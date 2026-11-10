@@ -5837,6 +5837,23 @@ impl Window {
         self.platform_facts.inner_window_bounds
     }
 
+    /// Encode the window's native restorable state into an opaque blob.
+    /// Returns `None` on platforms without native state restoration or if encoding fails.
+    pub fn native_window_state(&self) -> Option<Vec<u8>> {
+        self.platform_window.native_window_state()
+    }
+
+    /// Restore native state previously produced by [`Window::native_window_state`].
+    ///
+    /// The request owns its bytes and executes after the outer application borrow ends.
+    /// Unsupported backends ignore the request; dispatch does not confirm native restoration.
+    pub fn restore_native_window_state(&self, state: &[u8]) {
+        self.platform_command_sink
+            .enqueue(PlatformWindowCommand::RestoreNativeWindowState(Arc::from(
+                state,
+            )));
+    }
+
     /// Dispatch the given action on the currently focused element.
     pub fn dispatch_action(&mut self, action: Box<dyn Action>, cx: &mut App) {
         let focus_id = self.focused(cx).map(|handle| handle.id);
@@ -13810,6 +13827,11 @@ impl Window {
                 .platform_command_sink
                 .request_activation(activation_policy.generation()),
         }
+    }
+
+    /// Requests that the operating system draw attention to this window.
+    pub fn request_attention(&self) {
+        self.platform_window.request_attention();
     }
 
     /// Requests minimized placement through the placement authority.

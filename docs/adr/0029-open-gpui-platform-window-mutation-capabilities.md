@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-07-25
-**Amended**: 2026-07-28 (U25 appearance, activation, ownership, and presentation authority); 2026-08-18 (synchronous mutation terminal pairing); 2026-11-05 (post-borrow Windows frame maintenance and retained forced refresh)
+**Amended**: 2026-07-28 (U25 appearance, activation, ownership, and presentation authority); 2026-08-18 (synchronous mutation terminal pairing); 2026-11-05 (post-borrow Windows frame maintenance and retained forced refresh); 2026-11-11 (opaque native restoration)
 
 ## Context
 
@@ -286,10 +286,11 @@ synchronous authorities. There is no asynchronous open-window outbox.
 
 Framework and component code may request only this closed command set across the outer application
 borrow: `CompleteInitialPresentation { activate }`, `RevealDeferredInitialPresentation`,
-`Activate`, `ShowWindowMenu(Point<Pixels>)`, `StartWindowMove`, and
-`StartWindowResize(ResizeEdge)`, plus Windows-only `CompleteNativeFrame`. The
-envelope carries its own FIFO sequence, full `WindowId`, and a dispatcher that weakly references
-native state. `PlatformWindow` has no direct activation operation that can bypass this boundary.
+`Activate`, `ShowWindowMenu(Point<Pixels>)`, `StartWindowMove`,
+`StartWindowResize(ResizeEdge)`, and `RestoreNativeWindowState(Arc<[u8]>)`, plus Windows/Linux
+`CompleteNativeFrame`. The envelope carries its own FIFO sequence, full `WindowId`, and a
+dispatcher that weakly references native state. `PlatformWindow` has no direct activation operation
+that can bypass this boundary.
 
 The caller may enqueue a command while it holds `AppRefMut`, but execution waits until the outer
 borrow and every subordinate entity, controller, or viewport-runtime borrow have been released and
@@ -306,6 +307,19 @@ initial-presentation attempt retains the backend's hidden/show intent and receiv
 bounded retry, for two attempts total; a second rejection leaves the window unpresented, publishes
 `InitialPresentationFailed`, and records `WindowInitialPresentationStatus::Rejected`. Other
 rejected commands are terminal and are never retried.
+
+`Window::native_window_state` exposes the backend's opaque native archive; unsupported backends
+return `None`. `restore_native_window_state` owns a byte copy in the same command queue so AppKit
+restoration can reenter native callbacks after the outer App borrow ends. The native dispatcher
+retains its existing full-window liveness checks. Restoration does not require pointer or activation
+admission, but irreversible native teardown quiescence rejects it, including after native reentry.
+Diagnostics identify the command kind without carrying archive bytes. The archive is not a portable
+placement schema, does not advertise a new live mutation capability, and cannot settle a placement
+or activation ticket. The current Mac
+implementation preserves the official native workspace/fullscreen restoration rules; product
+persistence and archive compatibility remain with the caller and OS. Future backends that support
+both opaque restoration and live placement must reconcile any overlapping geometry through their
+existing placement owner rather than create another mutation authority.
 
 On Windows, the paint entry validates its update region before retaining the frame request.
 After that request is evaluated, `Window::complete_frame` obtains the backend's optional

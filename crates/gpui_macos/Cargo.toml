@@ -66,10 +66,14 @@ objc.workspace = true
 objc2.workspace = true
 objc2-app-kit = { workspace = true, features = [
     "NSAppearance",
+    "NSApplication",
     "NSDraggingItem",
     "NSImage",
     "NSPasteboard",
+    "NSResponder",
     "NSRunningApplication",
+    "NSWindow",
+    "NSWindowRestoration",
     "NSWorkspace",
     "block2",
     "objc2-uniform-type-identifiers",

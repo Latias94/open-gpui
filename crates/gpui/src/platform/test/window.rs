@@ -153,6 +153,9 @@ pub(crate) struct TestWindowState {
     pub(crate) title: Option<String>,
     pub(crate) edited: bool,
     pub(crate) document_path: Option<std::path::PathBuf>,
+    native_window_state: Option<Vec<u8>>,
+    native_window_state_restore_history: Vec<Vec<u8>>,
+    attention_request_count: usize,
     platform: Weak<TestPlatform>,
     // TODO: Replace with `Rc`
     sprite_atlas: Arc<dyn PlatformAtlas>,
@@ -429,6 +432,9 @@ impl TestWindow {
                 title: Default::default(),
                 edited: false,
                 document_path: None,
+                native_window_state: None,
+                native_window_state_restore_history: Vec::new(),
+                attention_request_count: 0,
                 should_close_handler: None,
                 close_callback: None,
                 native_drop_callback: None,
@@ -548,6 +554,24 @@ impl TestWindow {
         self.0.lock().platform_command_history.clone()
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_native_window_state(&self, native_window_state: Option<Vec<u8>>) {
+        let mut state = self.0.lock();
+        if !state.closed {
+            state.native_window_state = native_window_state;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn native_window_state_restore_history(&self) -> Vec<Vec<u8>> {
+        self.0.lock().native_window_state_restore_history.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn attention_request_count(&self) -> usize {
+        self.0.lock().attention_request_count
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn activation_count(&self) -> usize {
         self.0.lock().activation_count
@@ -660,7 +684,12 @@ impl TestWindow {
             if state.closed {
                 return PlatformWindowCommandOutcome::WindowClosed;
             }
-            state.platform_command_history.push(command);
+            if state.interaction_quiesced
+                && matches!(command, PlatformWindowCommand::RestoreNativeWindowState(_))
+            {
+                return PlatformWindowCommandOutcome::Rejected;
+            }
+            state.platform_command_history.push(command.clone());
             let scripted_outcome = matches!(
                 command,
                 PlatformWindowCommand::CompleteInitialPresentation { .. }
@@ -670,7 +699,7 @@ impl TestWindow {
             (state.platform_command_callback.take(), scripted_outcome)
         };
         let outcome = if let Some(mut callback) = callback {
-            let outcome = callback(command, self.clone());
+            let outcome = callback(command.clone(), self.clone());
             let mut state = self.0.lock();
             if !state.closed && state.platform_command_callback.is_none() {
                 state.platform_command_callback = Some(callback);
@@ -764,6 +793,18 @@ impl TestWindow {
                 }
                 self.0.lock().activation_count += 1;
                 self.activate_for_test();
+            }
+            PlatformWindowCommand::RestoreNativeWindowState(state) => {
+                {
+                    let window = self.0.lock();
+                    if window.closed {
+                        return PlatformWindowCommandOutcome::WindowClosed;
+                    }
+                    if window.interaction_quiesced {
+                        return PlatformWindowCommandOutcome::Rejected;
+                    }
+                }
+                self.restore_native_window_state(&state);
             }
             #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
             PlatformWindowCommand::CompleteNativeFrame => {}
@@ -1887,6 +1928,28 @@ impl PlatformWindow for TestWindow {
 
     fn capslock(&self) -> crate::Capslock {
         crate::Capslock::default()
+    }
+
+    fn request_attention(&self) {
+        let mut state = self.0.lock();
+        if !state.closed && !state.interaction_quiesced {
+            state.attention_request_count += 1;
+        }
+    }
+
+    fn native_window_state(&self) -> Option<Vec<u8>> {
+        self.0.lock().native_window_state.clone()
+    }
+
+    fn restore_native_window_state(&self, native_window_state: &[u8]) {
+        let mut state = self.0.lock();
+        if !state.closed && !state.interaction_quiesced && state.native_window_state.is_some() {
+            let native_window_state = native_window_state.to_vec();
+            state.native_window_state = Some(native_window_state.clone());
+            state
+                .native_window_state_restore_history
+                .push(native_window_state);
+        }
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
@@ -7050,6 +7113,358 @@ mod platform_command_tests {
     }
 
     #[crate::test]
+    fn native_state_restores_own_bytes_and_dispatch_in_order_after_outer_borrow(
+        cx: &mut TestAppContext,
+    ) {
+        let (handle, platform_window) = open_test_window(cx);
+        let initial = vec![0x01, 0x00, 0xff];
+        let first = vec![0x00, 0xff, 0x80, 0x01];
+        let second = vec![0x02, 0x00, 0xfe, 0x02];
+        platform_window.set_native_window_state(Some(initial.clone()));
+        let callbacks = Rc::new(RefCell::new(Vec::new()));
+        let app = cx.app.clone();
+        platform_window.set_platform_command_callback({
+            let callbacks = callbacks.clone();
+            move |command, _| {
+                let PlatformWindowCommand::RestoreNativeWindowState(state) = command else {
+                    panic!("only native-state restoration should be dispatched");
+                };
+                let borrow = app
+                    .try_borrow_mut()
+                    .expect("restoration must run after the outer App borrow is released");
+                drop(borrow);
+                callbacks.borrow_mut().push(state.to_vec());
+                PlatformWindowCommandOutcome::Accepted
+            }
+        });
+
+        cx.update_window(handle, |_, window, _| {
+            let mut snapshot = window
+                .native_window_state()
+                .expect("simulated native state");
+            snapshot.fill(0x42);
+            assert_eq!(window.native_window_state(), Some(initial.clone()));
+
+            let mut caller_buffer = first.clone();
+            window.restore_native_window_state(&caller_buffer);
+            caller_buffer.fill(0x55);
+            drop(caller_buffer);
+            let caller_buffer = second.clone();
+            window.restore_native_window_state(&caller_buffer);
+            drop(caller_buffer);
+
+            assert_eq!(window.native_window_state(), Some(initial.clone()));
+            assert!(
+                platform_window
+                    .native_window_state_restore_history()
+                    .is_empty()
+            );
+            assert!(platform_window.platform_command_history().is_empty());
+            assert!(callbacks.borrow().is_empty());
+        })
+        .expect("the restoring window must remain live");
+
+        assert_eq!(&*callbacks.borrow(), &[first.clone(), second.clone()]);
+        assert_eq!(
+            platform_window.native_window_state_restore_history(),
+            [first.clone(), second.clone()]
+        );
+        assert_eq!(
+            platform_window.platform_command_history(),
+            [
+                PlatformWindowCommand::RestoreNativeWindowState(Arc::from(first)),
+                PlatformWindowCommand::RestoreNativeWindowState(Arc::from(second.clone())),
+            ]
+        );
+        assert_eq!(
+            cx.update_window(handle, |_, window, _| window.native_window_state())
+                .expect("the restored window must remain readable"),
+            Some(second)
+        );
+    }
+
+    #[crate::test]
+    fn native_state_restore_for_a_closed_target_cannot_reach_its_replacement(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|app| app.set_quit_mode(crate::QuitMode::Explicit));
+        let (handle, platform_window) = open_test_window(cx);
+        let initial = vec![0x01, 0x00, 0xff];
+        platform_window.set_native_window_state(Some(initial.clone()));
+        let diagnostic_cursor = cx
+            .app
+            .native_boundary_diagnostics(crate::NativeBoundaryDiagnosticCursor::default())
+            .cursor;
+
+        cx.update_window(handle, |_, window, app| {
+            let caller_buffer = vec![0x02, 0xff, 0x00];
+            window.restore_native_window_state(&caller_buffer);
+            drop(caller_buffer);
+            window.remove_window(app);
+            assert!(platform_window.platform_command_history().is_empty());
+        })
+        .expect("the old window must accept its close before dispatch");
+
+        let (replacement, replacement_window) = open_test_window(cx);
+        let replacement_state = vec![0x03, 0x00, 0x80];
+        replacement_window.set_native_window_state(Some(replacement_state.clone()));
+        cx.run_until_parked();
+
+        assert_ne!(handle.window_id(), replacement.window_id());
+        assert!(!cx.windows().contains(&handle));
+        assert!(platform_window.platform_command_history().is_empty());
+        assert!(
+            platform_window
+                .native_window_state_restore_history()
+                .is_empty()
+        );
+        assert_eq!(platform_window.native_window_state(), Some(initial));
+        assert!(
+            replacement_window
+                .native_window_state_restore_history()
+                .is_empty()
+        );
+        assert_eq!(
+            cx.update_window(replacement, |_, window, _| window.native_window_state())
+                .expect("the replacement must retain its own native state"),
+            Some(replacement_state)
+        );
+        let diagnostics = cx.app.native_boundary_diagnostics(diagnostic_cursor);
+        let restores = diagnostics
+            .terminal
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic.target == crate::NativeBoundaryTarget::Window(handle.window_id())
+                    && diagnostic.kind
+                        == crate::NativeBoundaryKind::Command(
+                            crate::NativePlatformCommandKind::RestoreNativeWindowState,
+                        )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(restores.len(), 1);
+        assert_eq!(
+            restores[0].disposition,
+            crate::NativeBoundaryDisposition::Closed
+        );
+    }
+
+    #[crate::test]
+    fn native_state_restore_rejects_native_teardown_quiescence(cx: &mut TestAppContext) {
+        let (handle, platform_window) = open_test_window(cx);
+        let initial = vec![0x01, 0x00, 0xff];
+        platform_window.set_native_window_state(Some(initial.clone()));
+        let activation_count = platform_window.activation_count();
+        let cursor = cx
+            .app
+            .native_boundary_diagnostics(crate::NativeBoundaryDiagnosticCursor::default())
+            .cursor;
+
+        cx.update_window(handle, |_, window, app| {
+            assert!(window.quiesce_interaction(app));
+            window.restore_native_window_state(&[0x00, 0xff, 0x80]);
+            assert!(
+                platform_window
+                    .native_window_state_restore_history()
+                    .is_empty()
+            );
+        })
+        .expect("quiescence must preserve the retiring native-state target");
+
+        assert!(
+            platform_window
+                .native_window_state_restore_history()
+                .is_empty()
+        );
+        assert_eq!(platform_window.native_window_state(), Some(initial));
+        assert!(platform_window.platform_command_history().is_empty());
+        assert_eq!(platform_window.activation_count(), activation_count);
+        assert!(!platform_window.platform_facts().is_active);
+        let diagnostics = cx.app.native_boundary_diagnostics(cursor);
+        let restores = diagnostics
+            .terminal
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic.target == crate::NativeBoundaryTarget::Window(handle.window_id())
+                    && diagnostic.kind
+                        == crate::NativeBoundaryKind::Command(
+                            crate::NativePlatformCommandKind::RestoreNativeWindowState,
+                        )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(restores.len(), 1);
+        assert_eq!(
+            restores[0].disposition,
+            crate::NativeBoundaryDisposition::Rejected
+        );
+    }
+
+    #[crate::test]
+    fn native_state_restore_does_not_require_pointer_or_activation_admission(
+        cx: &mut TestAppContext,
+    ) {
+        let (handle, platform_window) = open_test_window(cx);
+        platform_window.set_native_window_state(Some(Vec::new()));
+        let activation_count = platform_window.activation_count();
+        cx.update_window(handle, |_, window, _| {
+            assert!(matches!(
+                window.request_pointer_input(false),
+                WindowMutationDispatch::Queued(_)
+            ));
+            assert!(matches!(
+                window.request_activation_policy(WindowActivationPolicy {
+                    accepts_activation: false,
+                    focus_on_click: false,
+                }),
+                WindowMutationDispatch::Queued(_)
+            ));
+        })
+        .expect("a live window must accept its input policy");
+        assert!(platform_window.flush_window_mutation(WindowMutationDomain::PointerInput));
+        assert!(platform_window.flush_window_mutation(WindowMutationDomain::ActivationPolicy));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, _| {
+            assert!(!window.platform_facts().accepts_pointer_input);
+            assert!(!window.platform_facts().accepts_activation);
+            window.restore_native_window_state(&[0x00, 0xff, 0x80]);
+        })
+        .expect("live noninteractive windows must still admit restoration");
+        assert_eq!(
+            platform_window.native_window_state_restore_history(),
+            [vec![0x00, 0xff, 0x80]]
+        );
+        assert_eq!(platform_window.activation_count(), activation_count);
+        assert!(
+            platform_window
+                .platform_command_history()
+                .iter()
+                .all(|command| !command.requires_interaction_authority())
+        );
+    }
+
+    #[crate::test]
+    fn native_state_restore_rechecks_quiescence_after_native_callback(cx: &mut TestAppContext) {
+        let (handle, platform_window) = open_test_window(cx);
+        let initial = vec![0x01, 0x00, 0xff];
+        platform_window.set_native_window_state(Some(initial.clone()));
+        platform_window.set_platform_command_callback(|_, platform_window| {
+            assert!(platform_window.interaction_quiescence().revoke());
+            PlatformWindowCommandOutcome::Accepted
+        });
+        cx.update_window(handle, |_, window, _| {
+            window.restore_native_window_state(&[0x00, 0xff, 0x80]);
+        })
+        .expect("the native callback must run after the outer App borrow");
+        assert_eq!(platform_window.native_window_state(), Some(initial.clone()));
+        assert!(
+            platform_window
+                .native_window_state_restore_history()
+                .is_empty()
+        );
+        platform_window.restore_native_window_state(&[0x80, 0x00]);
+        assert_eq!(platform_window.native_window_state(), Some(initial));
+        assert!(
+            platform_window
+                .native_window_state_restore_history()
+                .is_empty()
+        );
+    }
+
+    #[crate::test]
+    fn native_state_restore_can_pump_input_and_queue_another_restore_without_recursion(
+        cx: &mut TestAppContext,
+    ) {
+        const FIRST: &[u8] = &[0x00, 0xff, 0x80];
+        const SECOND: &[u8] = &[0x80, 0x00, 0xfe];
+
+        let (handle, platform_window) = open_test_window(cx);
+        platform_window.set_native_window_state(Some(Vec::new()));
+        let callback_active = Rc::new(Cell::new(false));
+        let input_count = Rc::new(Cell::new(0));
+        let callbacks = Rc::new(RefCell::new(Vec::new()));
+        let _interceptor = cx
+            .update_window(handle, |_, window, _| {
+                window.intercept_window_mouse_events({
+                    let callback_active = callback_active.clone();
+                    let input_count = input_count.clone();
+                    move |_, window, app| {
+                        assert!(callback_active.get());
+                        input_count.set(input_count.get() + 1);
+                        window.restore_native_window_state(SECOND);
+                        app.stop_propagation();
+                        window.prevent_default();
+                    }
+                })
+            })
+            .expect("the native input interceptor must attach to a live window");
+        let app = cx.app.clone();
+        platform_window.set_platform_command_callback({
+            let callback_active = callback_active.clone();
+            let callbacks = callbacks.clone();
+            let input_count = input_count.clone();
+            move |command, mut platform_window| {
+                let PlatformWindowCommand::RestoreNativeWindowState(state) = command else {
+                    panic!("only native-state restoration should be dispatched");
+                };
+                assert!(!callback_active.replace(true));
+                let borrow = app
+                    .try_borrow_mut()
+                    .expect("native restoration must enter with an idle App");
+                drop(borrow);
+                callbacks.borrow_mut().push(state.to_vec());
+                if state.as_ref() == FIRST {
+                    assert_eq!(
+                        platform_window.simulate_input_result(mouse_move_input(24.0)),
+                        DispatchEventResult {
+                            propagate: false,
+                            default_prevented: true,
+                        }
+                    );
+                    assert_eq!(input_count.get(), 1);
+                    assert_eq!(callbacks.borrow().len(), 1);
+                }
+                callback_active.set(false);
+                PlatformWindowCommandOutcome::Accepted
+            }
+        });
+
+        cx.update_window(handle, |_, window, _| {
+            window.restore_native_window_state(FIRST);
+            assert_eq!(input_count.get(), 0);
+        })
+        .expect("native restoration must allow synchronous input reentry");
+        cx.run_until_parked();
+
+        assert!(!callback_active.get());
+        assert_eq!(input_count.get(), 1);
+        assert_eq!(&*callbacks.borrow(), &[FIRST.to_vec(), SECOND.to_vec()]);
+        assert_eq!(
+            platform_window.native_window_state_restore_history(),
+            [FIRST.to_vec(), SECOND.to_vec()]
+        );
+        assert_eq!(platform_window.native_window_state(), Some(SECOND.to_vec()));
+    }
+
+    #[crate::test]
+    fn public_attention_requests_reach_the_backend_without_activating_the_window(
+        cx: &mut TestAppContext,
+    ) {
+        let (handle, platform_window) = open_test_window(cx);
+        let activation_count = platform_window.activation_count();
+        let initially_active = platform_window.platform_facts().is_active;
+
+        cx.update_window(handle, |_, window, _| {
+            window.request_attention();
+            window.request_attention();
+        })
+        .expect("attention requests must preserve the live window");
+
+        assert_eq!(platform_window.attention_request_count(), 2);
+        assert_eq!(platform_window.activation_count(), activation_count);
+        assert_eq!(platform_window.platform_facts().is_active, initially_active);
+        assert!(platform_window.platform_command_history().is_empty());
+    }
+
+    #[crate::test]
     fn platform_window_command_runs_after_outer_app_borrow_is_released(cx: &mut TestAppContext) {
         let (handle, platform_window) = open_test_window(cx);
         let callback_ran = Rc::new(Cell::new(false));
@@ -7306,17 +7721,18 @@ mod platform_command_tests {
         platform_window.set_platform_command_callback({
             let callback_active = callback_active.clone();
             let callback_history = callback_history.clone();
+            let nested_command = nested_command.clone();
             move |command, platform_window| {
                 assert!(
                     !callback_active.replace(true),
                     "nested platform commands must not dispatch recursively"
                 );
-                callback_history.borrow_mut().push(command);
+                callback_history.borrow_mut().push(command.clone());
                 if command == PlatformWindowCommand::StartWindowMove {
                     app.enqueue_platform_window_command(
                         window_id,
                         platform_window.command_dispatcher(),
-                        nested_command,
+                        nested_command.clone(),
                     );
                 }
                 callback_active.set(false);

@@ -498,6 +498,9 @@ impl NativePlatformCommand {
             PlatformWindowCommand::StartWindowResize(_) => {
                 (NativePlatformCommandKind::StartWindowResize, None)
             }
+            PlatformWindowCommand::RestoreNativeWindowState(_) => {
+                (NativePlatformCommandKind::RestoreNativeWindowState, None)
+            }
         };
         NativeBoundaryDiagnostic::pending(
             sequence,
@@ -514,7 +517,7 @@ impl NativePlatformCommand {
     }
 
     pub(super) fn dispatch(&self) -> PlatformWindowCommandOutcome {
-        self.dispatcher.dispatch(self.command)
+        self.dispatcher.dispatch(self.command.clone())
     }
 
     pub(super) fn settle_rejection(mut self) -> NativePlatformCommandRejection {

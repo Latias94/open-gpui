@@ -150,6 +150,7 @@ pub enum NativePlatformCommandKind {
     ShowWindowMenu,
     StartWindowMove,
     StartWindowResize,
+    RestoreNativeWindowState,
     ReleasePointerCapture,
     CompleteCapturedDragRelease,
     RetireNativeWindow,

@@ -564,6 +564,9 @@ impl WaylandWindowCommandTarget {
             PlatformWindowCommand::RevealDeferredInitialPresentation { .. } => {
                 PlatformWindowCommandOutcome::Rejected
             }
+            PlatformWindowCommand::RestoreNativeWindowState(_) => {
+                PlatformWindowCommandOutcome::Unsupported
+            }
             PlatformWindowCommand::Activate { .. } if state.globals.activation.is_none() => {
                 PlatformWindowCommandOutcome::Unsupported
             }
@@ -2104,6 +2107,8 @@ impl PlatformWindow for WaylandWindow {
     ) -> Option<Receiver<usize>> {
         None
     }
+
+    fn request_attention(&self) {}
 
     fn is_active(&self) -> bool {
         let state = self.borrow();

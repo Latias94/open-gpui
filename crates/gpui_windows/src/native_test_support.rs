@@ -132,6 +132,8 @@ mod native_text_layout_tests;
 mod native_text_pool_tests;
 #[path = "native_view_component_tests.rs"]
 mod native_view_component_tests;
+#[path = "native_window_services_tests.rs"]
+mod native_window_services_tests;
 #[path = "native_windowing_tests.rs"]
 mod native_windowing_tests;
 

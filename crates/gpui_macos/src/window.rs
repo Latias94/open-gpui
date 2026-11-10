@@ -64,8 +64,18 @@ use objc::{
     runtime::{BOOL, Class, NO, Object, Protocol, Sel, YES},
     sel, sel_impl,
 };
-use objc2::{rc::Retained, runtime::AnyObject as Objc2Object};
-use objc2_app_kit::NSBeep;
+use objc2::{
+    rc::{Allocated, Retained},
+    runtime::{AnyClass, AnyObject as Objc2Object, Bool, ClassBuilder, Sel as Objc2Sel},
+};
+use objc2_app_kit::{
+    NSApplication as NativeApplication, NSBeep, NSRequestUserAttentionType,
+    NSWindow as NativeWindow,
+};
+use objc2_foundation::{
+    NSData, NSDictionary as NativeDictionary, NSError, NSKeyedArchiver, NSKeyedUnarchiver,
+    NSNumber, NSString as NativeString, NSUserDefaults as NativeUserDefaults,
+};
 use open_gpui_scheduler::Instant;
 use parking_lot::Mutex;
 use raw_window_handle as rwh;
@@ -80,7 +90,7 @@ use std::{
     ptr::{self, NonNull},
     rc::Rc,
     sync::{
-        Arc, Weak,
+        Arc, Once, Weak,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
@@ -88,10 +98,14 @@ use std::{
 
 const WINDOW_STATE_IVAR: &str = "windowState";
 
+static RESTORES_WORKSPACE_AT_LAUNCH_DEFAULT: Once = Once::new();
+
 static mut WINDOW_CLASS: *const Class = ptr::null();
 static mut PANEL_CLASS: *const Class = ptr::null();
 static mut VIEW_CLASS: *const Class = ptr::null();
 static mut BLURRED_VIEW_CLASS: *const Class = ptr::null();
+static mut WINDOW_STATE_ARCHIVER_DELEGATE_CLASS: *const AnyClass = ptr::null();
+static mut WINDOW_STATE_UNARCHIVER_CLASS: *const AnyClass = ptr::null();
 static NEXT_EMERGENCY_PRESENTATION_SHUTDOWN_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 #[allow(non_upper_case_globals)]
@@ -593,6 +607,86 @@ unsafe fn build_classes() {
             );
             decl.register()
         };
+        WINDOW_STATE_ARCHIVER_DELEGATE_CLASS = {
+            let mut decl =
+                ClassBuilder::new(c"GPUIWindowStateArchiverDelegate", objc2::class!(NSObject))
+                    .unwrap();
+            decl.add_method(
+                objc2::sel!(archiver:willEncodeObject:),
+                window_state_archiver_will_encode_object
+                    as extern "C" fn(
+                        _,
+                        Objc2Sel,
+                        *mut Objc2Object,
+                        *mut Objc2Object,
+                    ) -> *mut Objc2Object,
+            );
+            decl.register()
+        };
+        WINDOW_STATE_UNARCHIVER_CLASS = {
+            let mut decl = ClassBuilder::new(
+                c"GPUIWindowStateKeyedUnarchiver",
+                objc2::class!(NSKeyedUnarchiver),
+            )
+            .unwrap();
+            decl.add_method(
+                objc2::sel!(_windowRestorationOptions),
+                window_state_unarchiver_restoration_options
+                    as extern "C" fn(_, Objc2Sel) -> *mut Objc2Object,
+            );
+            decl.register()
+        };
+    }
+}
+
+// NSKeyedArchiverDelegate callback that skips objects which don't adopt `NSSecureCoding`
+// (the window itself and its NSView hierarchy), so encoding the window's restorable state
+// succeeds. AppKit still encodes the window frame and its persistent window-management
+// identifier, which is what the Space restoration on relaunch keys off.
+extern "C" fn window_state_archiver_will_encode_object(
+    _this: &Objc2Object,
+    _sel: Objc2Sel,
+    _archiver: *mut Objc2Object,
+    object: *mut Objc2Object,
+) -> *mut Objc2Object {
+    // SAFETY: `object` is whatever AppKit hands the delegate during archiving; we only send it
+    // `isKindOfClass:` with valid class arguments, which is safe for any Objective-C object.
+    unsafe {
+        if object.is_null() {
+            return object;
+        }
+        let is_view: Bool = objc2::msg_send![object, isKindOfClass: objc2::class!(NSView)];
+        let is_window: Bool = objc2::msg_send![object, isKindOfClass: objc2::class!(NSWindow)];
+        if is_view == Bool::YES || is_window == Bool::YES {
+            ptr::null_mut()
+        } else {
+            object
+        }
+    }
+}
+
+// Override of the private `_windowRestorationOptions` on our NSKeyedUnarchiver subclass.
+// Returning a default-initialized `NSWindowRestorationOptions` tells AppKit to restore the
+// window to its original Space. This is the macOS 15+ path (FB15644170: the
+// `NSWindowRestoresWorkspaceAtLaunch` user default no longer works there).
+extern "C" fn window_state_unarchiver_restoration_options(
+    _this: &Objc2Object,
+    _sel: Objc2Sel,
+) -> *mut Objc2Object {
+    if !is_macos_version_at_least(NSOperatingSystemVersion::new(15, 0, 0)) {
+        return ptr::null_mut();
+    }
+    // SAFETY: we look the class up by name and only send it `alloc`/`init`/`autorelease`, all of
+    // which have the standard `-> id` signature. Returning `nil` when the class is absent is valid.
+    unsafe {
+        match AnyClass::get(c"NSWindowRestorationOptions") {
+            Some(class) => {
+                let options: *mut Objc2Object = objc2::msg_send![class, alloc];
+                let options: *mut Objc2Object = objc2::msg_send![options, init];
+                objc2::msg_send![options, autorelease]
+            }
+            None => ptr::null_mut(),
+        }
     }
 }
 
@@ -2860,6 +2954,11 @@ impl MacWindowInteractionQuiescenceTarget {
 }
 
 impl MacWindow {
+    fn borrowed_command_target(window_state: Arc<Mutex<MacWindowState>>) -> Self {
+        let shutdown_authority = window_state.lock().presentation_shutdown_authority.clone();
+        Self(window_state, shutdown_authority, true, None, None)
+    }
+
     fn dispose_native_window(&mut self, synchronously: bool) {
         if self.2 {
             return;
@@ -3205,6 +3304,7 @@ impl MacWindow {
                 WINDOW_STATE_IVAR,
                 Arc::into_raw(construction_guard.window.0.clone()) as *const c_void,
             );
+            (&*native_window.cast::<NativeWindow>()).setRestorable(true);
 
             if let Some(title) = titlebar
                 .as_ref()
@@ -4144,6 +4244,18 @@ fn dispatch_mac_window_command(
                 rejected_or_closed_mac_window_command(&window_state)
             }
         }
+        PlatformWindowCommand::RestoreNativeWindowState(state) => {
+            if window_state.lock().interaction_is_quiesced() {
+                return PlatformWindowCommandOutcome::Rejected;
+            }
+            MacWindow::borrowed_command_target(window_state.clone())
+                .restore_native_window_state(&state);
+            if window_state.lock().is_closed() {
+                PlatformWindowCommandOutcome::WindowClosed
+            } else {
+                PlatformWindowCommandOutcome::Accepted
+            }
+        }
         PlatformWindowCommand::ShowWindowMenu(_) | PlatformWindowCommand::StartWindowResize(_) => {
             PlatformWindowCommandOutcome::Rejected
         }
@@ -4444,6 +4556,132 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn native_window_state(&self) -> Option<Vec<u8>> {
+        let (native_window, handle) = {
+            let state = self.0.lock();
+            if state.is_closed()
+                || state.is_fullscreen()
+                || state.fullscreen_transition.is_some()
+                || state.pending_fullscreen_restore_bounds.is_some()
+            {
+                return None;
+            }
+            (
+                unsafe { Retained::retain(state.native_window.cast::<NativeWindow>()) }?,
+                state.handle,
+            )
+        };
+        let native_id = Retained::as_ptr(&native_window).cast_mut().cast();
+        if native_window
+            .styleMask()
+            .contains(objc2_app_kit::NSWindowStyleMask::FullScreen)
+        {
+            return None;
+        }
+        // SAFETY: `native_window` is retained for the duration of archiving, and the
+        // selectors below are AppKit/Foundation methods sent with their documented signatures. The
+        // archived bytes are copied into an owned `Vec` before the objects we allocated are
+        // released, so no pointer into Objective-C memory escapes this block.
+        unsafe {
+            let archiver: Allocated<NSKeyedArchiver> =
+                objc2::msg_send![objc2::class!(NSKeyedArchiver), alloc];
+            let archiver: Option<Retained<NSKeyedArchiver>> =
+                objc2::msg_send![archiver, initRequiringSecureCoding: true];
+            let Some(archiver) = archiver else {
+                log::warn!("failed to create an archiver for the native window state");
+                return None;
+            };
+            let delegate: Retained<Objc2Object> =
+                objc2::msg_send![WINDOW_STATE_ARCHIVER_DELEGATE_CLASS, new];
+            if !native_window_is_exact_live_handle(native_id, handle) {
+                return None;
+            }
+            let _: () = objc2::msg_send![&*archiver, setDelegate: &*delegate];
+            native_window.encodeRestorableStateWithCoder(&archiver);
+            archiver.finishEncoding();
+            // The archiver holds a weak reference to its delegate; clear it before the delegate
+            // is released below.
+            let _: () = objc2::msg_send![&*archiver, setDelegate: ptr::null_mut::<Objc2Object>()];
+
+            let data: Option<Retained<NSData>> = objc2::msg_send![&*archiver, encodedData];
+            let Some(data) = data else {
+                log::warn!("the archiver produced no data for the native window state");
+                return None;
+            };
+            if !native_window_is_exact_live_handle(native_id, handle) {
+                return None;
+            }
+            Some(data.to_vec())
+        }
+    }
+
+    fn restore_native_window_state(&self, state: &[u8]) {
+        if state.is_empty() {
+            return;
+        }
+        let (native_window, handle) = {
+            let window_state = self.0.lock();
+            if window_state.is_closed() || window_state.interaction_is_quiesced() {
+                return;
+            }
+            let Some(native_window) =
+                (unsafe { Retained::retain(window_state.native_window.cast::<NativeWindow>()) })
+            else {
+                return;
+            };
+            (native_window, window_state.handle)
+        };
+        let native_id = Retained::as_ptr(&native_window).cast_mut().cast();
+        // SAFETY: `native_window` is retained for the duration of restoration. The NSData,
+        // NSKeyedUnarchiver and `restoreStateWithCoder:` selectors are sent with their documented
+        // signatures, and the `NSData` owns a copy of `state` throughout this synchronous call.
+        unsafe {
+            let data = NSData::with_bytes(state);
+
+            // On macOS < 15 the `NSWindowRestoresWorkspaceAtLaunch` user default controls whether
+            // the window is restored to its original Space. On macOS 15+ that default is broken
+            // (FB15644170), and the `_windowRestorationOptions` override on our unarchiver subclass
+            // handles it instead.
+            if !is_macos_version_at_least(NSOperatingSystemVersion::new(15, 0, 0)) {
+                RESTORES_WORKSPACE_AT_LAUNCH_DEFAULT.call_once(|| {
+                    let defaults = NativeUserDefaults::standardUserDefaults();
+                    let key = NativeString::from_str("NSWindowRestoresWorkspaceAtLaunch");
+                    let yes_value = NSNumber::new_bool(true);
+                    let dict = NativeDictionary::<NativeString, Objc2Object>::from_slices(
+                        &[&*key],
+                        &[&*yes_value],
+                    );
+                    defaults.registerDefaults(&dict);
+                });
+            }
+
+            let unarchiver: Allocated<NSKeyedUnarchiver> =
+                objc2::msg_send![&*WINDOW_STATE_UNARCHIVER_CLASS, alloc];
+            let unarchiver: Result<Retained<NSKeyedUnarchiver>, Retained<NSError>> =
+                objc2::msg_send![unarchiver, initForReadingFromData: &*data, error: _];
+            let unarchiver = match unarchiver {
+                Ok(unarchiver) => unarchiver,
+                Err(error) => {
+                    log::warn!(
+                        "failed to unarchive the native window state: {}",
+                        error.localizedDescription()
+                    );
+                    return;
+                }
+            };
+            if !native_window_matches_handle(native_id, handle) {
+                return;
+            }
+            native_window.restoreStateWithCoder(&unarchiver);
+            if let Some(error) = unarchiver.error() {
+                log::warn!(
+                    "failed to restore the native window state: {}",
+                    error.localizedDescription()
+                );
+            }
+        }
+    }
+
     fn set_traffic_light_position(&self, position: Point<Pixels>) {
         let mut state = self.0.lock();
         state.traffic_light_position = Some(position);
@@ -4621,6 +4859,58 @@ impl PlatformWindow for MacWindow {
 
             Some(done_rx)
         }
+    }
+
+    fn request_attention(&self) {
+        let (window_state, handle, executor) = {
+            let state = self.0.lock();
+            if state.is_closed()
+                || state.interaction_is_quiesced()
+                || state.committed_native_observation().is_active
+            {
+                return;
+            }
+            (
+                Arc::downgrade(&self.0),
+                state.handle,
+                state.foreground_executor.clone(),
+            )
+        };
+        executor
+            .spawn(async move {
+                let Some(window_state) = window_state.upgrade() else {
+                    return;
+                };
+                let native_window = {
+                    let state = window_state.lock();
+                    if state.handle != handle
+                        || state.is_closed()
+                        || state.interaction_is_quiesced()
+                        || state.committed_native_observation().is_active
+                    {
+                        return;
+                    }
+                    unsafe { Retained::retain(state.native_window.cast::<NativeWindow>()) }
+                };
+                let Some(native_window) = native_window else {
+                    return;
+                };
+                let Some(main_thread) = objc2::MainThreadMarker::new() else {
+                    return;
+                };
+                let app = NativeApplication::sharedApplication(main_thread);
+                if !native_window.isKeyWindow()
+                    && unsafe {
+                        native_window_matches_handle(
+                            Retained::as_ptr(&native_window).cast_mut().cast(),
+                            handle,
+                        )
+                    }
+                {
+                    app.requestUserAttention(NSRequestUserAttentionType::InformationalRequest);
+                }
+            })
+            .detach();
     }
 
     fn is_active(&self) -> bool {
@@ -6840,6 +7130,19 @@ mod creation_projection_tests {
 
     fn restore_bounds() -> Bounds<Pixels> {
         Bounds::new(point(px(120.0), px(80.0)), size(px(1024.0), px(768.0)))
+    }
+
+    #[test]
+    fn native_state_restore_command_rejects_an_expired_window() {
+        let window_state = Weak::new();
+        let state = Arc::from([1_u8, 2, 3]);
+        assert_eq!(
+            dispatch_mac_window_command(
+                &window_state,
+                PlatformWindowCommand::RestoreNativeWindowState(state),
+            ),
+            PlatformWindowCommandOutcome::WindowClosed,
+        );
     }
 
     #[test]

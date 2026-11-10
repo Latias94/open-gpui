@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- Native windows expose opaque state query/restore and user-attention requests. macOS preserves the official workspace/fullscreen restoration policy; Windows requests one flash, X11 preserves and clears urgency hints, and unsupported backends retain no-op behavior. Restoration owns its archive bytes through the existing post-borrow command queue.
+
 - `fs_embed!` reads development assets from the runtime checkout and embeds them in release builds or with `debug-embed`. It exposes the same get/iter and asset trait interface with matching include/exclude filters.
 
 - JSON array union, Markdown source-position fragments, environment-name validation and explicit Unix open-file-limit setup follow the complete official utility APIs. Native command and Windows shell helpers share the low-level core utility owner.
@@ -62,6 +64,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Optional native debug hot reload follows the official GPUI/Subsecond 0.7.10 mechanism: build/process-matched patches, foreground application, window refresh, and typed, stateless and stored erased View render boundaries. Run with `dx serve --hot-patch`; compatible render-body edits preserve existing model state. Release/WebAssembly transport exclusion, failed loads, required restarts and disconnects remain explicit. The independently locked native consumer provides an actual edit/build/apply and Submitted-scene pixel acceptance procedure, including the required upstream dx x64 jump-stub backport for the qualified Windows tool.
 
 ### Breaking Changes and Migration Notes
+
+- The hidden backend integration enum `PlatformWindowCommand` is `Clone` rather than `Copy` and adds `RestoreNativeWindowState(Arc<[u8]>)`; `requires_interaction_authority` now borrows it. Clone when retaining a command across dispatch and update exhaustive matches, including `NativePlatformCommandKind::RestoreNativeWindowState`. Unsupported dispatchers should return `Unsupported`; ordinary `PlatformWindow` implementors inherit the default no-op services.
 
 - `merge_json_value_into` replaces colliding arrays instead of appending them. Use `union_json_value_into` for deduplicating array composition. Native shell/process modules are unavailable on wasm; the unused `take_until` utility reexport is removed.
 

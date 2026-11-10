@@ -29,7 +29,7 @@ use x11rb::{
     connection::Connection,
     cookie::{Cookie, VoidCookie},
     errors::{ConnectionError, ReplyError},
-    properties::WmSizeHints,
+    properties::{WmHints, WmSizeHints},
     protocol::{
         ErrorKind, sync,
         xinput::{self, ConnectionExt as _},
@@ -572,6 +572,9 @@ impl X11WindowCommandTarget {
             PlatformWindowCommand::RevealDeferredInitialPresentation { .. } => {
                 PlatformWindowCommandOutcome::Rejected
             }
+            PlatformWindowCommand::RestoreNativeWindowState(_) => {
+                PlatformWindowCommandOutcome::Unsupported
+            }
             PlatformWindowCommand::Activate { .. }
                 if state.activation_policy.accepts_activation =>
             {
@@ -1042,6 +1045,39 @@ where
         .map_err(handle_connection_error)
         .and_then(|response| response.reply().map_err(|reply_error| anyhow!(reply_error)))
         .with_context(failure_context)
+}
+
+/// Sets or clears the ICCCM WM_HINTS urgency flag, preserving the other hints.
+///
+/// Clearing when the flag isn't set is skipped: writing it back would create a
+/// WM_HINTS property on windows that never requested attention, and would add an
+/// X round trip to every window state change.
+fn set_wm_hints_urgency(xcb: &XCBConnection, x_window: xproto::Window, urgent: bool) {
+    let mut hints = WmHints::new();
+    match WmHints::get(xcb, x_window) {
+        Ok(cookie) => match cookie.reply() {
+            Ok(Some(existing_hints)) => hints = existing_hints,
+            Ok(None) => {}
+            Err(error) => {
+                log::debug!("failed to read X11 WM_HINTS before setting urgency: {error}")
+            }
+        },
+        Err(error) => {
+            log::debug!("failed to request X11 WM_HINTS before setting urgency: {error}")
+        }
+    }
+
+    if !urgent && !hints.urgent {
+        return;
+    }
+
+    hints.urgent = urgent;
+    check_reply(
+        || "X11 ChangeProperty for WM_HINTS urgency failed.",
+        hints.set(xcb, x_window),
+    )
+    .log_err();
+    xcb_flush(xcb);
 }
 
 /// Convert X11 connection errors to `anyhow::Error` and panic for unrecoverable errors.
@@ -2299,7 +2335,16 @@ impl X11WindowStatePtr {
             return;
         }
 
-        self.state.borrow_mut().active = focus;
+        let was_active = {
+            let mut state = self.state.borrow_mut();
+            let was_active = state.active;
+            state.active = focus;
+            was_active
+        };
+        if focus && !was_active {
+            set_wm_hints_urgency(&self.xcb, self.x_window, false);
+        }
+
         let callback = self.callbacks.borrow().active_status_change.clone();
         if let Some(fun) = callback {
             fun(observation);
@@ -2767,6 +2812,17 @@ impl PlatformWindow for X11Window {
         _answers: &[PromptButton],
     ) -> Option<futures::channel::oneshot::Receiver<usize>> {
         None
+    }
+
+    fn request_attention(&self) {
+        {
+            let state = self.0.state.borrow();
+            if state.destroyed || state.active || state.interaction_gate.is_quiesced() {
+                return;
+            }
+        }
+
+        set_wm_hints_urgency(&self.0.xcb, self.0.x_window, true);
     }
 
     fn is_active(&self) -> bool {

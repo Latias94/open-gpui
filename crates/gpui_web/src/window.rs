@@ -974,6 +974,9 @@ impl PlatformWindow for WebWindow {
                         PlatformWindowCommandOutcome::Rejected
                     }
                 }
+                PlatformWindowCommand::RestoreNativeWindowState(_) => {
+                    PlatformWindowCommandOutcome::Unsupported
+                }
                 PlatformWindowCommand::ShowWindowMenu(_)
                 | PlatformWindowCommand::StartWindowMove
                 | PlatformWindowCommand::StartWindowResize(_) => {

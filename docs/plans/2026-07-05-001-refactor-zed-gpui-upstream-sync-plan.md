@@ -3185,6 +3185,36 @@ remain separate manual scenarios unless actually executed. Reuse installed LLVM 
 in the validation process to finish the earlier higher-util wasm compilation; record the
 original missing-clang result and the actual rerun without changing compression semantics.
 
+### Native Window State And Attention Successor
+
+Continue after `34e6b6a963df3b775661dbf13bdd374cd4be509e` against the same fixed target.
+Adopt complete official `33c6212b055fa8a97b17c8653311c9ccab7fb3b6`, including the final target's
+archiver delegate, unarchiver subclass, workspace-default and fullscreen restrictions. The
+framework exposes the official opaque-byte state query/restore facade; unsupported backends
+return None and ignore restoration. Product workspace persistence stays outside GPUI.
+
+Preserve the official public facade while restoring through the existing post-borrow native
+command owner. The queued command owns an Arc byte slice rather than borrowing caller data;
+the closed command enum becomes Clone rather than Copy. Exact target/close dispatch and
+ordered callback ingress retain their owners. No second restoration queue or portable window
+state schema is introduced. Opaque restoration is an OS request, not a new typed placement
+capability or a fabricated mutation/activation success. Document that distinction in ADR 0029.
+Live noninteractive windows retain restoration admission; irreversible native teardown quiescence
+rejects it at actual execution, including after native callback reentry.
+
+Adopt official `905e955a702707cd81a2e5bae9b381a7a9c7f614`,
+`50e399332c120cc67a616fd637888bffc70e7906` and
+`4d1935b8d00320841da476ec38c7b7747abf6f09`: Windows requests one flash, Mac requests
+informational attention, X11 raises urgency and clears it on the inactive-to-active edge while
+preserving unrelated hints; Wayland keeps its official no-op. Queued native work must retain
+the current window's exact lifetime rather than act on a reused native handle.
+
+Trust unchanged official native algorithms. Compile affected owners and ordinary consumers;
+exercise actual fork byte ownership, post-borrow ordering/reentry, close refusal and Windows
+native lifetime seams. Qualify Mac/Linux source compilation separately from actual desktop
+state restoration, Space changes or attention indicators. Existing foreign toolchain failures
+do not justify repeating unavailable benchmark matrices or claiming native execution.
+
 ## Maintained Baseline Before Engine Adaptation
 
 The [Windows dialog/host safety record](../verification.md#windows-dialog-threads-and-native-host-safety)

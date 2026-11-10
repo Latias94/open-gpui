@@ -4343,7 +4343,7 @@ pub enum ResizeEdge {
 ///
 /// GPUI executes this closed command set only after releasing the outer application borrow.
 #[doc(hidden)]
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PlatformWindowCommand {
     #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
     CompleteNativeFrame,
@@ -4360,12 +4360,13 @@ pub enum PlatformWindowCommand {
     ShowWindowMenu(Point<Pixels>),
     StartWindowMove,
     StartWindowResize(ResizeEdge),
+    RestoreNativeWindowState(Arc<[u8]>),
 }
 
 impl PlatformWindowCommand {
     /// Returns whether dispatching this command can begin a new native user-interaction session.
     #[doc(hidden)]
-    pub fn requires_interaction_authority(self) -> bool {
+    pub fn requires_interaction_authority(&self) -> bool {
         matches!(
             self,
             Self::CompleteInitialPresentation { activate: true }
@@ -5860,6 +5861,8 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         detail: Option<&str>,
         answers: &[PromptButton],
     ) -> Option<oneshot::Receiver<usize>>;
+    /// Requests that the operating system draw attention to this window.
+    fn request_attention(&self) {}
     fn is_active(&self) -> bool;
     /// Returns the current presentation visibility, independently of the shown/mapped state.
     fn visibility(&self) -> WindowVisibility;
@@ -6065,6 +6068,11 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn move_tab_to_new_window(&self) {}
     fn toggle_window_tab_overview(&self) {}
     fn set_tabbing_identifier(&self, _identifier: Option<String>) {}
+
+    fn native_window_state(&self) -> Option<Vec<u8>> {
+        None
+    }
+    fn restore_native_window_state(&self, _state: &[u8]) {}
 
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::Win32::Foundation::HWND;

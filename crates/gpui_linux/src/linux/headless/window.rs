@@ -113,6 +113,9 @@ impl PlatformWindow for HeadlessWindow {
                     PlatformWindowCommandOutcome::Accepted
                 }
                 PlatformWindowCommand::Activate { .. } => PlatformWindowCommandOutcome::Unsupported,
+                PlatformWindowCommand::RestoreNativeWindowState(_) => {
+                    PlatformWindowCommandOutcome::Unsupported
+                }
                 PlatformWindowCommand::RevealDeferredInitialPresentation { .. }
                 | PlatformWindowCommand::ShowWindowMenu(_)
                 | PlatformWindowCommand::StartWindowMove

@@ -1931,3 +1931,30 @@ cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml 
 
 This command is a verification instruction, not an execution result. Runtime and native backend
 qualification remain with their respective owners.
+
+## Ordinary native window services
+
+The `native_window_services` target consumes `Window::native_window_state`,
+`Window::restore_native_window_state` and `Window::request_attention` through public APIs.
+The default case checks function signatures and uninvoked closures without creating an App.
+The optional `bench-support` case runs an ordinary `Application::run_embedded` on the existing
+headless benchmark platform, without `test-support`. It executes unsupported query/restoration
+and attention requests, verifies unchanged bounds and normal close, and shuts down that App.
+
+Native archives are opaque OS data, not a portable workspace format or a confirmed placement
+mutation. The framework copies restoration bytes into its existing post-borrow native command
+queue. It does not retain the caller's buffer, create persistence storage or confirm that the OS
+restored a window. Backends implementing the hidden command enum handle its owned Arc payload;
+the enum is Clone rather than Copy. Live noninteractive windows may request restoration, while
+irreversible native teardown quiescence rejects it. Default unsupported services add no required
+method to an ordinary backend.
+
+Run the modes serially with the existing independent lockfile and shared target:
+
+```text
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test native_window_services --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --test native_window_services --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+These commands are instructions, not results. The headless run does not qualify AppKit archive
+round trips, Space changes, native attention indicators or an engine Host/View integration.

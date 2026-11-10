@@ -183,6 +183,9 @@ jobs:
           cargo nextest run --locked -p open-gpui --all-features --lib --test window_appearance -E 'test(app::window_appearance_tests::) | binary(window_appearance)' --test-threads=1 --no-fail-fast --no-tests fail
           cargo nextest run --locked -p open-gpui --no-default-features --features test-support --lib --test window_appearance -E 'test(app::window_appearance_tests::) | binary(window_appearance)' --test-threads=1 --no-fail-fast --no-tests fail
 
+      - name: Test native state ownership and public services
+        run: cargo nextest run --locked -p open-gpui --all-features --lib --test native_window_services -E 'test(platform_command_tests::) | binary(native_window_services)' --test-threads=1 --no-fail-fast --no-tests fail
+
       - name: Test windowing custody and public consumers
         run: |
           cargo nextest run --locked -p open-gpui --all-features --lib --test windowing -E 'test(/^app::windowing_tests::/) | binary(windowing)' --test-threads=1 --no-fail-fast --no-tests fail
@@ -192,7 +195,7 @@ jobs:
 
       - name: Test Windows native windowing and recovery
         if: matrix.name == 'windows'
-        run: cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(native_windowing_) | test(unavailable_startup_has_no_publication_and_refresh_publishes_the_first_real_generation) | test(directwrite_color_emoji_rasterization_reads_back_identical_pixels)' --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(native_windowing_) | test(native_window_services_) | test(unavailable_startup_has_no_publication_and_refresh_publishes_the_first_real_generation) | test(directwrite_color_emoji_rasterization_reads_back_identical_pixels)' --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test Linux connection replacement and idle progress
         if: matrix.name == 'linux'
@@ -209,6 +212,11 @@ jobs:
         run: |
           cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-features --test window_appearance --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
           cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test window_appearance --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test independent native state services
+        run: |
+          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test native_window_services --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --test native_window_services --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Check macOS appearance native consumers
         if: matrix.name == 'macos'

@@ -8112,6 +8112,9 @@ impl PlatformWindow for WindowsWindow {
                         presentation_generation,
                     ),
                     PlatformWindowCommand::Activate { .. } => window.activate_now(),
+                    PlatformWindowCommand::RestoreNativeWindowState(_) => {
+                        PlatformWindowCommandOutcome::Unsupported
+                    }
                     // Preserve the existing Windows behavior for currently unsupported commands.
                     PlatformWindowCommand::ShowWindowMenu(_)
                     | PlatformWindowCommand::StartWindowMove
@@ -8494,6 +8497,41 @@ impl PlatformWindow for WindowsWindow {
             .detach();
 
         Some(done_rx)
+    }
+
+    fn request_attention(&self) {
+        if self.is_active() {
+            return;
+        }
+        let window = Rc::downgrade(&self.0);
+        self.0
+            .executor
+            .spawn(async move {
+                let Some(window) = window.upgrade() else {
+                    return;
+                };
+                if window.is_native_window_terminal()
+                    || window.state.interaction_is_quiesced()
+                    || window.presentation_shutdown_claimed()
+                {
+                    return;
+                }
+                let Ok(_authority) = RegisteredWindowAuthority::capture(&window) else {
+                    return;
+                };
+                if window.hwnd == unsafe { GetForegroundWindow() } {
+                    return;
+                }
+                let info = FLASHWINFO {
+                    cbSize: std::mem::size_of::<FLASHWINFO>() as u32,
+                    hwnd: window.hwnd,
+                    dwFlags: FLASHW_ALL,
+                    uCount: 1,
+                    dwTimeout: 0,
+                };
+                unsafe { FlashWindowEx(&info).ok().log_err() };
+            })
+            .detach();
     }
 
     fn is_active(&self) -> bool {
