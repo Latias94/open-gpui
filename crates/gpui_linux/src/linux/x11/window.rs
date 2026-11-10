@@ -7,18 +7,17 @@ use crate::linux::{
 };
 use open_gpui::{
     AnyWindowHandle, Bounds, CursorStyle, Decorations, DevicePixels, DisplayId, ForegroundExecutor,
-    FrameRequestSource, GpuSpecs, Modifiers, NativeInputHandlerOutcome, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformFrameSignal, PlatformInput, PlatformInputCallback,
-    PlatformInputCallbackSlot, PlatformInputHandler, PlatformInputHandlerSlot,
-    PlatformNativeWindowRetirementOutcome, PlatformPresentationShutdownOutcome,
-    PlatformShouldCloseCallbackSlot, PlatformWindow, PlatformWindowActiveStatusObservation,
-    PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
-    PlatformWindowInteractionQuiescence, PlatformWindowPresentOutcome, Point,
-    PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions,
-    ResizeEdge, ScaledPixels, Scene, Size, Task, Tiling, WindowActivationPolicy, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowCreationFacts,
-    WindowDecorations, WindowKind, WindowParams, WindowPresentationShutdownTicket,
-    WindowVisibility, px,
+    FrameRequestSource, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformFrameSignal, PlatformInput, PlatformInputCallback, PlatformInputCallbackSlot,
+    PlatformInputHandler, PlatformInputHandlerSlot, PlatformNativeWindowRetirementOutcome,
+    PlatformPresentationShutdownOutcome, PlatformShouldCloseCallbackSlot, PlatformWindow,
+    PlatformWindowActiveStatusObservation, PlatformWindowCommand, PlatformWindowCommandDispatcher,
+    PlatformWindowCommandOutcome, PlatformWindowInteractionQuiescence,
+    PlatformWindowPresentOutcome, Point, PreparedPlatformPresentationShutdown, PromptButton,
+    PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size, Task, Tiling,
+    WindowActivationPolicy, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControlArea, WindowCreationFacts, WindowDecorations, WindowKind, WindowParams,
+    WindowPresentationShutdownTicket, WindowVisibility, px,
 };
 use open_gpui_wgpu::{
     CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, WgpuSurfaceShutdownProgress,
@@ -2210,17 +2209,11 @@ impl X11WindowStatePtr {
             return;
         }
         let input_handler = self.state.borrow().input_handler.clone();
-        let _ =
-            input_handler.with_handler(|input_handler| match input_handler.marked_text_range() {
-                NativeInputHandlerOutcome::Delivered(Some(marked)) => {
-                    input_handler.replace_text_in_range(Some(marked), "")
-                }
-                NativeInputHandlerOutcome::Delivered(None) => {
-                    NativeInputHandlerOutcome::Delivered(())
-                }
-                NativeInputHandlerOutcome::StaleWindow => NativeInputHandlerOutcome::StaleWindow,
-                NativeInputHandlerOutcome::Quitting => NativeInputHandlerOutcome::Quitting,
-            });
+        let _ = input_handler.with_handler(|input_handler| {
+            if let Some(marked) = input_handler.marked_text_range() {
+                input_handler.replace_text_in_range(Some(marked), "");
+            }
+        });
     }
 
     pub fn get_ime_area(&self) -> Option<Bounds<ScaledPixels>> {
@@ -2235,12 +2228,8 @@ impl X11WindowStatePtr {
             .with_handler(|input_handler| {
                 input_handler
                     .selected_text_range(true)
-                    .and_then(|selection| match selection {
-                        Some(selection) => input_handler.bounds_for_range(selection.range),
-                        None => NativeInputHandlerOutcome::Delivered(None),
-                    })
+                    .and_then(|selection| input_handler.bounds_for_range(selection.range))
             })
-            .and_then(NativeInputHandlerOutcome::into_delivered)
             .flatten();
         bounds.map(|b| b.scale(scale_factor))
     }

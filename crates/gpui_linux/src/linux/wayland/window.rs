@@ -36,11 +36,11 @@ use crate::linux::{
 };
 use open_gpui::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, Decorations, DevicePixels, FrameRequestSource,
-    GpuSpecs, Modifiers, NativeInputHandlerOutcome, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformFrameSignal, PlatformInput, PlatformInputCallback, PlatformInputCallbackSlot,
-    PlatformInputHandler, PlatformInputHandlerSlot, PlatformPresentationShutdownOutcome,
-    PlatformShouldCloseCallbackSlot, PlatformWindow, PlatformWindowActiveStatusObservation,
-    PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
+    GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformFrameSignal,
+    PlatformInput, PlatformInputCallback, PlatformInputCallbackSlot, PlatformInputHandler,
+    PlatformInputHandlerSlot, PlatformPresentationShutdownOutcome, PlatformShouldCloseCallbackSlot,
+    PlatformWindow, PlatformWindowActiveStatusObservation, PlatformWindowCommand,
+    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
     PlatformWindowInteractionQuiescence, PlatformWindowPresentOutcome, Point,
     PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions,
     ResizeEdge, Scene, Size, Tiling, WindowActivationPolicy, WindowAppearance,
@@ -1203,7 +1203,6 @@ impl WaylandWindowStatePtr {
         }
         let ime_enabled = input_handler
             .with_handler(|input_handler| input_handler.query_accepts_text_input())
-            .and_then(NativeInputHandlerOutcome::into_delivered)
             .unwrap_or(false);
         if interaction_gate.is_quiesced() {
             client.quiesce_window_interaction(handle);
@@ -1586,16 +1585,11 @@ impl WaylandWindowStatePtr {
                 input_handler.replace_and_mark_text_in_range(None, &text, None)
             }
             ImeInput::UnmarkText => input_handler.unmark_text(),
-            ImeInput::DeleteText => match input_handler.marked_text_range() {
-                NativeInputHandlerOutcome::Delivered(Some(marked)) => {
-                    input_handler.replace_text_in_range(Some(marked), "")
+            ImeInput::DeleteText => {
+                if let Some(marked) = input_handler.marked_text_range() {
+                    input_handler.replace_text_in_range(Some(marked), "");
                 }
-                NativeInputHandlerOutcome::Delivered(None) => {
-                    NativeInputHandlerOutcome::Delivered(())
-                }
-                NativeInputHandlerOutcome::StaleWindow => NativeInputHandlerOutcome::StaleWindow,
-                NativeInputHandlerOutcome::Quitting => NativeInputHandlerOutcome::Quitting,
-            },
+            }
         });
     }
 
@@ -1608,7 +1602,6 @@ impl WaylandWindowStatePtr {
         drop(state);
         input_handler
             .with_handler(|input_handler| input_handler.ime_candidate_bounds())
-            .and_then(NativeInputHandlerOutcome::into_delivered)
             .flatten()
     }
 
