@@ -8261,12 +8261,16 @@ with existing non-correctness warnings. Windows restart controls pass 11/11
 unpaired UTF-16, payload separation and missing/failed helper refusal without quit. They do not
 restart a successful live application or qualify unrelated native renderer/input behavior.
 
-The combined higher-utility wasm library check stops at the new compression closure's
-zstd-sys build because clang is absent. The compiler locations are checked; only LLVM formatting/
-analysis tools remain installed. No Rust source result or browser execution is inferred from
-that failure. Higher-utility wasm compilation with compression stays unqualified pending the
-required C toolchain, without removing compression or changing the official asset algorithm
-to make an unavailable toolchain green.
+The initial combined higher-utility wasm library check stops at the new compression closure's
+zstd-sys build because clang is absent from that process. No Rust source result or browser
+execution is inferred from that failure. On November 10 the owner supplies the installed
+`F:/MySoftware/LLVM-22.1.6/bin` toolchain. `clang --version` reports 22.1.6 and `llvm-ar` is
+present. With process-local `CC_wasm32_unknown_unknown` and `AR_wasm32_unknown_unknown`
+pointing to those executables and the same directory prepended to `PATH`, the patched locked
+`cargo +1.95.0 check -p open-gpui-util --target wasm32-unknown-unknown` passes, including the
+complete zstd compression dependency. No additional installation, global environment change,
+compression removal or asset-algorithm change is needed. This is production compilation for
+that target, distinct from browser execution.
 
 The existing dependency-health gate finds RUSTSEC-2026-0391 in the initially selected zstd
 0.14.2, RUSTSEC-2026-0398/0403 in zstd-safe 8.1.0 and RUSTSEC-2026-0410 in zstd-sys
@@ -8286,8 +8290,8 @@ asset and trait-parity assertions; the earlier runs are not substituted for this
 The patched release integration also passes 1/1 (`c958b1b4-b9be-4dc5-b63f-5e9f1c7fb901`).
 Five independent lock audits report zero vulnerabilities with the existing advisory policy;
 the exact rust-embed and patched zstd family selections are inspected in all six roots.
-The separate core-util wasm library check passes, distinct from the higher-utility compression
-toolchain failure above. Root and ordinary-consumer formatting, whitespace, affected TOML/YAML
+The separate core-util wasm library check passes, distinct from the higher-utility toolchain
+failure and successful LLVM follow-up above. Root and ordinary-consumer formatting, whitespace, affected TOML/YAML
 syntax and existing import-boundary/public-API/document/release gates pass.
 
 Bounded independent review identifies the concrete dependency-interface and shared-target
@@ -8329,6 +8333,90 @@ These scopes do not establish an independent translucent-destination alpha oracl
 child-HWND/WebView visibility. No desktop screenshot, live device timeout, Apple/browser
 execution, numerical performance or real Nara GPU/Host/View qualification follows from source
 adoption and those existing consumer regressions.
+
+## Windows Dialog Threads And Native Host Safety
+
+Implementation: `34e6b6a963df3b775661dbf13bdd374cd4be509e`.
+
+This successor adopts complete official `a0f8fa7bdbbf0269aaf5d5ebfac3ad9adfb576dd`,
+`9cb5f90e3c493fb273230b14b95047fb41c5eab6`,
+`e462f873c622f6265736bf8468e7a017f4ba99de` and
+`23c0080d1dd5e8e550ede91c0d573658e5aabe76` from the unchanged fixed Zed target.
+File-open/save and message prompts use complete dedicated STA threads, the per-owner mutex,
+caller/owner cancellation and native cancellation timers. Message prompts retain the official
+Cancel-button veto/internal-cancellation policy; file dialogs distinguish ERROR_CANCELLED
+from actual failures. Owner selection uses the current UI thread's registered active window,
+with the official null HWND for ownerless dialogs. Credential I/O was already background work.
+
+The fork has an existing presentation-ticket and exact native-retirement owner. Its concrete
+adaptation closes the DialogOwner and tries its same serialization mutex before DestroyWindow;
+a busy owner is hidden and retirement remains pending through the existing retry path. The
+guard stays live through synchronous native destruction. The official asynchronous when_idle
+helper remains in its original tests; production uses the nonblocking accessor rather than
+adding an asynchronous Drop, second destruction queue or lifetime registry. Existing
+generation custody, child-first retirement and renderer quiescence retain their owners.
+
+Keyboard accelerators resolve the exact registered GPUI owner before touching native userdata,
+then invoke the official key-down handler directly. Foreign HWNDs receive no synthetic private
+keyboard message. Fork provisional/quiesced/generation and panic-recovery boundaries remain
+explicit; the old WM_GPUI_KEYDOWN route is removed. Test message pumps take a weak reference
+to the actual platform and release temporary upgrades before DispatchMessage, preserving
+teardown/lifetime assertions without another registry. Private repaint/device/topology messages
+carry both the platform validation token and original native generation. Composition fallback
+checks the nullable system symbol before conversion.
+
+Stationary no-button client moves retain the official suppression rule. The existing last
+position owner also retains its sampled physical frame, so changed source geometry still
+dispatches at the same logical point. Hover reentry, held buttons and an active capture session
+continue dispatching; leave keeps its actual historical local position without inventing a
+physical point. There is no separate hover or geometry owner.
+
+The initial focused compile exposes a test glob import that selects GPUI's test macro instead
+of Rust's built-in attribute. Explicit imports fix that fixture without increasing recursion
+limits. The six official dialog policy tests remain unchanged. First native execution passes
+10/11 (`c455ed65-d74b-41f9-a8cc-ce9267098f3d`); the new retirement test incorrectly waits for
+the platform fallback queue, while real WM_CLOSE removes the logical window and retains it in
+Core's existing presentation-ticket retirement path. Its observation is corrected to that
+actual route, retaining the original live-HWND, exact-ticket, no-premature-destruction and final
+terminal assertions. No production behavior is weakened for either fixture correction.
+
+The affected input/dialog/retirement/profiler/windowing cohort then passes 66/67, with 239
+tests outside selection (`b8ecb2a9-d9cf-4108-bead-e11987efc1c1`). The remaining returning-loop
+device-recovery consumer observes the old private-message encoding: its actual device and
+renderer recovery predicates pass, but its native event assertion still expects the HWND
+generation in WPARAM. The assertion now checks the actual validation token in WPARAM and the
+original native generation in LPARAM; stale-generation injections retain a valid token so
+they still exercise generation refusal rather than merely failing validation. The unchanged
+full round-trip workflow then passes 1/1 (`ab950c92-a468-4817-9c3b-64636a2a078b`). Together
+these runs qualify all 67 selected cases on the current production source, not a newly claimed
+single 67/67 run. No unchanged official mechanism or unrelated component/platform/compiler
+matrix is repeated to repair these test observations.
+
+The independent all-target/all-feature compilation exposes a separate concrete dependency
+resolution failure: gpu-allocator 0.28's broad Windows range retains 0.58 while fixed WGPU
+requires 0.62, producing ten D3D12 type errors. The root and official target locks already
+select 0.62.2 at the allocator boundary. An offline package-only refresh still selects 0.61;
+its incidental time-zone binding change is removed, and only the consumer allocator's edge
+is aligned to its already locked Windows 0.62.2 package. No package version, checksum, source,
+allocator implementation or other binding dependency is changed. The fixture README records
+the graph requirement; arbitrary future lock resolution is not claimed to enforce it.
+
+Affected Windows all-target/all-feature compilation and correctness Clippy pass on Rust 1.95,
+with non-correctness warnings. The corrected independently locked all-target/all-feature
+consumer passes, including the actual WGPU renderer closure; it passes again after the final
+unused-import cleanup, which preserves the same Receiver type. Root and independent
+formatting checks, whitespace and the existing import-boundary/public-API/document/release
+gates pass. No new external package version or source requires an advisory-policy change.
+One bounded independent correctness review finds no P1/P2 in the dialog lifetime/retirement
+and registered-accelerator adaptations. All four implementation/migration/review lanes close.
+
+Native seam consumers use actual HWNDs and the production show_dialog worker/executor/STA
+handoff. They hold worker closures at a bounded barrier; these are not live Shell/TaskDialog
+modal loops. Their scope is serialization, foreground progress, queued cancellation and exact
+retirement, plus foreign/registered/quiesced/panicking keyboard routing. Real file-picker
+focus/Alt+Tab, nested overwrite confirmations, ownerless modal dialogs and automatic native
+timer cancellation remain manual scenarios unless separately executed. Official source
+adoption and its unchanged policy coverage do not imply those observations or numeric costs.
 
 ## Focused Product Gates
 

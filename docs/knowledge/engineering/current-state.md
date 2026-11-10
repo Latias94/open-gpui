@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-10T23:40:00+08:00
+timestamp: 2026-11-11T00:29:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,19 @@ verified_by:
 ---
 
 # Current State
+
+- Windows dialogs and native host/input safety are implemented at
+  `34e6b6a963df3b775661dbf13bdd374cd4be509e`. Complete official STA/cancellation/serialization,
+  registered accelerator routing, duplicate-input correction and nullable composition lookup
+  use existing owners. The [qualification](../../verification.md#windows-dialog-threads-and-native-host-safety)
+  records the original fixture failures, affected 66/67 plus corrected recovery 1/1, actual
+  worker/STA/foreground/retirement and foreign/registered/quiesced/panic input controls.
+  Affected compilation/Clippy, corrected independently locked all-feature compilation and
+  formatting/static gates pass. The existing consumer allocator selects official Windows
+  0.62.2 without package/source changes. Four lanes close without P1/P2. Actual Shell/TaskDialog
+  modal focus, overwrite and automatic timer cancellation, numeric costs and the real Nara
+  GPU/Host/View consumer remain unqualified. Continue remaining backend/render owners and
+  logging disposition before separate maintenance; full target/foundation gates stay open.
 
 - Source-over alpha/native child composition is implemented at
   `37d211ea030388e2c413bcb7301cb8588d779919`. Complete official DirectX/WGPU settings and
@@ -39,8 +52,9 @@ verified_by:
   11/11 passes, affected compilation/Clippy, core-util wasm and format/static gates. A concrete
   rust-embed 8.13 interface failure receives one bounded adaptation; actual compression
   advisories receive patched dependencies, passing root health and five independent audits
-  without new ignores. Four lanes close without remaining P1/P2. Higher-utility wasm is stopped
-  at missing clang; foreign shell/file-limit execution and numeric costs remain unqualified.
+  without new ignores. Four lanes close without remaining P1/P2. The initial higher-utility
+  wasm missing-clang failure is resolved with process-local installed LLVM 22.1.6; the locked
+  complete compression build passes. Foreign shell/file-limit execution and numeric costs remain unqualified.
   Continue remaining backend/render owners and logging disposition, then the real Nara
   GPU/Host/View consumer before separate maintenance. Full target/foundation gates stay open.
 
@@ -1094,8 +1108,8 @@ historical scope and is not current branch or CI qualification.
 - Continue the [residual source inventory](../../imports/zed-gpui-upstream-sync-candidates.md#november-10-residual-source-reconciliation)
   after qualified identity/diagnostics/list precision, element layout/drawing, gestures/
   scroll/padding/hover, cursor/native file drag, process/dedicated/string and HTTP/download/
-  archive support, canonical paths, complete utility composition/native helpers and source-over/
-  native child composition, rather than treating the earlier
+  archive support, canonical paths, complete utility composition/native helpers, source-over/
+  native child composition and Windows dialog/host/input safety, rather than treating the earlier
   public-Platform audit as exhaustive. Continue the remaining
   supporting utility/dependency and backend/render groups, including native popup,
   in their recorded prerequisite order. Build on qualified

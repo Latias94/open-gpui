@@ -3187,6 +3187,20 @@ original missing-clang result and the actual rerun without changing compression 
 
 ## Maintained Baseline Before Engine Adaptation
 
+The [Windows dialog/host safety record](../verification.md#windows-dialog-threads-and-native-host-safety)
+qualifies `34e6b6a963df3b775661dbf13bdd374cd4be509e`: complete official STA/per-owner dialogs,
+cancellation/error policy, registered accelerator routing, stationary-input correction and
+nullable composition lookup share existing owners. Fork adaptations preserve exact native
+generation/pointer frames, panic custody and the current presentation-ticket retirement path.
+Affected cases pass 66/67, followed by the corrected complete recovery consumer 1/1; actual
+worker/STA/foreground/retirement and input controls pass. Affected compilation/Clippy,
+corrected independent all-feature compilation and format/static gates pass. The consumer's
+allocator binding edge matches the root/official Windows 0.62.2 selection without package or
+source changes. Four scoped lanes close without P1/P2. Live modal focus, nested overwrite and
+automatic native timer cancellation remain manual gates; numeric costs, remaining framework
+owners and the real Nara GPU/Host/View consumer still precede separate maintenance. No full
+fixed-target or foundation gate closes here.
+
 The [source-over/native child composition record](../verification.md#source-over-alpha-and-native-child-composition)
 qualifies `37d211ea030388e2c413bcb7301cb8588d779919`: complete official DirectX/WGPU blend
 settings and the DirectComposition startup/recreation setting below child HWNDs replace old
