@@ -5,6 +5,7 @@ use crate::MouseButton;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use crate::PlatformPixelBuffer;
 use crate::app::{AppCell, PlatformWindowCommandSink};
+use crate::element::ElementIdStack;
 #[cfg(feature = "profiler")]
 use crate::profiler;
 use crate::{
@@ -1838,7 +1839,7 @@ pub struct Window {
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root: Option<AnyView>,
-    pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
+    pub(crate) element_id_stack: ElementIdStack,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
@@ -2098,7 +2099,7 @@ struct CandidateFrameAuthorityCheckpoint {
 }
 
 struct CandidateDrawContextCheckpoint {
-    element_ids: SmallVec<[ElementId; 32]>,
+    element_ids: ElementIdStack,
     text_styles: Vec<TextStyleRefinement>,
     rendered_entities: Vec<EntityId>,
     offsets: Vec<Point<Pixels>>,
@@ -2938,7 +2939,7 @@ impl Window {
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
             root: None,
-            element_id_stack: SmallVec::default(),
+            element_id_stack: ElementIdStack::default(),
             text_style_stack: Vec::new(),
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
@@ -5752,6 +5753,7 @@ impl Window {
                     let node_id = window.focus_node_id_in_rendered_frame(focus_id);
                     window.dispatch_action_on_node(node_id, action.as_ref(), cx);
                 })
+                .with_context(|| format!("dispatching action for window {:?}", window.window_id()))
                 .log_err();
         })
     }
@@ -7076,7 +7078,7 @@ impl Window {
         f: impl FnOnce(&GlobalElementId, &mut Self) -> R,
     ) -> R {
         self.with_id(element_id, |this| {
-            let global_id = GlobalElementId(Arc::from(&*this.element_id_stack));
+            let global_id = GlobalElementId::from_stack(&this.element_id_stack);
 
             f(&global_id, this)
         })
@@ -13126,6 +13128,12 @@ impl Window {
                         )
                     })
                     .await
+                    .with_context(|| {
+                        format!(
+                            "handling pending input timeout for window {:?}",
+                            cx.window_handle().window_id()
+                        )
+                    })
                     .log_err();
                 }));
             } else {
@@ -14383,6 +14391,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     /// Updates the root view of this window.
     ///
     /// This will fail if the window has been closed or if the root view's type does not match
+    #[track_caller]
     pub fn update<C, R>(
         &self,
         cx: &mut C,
@@ -14506,6 +14515,7 @@ impl AnyWindowHandle {
     /// Updates the state of the root view of this window.
     ///
     /// This will fail if the window has been closed.
+    #[track_caller]
     pub fn update<C, R>(
         self,
         cx: &mut C,

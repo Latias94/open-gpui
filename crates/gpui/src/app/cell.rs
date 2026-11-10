@@ -1,5 +1,5 @@
 use std::{
-    cell::{BorrowMutError, Cell, Ref, RefCell, RefMut},
+    cell::{Cell, Ref, RefCell, RefMut},
     collections::{HashMap, HashSet, VecDeque},
     ops::{Deref, DerefMut},
     panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
@@ -603,11 +603,11 @@ impl Drop for AppBorrowReleaseConvergence<'_> {
     }
 }
 
-/// Temporary wrapper around [`RefCell<App>`] to help debug double borrows.
-/// Strongly consider removing after stabilization.
+/// Owns application borrows and ordered native lifecycle convergence.
 #[doc(hidden)]
 pub struct AppCell {
     app: RefCell<App>,
+    borrow_origin: Cell<Option<(&'static std::panic::Location<'static>, &'static str)>>,
     app_borrow_depth: Cell<usize>,
     app_borrow_waiters: RefCell<Vec<oneshot::Sender<()>>>,
     native_events: NativeEventIngress,
@@ -641,6 +641,41 @@ pub struct AppCell {
     input_handler_leases: RefCell<Vec<u64>>,
 }
 
+struct AppBorrowError {
+    attempted: &'static std::panic::Location<'static>,
+    kind: &'static str,
+    origin: Option<(&'static std::panic::Location<'static>, &'static str)>,
+}
+
+impl std::fmt::Display for AppBorrowError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            attempted,
+            kind,
+            origin,
+        } = self;
+        write!(
+            formatter,
+            "RefCell already borrowed: attempted {kind} App borrow at {attempted}; "
+        )?;
+        match origin {
+            Some((origin, existing_kind)) => write!(
+                formatter,
+                "existing {existing_kind} borrow group began at {origin}"
+            ),
+            None => write!(formatter, "origin unavailable"),
+        }
+    }
+}
+
+impl std::fmt::Debug for AppBorrowError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, formatter)
+    }
+}
+
+impl std::error::Error for AppBorrowError {}
+
 impl AppCell {
     pub(super) fn new(app: App) -> Self {
         let foreground_executor = app.foreground_executor.clone();
@@ -649,6 +684,7 @@ impl AppCell {
         let this = app.this.clone();
         Self {
             app: RefCell::new(app),
+            borrow_origin: Cell::new(None),
             app_borrow_depth: Cell::new(0),
             app_borrow_waiters: RefCell::new(Vec::new()),
             native_events: NativeEventIngress::new(foreground_executor, this),
@@ -3977,7 +4013,20 @@ impl AppCell {
             let thread_id = std::thread::current().id();
             eprintln!("borrowed {thread_id:?}");
         }
-        let app = self.app.borrow();
+        let starts_borrow_group = self.app_borrow_depth.get() == 0;
+        let attempted = std::panic::Location::caller();
+        let app = self
+            .app
+            .try_borrow()
+            .map_err(|_error| AppBorrowError {
+                attempted,
+                kind: "shared",
+                origin: self.active_borrow_origin(),
+            })
+            .unwrap();
+        if starts_borrow_group {
+            self.borrow_origin.set(Some((attempted, "shared")));
+        }
         self.app_borrow_started();
         AppRef {
             app: Some(app),
@@ -3988,31 +4037,42 @@ impl AppCell {
     #[doc(hidden)]
     #[track_caller]
     pub fn borrow_mut(&self) -> AppRefMut<'_> {
-        if option_env!("TRACK_THREAD_BORROWS").is_some() {
-            let thread_id = std::thread::current().id();
-            eprintln!("borrowed {thread_id:?}");
-        }
-        let app = self.app.borrow_mut();
-        self.app_borrow_started();
-        AppRefMut {
-            app: Some(app),
-            cell: self,
-        }
+        self.try_borrow_mut().unwrap()
     }
 
     #[doc(hidden)]
     #[track_caller]
-    pub fn try_borrow_mut(&self) -> Result<AppRefMut<'_>, BorrowMutError> {
+    pub fn try_borrow_mut(&self) -> anyhow::Result<AppRefMut<'_>> {
         if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
             eprintln!("borrowed {thread_id:?}");
         }
-        let app = self.app.try_borrow_mut()?;
+        let app = match self.app.try_borrow_mut() {
+            Ok(app) => app,
+            Err(_error) => {
+                return Err(AppBorrowError {
+                    attempted: std::panic::Location::caller(),
+                    kind: "mutable",
+                    origin: self.active_borrow_origin(),
+                }
+                .into());
+            }
+        };
+        self.borrow_origin
+            .set(Some((std::panic::Location::caller(), "mutable")));
         self.app_borrow_started();
         Ok(AppRefMut {
             app: Some(app),
             cell: self,
         })
+    }
+
+    fn active_borrow_origin(
+        &self,
+    ) -> Option<(&'static std::panic::Location<'static>, &'static str)> {
+        (self.app_borrow_depth.get() > 0)
+            .then(|| self.borrow_origin.get())
+            .flatten()
     }
 }
 
@@ -4198,6 +4258,9 @@ impl Drop for AppRefMut<'_> {
 
 #[cfg(test)]
 mod native_terminal_tests;
+
+#[cfg(test)]
+mod borrow_tests;
 
 #[cfg(test)]
 mod tests {

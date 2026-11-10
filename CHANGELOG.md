@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- `GlobalElementId::new` constructs a complete root-first path with its cached hash. Window element stacks retain prefix hashes through deferred drawing and candidate rollback. App borrow conflicts now report attempted and original borrow locations through panics and fallible window updates.
+
 - `open-gpui-apple` owns the shared Apple dispatcher, Metal renderer/atlas, CoreText/OpenType, Keychain and process services. CoreVideo surfaces are available on macOS/iOS; this shared substrate does not add an iOS application backend. macOS window options expose the official opt-in Display P3 color space.
 
 - Windows forwards Restart Manager session shutdown from application windows to the platform quit callback. Completed shutdown flushes logs and exits; asynchronous shutdown retains the official best-effort quit fallback.
@@ -34,6 +36,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Optional native debug hot reload follows the official GPUI/Subsecond 0.7.10 mechanism: build/process-matched patches, foreground application, window refresh, and typed, stateless and stored erased View render boundaries. Run with `dx serve --hot-patch`; compatible render-body edits preserve existing model state. Release/WebAssembly transport exclusion, failed loads, required restarts and disconnects remain explicit. The independently locked native consumer provides an actual edit/build/apply and Submitted-scene pixel acceptance procedure, including the required upstream dx x64 jump-stub backport for the qualified Windows tool.
 
 ### Breaking Changes and Migration Notes
+
+- `GlobalElementId` dereferences to an immutable `[ElementId]`; mutable path dereferencing is removed so cached hashes remain valid. Use `GlobalElementId::new` to construct paths and `accesskit_node_id` for semantic node identity. The hidden `AppCell::try_borrow_mut` returns the framework Result with borrow-origin diagnostics rather than `std::cell::BorrowMutError`. `AssetLogger` now requires Debug errors and logs their complete diagnostic representation.
 
 - Import shared Apple services from `open_gpui_apple`, including `AppleTextSystem` and `keychain`; macOS retains application/window/input APIs. `WindowOptions` adds `use_display_p3` (default `false`), so explicit complete literals need the new field. Metal shaders follow the fixed target's macOS 12 deployment floor and target-specific iOS SDK selection.
 
@@ -187,6 +191,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `open-gpui-devtools` now projects Table behavior through a pre-capture allowlist with session-scoped opaque table, column, and row ordinals plus derived cell ids; raw ids, values, diagnostic source identities, selectors, and deterministic hashes are excluded from live, history, diff, Inspector, export, artifact, report, and Gallery fixture output, while sanitized diagnostic kinds and counts remain observable.
 
 ### Fixed
+
+- Uniform lists retain accurate visible rows and local item spacing at large scroll offsets by applying the official f64 range and local-position calculation. Error logging preserves chained diagnostics, backtraces and caller locations through a shared non-generic sink.
 
 - Window closure retains its native owner when presentation-shutdown preparation panics, retries through the existing retirement queue and keeps windowing changes blocked until exact native completion. Linux mode changes also discard stale Wayland drag reads, release queued foreground captures and stop owned timers without canceling a standalone executor returned before application launch.
 

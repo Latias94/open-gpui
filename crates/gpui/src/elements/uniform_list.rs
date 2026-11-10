@@ -477,10 +477,13 @@ impl Element for UniformList {
                         }
                     }
 
+                    let scroll_top = -scroll_offset.y.to_f64();
+                    let item_height_f64 = item_height.to_f64();
                     let first_visible_element_ix =
-                        (-(scroll_offset.y + padding.top) / item_height).floor() as usize;
-                    let last_visible_element_ix = ((-scroll_offset.y + padded_bounds.size.height)
-                        / item_height)
+                        ((scroll_top - padding.top.to_f64()) / item_height_f64).floor() as usize;
+                    let last_visible_element_ix = ((scroll_top
+                        + padded_bounds.size.height.to_f64())
+                        / item_height_f64)
                         .ceil() as usize;
 
                     let visible_range = first_visible_element_ix
@@ -507,9 +510,9 @@ impl Element for UniformList {
                     );
                     let _ = window.with_prepared_subtree_clip(&prepared, |window| {
                         for (mut item, ix) in items.into_iter().zip(visible_range.clone()) {
+                            let item_top = item_height_f64 * ix as f64 - scroll_top;
                             let item_origin = padded_bounds.origin
-                                + scroll_offset
-                                + point(Pixels::ZERO, item_height * ix);
+                                + point(scroll_offset.x, Pixels::from(item_top));
 
                             let available_width = if can_scroll_horizontally {
                                 padded_bounds.size.width + scroll_offset.x.abs()
@@ -740,6 +743,10 @@ impl InteractiveElement for UniformList {
         &mut self.interactivity
     }
 }
+
+#[cfg(test)]
+#[path = "uniform_list/precision_tests.rs"]
+mod precision_tests;
 
 #[cfg(test)]
 #[path = "uniform_list/text_measurement_tests.rs"]

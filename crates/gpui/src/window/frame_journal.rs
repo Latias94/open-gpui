@@ -1,12 +1,12 @@
 #[cfg(any(test, feature = "test-support"))]
 use crate::Bounds;
+use crate::element::ElementIdStack;
 use crate::{
     AccessibilityTreeScope, AnyElement, AnyTooltip, App, AtlasAccessDiagnostic,
     AtlasTextureInstanceId, AtlasTextureLease, AtlasTextureLeaseError, CursorStyle, DispatchNodeId,
-    DispatchTree, ElementId, EntityId, GlobalElementId, Hitbox, HitboxBehavior, HitboxId,
-    LineLayoutIndex, Pixels, PlatformInputHandler, Point, PointerCaptureId, Scene,
-    SubtreePresentation, SubtreeTransformDiagnostic, TabStopMap, TextStyleRefinement, Window,
-    WindowControlArea,
+    DispatchTree, EntityId, GlobalElementId, Hitbox, HitboxBehavior, HitboxId, LineLayoutIndex,
+    Pixels, PlatformInputHandler, Point, PointerCaptureId, Scene, SubtreePresentation,
+    SubtreeTransformDiagnostic, TabStopMap, TextStyleRefinement, Window, WindowControlArea,
     geometry::{ClipStackSnapshot, ResolvedSubtreeTransform, SubtreeGeometryValidity},
 };
 use itertools::FoldWhile::{Continue, Done};
@@ -90,7 +90,7 @@ pub(crate) struct DeferredDraw {
     pub(super) current_view: EntityId,
     pub(super) priority: usize,
     pub(super) parent_node: DispatchNodeId,
-    pub(super) element_id_stack: SmallVec<[ElementId; 32]>,
+    pub(super) element_id_stack: ElementIdStack,
     pub(super) text_style_stack: Vec<TextStyleRefinement>,
     pub(super) accessibility_tree_scope: AccessibilityTreeScope,
     pub(super) accessibility_parent: Option<AccessibilityDeferredParent>,

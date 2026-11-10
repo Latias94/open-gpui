@@ -36,13 +36,16 @@ use crate::{
     FocusHandle, InspectorElementId, LayoutId, Pixels, Point, Size, Style, Window,
     util::FluentBuilder, window::with_element_arena,
 };
-use derive_more::{Deref, DerefMut};
+use smallvec::SmallVec;
 use std::{
     any::Any,
     fmt::{self, Debug, Display},
     mem, panic,
     sync::Arc,
 };
+
+#[cfg(test)]
+mod global_element_id_tests;
 
 /// Implemented by types that participate in laying out and painting the contents of a window.
 /// Elements form a tree and are laid out according to web-based layout rules, as implemented by Taffy.
@@ -213,12 +216,89 @@ pub trait ParentElement {
 }
 
 /// A globally unique identifier for an element, used to track state across frames.
-#[derive(Deref, DerefMut, Clone, Default, Debug, Eq, PartialEq, Hash)]
-pub struct GlobalElementId(pub(crate) Arc<[ElementId]>);
+///
+/// The hash of the id path is computed once, when the id is built. Every
+/// element with an id is looked up in the element-state maps of two frames
+/// and recorded as accessed on every frame it is drawn, and each of those
+/// hashes the whole path — every ancestor's id, string names byte by byte —
+/// so on a deep tree the hashing alone was a visible share of a frame.
+#[derive(Clone, Debug)]
+pub struct GlobalElementId {
+    ids: Arc<[ElementId]>,
+    hash: u64,
+}
+
+/// The hash of an empty id path; every path hash is folded from it with
+/// [`extend_path_hash`], one id at a time, so the window can keep the hash
+/// of each prefix of its id stack and never re-hash a path.
+pub(crate) const EMPTY_PATH_HASH: u64 = 0;
+
+/// The hash of the path `prefix` + `id`, given the hash of `prefix`.
+pub(crate) fn extend_path_hash(prefix: u64, id: &ElementId) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = open_gpui_collections::FxHasher::with_seed(prefix as usize);
+    id.hash(&mut hasher);
+    hasher.finish()
+}
+
+impl GlobalElementId {
+    /// Builds a global element id from its root-first id path.
+    pub fn new(ids: &[ElementId]) -> Self {
+        let hash = ids.iter().fold(EMPTY_PATH_HASH, extend_path_hash);
+        Self::with_hash(ids, hash)
+    }
+
+    /// Builds a global element id from the window's cached prefix stack.
+    pub(crate) fn from_stack(stack: &ElementIdStack) -> Self {
+        stack.global_id()
+    }
+
+    /// `ids` with its hash already known, as the window's id stack keeps it.
+    fn with_hash(ids: &[ElementId], hash: u64) -> Self {
+        debug_assert_eq!(hash, ids.iter().fold(EMPTY_PATH_HASH, extend_path_hash));
+        Self {
+            ids: Arc::from(ids),
+            hash,
+        }
+    }
+
+    /// Returns the AccessKit node id derived from this global element id.
+    pub fn accesskit_node_id(&self) -> accesskit::NodeId {
+        accesskit::NodeId(self.hash)
+    }
+}
+
+impl Default for GlobalElementId {
+    fn default() -> Self {
+        Self::new(&[])
+    }
+}
+
+impl std::ops::Deref for GlobalElementId {
+    type Target = [ElementId];
+
+    fn deref(&self) -> &Self::Target {
+        &self.ids
+    }
+}
+
+impl PartialEq for GlobalElementId {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash && (Arc::ptr_eq(&self.ids, &other.ids) || self.ids == other.ids)
+    }
+}
+
+impl Eq for GlobalElementId {}
+
+impl std::hash::Hash for GlobalElementId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u64(self.hash);
+    }
+}
 
 impl Display for GlobalElementId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (i, element_id) in self.0.iter().enumerate() {
+        for (i, element_id) in self.ids.iter().enumerate() {
             if i > 0 {
                 write!(f, ".")?;
             }
@@ -228,13 +308,48 @@ impl Display for GlobalElementId {
     }
 }
 
-impl GlobalElementId {
-    /// Returns the AccessKit node id derived from this global element id.
-    pub fn accesskit_node_id(&self) -> accesskit::NodeId {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::hash::DefaultHasher::default();
-        self.hash(&mut hasher);
-        accesskit::NodeId(hasher.finish())
+/// The ids of the elements being drawn, root first, with the hash of every
+/// prefix alongside: a [`GlobalElementId`] for the current element is then
+/// the ids cloned out and the hash on top of the stack, without walking the
+/// path — the ids of every ancestor, string names byte by byte — for each
+/// element on every frame.
+#[derive(Clone, Default)]
+pub(crate) struct ElementIdStack {
+    ids: SmallVec<[ElementId; 32]>,
+    hashes: SmallVec<[u64; 32]>,
+}
+
+impl ElementIdStack {
+    pub(crate) fn push(&mut self, id: ElementId) {
+        self.hashes.push(extend_path_hash(self.hash(), &id));
+        self.ids.push(id);
+    }
+
+    pub(crate) fn pop(&mut self) -> Option<ElementId> {
+        self.hashes.pop();
+        self.ids.pop()
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.ids.clear();
+        self.hashes.clear();
+    }
+
+    /// The hash of the whole path on the stack.
+    fn hash(&self) -> u64 {
+        self.hashes.last().copied().unwrap_or(EMPTY_PATH_HASH)
+    }
+
+    pub(crate) fn global_id(&self) -> GlobalElementId {
+        GlobalElementId::with_hash(&self.ids, self.hash())
+    }
+}
+
+impl std::ops::Deref for ElementIdStack {
+    type Target = [ElementId];
+
+    fn deref(&self) -> &Self::Target {
+        &self.ids
     }
 }
 
@@ -304,7 +419,7 @@ impl<E: Element> Drawable<E> {
             ElementDrawPhase::Start => {
                 let global_id = self.element.id().map(|element_id| {
                     window.element_id_stack.push(element_id);
-                    GlobalElementId(Arc::from(&*window.element_id_stack))
+                    GlobalElementId::from_stack(&window.element_id_stack)
                 });
 
                 let inspector_id;
@@ -312,7 +427,7 @@ impl<E: Element> Drawable<E> {
                 {
                     inspector_id = self.element.source_location().map(|source| {
                         let path = crate::InspectorElementPath {
-                            global_id: GlobalElementId(Arc::from(&*window.element_id_stack)),
+                            global_id: GlobalElementId::from_stack(&window.element_id_stack),
                             source_location: source,
                         };
                         window.build_inspector_element_id(path)
@@ -363,7 +478,7 @@ impl<E: Element> Drawable<E> {
             } => {
                 if let Some(element_id) = self.element.id() {
                     window.element_id_stack.push(element_id);
-                    debug_assert_eq!(&*global_id.as_ref().unwrap().0, &*window.element_id_stack);
+                    debug_assert_eq!(&**global_id.as_ref().unwrap(), &*window.element_id_stack);
                 }
 
                 let bounds = window.layout_bounds(layout_id);
@@ -394,7 +509,7 @@ impl<E: Element> Drawable<E> {
                                             .view_type_names
                                             .get(&window.current_view())
                                             .copied(),
-                                        element_id: global_id.0.last().map(|id| format!("{id:?}")),
+                                        element_id: global_id.last().map(|id| format!("{id:?}")),
                                         source_location: self.element.source_location(),
                                     };
                                     window.a11y.nodes.record_node_info(node_id, info);
@@ -436,7 +551,7 @@ impl<E: Element> Drawable<E> {
                                 .view_type_names
                                 .get(&window.current_view())
                                 .copied(),
-                            element_id: global_id.0.last().map(|id| format!("{id:?}")),
+                            element_id: global_id.last().map(|id| format!("{id:?}")),
                             source_location: self.element.source_location(),
                         };
                         let mut builder = A11ySubtreeBuilder::new(
@@ -487,7 +602,7 @@ impl<E: Element> Drawable<E> {
             } => {
                 if let Some(element_id) = self.element.id() {
                     window.element_id_stack.push(element_id);
-                    debug_assert_eq!(&*global_id.as_ref().unwrap().0, &*window.element_id_stack);
+                    debug_assert_eq!(&**global_id.as_ref().unwrap(), &*window.element_id_stack);
                 }
 
                 window.next_frame.dispatch_tree.set_active_node(node_id);
