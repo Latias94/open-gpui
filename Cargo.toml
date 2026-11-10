@@ -8,6 +8,7 @@ members = [
     "crates/form",
     "crates/open-gpui-command",
     "crates/gpui",
+    "crates/gpui_apple",
     "crates/gpui_docking",
     "crates/gpui_linux",
     "crates/gpui_macos",
@@ -61,6 +62,7 @@ publish = false
 [workspace.dependencies]
 open_gpui_bench_metrics = { package = "open-gpui-bench-metrics", version = "0.2.0", path = "crates/bench_metrics" }
 open_gpui = { package = "open-gpui", version = "0.2.0", path = "crates/gpui", default-features = false }
+open_gpui_apple = { package = "open-gpui-apple", version = "0.2.0", path = "crates/gpui_apple", default-features = false }
 open_gpui_canvas = { package = "open-gpui-canvas", version = "0.2.0", path = "crates/canvas" }
 open_gpui_collections = { package = "open-gpui-collections", version = "0.2.0", path = "crates/collections" }
 open_gpui_command = { package = "open-gpui-command", version = "0.2.0", path = "crates/open-gpui-command" }
@@ -112,6 +114,9 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.6.1", features = ["derive"] }
 core-foundation = "0.10.0"
 core-foundation-sys = "0.8.6"
+core-graphics = "0.24"
+core-text = "21"
+dispatch2 = { version = "0.3.1", features = ["block2"] }
 criterion = { version = "0.8.2", features = ["html_reports"] }
 ctor = "1.0.6"
 derive_more = { version = "2.1.1", features = ["add", "add_assign", "deref", "deref_mut", "display", "from_str", "mul", "mul_assign", "not"] }
@@ -155,6 +160,8 @@ objc = "0.2"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSGraphics"] }
 objc2-core-foundation = "0.3"
+objc2-core-graphics = "0.3"
+objc2-core-text = "0.3"
 objc2-core-video = "0.3"
 objc2-foundation = "0.3"
 objc2-metal = "0.3"

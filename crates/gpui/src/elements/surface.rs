@@ -1,22 +1,22 @@
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 use crate::PlatformPixelBuffer;
 use crate::{
     App, Bounds, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, LayoutId,
     ObjectFit, Pixels, Style, StyleRefinement, Styled, Window,
 };
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 use objc2_core_video::{CVPixelBufferGetHeight, CVPixelBufferGetWidth};
 use open_gpui_refineable::Refineable;
 
 /// A source of a surface's content.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SurfaceSource {
-    /// A macOS image buffer from CoreVideo
-    #[cfg(target_os = "macos")]
+    /// An Apple image buffer from CoreVideo.
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     Surface(PlatformPixelBuffer),
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 impl From<PlatformPixelBuffer> for SurfaceSource {
     fn from(value: PlatformPixelBuffer) -> Self {
         SurfaceSource::Surface(value)
@@ -31,7 +31,7 @@ pub struct Surface {
 }
 
 /// Create a new surface element.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 pub fn surface(source: impl Into<SurfaceSource>) -> Surface {
     Surface {
         source: source.into(),
@@ -88,14 +88,22 @@ impl Element for Surface {
         &mut self,
         _global_id: Option<&GlobalElementId>,
         _inspector_id: Option<&InspectorElementId>,
-        #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] bounds: Bounds<Pixels>,
+        #[cfg_attr(
+            not(any(target_os = "macos", target_os = "ios")),
+            allow(unused_variables)
+        )]
+        bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
-        #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] window: &mut Window,
+        #[cfg_attr(
+            not(any(target_os = "macos", target_os = "ios")),
+            allow(unused_variables)
+        )]
+        window: &mut Window,
         _: &mut App,
     ) {
         match &self.source {
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
             SurfaceSource::Surface(surface) => {
                 let size = crate::size(
                     CVPixelBufferGetWidth(surface).into(),

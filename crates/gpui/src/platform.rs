@@ -32,8 +32,8 @@ pub(crate) type PlatformScreenCaptureFrame = scap::frame::Frame;
 pub(crate) type PlatformScreenCaptureFrame = ();
 #[cfg(all(target_os = "macos", feature = "screen-capture"))]
 pub(crate) type PlatformScreenCaptureFrame = PlatformPixelBuffer;
-/// A retained macOS CoreVideo pixel buffer used by screen capture and surface painting.
-#[cfg(target_os = "macos")]
+/// A retained Apple CoreVideo pixel buffer used by screen capture and surface painting.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 pub type PlatformPixelBuffer = objc2_core_foundation::CFRetained<objc2_core_video::CVPixelBuffer>;
 
 use crate::{
@@ -7721,6 +7721,9 @@ pub struct WindowOptions {
 
     /// Tab group name, allows opening the window as a native tab on macOS 10.12+. Windows with the same tabbing identifier will be grouped together.
     pub tabbing_identifier: Option<String>,
+
+    /// Whether to render the window using the Display P3 color space on macOS.
+    pub use_display_p3: bool,
 }
 
 /// The variables that can be configured when creating a new window
@@ -7785,6 +7788,8 @@ pub struct WindowParams {
     pub window_min_size: Option<Size<Pixels>>,
     #[cfg(target_os = "macos")]
     pub tabbing_identifier: Option<String>,
+    #[cfg(target_os = "macos")]
+    pub use_display_p3: bool,
 }
 
 /// Represents the status of how a window should be opened.
@@ -7851,6 +7856,7 @@ impl Default for WindowOptions {
             window_min_size: None,
             window_decorations: None,
             tabbing_identifier: None,
+            use_display_p3: false,
         }
     }
 }

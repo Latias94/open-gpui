@@ -10,15 +10,13 @@
 use block2::RcBlock;
 use core_graphics::display::CGDirectDisplayID;
 
-mod metal;
-mod metal_state;
-
 use dispatch2::{
     _dispatch_source_type_data_add, DispatchObject, DispatchQueue, DispatchRetained, DispatchSource,
 };
-pub(crate) use metal::{MetalFrameSource, MetalFrames};
-pub(crate) use metal_state::MetalFrameGeneration;
 use open_gpui::{FrameRequestSource, PlatformFrameSignal};
+pub(crate) use open_gpui_apple::display_link::{
+    MetalFrameGeneration, MetalFrameSource, MetalFrames,
+};
 use open_gpui_scheduler::Instant;
 use std::{
     collections::{BTreeMap, btree_map},
@@ -76,11 +74,8 @@ fn lock_registry() -> MutexGuard<'static, Registry> {
 fn debug_assert_main_thread() {
     #[cfg(debug_assertions)]
     {
-        use objc::{class, msg_send, sel, sel_impl};
-        let is_main_thread: objc::runtime::BOOL =
-            unsafe { msg_send![class!(NSThread), isMainThread] };
         debug_assert!(
-            is_main_thread == objc::runtime::YES,
+            open_gpui_apple::main_thread_marker().is_some(),
             "display link registry mutations must happen on the main thread"
         );
     }

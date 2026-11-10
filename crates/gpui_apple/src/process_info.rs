@@ -8,7 +8,7 @@ use open_gpui::{NativeAppNotificationHandler, PowerMode, ThermalState};
 use parking_lot::Mutex;
 use std::{ptr::NonNull, sync::Arc};
 
-pub(crate) fn thermal_state() -> ThermalState {
+pub fn thermal_state() -> ThermalState {
     match NSProcessInfo::processInfo().thermalState() {
         NSProcessInfoThermalState::Fair => ThermalState::Fair,
         NSProcessInfoThermalState::Serious => ThermalState::Serious,
@@ -18,7 +18,7 @@ pub(crate) fn thermal_state() -> ThermalState {
 }
 
 /// Foundation reports Low Power Mode but cannot distinguish Balanced from HighPower.
-pub(crate) fn power_mode() -> PowerMode {
+pub fn power_mode() -> PowerMode {
     let process_info = NSProcessInfo::processInfo();
     if process_info.respondsToSelector(objc2::sel!(isLowPowerModeEnabled))
         && process_info.isLowPowerModeEnabled()
@@ -29,14 +29,14 @@ pub(crate) fn power_mode() -> PowerMode {
     }
 }
 
-pub(crate) struct ProcessInfoObserver {
+pub struct ProcessInfoObserver {
     center: Retained<NSNotificationCenter>,
     observer: Retained<ProtocolObject<dyn NSObjectProtocol>>,
     callback: Arc<Mutex<Option<NativeAppNotificationHandler>>>,
 }
 
 impl ProcessInfoObserver {
-    pub(crate) fn thermal(callback: NativeAppNotificationHandler) -> Self {
+    pub fn thermal(callback: NativeAppNotificationHandler) -> Self {
         // Foundation requires reading thermalState before registering for changes.
         // https://developer.apple.com/documentation/foundation/processinfo/thermalstatedidchangenotification
         thermal_state();
@@ -47,7 +47,7 @@ impl ProcessInfoObserver {
         )
     }
 
-    pub(crate) fn power(callback: NativeAppNotificationHandler) -> Self {
+    pub fn power(callback: NativeAppNotificationHandler) -> Self {
         let name = NSString::from_str("NSProcessInfoPowerStateDidChangeNotification");
         Self::with_center(NSNotificationCenter::defaultCenter(), &name, callback)
     }
@@ -65,7 +65,7 @@ impl ProcessInfoObserver {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| callback()));
                 if let Err(panic) = result {
                     std::mem::forget(panic);
-                    log::error!("isolated a panic from a macOS process-info notification");
+                    log::error!("isolated a panic from an Apple process-info notification");
                 }
             }
         });
@@ -101,16 +101,15 @@ impl Drop for ProcessInfoObserver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use objc2::AnyThread;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn independent_process_observers_retire_without_delegate_or_run_loop() {
-        for name in [
+        for notification_name in [
             "NSProcessInfoPowerStateDidChangeNotification",
             "NSProcessInfoThermalStateDidChangeNotification",
         ] {
-            let name = NSString::from_str(name);
+            let name = NSString::from_str(notification_name);
             let center = NSNotificationCenter::new();
             let calls = Arc::new(AtomicUsize::new(0));
             let callback: NativeAppNotificationHandler = Arc::new({
@@ -127,7 +126,18 @@ mod tests {
             post();
             assert_eq!(calls.load(Ordering::Relaxed), 2);
             std::thread::scope(|scope| {
-                scope.spawn(&post).join().unwrap();
+                let center = center.clone();
+                scope
+                    .spawn(move || {
+                        objc2::rc::autoreleasepool(|_| unsafe {
+                            center.postNotificationName_object(
+                                &NSString::from_str(notification_name),
+                                Some(&NSProcessInfo::processInfo()),
+                            );
+                        });
+                    })
+                    .join()
+                    .unwrap();
             });
             assert_eq!(calls.load(Ordering::Relaxed), 4);
             drop(first);

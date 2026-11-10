@@ -1,11 +1,9 @@
 use crate::{
-    BoolExt, MacDispatcher, MacDisplayTopologyHandle, MacDisplayTopologyRefresh,
+    AppleActivity, AppleDispatcher, BoolExt, MacDisplayTopologyHandle, MacDisplayTopologyRefresh,
     MacDisplayTopologyRetry, MacKeyboardLayout, MacKeyboardMapper, MacWindow, MacWindowRegistry,
-    activity::AppleActivity,
     events::key_to_native,
-    keychain, ns_string,
+    ns_string,
     pasteboard::Pasteboard,
-    process_info::{self, ProcessInfoObserver},
     renderer,
     window::{macos_supports_focus_on_appearing, macos_supports_toplevel_creation_state},
 };
@@ -53,6 +51,10 @@ use open_gpui::{
     PlatformWindowMutationCapabilities, PowerMode, Result, SystemMenuType, Task, ThermalState,
     WindowAppearance, WindowCoordinateSpace, WindowCreationSupport, WindowInitialPresentationOrder,
     WindowKind, WindowMutationSupport, WindowParams, WindowingRequest,
+};
+use open_gpui_apple::{
+    keychain,
+    process_info::{self, ProcessInfoObserver},
 };
 use open_gpui_util::{
     ResultExt,
@@ -241,10 +243,10 @@ fn native_activation_policy(policy: ActivationPolicy) -> NSApplicationActivation
 
 impl MacPlatform {
     pub fn new(headless: bool) -> Self {
-        let dispatcher = Arc::new(MacDispatcher::new());
+        let dispatcher = Arc::new(AppleDispatcher::new());
 
         #[cfg(feature = "font-kit")]
-        let text_system = Arc::new(crate::MacTextSystem::new());
+        let text_system = Arc::new(crate::AppleTextSystem::new());
 
         #[cfg(not(feature = "font-kit"))]
         let text_system = Arc::new(open_gpui::NoopTextSystem::new());

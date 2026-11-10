@@ -1,7 +1,8 @@
 //! Native process-main-thread gate, run on macOS with a GUI session and Metal device:
 //! `cargo run -p open-gpui-macos --example native_windowing -- <mode>`.
 //!
-//! Run each mode in a fresh process: `default`, `windowed`, `headless`, `accessory`, `direct`.
+//! Run each mode in a fresh process: `default`, `windowed`, `headless`, `accessory`, `direct`,
+//! `activity`. The activity mode exercises the real headless platform acquisition/drop path.
 //! The first four enter the real GPUIApplication run loop and launch delegate. `direct` only
 //! checks stored policy and native resource refusal without launching the application. Neither
 //! path creates a Core App or qualifies Core retirement, external event pumping, or Dock pixels.
@@ -209,6 +210,7 @@ mod macos {
                         display_id: None,
                         window_min_size: None,
                         tabbing_identifier: None,
+                        use_display_p3: false,
                     },
                 )
                 .expect("a native window requires a macOS GUI session and Metal device"),
@@ -455,6 +457,21 @@ mod macos {
         let _main_thread =
             MainThreadMarker::new().expect("native windowing must run on the process main thread");
         let mode = std::env::args().nth(1).unwrap_or_else(|| "default".into());
+        if mode == "activity" {
+            let (guard, abandoned_task) = objc2::rc::autoreleasepool(|_| {
+                let platform = MacPlatform::new(true);
+                let guard = futures::executor::block_on(
+                    platform.prevent_idle_sleep("native platform idle sleep activity"),
+                )
+                .expect("native idle-sleep activity acquisition");
+                let abandoned_task = platform.prevent_idle_sleep("abandoned native activity");
+                (guard, abandoned_task)
+            });
+            drop(abandoned_task);
+            drop(guard);
+            println!("native platform idle-sleep consumer completed");
+            return;
+        }
         assert!(matches!(
             mode.as_str(),
             "default" | "windowed" | "headless" | "accessory" | "direct"

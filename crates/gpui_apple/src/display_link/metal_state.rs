@@ -1,5 +1,5 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct MetalFrameGeneration(u64);
+pub struct MetalFrameGeneration(u64);
 
 #[derive(Default)]
 pub(crate) struct MetalFrameState {

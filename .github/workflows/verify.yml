@@ -236,7 +236,7 @@ jobs:
 
       - name: Test macOS typed activity acquisition and release
         if: matrix.name == 'macos'
-        run: cargo nextest run --locked -p open-gpui-macos --all-features --lib -E 'test(activity::tests::)' --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui-apple --all-features --lib -E 'test(dispatcher::tests::)' --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test Linux isolated portal acquisition and actual release
         if: matrix.name == 'linux'
@@ -282,7 +282,7 @@ jobs:
       - name: Test typed Keychain errors and independent ordinary API
         if: matrix.name == 'macos'
         run: |
-          cargo nextest run --locked -p open-gpui-macos --all-features --lib -E 'test(keychain::)' --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked -p open-gpui-apple --all-features --lib -E 'test(keychain::)' --test-threads=1 --no-fail-fast --no-tests fail
           cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test credentials --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test independent system notification API without optional features
@@ -381,11 +381,11 @@ jobs:
 
       - name: Check macOS font surface
         if: matrix.name == 'macos'
-        run: cargo check -p open-gpui-macos --features font-kit --locked
+        run: cargo check -p open-gpui-apple -p open-gpui-macos --features font-kit --locked
 
       - name: Test macOS font surface
         if: matrix.name == 'macos'
-        run: cargo nextest run -p open-gpui-macos --features font-kit --locked --no-fail-fast
+        run: cargo nextest run -p open-gpui-apple -p open-gpui-macos --features font-kit --locked --no-fail-fast
 
       - name: Check Windows platform surface
         if: matrix.name == 'windows'

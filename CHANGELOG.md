@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- `open-gpui-apple` owns the shared Apple dispatcher, Metal renderer/atlas, CoreText/OpenType, Keychain and process services. CoreVideo surfaces are available on macOS/iOS; this shared substrate does not add an iOS application backend. macOS window options expose the official opt-in Display P3 color space.
+
 - Windows forwards Restart Manager session shutdown from application windows to the platform quit callback. Completed shutdown flushes logs and exits; asynchronous shutdown retains the official best-effort quit fallback.
 
 - `Application::with_windowing`, `App::request_windowing` and `GraphicalEnvironment` retain an application while a capable native backend switches between headless and graphical operation. Linux exposes explicit allowed `WindowingModes`; application `ActivationPolicy` controls macOS Dock/menu participation separately from each window's activation policy.
@@ -32,6 +34,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Optional native debug hot reload follows the official GPUI/Subsecond 0.7.10 mechanism: build/process-matched patches, foreground application, window refresh, and typed, stateless and stored erased View render boundaries. Run with `dx serve --hot-patch`; compatible render-body edits preserve existing model state. Release/WebAssembly transport exclusion, failed loads, required restarts and disconnects remain explicit. The independently locked native consumer provides an actual edit/build/apply and Submitted-scene pixel acceptance procedure, including the required upstream dx x64 jump-stub backport for the qualified Windows tool.
 
 ### Breaking Changes and Migration Notes
+
+- Import shared Apple services from `open_gpui_apple`, including `AppleTextSystem` and `keychain`; macOS retains application/window/input APIs. `WindowOptions` adds `use_display_p3` (default `false`), so explicit complete literals need the new field. Metal shaders follow the fixed target's macOS 12 deployment floor and target-specific iOS SDK selection.
 
 - Native Windows graphical initialization occurs before the launch callback rather than at platform construction. `WindowsPlatform::new(false)` starts without a GPU; enter the launch callback or complete `Platform::request_windowing` before opening graphical windows. Fixed-headless constructors remain unable to attach later. Windowing changes require complete window and native-resource retirement. Deferred platform implementations preserve the caller's validation through physical connection replacement.
 

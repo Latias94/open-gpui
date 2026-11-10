@@ -2,7 +2,7 @@
 use crate::Inspector;
 #[cfg(not(target_family = "wasm"))]
 use crate::MouseButton;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 use crate::PlatformPixelBuffer;
 use crate::app::{AppCell, PlatformWindowCommandSink};
 #[cfg(feature = "profiler")]
@@ -2487,6 +2487,8 @@ impl Window {
             icon,
             #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
             tabbing_identifier,
+            #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+            use_display_p3,
         } = options;
 
         let transient_for = transient_for
@@ -2592,6 +2594,8 @@ impl Window {
                 icon,
                 #[cfg(target_os = "macos")]
                 tabbing_identifier,
+                #[cfg(target_os = "macos")]
+                use_display_p3,
             },
             display_snapshot,
         )?;
@@ -11875,7 +11879,7 @@ impl Window {
     /// Paint a surface into the scene for the next frame at the current z-index.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: PlatformPixelBuffer) {
         use crate::PaintSurface;
 

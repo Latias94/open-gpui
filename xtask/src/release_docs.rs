@@ -14,6 +14,11 @@ const REQUIRED_CRATE_READMES: &[RequiredCrateReadme] = &[
         readme: "crates/gpui/README.md",
     },
     RequiredCrateReadme {
+        package: "open-gpui-apple",
+        manifest: "crates/gpui_apple/Cargo.toml",
+        readme: "crates/gpui_apple/README.md",
+    },
+    RequiredCrateReadme {
         package: "open-gpui-ui-components",
         manifest: "crates/ui_components/Cargo.toml",
         readme: "crates/ui_components/README.md",

@@ -31,11 +31,11 @@ test = false
 
 [features]
 default = ["open_gpui/default"]
-test-support = ["open_gpui/test-support"]
-bench-support = ["open_gpui/bench-support"]
-runtime_shaders = []
-font-kit = ["dep:font-kit"]
-screen-capture = ["open_gpui/screen-capture"]
+test-support = ["open_gpui/test-support", "open_gpui_apple/test-support"]
+bench-support = ["open_gpui/bench-support", "open_gpui_apple/bench-support"]
+runtime_shaders = ["open_gpui_apple/runtime_shaders"]
+font-kit = ["open_gpui_apple/font-kit"]
+screen-capture = ["open_gpui/screen-capture", "dep:open_gpui_media"]
 
 [dependencies]
 open_gpui.workspace = true
@@ -44,27 +44,23 @@ open_gpui.workspace = true
 accesskit.workspace = true
 accesskit_macos.workspace = true
 anyhow.workspace = true
-async-task.workspace = true
 bitflags.workspace = true
 block2.workspace = true
 open_gpui_collections.workspace = true
 core-foundation.workspace = true
 core-foundation-sys.workspace = true
 core-graphics = "0.24"
-core-text = "21"
 ctor.workspace = true
 derive_more.workspace = true
 dispatch2 = "0.3.1"
-etagere = "0.3"
-font-kit = { package = "open-gpui-font-kit", version = "0.14.3", optional = true }
 foreign-types = "0.5"
 futures.workspace = true
 image.workspace = true
 itertools.workspace = true
 libc.workspace = true
 log.workspace = true
-mach2.workspace = true
-open_gpui_media.workspace = true
+open_gpui_apple.workspace = true
+open_gpui_media = { workspace = true, optional = true }
 open_gpui_scheduler.workspace = true
 objc.workspace = true
 objc2.workspace = true
@@ -72,9 +68,7 @@ objc2-app-kit = { workspace = true, features = ["NSAppearance", "NSPasteboard", 
 objc2-core-foundation.workspace = true
 objc2-core-video.workspace = true
 objc2-foundation.workspace = true
-objc2-metal.workspace = true
 objc2-quartz-core.workspace = true
-objc2-security.workspace = true
 objc2-user-notifications = { version = "0.3", default-features = false, features = [
     "std",
     "block2",
@@ -88,18 +82,12 @@ objc2-user-notifications = { version = "0.3", default-features = false, features
     "UNUserNotificationCenter",
 ] }
 parking_lot.workspace = true
-pathfinder_geometry = "0.5"
 raw-window-handle = "0.6"
 semver.workspace = true
 smallvec.workspace = true
 strum.workspace = true
-thiserror.workspace = true
 open_gpui_util.workspace = true
 uuid.workspace = true
-
-[target.'cfg(target_os = "macos")'.build-dependencies]
-cbindgen = { version = "0.29", default-features = false }
-open_gpui.workspace = true
 
 # When this crate is itself being tested (cargo test -p gpui_macos), its own
 # cfg(test) flag enables impls of test-only traits like PlatformHeadlessRenderer

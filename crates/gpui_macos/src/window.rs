@@ -19,7 +19,7 @@ use cocoa::{
     },
     base::{id, nil},
     foundation::{
-        NSArray, NSAutoreleasePool, NSFastEnumeration, NSInteger, NSNotFound,
+        NSArray, NSAutoreleasePool, NSDictionary, NSFastEnumeration, NSInteger, NSNotFound,
         NSOperatingSystemVersion, NSPoint, NSProcessInfo, NSRect, NSSize, NSString, NSUInteger,
         NSUserDefaults,
     },
@@ -1511,7 +1511,8 @@ impl<O: Copy + PartialEq> MacWindowPendingObservationEvents<O> {
         // topology fact. Unobserved events use that final fact and are subject to their typed
         // fallback semantics (notably latest-wins fullscreen terminals).
         let last_active_event_index = self.last_active_event_index();
-        let mut batches = SmallVec::with_capacity(self.events.len() + 1);
+        let mut batches: SmallVec<[MacWindowObservationEffectBatch<O>; 4]> =
+            SmallVec::with_capacity(self.events.len() + 1);
         for (event_index, event) in self.events.into_iter().enumerate() {
             batches.push(MacWindowObservationEffectBatch {
                 observation: event.observation.unwrap_or(final_observation),
@@ -1951,7 +1952,8 @@ impl MacWindowState {
             let display = target_before.display();
             let screen_frame = NSScreen::frame(screen_before);
             let window_frame = NSWindow::frame(self.native_window);
-            let content_rect = NSWindow::contentRectForFrameRect_(self.native_window, window_frame);
+            let content_rect: NSRect =
+                msg_send![self.native_window, contentRectForFrameRect: window_frame];
             let content_view = NSWindow::contentView(self.native_window);
             if content_view == nil {
                 return None;
@@ -2080,7 +2082,7 @@ impl MacWindowState {
         }
 
         if let Some(layer) = self.renderer.layer() {
-            layer.set_contents_scale(geometry.scale_factor as f64);
+            layer.setContentsScale(geometry.scale_factor as f64);
         }
         self.renderer.update_drawable_size(
             geometry
@@ -2897,6 +2899,7 @@ impl MacWindow {
             display_id: _,
             window_min_size,
             tabbing_identifier,
+            use_display_p3,
             ..
         }: WindowParams,
         transient_owner: Option<MacTransientOwnerLease>,
@@ -2935,6 +2938,9 @@ impl MacWindow {
             ));
         }
 
+        let renderer = objc2::rc::autoreleasepool(|_| {
+            renderer::new_renderer(renderer_context, false, use_display_p3)
+        })?;
         let native_resources = window_registry.retain_native_resources();
         unsafe {
             let creation = MacWindowCreationProjection::new(
@@ -3070,13 +3076,7 @@ impl MacWindow {
                         Some(frames) => FrameSource::Metal(frames.clone()),
                         None => FrameSource::DisplayLink(None),
                     },
-                    renderer: renderer::new_renderer(
-                        renderer_context,
-                        native_window as *mut _,
-                        native_view as *mut _,
-                        bounds.size.map(|pixels| pixels.as_f32()),
-                        false,
-                    ),
+                    renderer,
                     presentation_shutdown_authority: presentation_shutdown_authority.clone(),
                     display_transaction_frame_depth: MacDisplayTransactionFrameDepth::default(),
                     request_frame_callback: None,
@@ -3205,8 +3205,9 @@ impl MacWindow {
             // Reapply the requested content rect after titlebar configuration. AppKit accepts an
             // outer frame here, so projecting through the live window decoration policy keeps
             // WindowBounds in client coordinates.
-            let frame_rect = NSWindow::frameRectForContentRect_(native_window, content_rect);
-            NSWindow::setFrame_display_(native_window, frame_rect, NO);
+            let frame_rect: NSRect =
+                msg_send![native_window, frameRectForContentRect: content_rect];
+            let _: () = msg_send![native_window, setFrame: frame_rect display: NO];
             if creation.state == MacWindowCreationState::Maximized {
                 let visible_frame = NSScreen::visibleFrame(target_screen);
                 let _: () = msg_send![native_window, setFrame: visible_frame display: NO];
@@ -6197,9 +6198,7 @@ fn metal_frame(
             let Some(options) = frames.begin_frame(generation, signal_at) else {
                 return;
             };
-            state.renderer.set_frame_drawable(Some(
-                crate::metal_compat::MetalDrawable::from_display_link(update.drawable()),
-            ));
+            state.renderer.set_frame_drawable(Some(update.drawable()));
             (frames, options)
         };
         let frame_delivery = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -6386,7 +6385,7 @@ extern "C" fn do_command_by_selector(this: &Object, _: Sel, _: Sel) {
     let event_callback = lock.event_callback.clone();
     drop(lock);
 
-    if let Some(handled) = keystroke.and_then(|keystroke| {
+    if let Some(handled) = keystroke.map(|keystroke| {
         event_callback.dispatch(PlatformInput::KeyDown(KeyDownEvent {
             keystroke,
             is_held: false,

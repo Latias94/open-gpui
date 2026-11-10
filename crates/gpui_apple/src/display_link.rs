@@ -1,4 +1,7 @@
-use super::metal_state::{MetalFrameGeneration, MetalFrameState};
+mod metal_state;
+
+pub use metal_state::MetalFrameGeneration;
+use metal_state::MetalFrameState;
 use objc2::{
     AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send,
     rc::Retained,
@@ -35,7 +38,7 @@ define_class!(
             }));
             if let Err(panic) = result {
                 std::mem::forget(panic);
-                log::error!("isolated a panic from a macOS Metal display-link delegate");
+                log::error!("isolated a panic from an Apple Metal display-link delegate");
             }
         }
     }
@@ -54,19 +57,26 @@ impl MetalDisplayLinkDelegate {
     }
 }
 
-/// A main-run-loop source of Metal drawables on macOS 14 and later.
-pub(crate) struct MetalFrameSource {
+/// A main-run-loop source of Metal drawables on macOS 14+ and iOS/iPadOS 17+.
+///
+/// Callbacks run on the run loop the link is registered with:
+/// <https://developer.apple.com/documentation/quartzcore/cametaldisplaylink>.
+/// This wrapper uses the main run loop because GPUI renders on the foreground thread.
+pub struct MetalFrameSource {
     link: Retained<CAMetalDisplayLink>,
     _delegate: Retained<MetalDisplayLinkDelegate>,
     _main_thread: MainThreadMarker,
 }
 
 impl MetalFrameSource {
-    pub(crate) fn is_available() -> bool {
+    /// Whether this system has `CAMetalDisplayLink` (macOS 14+, iOS/iPadOS 17+).
+    pub fn is_available() -> bool {
         AnyClass::get(c"CAMetalDisplayLink").is_some()
     }
 
-    fn new(
+    /// Starts delivering updates for `layer`, or returns `None` where
+    /// `CAMetalDisplayLink` is unavailable.
+    pub fn new(
         layer: &CAMetalLayer,
         main_thread: MainThreadMarker,
         callback: impl Fn(&CAMetalDisplayLinkUpdate) + 'static,
@@ -89,7 +99,8 @@ impl MetalFrameSource {
         })
     }
 
-    fn set_paused(&self, paused: bool) {
+    /// A paused link delivers no updates and acquires no drawables.
+    pub fn set_paused(&self, paused: bool) {
         self.link.setPaused(paused);
     }
 }
@@ -102,7 +113,7 @@ impl Drop for MetalFrameSource {
 
 /// Shares a window's Metal link with its foreground frame waker.
 #[derive(Default)]
-pub(crate) struct MetalFrames {
+pub struct MetalFrames {
     source: RefCell<Option<MetalFrameSource>>,
     state: RefCell<MetalFrameState>,
     signal: PlatformFrameSignal,
@@ -111,7 +122,7 @@ pub(crate) struct MetalFrames {
 }
 
 impl MetalFrames {
-    pub(crate) fn start(
+    pub fn start(
         &self,
         layer: &CAMetalLayer,
         main_thread: MainThreadMarker,
@@ -130,15 +141,15 @@ impl MetalFrames {
         attached
     }
 
-    pub(crate) fn is_attached(&self) -> bool {
+    pub fn is_attached(&self) -> bool {
         self.state.borrow().is_attached()
     }
 
-    pub(crate) fn is_current(&self, generation: MetalFrameGeneration) -> bool {
+    pub fn is_current(&self, generation: MetalFrameGeneration) -> bool {
         self.state.borrow().is_current(generation)
     }
 
-    pub(crate) fn wake(&self) {
+    pub fn wake(&self) {
         self.request_frame(RequestFrameOptions {
             signal_at: PlatformFrameSignal::capture(Instant::now),
             signal_source: FrameRequestSource::LocalSchedule,
@@ -146,7 +157,7 @@ impl MetalFrames {
         });
     }
 
-    pub(crate) fn request_frame(&self, options: RequestFrameOptions) {
+    pub fn request_frame(&self, options: RequestFrameOptions) {
         if let Some(at) = options.signal_at {
             self.signal.record(at, options.signal_source);
         }
@@ -162,7 +173,7 @@ impl MetalFrames {
         }
     }
 
-    pub(crate) fn begin_frame(
+    pub fn begin_frame(
         &self,
         generation: MetalFrameGeneration,
         signal_at: Option<Instant>,
@@ -185,7 +196,7 @@ impl MetalFrames {
         })
     }
 
-    pub(crate) fn end_frame(&self, generation: MetalFrameGeneration, used_drawable: bool) -> bool {
+    pub fn end_frame(&self, generation: MetalFrameGeneration, used_drawable: bool) -> bool {
         let pause = self.state.borrow_mut().end_frame(generation, used_drawable);
         if pause && let Some(source) = self.source.borrow().as_ref() {
             source.set_paused(true);
@@ -193,7 +204,7 @@ impl MetalFrames {
         pause
     }
 
-    pub(crate) fn stop(&self) {
+    pub fn stop(&self) {
         self.state.borrow_mut().retire();
         let source = self.source.borrow_mut().take();
         drop(source);

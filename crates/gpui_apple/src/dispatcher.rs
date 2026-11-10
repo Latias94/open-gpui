@@ -1,4 +1,3 @@
-use crate::activity::AppleActivity;
 use dispatch2::{DispatchQueue, DispatchQueueGlobalPriority, DispatchTime, GlobalQueueIdentifier};
 use mach2::{
     kern_return::KERN_SUCCESS,
@@ -14,26 +13,21 @@ use open_gpui::{ActivityGuard, PlatformDispatcher, Priority, RunnableMeta, Runna
 use open_gpui_util::ResultExt;
 
 use async_task::Runnable;
-use objc::{
-    class, msg_send,
-    runtime::{BOOL, YES},
-    sel, sel_impl,
-};
-use objc2_foundation::NSActivityOptions;
+use objc2::{rc::Retained, runtime::ProtocolObject};
+use objc2_foundation::{NSActivityOptions, NSObjectProtocol, NSProcessInfo, NSString};
 use std::{ffi::c_void, ptr::NonNull, time::Duration};
 
-pub(crate) struct MacDispatcher;
+pub struct AppleDispatcher;
 
-impl MacDispatcher {
+impl AppleDispatcher {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl PlatformDispatcher for MacDispatcher {
+impl PlatformDispatcher for AppleDispatcher {
     fn is_main_thread(&self) -> bool {
-        let is_main_thread: BOOL = unsafe { msg_send![class!(NSThread), isMainThread] };
-        is_main_thread == YES
+        crate::main_thread_marker().is_some()
     }
 
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority) {
@@ -85,6 +79,46 @@ impl PlatformDispatcher for MacDispatcher {
             reason,
             NSActivityOptions::UserInitiatedAllowingIdleSystemSleep,
         )
+    }
+}
+
+pub struct AppleActivity {
+    process_info: Retained<NSProcessInfo>,
+    activity: Retained<ProtocolObject<dyn NSObjectProtocol>>,
+    #[cfg(test)]
+    release_observation: tests::ReleaseObservation,
+}
+
+// The activity token returned by NSProcessInfo is thread-safe
+unsafe impl Send for AppleActivity {}
+
+impl AppleActivity {
+    pub fn begin(reason: &str, options: NSActivityOptions) -> ActivityGuard {
+        let process_info = NSProcessInfo::processInfo();
+        let activity =
+            process_info.beginActivityWithOptions_reason(options, &NSString::from_str(reason));
+        #[cfg(test)]
+        let release_observation = tests::observe_begin(&process_info, &activity, reason, options);
+        let activity = Self {
+            process_info,
+            activity,
+            #[cfg(test)]
+            release_observation,
+        };
+        ActivityGuard::new(move || drop(activity))
+    }
+}
+
+impl Drop for AppleActivity {
+    fn drop(&mut self) {
+        // SAFETY: This is the token created by this process-info instance, ended exactly once.
+        unsafe { self.process_info.endActivity(&self.activity) };
+        #[cfg(test)]
+        tests::observe_end(
+            &self.release_observation,
+            &self.process_info,
+            &self.activity,
+        );
     }
 }
 
@@ -182,3 +216,7 @@ extern "C" fn trampoline(context: *mut c_void) {
     let _task_timing = open_gpui::profiler::task_timing(spawned, location);
     runnable.run();
 }
+
+#[cfg(test)]
+#[path = "activity_tests.rs"]
+mod tests;

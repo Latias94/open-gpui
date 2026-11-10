@@ -1,5 +1,6 @@
 use super::*;
 use anyhow::Context;
+use core_text::font_descriptor::kCTFontCascadeListAttribute;
 use open_gpui::font;
 
 const IBM_PLEX: &[u8] = include_bytes!(concat!(
@@ -19,7 +20,7 @@ const NOTO_EMOJI: &[u8] = include_bytes!(concat!(
     "/../../tests/fixtures/fonts/NotoEmoji-Regular.ttf"
 ));
 
-fn loaded_fonts(platform: &MacTextSystem) -> Vec<(CTFont, FontMetrics)> {
+fn loaded_fonts(platform: &AppleTextSystem) -> Vec<(CTFont, FontMetrics)> {
     platform
         .0
         .read()
@@ -34,7 +35,7 @@ fn loaded_fonts(platform: &MacTextSystem) -> Vec<(CTFont, FontMetrics)> {
         .collect()
 }
 
-fn assert_loaded_fonts_retained(platform: &MacTextSystem, before: &[(CTFont, FontMetrics)]) {
+fn assert_loaded_fonts_retained(platform: &AppleTextSystem, before: &[(CTFont, FontMetrics)]) {
     let state = platform.0.read();
     assert!(state.fonts.len() >= before.len());
     for (font, (native, metrics)) in state.fonts.iter().zip(before) {
@@ -68,12 +69,12 @@ fn assert_loaded_fonts_retained(platform: &MacTextSystem, before: &[(CTFont, Fon
     }
 }
 
-fn postscript_name(platform: &MacTextSystem, font_id: FontId) -> String {
+fn postscript_name(platform: &AppleTextSystem, font_id: FontId) -> String {
     platform.0.read().postscript_names_by_font_id[&font_id].clone()
 }
 
 fn rasterized_layout(
-    platform: &MacTextSystem,
+    platform: &AppleTextSystem,
     layout: &LineLayout,
 ) -> Result<Vec<(Size<DevicePixels>, Vec<u8>)>> {
     let mut rasters = Vec::new();
@@ -99,7 +100,7 @@ fn rasterized_layout(
     Ok(rasters)
 }
 
-fn cascade_descriptors(platform: &MacTextSystem, font_id: FontId) -> Vec<CTFontDescriptor> {
+fn cascade_descriptors(platform: &AppleTextSystem, font_id: FontId) -> Vec<CTFontDescriptor> {
     let descriptor = platform.0.read().fonts[font_id.0]
         .native_font()
         .copy_descriptor();
@@ -117,7 +118,7 @@ fn cascade_descriptors(platform: &MacTextSystem, font_id: FontId) -> Vec<CTFontD
 #[test]
 fn installing_bold_reselects_matched_descriptors_and_retains_loaded_fonts() -> Result<()> {
     for owned in [false, true] {
-        let platform = MacTextSystem::new();
+        let platform = AppleTextSystem::new();
         platform.add_fonts(vec![Cow::Borrowed(LILEX_REGULAR)])?;
         let requested = [font("Lilex").bold(), font("Lilex").bold().italic()];
         let old_id = platform.font_id(&requested[0])?;
@@ -181,7 +182,7 @@ fn installing_bold_reselects_matched_descriptors_and_retains_loaded_fonts() -> R
 #[test]
 fn installing_fallback_rebuilds_the_cascade_with_the_installed_face() -> Result<()> {
     for owned in [false, true] {
-        let platform = MacTextSystem::new();
+        let platform = AppleTextSystem::new();
         platform.add_fonts(vec![Cow::Borrowed(IBM_PLEX)])?;
         let plain_id = platform.font_id(&font("IBM Plex Sans"))?;
         let requested = Font {
@@ -286,7 +287,7 @@ fn installing_fallback_rebuilds_the_cascade_with_the_installed_face() -> Result<
 #[test]
 fn native_run_identity_preserves_features_and_cascades_across_sizes_and_installation() -> Result<()>
 {
-    let platform = MacTextSystem::new();
+    let platform = AppleTextSystem::new();
     platform.add_fonts(vec![Cow::Borrowed(IBM_PLEX), Cow::Borrowed(NOTO_EMOJI)])?;
     let disabled = FontFeatures(Arc::new(vec![("liga".into(), 0)]));
     let fallbacks = Some(FontFallbacks::from_fonts(vec!["Noto Emoji".into()]));
@@ -356,7 +357,7 @@ fn native_run_identity_preserves_features_and_cascades_across_sizes_and_installa
 
 #[test]
 fn empty_and_rejected_installs_preserve_native_selection_state() -> Result<()> {
-    let platform = MacTextSystem::new();
+    let platform = AppleTextSystem::new();
     platform.add_fonts(vec![Cow::Borrowed(LILEX_REGULAR)])?;
     let requested = font("Lilex").bold();
     let old_id = platform.font_id(&requested)?;
@@ -398,7 +399,7 @@ fn empty_and_rejected_installs_preserve_native_selection_state() -> Result<()> {
 #[test]
 fn invalid_owned_tail_is_validated_before_installation_and_valid_retry_reselects_fonts()
 -> Result<()> {
-    let platform = MacTextSystem::new();
+    let platform = AppleTextSystem::new();
     platform.add_fonts(vec![Cow::Borrowed(IBM_PLEX), Cow::Borrowed(LILEX_REGULAR)])?;
     let requested = font("Lilex").bold();
     let old_id = platform.font_id(&requested)?;

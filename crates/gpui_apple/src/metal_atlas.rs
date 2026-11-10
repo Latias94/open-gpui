@@ -1,8 +1,15 @@
-use crate::metal_compat as metal;
-use crate::metal_compat::Device;
+//! Metal storage for the shared atlas owner.
+//!
+//! Renderer preflight acquires a lease and a snapshot of exact texture instances. Removed keys do
+//! not reclaim published regions while that lease is live, including during native GPU submission.
+
 use anyhow::{Context as _, Result, ensure};
-use derive_more::{Deref, DerefMut};
 use etagere::BucketedAtlasAllocator;
+use objc2::{rc::Retained, runtime::ProtocolObject};
+use objc2_metal::{
+    MTLDevice, MTLOrigin, MTLPixelFormat, MTLRegion, MTLSize, MTLStorageMode, MTLTexture,
+    MTLTextureDescriptor, MTLTextureUsage,
+};
 use open_gpui::{
     AtlasAccess, AtlasBackend, AtlasKey, AtlasRemoveDiagnostic, AtlasRemoveOutcome, AtlasState,
     AtlasTextureId, AtlasTextureInstanceId, AtlasTextureKind, AtlasTextureLease,
@@ -15,15 +22,18 @@ use std::{borrow::Cow, sync::Arc};
 
 const MAX_ATLAS_DIMENSION: i32 = 16384;
 
-pub(crate) struct MetalAtlas(Mutex<AtlasState<MetalAtlasTextures>>);
+pub struct MetalAtlas(Mutex<AtlasState<MetalAtlasTextures>>);
 
 impl MetalAtlas {
-    pub(crate) fn new(device: Device, is_apple_gpu: bool) -> Self {
+    pub(crate) fn new(
+        device: Retained<ProtocolObject<dyn MTLDevice>>,
+        supports_shared_storage: bool,
+    ) -> Self {
         MetalAtlas(Mutex::new(AtlasState::new(MetalAtlasTextures {
             epoch: AtlasTextureLeaseEpoch::INITIAL,
             next_texture_generation: 1,
-            device: AssertSend(device),
-            is_apple_gpu,
+            device,
+            supports_shared_storage,
             monochrome_textures: Default::default(),
             polychrome_textures: Default::default(),
         })))
@@ -31,7 +41,11 @@ impl MetalAtlas {
 
     /// Returns the exact resident texture instance, including a lease-retained instance.
     /// Released slots and replacement generations return `None`.
-    pub(crate) fn metal_texture(&self, texture: AtlasTextureInstanceId) -> Option<metal::Texture> {
+    #[cfg(test)]
+    pub(crate) fn metal_texture(
+        &self,
+        texture: AtlasTextureInstanceId,
+    ) -> Option<Retained<ProtocolObject<dyn MTLTexture>>> {
         Some(
             self.0
                 .lock()
@@ -47,7 +61,7 @@ impl MetalAtlas {
         textures: &[AtlasTextureInstanceId],
     ) -> Result<(
         AtlasTextureLease,
-        FxHashMap<AtlasTextureInstanceId, metal::Texture>,
+        FxHashMap<AtlasTextureInstanceId, Retained<ProtocolObject<dyn MTLTexture>>>,
     )> {
         let atlas: Arc<dyn PlatformAtlas> = self.clone();
         let lease = atlas.retain_texture_instances(textures)?;
@@ -81,8 +95,8 @@ impl MetalAtlas {
 struct MetalAtlasTextures {
     epoch: AtlasTextureLeaseEpoch,
     next_texture_generation: u32,
-    device: AssertSend<Device>,
-    is_apple_gpu: bool,
+    device: Retained<ProtocolObject<dyn MTLDevice>>,
+    supports_shared_storage: bool,
     monochrome_textures: AtlasTextureList<MetalAtlasTexture>,
     polychrome_textures: AtlasTextureList<MetalAtlasTexture>,
 }
@@ -356,32 +370,35 @@ impl MetalAtlasTextures {
             height: DevicePixels(MAX_ATLAS_DIMENSION),
         };
         let size = min_size.min(&MAX_ATLAS_SIZE).max(&DEFAULT_ATLAS_SIZE);
-        let texture_descriptor = metal::TextureDescriptor::new();
-        texture_descriptor.set_width(size.width.into());
-        texture_descriptor.set_height(size.height.into());
+        let texture_descriptor = MTLTextureDescriptor::new();
+        // SAFETY: AtlasUpload validates the positive dimensions against MAX_ATLAS_DIMENSION before allocation.
+        unsafe {
+            texture_descriptor.setWidth(size.width.into());
+            texture_descriptor.setHeight(size.height.into());
+        }
         let pixel_format;
         let usage;
         match kind {
             AtlasTextureKind::Monochrome => {
-                pixel_format = metal::MTLPixelFormat::A8Unorm;
-                usage = metal::MTLTextureUsage::ShaderRead;
+                pixel_format = MTLPixelFormat::A8Unorm;
+                usage = MTLTextureUsage::ShaderRead;
             }
             AtlasTextureKind::Polychrome => {
-                pixel_format = metal::MTLPixelFormat::BGRA8Unorm;
-                usage = metal::MTLTextureUsage::ShaderRead;
+                pixel_format = MTLPixelFormat::BGRA8Unorm;
+                usage = MTLTextureUsage::ShaderRead;
             }
             AtlasTextureKind::Subpixel => {
                 anyhow::bail!("Metal does not support subpixel atlas textures")
             }
         }
-        texture_descriptor.set_pixel_format(pixel_format);
-        texture_descriptor.set_usage(usage);
+        texture_descriptor.setPixelFormat(pixel_format);
+        texture_descriptor.setUsage(usage);
         // Shared memory mode can be used only on Apple GPU families
         // https://developer.apple.com/documentation/metal/mtlresourceoptions/storagemodeshared
-        texture_descriptor.set_storage_mode(if self.is_apple_gpu {
-            metal::MTLStorageMode::Shared
+        texture_descriptor.setStorageMode(if self.supports_shared_storage {
+            MTLStorageMode::Shared
         } else {
-            metal::MTLStorageMode::Managed
+            MTLStorageMode::Managed
         });
         let generation = self.next_texture_generation;
         let next_generation = self
@@ -390,7 +407,7 @@ impl MetalAtlasTextures {
             .context("Metal atlas texture generation exhausted")?;
         let metal_texture = self
             .device
-            .try_new_texture(&texture_descriptor)
+            .newTextureWithDescriptor(&texture_descriptor)
             .context("allocating atlas texture")?;
 
         let texture_list = match kind {
@@ -420,7 +437,7 @@ impl MetalAtlasTextures {
                 generation,
             },
             allocator: etagere::BucketedAtlasAllocator::new(size_to_etagere(size)),
-            metal_texture: AssertSend(metal_texture),
+            metal_texture,
             live_atlas_keys: 0,
             live_visual_leases: 0,
         };
@@ -433,7 +450,7 @@ impl MetalAtlasTextures {
 struct MetalAtlasTexture {
     id: AtlasTextureInstanceId,
     allocator: BucketedAtlasAllocator,
-    metal_texture: AssertSend<metal::Texture>,
+    metal_texture: Retained<ProtocolObject<dyn MTLTexture>>,
     live_atlas_keys: u32,
     live_visual_leases: u32,
 }
@@ -463,14 +480,14 @@ impl MetalAtlasTexture {
             "atlas upload kind does not match texture"
         );
         let pixel_format = match upload.kind {
-            AtlasTextureKind::Monochrome => metal::MTLPixelFormat::A8Unorm,
-            AtlasTextureKind::Polychrome => metal::MTLPixelFormat::BGRA8Unorm,
+            AtlasTextureKind::Monochrome => MTLPixelFormat::A8Unorm,
+            AtlasTextureKind::Polychrome => MTLPixelFormat::BGRA8Unorm,
             AtlasTextureKind::Subpixel => {
                 anyhow::bail!("Metal does not support subpixel atlas textures")
             }
         };
         ensure!(
-            self.metal_texture.pixel_format() == pixel_format,
+            self.metal_texture.pixelFormat() == pixel_format,
             "atlas upload pixel format does not match texture"
         );
         ensure!(
@@ -484,18 +501,28 @@ impl MetalAtlasTexture {
                     .is_some_and(|end| end <= self.metal_texture.height()),
             "atlas upload is outside texture bounds"
         );
-        let region = metal::region_2d(
-            origin.x.into(),
-            origin.y.into(),
-            upload.size.width.into(),
-            upload.size.height.into(),
-        );
-        self.metal_texture.replace_region(
-            region,
-            0,
-            upload.bytes.as_ptr() as *const _,
-            upload.bytes_per_row as u64,
-        );
+        let region = MTLRegion {
+            origin: MTLOrigin {
+                x: origin.x.into(),
+                y: origin.y.into(),
+                z: 0,
+            },
+            size: MTLSize {
+                width: upload.size.width.into(),
+                height: upload.size.height.into(),
+                depth: 1,
+            },
+        };
+        // SAFETY: AtlasUpload validates the byte length and row stride; the destination bounds were checked above.
+        unsafe {
+            self.metal_texture
+                .replaceRegion_mipmapLevel_withBytes_bytesPerRow(
+                    region,
+                    0,
+                    std::ptr::NonNull::from(upload.bytes).cast(),
+                    upload.bytes_per_row,
+                );
+        }
         Ok(())
     }
 
@@ -572,11 +599,6 @@ fn point_from_etagere(value: etagere::Point) -> Point<DevicePixels> {
     }
 }
 
-#[derive(Deref, DerefMut)]
-struct AssertSend<T>(T);
-
-unsafe impl<T> Send for AssertSend<T> {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -584,9 +606,10 @@ mod tests {
     use std::borrow::Cow;
 
     fn create_atlas() -> Option<MetalAtlas> {
-        let device = metal::Device::system_default()?;
-        let is_apple_gpu = device.supports_family(metal::MTLGPUFamily::Apple1);
-        Some(MetalAtlas::new(device, is_apple_gpu))
+        let device = objc2_metal::MTLCreateSystemDefaultDevice()?;
+        let supports_shared_storage =
+            cfg!(target_os = "ios") || device.supportsFamily(objc2_metal::MTLGPUFamily::Apple1);
+        Some(MetalAtlas::new(device, supports_shared_storage))
     }
 
     fn make_image_key(image_id: usize, frame_index: usize) -> AtlasKey {

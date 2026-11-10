@@ -1,48 +1,35 @@
 use anyhow::anyhow;
-use cocoa::appkit::CGFloat;
 use core_foundation::{
     array::{CFArray, CFArrayRef},
     attributed_string::CFMutableAttributedString,
-    base::{CFRange, CFType, TCFType, kCFAllocatorDefault, kCFAllocatorNull},
+    base::{CFRange, TCFType, kCFAllocatorDefault, kCFAllocatorNull},
     data::{CFData, CFDataCreateWithBytesNoCopy},
-    dictionary::CFDictionary,
-    number::CFNumber,
-    string::{CFString, CFStringRef},
+    string::CFString,
 };
-use core_foundation_sys::locale::CFLocaleCopyPreferredLanguages;
 use core_graphics::{
-    base::{CGGlyph, kCGImageAlphaPremultipliedLast},
+    base::{CGFloat, CGGlyph, kCGImageAlphaPremultipliedLast},
     color_space::CGColorSpace,
     context::{CGContext, CGTextDrawingMode},
-    display::CGPoint,
-    geometry::CGAffineTransform,
+    geometry::CGPoint,
 };
 use core_text::{
-    font::{CTFont, CTFontRef, cascade_list_for_languages},
-    font_collection::CTFontCollectionRef,
-    font_descriptor::{
-        CTFontDescriptor, CTFontDescriptorRef, kCTFontCascadeListAttribute,
-        kCTFontFeatureSettingsAttribute, kCTFontSlantTrait, kCTFontSymbolicTrait,
-        kCTFontWeightTrait, kCTFontWidthTrait,
-    },
-    line::CTLine,
-    string_attributes::kCTFontAttributeName,
+    font::CTFont, font_collection::CTFontCollectionRef, font_descriptor::CTFontDescriptor,
+    line::CTLine, string_attributes::kCTFontAttributeName,
 };
 use font_kit::{
-    family_handle::FamilyHandle,
     font::Font as FontKitFont,
     handle::Handle,
     hinting::HintingOptions,
     metrics::Metrics,
-    properties::{Properties as FontkitProperties, Style as FontkitStyle, Weight as FontkitWeight},
+    properties::{Style as FontkitStyle, Weight as FontkitWeight},
     source::SystemSource,
     sources::mem::MemSource,
 };
 use open_gpui::{
     Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics, FontRun,
-    FontStyle, FontWeight, GlyphId, Hsla, LineLayout, Pixels, PlatformTextSystem,
-    RenderGlyphParams, Result, Rgba, SUBPIXEL_VARIANTS_X, ShapedGlyph, ShapedRun, SharedString,
-    Size, TextRenderingMode, point, px, size, swap_rgba_pa_to_bgra,
+    FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, RenderGlyphParams,
+    Result, SUBPIXEL_VARIANTS_X, ShapedGlyph, ShapedRun, SharedString, Size, TextRenderingMode,
+    point, px, size, swap_rgba_pa_to_bgra,
 };
 use open_gpui_collections::{HashMap, HashSet};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
@@ -52,26 +39,22 @@ use pathfinder_geometry::{
     vector::Vector2F,
 };
 use smallvec::SmallVec;
-use std::{borrow::Cow, char, convert::TryFrom, sync::Arc, sync::OnceLock};
+use std::{borrow::Cow, char, convert::TryFrom, sync::Arc};
+
+#[cfg(target_os = "macos")]
+use {
+    core_foundation::{base::CFType, number::CFNumber},
+    open_gpui::{Hsla, Rgba},
+    std::sync::OnceLock,
+};
+
+use crate::open_type::{apply_features_and_fallbacks, font_has_valid_traits};
 
 #[allow(non_upper_case_globals)]
 const kCGImageAlphaOnly: u32 = 7;
 
-#[link(name = "CoreText", kind = "framework")]
-unsafe extern "C" {
-    static kCTFontOpenTypeFeatureTag: CFStringRef;
-    static kCTFontOpenTypeFeatureValue: CFStringRef;
-
-    fn CTFontCreateCopyWithAttributes(
-        font: CTFontRef,
-        size: CGFloat,
-        matrix: *const CGAffineTransform,
-        attributes: CTFontDescriptorRef,
-    ) -> CTFontRef;
-}
-
-/// macOS text system using CoreText for font shaping.
-pub struct MacTextSystem(RwLock<MacTextSystemState>);
+/// Apple text system using CoreText for font shaping.
+pub struct AppleTextSystem(RwLock<AppleTextSystemState>);
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct FontKey {
@@ -80,7 +63,7 @@ struct FontKey {
     font_fallbacks: Option<FontFallbacks>,
 }
 
-struct MacTextSystemState {
+struct AppleTextSystemState {
     memory_source: MemSource,
     system_source: SystemSource,
     fonts: Vec<FontKitFont>,
@@ -90,10 +73,10 @@ struct MacTextSystemState {
     postscript_names_by_font_id: HashMap<FontId, String>,
 }
 
-impl MacTextSystem {
-    /// Create a new MacTextSystem.
+impl AppleTextSystem {
+    /// Create a new AppleTextSystem.
     pub fn new() -> Self {
-        Self(RwLock::new(MacTextSystemState {
+        Self(RwLock::new(AppleTextSystemState {
             memory_source: MemSource::empty(),
             system_source: SystemSource::new(),
             fonts: Vec::new(),
@@ -105,13 +88,13 @@ impl MacTextSystem {
     }
 }
 
-impl Default for MacTextSystem {
+impl Default for AppleTextSystem {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl PlatformTextSystem for MacTextSystem {
+impl PlatformTextSystem for AppleTextSystem {
     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
         self.0.write().add_fonts(fonts)
     }
@@ -232,6 +215,7 @@ impl PlatformTextSystem for MacTextSystem {
         TextRenderingMode::Grayscale
     }
 
+    #[cfg(target_os = "macos")]
     fn glyph_dilation_for_color(&self, color: Hsla) -> u8 {
         // When font smoothing is enabled, CoreGraphics thickens glyph strokes by an amount that
         // depends on the foreground color's luminance. We replicate the logic used by CoreGraphics
@@ -246,6 +230,7 @@ impl PlatformTextSystem for MacTextSystem {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn font_smoothing_allowed_by_user() -> bool {
     static ALLOWED: OnceLock<bool> = OnceLock::new();
     *ALLOWED.get_or_init(|| {
@@ -269,7 +254,7 @@ fn font_smoothing_allowed_by_user() -> bool {
     })
 }
 
-impl MacTextSystemState {
+impl AppleTextSystemState {
     fn add_fonts(&mut self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
         let fonts = fonts
             .into_iter()
@@ -301,89 +286,6 @@ impl MacTextSystemState {
             self.font_selections.clear();
             self.font_ids_by_font_key.clear();
         }
-        Ok(())
-    }
-
-    fn apply_features_and_fallbacks(
-        &self,
-        font: &mut FontKitFont,
-        features: &FontFeatures,
-        fallbacks: Option<&FontFallbacks>,
-    ) -> Result<()> {
-        let feature_tag = unsafe { CFString::wrap_under_get_rule(kCTFontOpenTypeFeatureTag) };
-        let feature_value = unsafe { CFString::wrap_under_get_rule(kCTFontOpenTypeFeatureValue) };
-        let features = features
-            .tag_value_list()
-            .iter()
-            .map(|(tag, value)| {
-                CFDictionary::from_CFType_pairs(&[
-                    (feature_tag.clone(), CFString::new(tag).as_CFType()),
-                    (
-                        feature_value.clone(),
-                        CFNumber::from(*value as i32).as_CFType(),
-                    ),
-                ])
-            })
-            .collect::<Vec<_>>();
-        let mut attributes = vec![(
-            unsafe { CFString::wrap_under_get_rule(kCTFontFeatureSettingsAttribute) },
-            CFArray::from_CFTypes(&features).as_CFType(),
-        )];
-        let native_font = font.native_font();
-
-        if let Some(fallbacks) = fallbacks
-            && !fallbacks.fallback_list().is_empty()
-        {
-            let properties = font.properties();
-            let mut descriptors = Vec::new();
-            for family in fallbacks.fallback_list() {
-                let family = open_gpui::font_name_with_fallbacks(family, ".AppleSystemUIFont");
-                let fallback = self
-                    .memory_source
-                    .select_family_by_name(family)
-                    .ok()
-                    .and_then(|family| select_fallback_from_family(family, &properties))
-                    .or_else(|| {
-                        self.system_source
-                            .select_family_by_name(family)
-                            .ok()
-                            .and_then(|family| select_fallback_from_family(family, &properties))
-                    });
-                if let Some(fallback) = fallback {
-                    descriptors.push(fallback.native_font().copy_descriptor());
-                }
-            }
-            let preferred_languages: CFArray<CFString> =
-                unsafe { CFArray::wrap_under_create_rule(CFLocaleCopyPreferredLanguages()) };
-            let system_fallbacks = cascade_list_for_languages(&native_font, &preferred_languages);
-            descriptors.extend(
-                system_fallbacks
-                    .iter()
-                    .filter(|descriptor| descriptor.font_path().is_some())
-                    .map(|descriptor| descriptor.clone()),
-            );
-            attributes.push((
-                unsafe { CFString::wrap_under_get_rule(kCTFontCascadeListAttribute) },
-                CFArray::from_CFTypes(&descriptors).as_CFType(),
-            ));
-        }
-
-        let descriptor = core_text::font_descriptor::new_from_attributes(
-            &CFDictionary::from_CFType_pairs(&attributes),
-        );
-        let configured = unsafe {
-            CTFontCreateCopyWithAttributes(
-                native_font.as_concrete_TypeRef(),
-                0.0,
-                std::ptr::null(),
-                descriptor.as_concrete_TypeRef(),
-            )
-        };
-        if configured.is_null() {
-            anyhow::bail!("Could not configure font {:?}", font.postscript_name());
-        }
-        let configured = unsafe { CTFont::wrap_under_create_rule(configured) };
-        *font = unsafe { FontKitFont::from_native_font(&configured) };
         Ok(())
     }
 
@@ -441,7 +343,13 @@ impl MacTextSystemState {
             if !postscript_names_seen.insert(postscript_name) {
                 continue;
             }
-            self.apply_features_and_fallbacks(&mut font, features, fallbacks)?;
+            apply_features_and_fallbacks(
+                &mut font,
+                features,
+                fallbacks,
+                &self.memory_source,
+                &self.system_source,
+            )?;
             font_ids.push(self.id_for_native_font(font.native_font()));
         }
         Ok(font_ids)
@@ -572,7 +480,7 @@ impl MacTextSystemState {
             cx.set_allows_font_subpixel_quantization(false);
             cx.set_should_subpixel_quantize_fonts(false);
 
-            if params.dilation > 0 {
+            if cfg!(target_os = "macos") && params.dilation > 0 {
                 let luminance = params.dilation as f64 * 0.25;
                 cx.set_should_smooth_fonts(true);
                 cx.set_gray_fill_color(luminance, 1.0);
@@ -610,7 +518,12 @@ impl MacTextSystemState {
 
         {
             let mut text = text;
-            let mut break_ligature = true;
+            // CoreText merges adjacent runs that end up in equal fonts, including runs of
+            // different fonts that fall back to the same one, so every other run that inserts
+            // text is set a hair larger to keep ligatures from forming across them. The first
+            // run keeps its exact size: SF tracks by its exact point size, and a nudged size
+            // draws wider or narrower than AppKit sets the same text.
+            let mut break_ligature = false;
             for run in font_runs {
                 let text_run;
                 (text_run, text) = text.split_at(run.len);
@@ -641,7 +554,9 @@ impl MacTextSystemState {
                         &font.native_font().clone_with_font_size(font_size.into()),
                     );
                 }
-                break_ligature = !break_ligature;
+                if length > 0 {
+                    break_ligature = !break_ligature;
+                }
             }
         }
         // Retrieve the glyphs from the shaped line, converting UTF16 offsets to UTF8 offsets.
@@ -729,57 +644,6 @@ impl<'a> StringIndexConverter<'a> {
         }
         self.utf8_ix = self.text.len();
     }
-}
-
-/// Rejects missing or invalid traits before font-kit reads their numeric properties.
-fn font_has_valid_traits(font: &FontKitFont) -> bool {
-    let traits = font.native_font().all_traits();
-    let valid = unsafe {
-        [
-            kCTFontSymbolicTrait,
-            kCTFontWidthTrait,
-            kCTFontWeightTrait,
-            kCTFontSlantTrait,
-        ]
-        .into_iter()
-        .all(|key| {
-            traits
-                .find(key)
-                .and_then(|value| value.downcast::<CFNumber>())
-                .is_some()
-        })
-    };
-    if !valid {
-        log::error!(
-            "Failed to read traits for font {:?}",
-            font.postscript_name()
-        );
-    }
-    valid
-}
-
-fn select_fallback_from_family(
-    family: FamilyHandle,
-    properties: &FontkitProperties,
-) -> Option<FontKitFont> {
-    let mut fonts = Vec::new();
-    let mut candidates = Vec::new();
-    for handle in family.fonts() {
-        let font = match handle.load() {
-            Ok(font) => font,
-            Err(error) => {
-                log::warn!("Error loading fallback font: {error:?}");
-                continue;
-            }
-        };
-        if !font_has_valid_traits(&font) {
-            continue;
-        }
-        candidates.push(font.properties());
-        fonts.push(font);
-    }
-    let index = font_kit::matching::find_best_match(&candidates, properties).ok()?;
-    Some(fonts.swap_remove(index))
 }
 
 fn font_kit_metrics_to_metrics(metrics: Metrics) -> FontMetrics {
@@ -973,7 +837,7 @@ mod tests {
             .map(String::from)
     }
 
-    fn assert_memory_source_contains(fonts: &MacTextSystem, family: &str) {
+    fn assert_memory_source_contains(fonts: &AppleTextSystem, family: &str) {
         let families = fonts
             .0
             .read()
@@ -987,7 +851,7 @@ mod tests {
         );
     }
 
-    fn assert_can_shape_family(fonts: &MacTextSystem, family: &str) -> FontId {
+    fn assert_can_shape_family(fonts: &AppleTextSystem, family: &str) -> FontId {
         let font_id = fonts.font_id(&font(family)).unwrap_or_else(|error| {
             panic!("failed to resolve loaded font family {family}: {error}")
         });
@@ -1036,7 +900,7 @@ mod tests {
     fn test_add_fonts_accepts_owned_and_borrowed_font_data() {
         let (family_name, font_data) = test_system_font_data();
 
-        let owned_fonts = MacTextSystem::new();
+        let owned_fonts = AppleTextSystem::new();
         owned_fonts
             .add_fonts(vec![Cow::Owned(font_data.clone())])
             .expect("owned font data should load");
@@ -1044,7 +908,7 @@ mod tests {
         assert_can_shape_family(&owned_fonts, &family_name);
 
         let borrowed_data: &'static [u8] = Box::leak(font_data.into_boxed_slice());
-        let borrowed_fonts = MacTextSystem::new();
+        let borrowed_fonts = AppleTextSystem::new();
         borrowed_fonts
             .add_fonts(vec![Cow::Borrowed(borrowed_data)])
             .expect("borrowed embedded font data should load");
@@ -1060,7 +924,7 @@ mod tests {
         let fallback_family = first_family_matching(CJK_FONT_FAMILIES, cjk_char, true)
             .expect("expected a CJK macOS font family with CJK coverage");
 
-        let fonts = MacTextSystem::new();
+        let fonts = AppleTextSystem::new();
         let mut primary_font = font(primary_family.clone());
         primary_font.fallbacks = Some(FontFallbacks::from_fonts(vec![fallback_family.clone()]));
         let primary_id = fonts.font_id(&primary_font).unwrap_or_else(|error| {
@@ -1094,7 +958,7 @@ mod tests {
 
     #[test]
     fn test_layout_line_bom_char() {
-        let fonts = MacTextSystem::new();
+        let fonts = AppleTextSystem::new();
         let font_id = fonts.font_id(&font("Helvetica")).unwrap();
         let line = "\u{feff}";
         let mut style = FontRun {
@@ -1138,7 +1002,7 @@ mod tests {
 
     #[test]
     fn test_layout_line_zwnj_insertion() {
-        let fonts = MacTextSystem::new();
+        let fonts = AppleTextSystem::new();
         let font_id = fonts.font_id(&font("Helvetica")).unwrap();
 
         let text = "hello world";
@@ -1189,7 +1053,7 @@ mod tests {
 
     #[test]
     fn test_layout_line_zwnj_edge_cases() {
-        let fonts = MacTextSystem::new();
+        let fonts = AppleTextSystem::new();
         let font_id = fonts.font_id(&font("Helvetica")).unwrap();
 
         let text = "hello";

@@ -4,8 +4,8 @@
 
 use super::*;
 use open_gpui::{
-    AtlasKey, AtlasRemoveOutcome, AtlasTile, Corners, Hsla, ImageId, PaddedBool32, PlatformAtlas,
-    RenderImageParams, RenderSvgParams,
+    AtlasKey, AtlasRemoveOutcome, AtlasTile, Corners, Hsla, ImageId, MonochromeSprite,
+    PaddedBool32, PlatformAtlas, PolychromeSprite, RenderImageParams, RenderSvgParams,
 };
 use std::borrow::Cow;
 
@@ -184,17 +184,26 @@ fn preflight_receipt_pins_actual_mixed_textures_after_key_removal() -> Result<()
             assert!(ptr::eq(&**texture, &*resident));
             let channels = if tile == monochrome { 1 } else { 4 };
             let mut bytes = vec![0; 3 * 2 * channels];
-            texture.get_bytes(
-                bytes.as_mut_ptr().cast(),
-                (3 * channels) as u64,
-                metal::region_2d(
-                    tile.bounds.origin.x.into(),
-                    tile.bounds.origin.y.into(),
-                    3,
-                    2,
-                ),
-                0,
-            );
+            // SAFETY: The preflight pins this exact tile and the destination has all six texels at the correct stride.
+            unsafe {
+                texture.getBytes_bytesPerRow_fromRegion_mipmapLevel(
+                    ptr::NonNull::from(bytes.as_mut_slice()).cast(),
+                    3 * channels,
+                    MTLRegion {
+                        origin: MTLOrigin {
+                            x: tile.bounds.origin.x.into(),
+                            y: tile.bounds.origin.y.into(),
+                            z: 0,
+                        },
+                        size: MTLSize {
+                            width: 3,
+                            height: 2,
+                            depth: 1,
+                        },
+                    },
+                    0,
+                );
+            }
             assert_eq!(bytes, vec![97; 3 * 2 * channels]);
         }
         drop(receipt);

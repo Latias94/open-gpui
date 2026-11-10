@@ -32,6 +32,7 @@ bench-support = ["profiler", "dep:criterion", "dep:open_gpui_bench_metrics"]
 bench = ["bench-support"]
 inspector = ["open_gpui_macros/inspector"]
 leak-detection = []
+font-kit = []
 wayland = []
 x11 = [
     "scap?/x11",
@@ -147,13 +148,7 @@ uuid = { workspace = true, features = ["js"] }
 async-channel = { workspace = true, features = ["std"] }
 
 
-[target.'cfg(target_os = "macos")'.dependencies]
-core-graphics = "0.24"
-core-text = "21"
-font-kit = { package = "open-gpui-font-kit", version = "0.14.3", optional = true }
-log.workspace = true
-open_gpui_media.workspace = true
-objc2 = { version = "0.6", optional = true }
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 objc2-core-foundation.workspace = true
 objc2-core-video.workspace = true
 
@@ -188,7 +183,3 @@ open_gpui_http_client = { workspace = true, features = ["test-support"] }
 
 [build-dependencies]
 embed-resource = { version = "3.0.11", optional = true }
-
-[target.'cfg(target_os = "macos")'.build-dependencies]
-bindgen = "0.72"
-cbindgen = { version = "0.29", default-features = false }

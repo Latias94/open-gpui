@@ -109,7 +109,7 @@ pub fn current_headless_renderer()
     #[cfg(target_os = "macos")]
     {
         Ok(Some(Box::new(
-            open_gpui_macos::metal_renderer::MetalHeadlessRenderer::new()?,
+            open_gpui_apple::metal_renderer::MetalHeadlessRenderer::new()?,
         )))
     }
 

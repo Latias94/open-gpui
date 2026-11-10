@@ -1,7 +1,7 @@
 use super::*;
-use crate::{MacDispatcher, MacPlatform};
+use crate::AppleDispatcher;
 use objc2::rc::{Weak, autoreleasepool};
-use open_gpui::{BackgroundExecutor, Platform, PlatformDispatcher};
+use open_gpui::{BackgroundExecutor, PlatformDispatcher};
 use std::{
     cell::RefCell,
     sync::{Arc, Mutex},
@@ -101,7 +101,7 @@ impl ObservedActivity {
 #[test]
 fn dispatcher_keeps_independent_app_nap_activities_alive_outside_the_autorelease_pool() {
     let (first, second) = autoreleasepool(|_| {
-        let dispatcher = MacDispatcher::new();
+        let dispatcher = AppleDispatcher::new();
         (
             dispatcher.prevent_app_nap("first native activity"),
             dispatcher.prevent_app_nap("second native activity"),
@@ -139,7 +139,7 @@ fn dispatcher_keeps_independent_app_nap_activities_alive_outside_the_autorelease
 #[test]
 fn background_executor_guard_outlives_its_executor_and_ends_on_another_thread() {
     let guard = autoreleasepool(|_| {
-        let executor = BackgroundExecutor::new(Arc::new(MacDispatcher::new()));
+        let executor = BackgroundExecutor::new(Arc::new(AppleDispatcher::new()));
         executor.prevent_app_nap("background activity β")
     });
     let [activity]: [ObservedActivity; 1] = take_activities().try_into().unwrap();
@@ -166,7 +166,7 @@ fn background_executor_guard_outlives_its_executor_and_ends_on_another_thread() 
 #[cfg(panic = "unwind")]
 fn unwinding_an_inner_activity_preserves_the_outer_native_activity() {
     let outer = autoreleasepool(|_| {
-        let dispatcher = MacDispatcher::new();
+        let dispatcher = AppleDispatcher::new();
         let outer = dispatcher.prevent_app_nap("outer activity");
         let result = std::panic::catch_unwind(|| {
             let _inner = dispatcher.prevent_app_nap("inner activity");
@@ -182,41 +182,4 @@ fn unwinding_an_inner_activity_preserves_the_outer_native_activity() {
     drop(outer);
     inner_activity.assert_ended_once_on(thread::current().id());
     outer_activity.assert_ended_once_on(thread::current().id());
-}
-
-#[test]
-fn platform_idle_sleep_guards_outlive_the_platform_and_unpolled_tasks_release() {
-    let (guard, abandoned_task) = autoreleasepool(|_| {
-        let platform = MacPlatform::new(true);
-        let guard = futures::executor::block_on(
-            platform.prevent_idle_sleep("platform idle sleep activity"),
-        )
-        .unwrap();
-        let abandoned_task = platform.prevent_idle_sleep("abandoned idle sleep activity");
-        (guard, abandoned_task)
-    });
-    let [activity, abandoned_activity]: [ObservedActivity; 2] =
-        take_activities().try_into().unwrap();
-    assert_eq!(activity.reason, "platform idle sleep activity");
-    assert_eq!(abandoned_activity.reason, "abandoned idle sleep activity");
-    assert_ne!(
-        activity.activity_address,
-        abandoned_activity.activity_address
-    );
-    for activity in [&activity, &abandoned_activity] {
-        assert_eq!(activity.options, NSActivityOptions::UserInitiated);
-        assert!(
-            activity
-                .options
-                .contains(NSActivityOptions::IdleSystemSleepDisabled)
-        );
-        activity.assert_active();
-    }
-
-    drop(abandoned_task);
-    abandoned_activity.assert_ended_once_on(thread::current().id());
-    activity.assert_active();
-    drop(guard);
-    abandoned_activity.assert_ended_once_on(thread::current().id());
-    activity.assert_ended_once_on(thread::current().id());
 }

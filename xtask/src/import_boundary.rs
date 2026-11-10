@@ -21,6 +21,7 @@ const DISALLOWED_ZED_GIT_SOURCES: &[&str] = &[
 const MOTION_MANIFEST_PATH: &str = "crates/motion/Cargo.toml";
 const DISALLOWED_MOTION_DEPENDENCY_NAMES: &[&str] = &[
     "open-gpui",
+    "open-gpui-apple",
     "open-gpui-docking",
     "open-gpui-linux",
     "open-gpui-macos",
@@ -31,6 +32,7 @@ const DISALLOWED_MOTION_DEPENDENCY_NAMES: &[&str] = &[
     "open-gpui-wgpu",
     "open-gpui-windows",
     "open_gpui",
+    "open_gpui_apple",
     "open_gpui_docking",
     "open_gpui_linux",
     "open_gpui_macos",

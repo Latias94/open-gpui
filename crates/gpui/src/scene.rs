@@ -4,7 +4,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 use crate::PlatformPixelBuffer;
 use crate::{
     AtlasTextureInstanceId, AtlasTile, Background, Bounds, Corners, Edges, Hsla, Pixels, Point,
@@ -1316,7 +1316,7 @@ pub struct PaintSurface {
     pub bounds: Bounds<ScaledPixels>,
     pub clip: ClipEnvelope,
     pub(crate) transform: PrimitiveTransform,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub image_buffer: PlatformPixelBuffer,
 }
 

@@ -4,11 +4,16 @@
 use super::*;
 use open_gpui::{AtlasAccessOutcome, ImageId, RenderImageParams, point, size};
 
+#[expect(
+    clippy::arc_with_non_send_sync,
+    reason = "PlatformAtlas uses Arc without requiring Send or Sync"
+)]
 fn create_atlas() -> Result<Arc<MetalAtlas>> {
-    let device = Device::system_default()
+    let device = objc2_metal::MTLCreateSystemDefaultDevice()
         .context("native Metal atlas qualification requires an available Metal device")?;
-    let is_apple_gpu = device.supports_family(metal::MTLGPUFamily::Apple1);
-    Ok(Arc::new(MetalAtlas::new(device, is_apple_gpu)))
+    let supports_shared_storage =
+        cfg!(target_os = "ios") || device.supportsFamily(objc2_metal::MTLGPUFamily::Apple1);
+    Ok(Arc::new(MetalAtlas::new(device, supports_shared_storage)))
 }
 
 fn image_key(image_id: usize) -> AtlasKey {
@@ -47,17 +52,26 @@ fn read_tile(atlas: &MetalAtlas, tile: AtlasTile) -> Result<Vec<u8>> {
     };
     let row_bytes = tile.bounds.size.width.0 as usize * channels;
     let mut bytes = vec![0; row_bytes * tile.bounds.size.height.0 as usize];
-    texture.get_bytes(
-        bytes.as_mut_ptr().cast(),
-        row_bytes as u64,
-        metal::region_2d(
-            tile.bounds.origin.x.into(),
-            tile.bounds.origin.y.into(),
-            tile.bounds.size.width.into(),
-            tile.bounds.size.height.into(),
-        ),
-        0,
-    );
+    // SAFETY: The destination holds every row of this resident tile at the texture's channel width.
+    unsafe {
+        texture.getBytes_bytesPerRow_fromRegion_mipmapLevel(
+            std::ptr::NonNull::from(bytes.as_mut_slice()).cast(),
+            row_bytes,
+            MTLRegion {
+                origin: MTLOrigin {
+                    x: tile.bounds.origin.x.into(),
+                    y: tile.bounds.origin.y.into(),
+                    z: 0,
+                },
+                size: MTLSize {
+                    width: tile.bounds.size.width.into(),
+                    height: tile.bounds.size.height.into(),
+                    depth: 1,
+                },
+            },
+            0,
+        );
+    }
     Ok(bytes)
 }
 
@@ -403,24 +417,27 @@ fn failed_backend_upload_cancels_its_slot_and_allows_retry() -> Result<()> {
     let key = image_key(13);
     {
         let mut state = atlas.0.lock();
-        let descriptor = metal::TextureDescriptor::new();
-        descriptor.set_width(1);
-        descriptor.set_height(1);
-        descriptor.set_pixel_format(metal::MTLPixelFormat::BGRA8Unorm);
-        descriptor.set_storage_mode(if state.backend.is_apple_gpu {
-            metal::MTLStorageMode::Shared
+        let descriptor = MTLTextureDescriptor::new();
+        // SAFETY: The 1x1 control uses positive dimensions supported by every Metal device.
+        unsafe {
+            descriptor.setWidth(1);
+            descriptor.setHeight(1);
+        }
+        descriptor.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
+        descriptor.setStorageMode(if state.backend.supports_shared_storage {
+            MTLStorageMode::Shared
         } else {
-            metal::MTLStorageMode::Managed
+            MTLStorageMode::Managed
         });
         let undersized = state
             .backend
             .device
-            .try_new_texture(&descriptor)
+            .newTextureWithDescriptor(&descriptor)
             .context("creating refusal control")?;
         state
             .backend
             .push_texture(pixels(8, 8), AtlasTextureKind::Polychrome)?
-            .metal_texture = AssertSend(undersized);
+            .metal_texture = undersized;
     }
     assert!(insert_image(&atlas, key.clone(), pixels(3, 2), 19).is_err());
     assert!(!atlas.contains(&key));
@@ -457,12 +474,24 @@ fn test_texture_upload_preserves_pixel_layout() -> Result<()> {
             &AtlasUpload::new(kind, pixels(3, 2), &bytes)?,
         )?;
         let mut actual = vec![0; 8 * 8 * channels];
-        texture.metal_texture.get_bytes(
-            actual.as_mut_ptr().cast(),
-            (8 * channels) as u64,
-            metal::region_2d(0, 0, 8, 8),
-            0,
-        );
+        // SAFETY: The destination contains all 8x8 texels with the format's channel width.
+        unsafe {
+            texture
+                .metal_texture
+                .getBytes_bytesPerRow_fromRegion_mipmapLevel(
+                    std::ptr::NonNull::from(actual.as_mut_slice()).cast(),
+                    8 * channels,
+                    MTLRegion {
+                        origin: MTLOrigin { x: 0, y: 0, z: 0 },
+                        size: MTLSize {
+                            width: 8,
+                            height: 8,
+                            depth: 1,
+                        },
+                    },
+                    0,
+                );
+        }
         let mut expected = vec![0; actual.len()];
         for row in 0..2 {
             let destination = ((row + 3) * 8 + 2) * channels;

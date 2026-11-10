@@ -93,6 +93,7 @@ mod macos {
                     display_id: None,
                     window_min_size: None,
                     tabbing_identifier: None,
+                    use_display_p3: false,
                 },
             )
             .expect("a native window requires a macOS GUI session and Metal device");
@@ -203,20 +204,16 @@ mod macos {
                 let native_override: Option<Retained<NSAppearance>> =
                     unsafe { objc2::msg_send![&*restore.app, appearance] };
                 assert_eq!(
-                    native_override
+                    &*native_override
                         .expect("explicit application appearance")
-                        .name()
-                        .as_ref(),
+                        .name(),
                     name
                 );
                 assert_eq!(platform.window_appearance(), expected);
                 assert_eq!(window.appearance(), expected);
                 assert_eq!(later_window.appearance(), expected);
-                assert_eq!(effective_appearance(&native_window).name().as_ref(), name);
-                assert_eq!(
-                    effective_appearance(&later_native_window).name().as_ref(),
-                    name
-                );
+                assert_eq!(&*effective_appearance(&native_window).name(), name);
+                assert_eq!(&*effective_appearance(&later_native_window).name(), name);
                 wait_for_native(
                     || {
                         let _ = effective_appearance(&view);

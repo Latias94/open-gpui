@@ -37,7 +37,7 @@ open_gpui_platform = { package = "open-gpui-platform", path = "../../../crates/g
 
 [target.'cfg(target_os = "macos")'.dependencies]
 open_gpui_platform = { package = "open-gpui-platform", path = "../../../crates/gpui_platform", default-features = false, features = ["font-kit"] }
-open_gpui_macos = { package = "open-gpui-macos", path = "../../../crates/gpui_macos", default-features = false }
+open_gpui_apple = { package = "open-gpui-apple", path = "../../../crates/gpui_apple", default-features = false }
 core-foundation = "=0.10.1"
 
 [target.'cfg(target_os = "windows")'.dev-dependencies]

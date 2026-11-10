@@ -193,7 +193,7 @@ mod runtime {
 #[cfg(target_os = "macos")]
 mod keychain_errors {
     use open_gpui::Result;
-    use open_gpui_macos::keychain::{KeychainError, KeychainOperation};
+    use open_gpui_apple::keychain::{KeychainError, KeychainOperation};
 
     #[test]
     fn downstream_constructed_keychain_security_errors_keep_operation_and_status() {
