@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-11T04:55:40+08:00
+timestamp: 2026-11-11T05:43:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -18,6 +18,20 @@ verified_by:
 
 # Current State
 
+- Official Canvas font fallback and selected-face reporting are implemented at
+  `f2526df594ae975bf8e234cc2e8ed0e36a871dfd`. The complete immutable policy, eligibility,
+  measurement/raster, glyph cache and replacement owners reuse TextSystem and the atlas.
+  The [qualification](../../verification.md#web-canvas-font-fallback) records reproduced stock
+  Inter-family and UTF-16 import defects, bounded owning fixes and corrected obsolete blur
+  expectations under official browser activity. Cosmic 52/52, final Web 47/47 and ordinary
+  independent 1/1 pass. Complete actual WebGL/WebGPU/Auto smoke retains original PNG/resize,
+  input/capture/docking/activation and all identity/clipboard/text/Canvas/touch workflows.
+  Affected host/wasm correctness Clippy, optional shared-memory wasm, formatting and static
+  gates pass; all five lanes close without reviewed P1/P2. OS IME/mobile/browser coverage
+  elsewhere, contextual CJK and numeric costs remain unqualified. Remaining platform/render/
+  logging/API dispositions and the real Nara GPU/Host/View consumer still precede separate
+  maintenance; no full fixed-target or foundation gate closes.
+
 - Web text sessions and viewport/insets are implemented at
   `7a79a113733e8f4aad1fb6ed2232e66ec171c26a`. Complete official textarea/configuration,
   editable UTF-16 context, selection/composition and keyboard controls use existing input leases,
@@ -29,8 +43,9 @@ verified_by:
   affected correctness Clippy, Linux production and independent all-target compilation,
   format and existing static gates. All nine lanes close without remaining reviewed P1/P2.
   Actual OS IME, mobile keyboard/nonzero safe areas, Apple execution and numeric costs remain
-  unqualified. Canvas fallback/selected-face and remaining platform/render/logging/API
-  dispositions still precede the real Nara GPU/Host/View consumer and separate maintenance.
+  unqualified. The subsequent Canvas successor above owns font fallback/selected-face and the
+  reproduced import correction. Remaining platform/render/logging/API dispositions still
+  precede the real Nara GPU/Host/View consumer and separate maintenance.
   Full fixed-target and foundation gates remain open.
 
 - Native regions, layer-shell controls, simple fullscreen and anchored popups are implemented at
@@ -1156,10 +1171,11 @@ historical scope and is not current branch or CI qualification.
   scroll/padding/hover, cursor/native file drag, process/dedicated/string and HTTP/download/
   archive support, canonical paths, complete utility composition/native helpers, source-over/
   native child composition, Windows dialog/host/input safety, native restoration/attention and
-  native regions/layer-shell/fullscreen/popups and complete Web text/viewport,
+  native regions/layer-shell/fullscreen/popups, complete Web text/viewport and official Canvas
+  font fallback/selected-face reporting,
   rather than treating the earlier
   public-Platform audit as exhaustive. Continue the remaining
-  Canvas fallback/selected-face, Wayland IME/effects/XKB, X11 metadata, Mac native input/AppKit,
+  Wayland IME/effects/XKB, X11 metadata, Mac native input/AppKit,
   renderer batching and logging groups, plus the final public-method/dispatch dispositions,
   in their recorded prerequisite order. Build on qualified
   [shared Apple topology](../../verification.md#shared-apple-framework-topology) and

@@ -8815,7 +8815,8 @@ consumer remain separate. This unit does not close full fixed-target or foundati
 
 ## Web Canvas Font Fallback
 
-This unit follows `7a79a113733e8f4aad1fb6ed2232e66ec171c26a` against fixed Zed
+Implemented at `f2526df594ae975bf8e234cc2e8ed0e36a871dfd`, this unit follows
+`7a79a113733e8f4aad1fb6ed2232e66ec171c26a` against fixed Zed
 `635026fabc38440fce5e1767d125026a17b12012`. Complete official `7960b2a7c9568e90fbe0727332149e5b2a5fd57a`
 and text-default emoji correction `87f65de697` supply the public immutable policy, complete-
 grapheme eligibility, OffscreenCanvas measurement/raster, stable glyph cache and in-place run

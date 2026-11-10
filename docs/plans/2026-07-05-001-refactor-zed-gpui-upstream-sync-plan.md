@@ -3360,6 +3360,19 @@ dependency resolution and source-specific adaptations without unrelated lockfile
 
 ## Maintained Baseline Before Engine Adaptation
 
+The [Canvas fallback record](../verification.md#web-canvas-font-fallback) qualifies
+`f2526df594ae975bf8e234cc2e8ed0e36a871dfd`: complete official policy/eligibility/measurement/
+raster/cache/replacement and actual selected-face APIs use existing TextSystem/atlas owners.
+Concrete bundled-family and UTF-16 input defects receive owning fixes; old blur expectations
+follow official browser activity instead of reverting it. Cosmic 52/52, final Web 47/47 and
+ordinary independent 1/1 pass. The complete real Edge WebGL/WebGPU/Auto workflow passes all
+original renderer/resize PNG, input/capture/docking/activation and identity/clipboard/text/
+Canvas/touch controls. Affected host/wasm correctness Clippy, optional shared-memory production
+wasm and format/static gates pass. Five lanes close without reviewed P1/P2. Actual OS IME,
+mobile/browser font coverage elsewhere, general CJK shaping and numeric costs remain
+unqualified. Continue remaining Wayland/X11/Mac, renderer/logging and final API/dispatch
+dispositions before the real Nara GPU/Host/View consumer and separate maintenance handoff.
+
 The [Web text/viewport record](../verification.md#web-text-sessions-and-viewport) qualifies
 `7a79a113733e8f4aad1fb6ed2232e66ec171c26a`: complete official text mirroring/configuration,
 editable UTF-16 context, keyboard controls and viewport/inset snapshots use accepted sessions,
