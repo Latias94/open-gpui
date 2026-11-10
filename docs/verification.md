@@ -8418,6 +8418,118 @@ focus/Alt+Tab, nested overwrite confirmations, ownerless modal dialogs and autom
 timer cancellation remain manual scenarios unless separately executed. Official source
 adoption and its unchanged policy coverage do not imply those observations or numeric costs.
 
+## Native Window State And Attention
+
+Implementation: `9b671ed5148ec8de27aab4ffa0f55971142c621d`.
+
+This successor adopts complete official `33c6212b055fa8a97b17c8653311c9ccab7fb3b6`,
+`905e955a702707cd81a2e5bae9b381a7a9c7f614`,
+`50e399332c120cc67a616fd637888bffc70e7906` and
+`4d1935b8d00320841da476ec38c7b7747abf6f09`, including fixed-target restoration follow-ups.
+Core exposes the official opaque state query/restore and attention methods. The Mac owner
+retains the archiver delegate, unarchiver subclass, macOS 15 restoration options, older-system
+default and native/pending/transitioning fullscreen exclusions. Product workspace persistence
+and archive compatibility stay with the caller and OS.
+
+The fork restores through the existing post-borrow native command owner under ADR 0029.
+`RestoreNativeWindowState` owns an Arc byte slice; the command enum becomes Clone rather than
+Copy. The original FIFO, exact WindowId, weak dispatcher, liveness and native callback ingress
+remain authoritative. No archive bytes enter diagnostics, no second restoration queue is
+introduced, and command dispatch cannot settle a placement or activation ticket. Mac command
+wrappers are non-owning, typed Objective-C objects stay retained across AppKit calls, and state
+locks are released before calls that may reenter. Live noninteractive windows can restore;
+irreversible native teardown quiescence rejects restoration, including after native reentry.
+
+Windows requests one official FlashWindowEx flash. Its delayed task holds a weak window,
+rejects native terminal/quiesced/shutdown state before resolving HWND userdata, then validates
+the exact registered generation and foreground state. Mac informational attention checks the
+same original live native target on the foreground executor. X11 preserves unrelated WM_HINTS
+and clears urgency on the existing inactive-to-active edge. Wayland attention remains the
+official no-op; unsupported native-state backends return None and dispatch Unsupported.
+
+The first public signature compile exposes trait-object method-item lifetime coercion in the
+new test, corrected with noncapturing public-call closures. Initial runtime passes 24/25
+(`eae1a62e-32a6-4014-899c-7e5846ffc295`): the new close fixture incorrectly expects Stale where
+the existing native command owner reports Closed. Its exact terminal assertion is corrected;
+old-target non-dispatch, unchanged bytes and replacement isolation assertions remain intact.
+
+One bounded correctness review finds and closes two fork integration defects: TestWindow must
+mirror native teardown refusal rather than treat it as ordinary disabled input, and Windows
+must reject a retired owner before resolving a potentially reused HWND. New controls distinguish
+live input-policy refusal from irreversible teardown, repeat checks after native reentry, and
+retain the retired Rust owner through actual queued-task execution. Review closure does not
+itself claim test execution. Trust unchanged official native algorithms and focus qualification
+on these ownership, command and public-consumer seams.
+
+Corrected Core/native-command and public controls pass 25/25
+(`818fed5e-c1af-4358-b38e-f6a3690fda1f`). They execute exact caller-buffer independence,
+snapshot copies, ordered post-borrow dispatch, close/replacement isolation, input-policy and
+teardown distinctions, native callback reentry and public unsupported services. Existing
+activation, panic and native input controls remain intact. The tests use TestPlatform rather
+than claiming AppKit restoration.
+
+Affected actual Windows native controls pass 5/5
+(`390be01c-5199-42d2-95ae-7669a0737772`). The new hidden-HWND consumer observes unsupported
+restoration's exact Rejected diagnostic without a domain generation or changed bounds. It
+queues attention and retires the original window, keeping the terminal Rust owner alive until
+the actual foreground task executes. Its sole remaining strong reference proves that the task
+does not retain that owner; the owner and platform then release. Existing initial-presentation
+rejection/retry, registration replacement, quiesced revocation and failed-destruction retry
+controls pass in the same run. This proves lifetime/no-op seams, not visible taskbar flashes.
+
+The independently locked ordinary consumer passes 1/1 in default type-only mode
+(`70516972-a2b3-4449-acc7-4c13b34db170`) and 2/2 with bench-support
+(`3cfb356c-d775-4de8-b5af-60e8f4baafe0`). The latter executes an ordinary embedded headless
+App without test-support, confirms unsupported query/restore and attention calls preserve
+bounds, then closes and shuts down normally. A typed uninvoked closure is not native execution.
+
+Affected Core/Windows all-target/all-feature correctness Clippy and the independently locked
+all-target/all-feature consumer check pass on Rust 1.95, with non-correctness warnings. The
+selected production Web backend compiles for wasm32 with the existing LLVM 22.1.6 C compiler
+and archiver. Root formatting and independently locked formatting checks pass. Existing
+import-boundary, public-API, document and release scans pass; workflow YAML parses after a
+new-step indentation correction. These local workflow edits do not claim remote CI execution.
+
+The initial Mac foreign Clippy attempt stops in the newly imported compression dependency:
+automatic MinGW cc does not accept the Apple target flags. Selecting existing LLVM 22.1.6
+then exposes missing target C headers. Official Zig 0.16.0 is installed under F:/MySoftware
+after its download-index SHA-256 matches. Its Darwin headers with LLVM produce an actual
+arm64 Mach-O C object at the macOS 12 deployment target; no project dependency, global PATH
+or fake system header changes are made. Zig's direct cc driver does not accept cc-rs's arm64
+target spelling, so the qualification uses LLVM with the target headers instead. This C
+probe alone does not qualify the Rust Mac owner, Apple framework linking or desktop execution.
+
+With compression compiled, foreign checking reaches the new Mac code and exposes five binding
+errors. Initializer receivers now use objc2's owned `Allocated<T>` rather than raw pointers,
+preserving typed Retained success/error custody. Dynamic method registration follows the
+official inferred receiver spelling instead of an over-general explicit reference lifetime.
+The archiver/unarchiver, failure policy, fullscreen exclusions and original native identity
+checks are unchanged by these type corrections.
+
+Final selected-feature Mac all-target foreign correctness Clippy passes for
+`aarch64-apple-darwin`, including the test targets, with non-correctness warnings. The custom
+unarchiver allocation uses its typed class reference so objc2 preserves the allocation's init
+semantics. The exact selection is `runtime_shaders,font-kit,test-support`, without benchmark
+support; LLVM 22.1.6 and Zig 0.16.0's Darwin headers compile the C compression closure at the
+existing macOS 12 floor. This is foreign compilation, not Apple linking or execution. Actual
+archive round trips, Space restoration, fullscreen transition behavior and attention indicators
+remain native Apple gates. No compiler-floor or dependency-version change is made.
+
+Final locked X11/Wayland production compilation passes on actual Linux Rust 1.95 through WSL,
+using the explicit Linux target and existing shared build root. The initial offline attempt
+lacks the newly selected fixed async-process revision in WSL's cache. Cache/download population
+resolves that prerequisite; one owned intermediate build is interrupted for a process-local
+proxy retry, and the final selected backend check completes. These are dependency/tooling
+attempts, not failed urgency or restoration runtime tests. No native Linux desktop attention or
+archive execution is claimed. The previously recorded default WSLg thread-exit failure remains
+unresolved and outside this no-op/command/compilation qualification.
+
+All three implementation lanes and the bounded independent correctness lane are closed.
+Whitespace, existing static/document scans and workflow YAML parsing pass. No owned Cargo
+remains active, no external dependency version/source is changed by this unit, and no remote
+publication occurs. Actual OS indicators/restoration, numerical costs, remaining fixed-target
+differences and the real Nara GPU/Host/View consumer retain separate gates.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

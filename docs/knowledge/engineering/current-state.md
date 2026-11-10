@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-11T00:29:00+08:00
+timestamp: 2026-11-11T01:34:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,20 @@ verified_by:
 ---
 
 # Current State
+
+- Native state restoration and attention are implemented at
+  `9b671ed5148ec8de27aab4ffa0f55971142c621d`. Complete official Mac archives/restoration,
+  Windows single flash, Mac informational attention and X11 urgency use the existing native
+  owners. Restoration owns bytes in the post-borrow queue, accepts live noninteractive targets
+  and rejects irreversible native teardown, without introducing a placement/persistence owner.
+  The [qualification](../../verification.md#native-window-state-and-attention) records corrected
+  Core/public 25/25, actual Windows lifetime/no-op 5/5, independent default/runtime 1/1 and 2/2,
+  affected host/consumer checks, host correctness Clippy, Mac all-target foreign correctness
+  Clippy, Linux X11/Wayland and Web production compilation. Two reviewed lifecycle defects and
+  binding/toolchain failures are corrected; all four lanes close without remaining P1/P2.
+  Actual OS archive/Space/attention behavior, the earlier WSLg exit failure, numerical costs,
+  remaining backend/render/logging reconciliation and the real Nara GPU/Host/View consumer
+  remain open before separate maintenance. Full target/foundation gates stay open.
 
 - Windows dialogs and native host/input safety are implemented at
   `34e6b6a963df3b775661dbf13bdd374cd4be509e`. Complete official STA/cancellation/serialization,
@@ -1109,7 +1123,8 @@ historical scope and is not current branch or CI qualification.
   after qualified identity/diagnostics/list precision, element layout/drawing, gestures/
   scroll/padding/hover, cursor/native file drag, process/dedicated/string and HTTP/download/
   archive support, canonical paths, complete utility composition/native helpers, source-over/
-  native child composition and Windows dialog/host/input safety, rather than treating the earlier
+  native child composition, Windows dialog/host/input safety and native restoration/attention,
+  rather than treating the earlier
   public-Platform audit as exhaustive. Continue the remaining
   supporting utility/dependency and backend/render groups, including native popup,
   in their recorded prerequisite order. Build on qualified

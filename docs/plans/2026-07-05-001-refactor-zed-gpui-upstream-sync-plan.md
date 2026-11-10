@@ -3217,6 +3217,20 @@ do not justify repeating unavailable benchmark matrices or claiming native execu
 
 ## Maintained Baseline Before Engine Adaptation
 
+The [native state/attention record](../verification.md#native-window-state-and-attention)
+qualifies `9b671ed5148ec8de27aab4ffa0f55971142c621d`: complete official restoration, attention
+and urgency mechanisms retain the current post-borrow command and exact native lifetime owners.
+Owned archive bytes, non-Copy commands, live noninteractive admission and native teardown refusal
+introduce no parallel persistence, placement or scheduler authority. Corrected Core/public 25/25,
+actual Windows 5/5 and independent default/runtime 1/1 and 2/2 pass. Affected host/consumer checks,
+host correctness Clippy, Mac selected all-target foreign correctness Clippy, Linux X11/Wayland
+and Web production compilation pass, with original failures and toolchain corrections recorded.
+LLVM plus verified Zig Darwin headers supplies the C compression prerequisite without dependency
+changes. All four lanes close without remaining P1/P2. Actual archive/Space/attention behavior,
+the existing WSLg exit failure, numeric costs, remaining backend/render owners and the real Nara
+GPU/Host/View consumer remain open before maintenance handoff. No full fixed-target or foundation
+gate closes here.
+
 The [Windows dialog/host safety record](../verification.md#windows-dialog-threads-and-native-host-safety)
 qualifies `34e6b6a963df3b775661dbf13bdd374cd4be509e`: complete official STA/per-owner dialogs,
 cancellation/error policy, registered accelerator routing, stationary-input correction and
