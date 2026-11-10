@@ -238,6 +238,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- DirectX ordinary/path-sprite and WGPU path-sprite alpha now use standard source-over composition. Windows DirectComposition content stays below native child windows, including renderer reconstruction; child HWNDs consequently remain above GPUI-drawn overlays.
+
 - Scroll clamping snaps recomputed padding to the same device-pixel grid as layout, avoiding phantom sub-pixel scroll ranges. Touch timer and lifecycle integration use the existing executor clock, input transactions and Window retirement boundaries.
 
 - Image object-fit preserves explicit aspect ratios and crops Cover content before applying visible-box rounded corners. SVG rasterization caps both dimensions at the official 8192px limit.

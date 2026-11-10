@@ -3131,6 +3131,29 @@ serial; unrelated UI/component/native-renderer matrices do not repeat. Actual fo
 file-limit execution, numerical costs, remaining backend/render owners and the real Nara
 GPU/Host/View consumer retain their own scope.
 
+### Source-Over Alpha And Native Child Composition Successor
+
+Continue after the qualified utility owner at `8e0517f5650` against the same fixed target.
+Complete official `e18de65b75901f8720ff9c9320bb013395de54e5` across its renderer owners:
+DirectX uses inverse-source-alpha destination alpha for ordinary and path-sprite pipelines;
+WGPU uses its standard premultiplied source-over state for path sprites. The shared Apple
+owner already contains both official source-over settings. Do not treat the earlier DirectX
+inventory row as the complete remaining scope of this cross-backend change.
+
+Adopt official `bc6fc117403dd6dc872072626fbc8269c0c06cf1` in the existing DirectComposition
+constructor so the GPUI composition tree sits below native child HWNDs, including ordinary
+device reconstruction. Child windows consequently remain above GPUI menus/popovers; this is
+the native child-window composition model, not a new embedded-UI integration or layer owner.
+Preserve current clip envelopes, atlas/resource leases, candidate/submission receipts and
+native generation/retirement. There is no fork-specific production adaptation in these settings.
+
+Trust the official configuration changes and source evidence. Compile affected Windows/WGPU
+owners and run existing actual scene-pixel/submission consumers that cover their current fork
+render paths. Do not add tests that merely repeat blend constants. Distinguish those existing
+consumer regressions from unexecuted translucent-desktop, child-HWND/WebView and real device-
+loss scenarios; native readback of a GPUI Scene alone does not observe desktop child composition.
+Record those limits without repeating unrelated whole-platform/component/compiler matrices.
+
 ## Maintained Baseline Before Engine Adaptation
 
 The [utility composition/native helper record](../verification.md#utility-composition-shells-and-development-assets)
