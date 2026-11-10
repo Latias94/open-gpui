@@ -6514,6 +6514,259 @@ with complete runtime OS identity and secondary keybindings. Full fixed-target c
 foreign-native qualification, numeric budgets, canonical docking and the actual Nara
 GPU/Host/View seam remain open before the separate maintenance-session handoff.
 
+## Runtime Platform Identity And Keybindings
+
+The November 10 successor starts after `6613f6b0075c7df818518687f06128c7b19b1619`, adopting
+complete official `389c22e1c747d1a433c3b51c176936166c9cc1cf` against unchanged fixed Zed
+`635026fabc38440fce5e1767d125026a17b12012`. Backend-reported PlatformInfo separates host OS
+from Native/Web delivery. Static keystroke/binding construction requires explicit modifiers;
+dynamic secondary input uses the App's actual mapper and runtime OS. Display, serialization,
+context defaults, Window labels, Div debug-source interaction and input simulation consume
+those same facts. Fork command, capture, edit-preview, installation and palette consumers
+migrate around the official mechanism rather than retaining a compile-target interpretation.
+
+Core/Windows all-feature production libraries pass locked Rust 1.95 checking. Focused Core
+passes 92/92 (`2bfbeb70-0958-411a-99e2-95078ce35a4c`), retaining keymap/dispatch/context,
+pending-input and keyboard-activation controls. The actual Div source-label test uses one host
+with injected Mac/Windows/Linux Web identity, checks exact displayed-label hit capture versus
+ordinary presses, and retires its root. This is rendered test-platform input, not native
+browser/GPU/scanout evidence. The first command/component test compilation lacks the
+VisualContext trait import in its new consumers; the imports are corrected without changing
+workflow assertions. Runtime qualification follows below.
+
+The official navigator classification body is extracted unchanged into the Web backend's
+private platform_info module, compiled on the host for its 33-case source matrix and used by
+actual browser report extraction. Browser extraction, getter errors, cached identity and
+real key delivery retain the existing smoke consumer's separate execution scope. Native
+host checking cannot prove Mac/Linux backend behavior or a browser's host report.
+
+DevTools command binding projection now requires the owning App mapper. Project and convert
+to owned snapshot DTOs before publication; existing thread-safe samplers read the latest
+published DTO rather than holding App or manufacturing a dummy keyboard mapping. Preserve
+the same registered probe's updates and Gallery's same-workbench refresh. Static diagnostic
+samples remain distinguishable from installed-keymap observations. Implementation and
+qualification of this seam are part of the complete consumer migration, not an API-only
+identity claim.
+
+Initial command/component focused execution passes 21/21
+(`98161df1-071b-4c7e-9dc0-533789713542`), including seven new real command/capture/preview/
+install/palette/chord workflows. The second compilation first exposes a missing OperatingSystem
+import in an existing command test module; that import is corrected before this pass. Web host
+tests pass 18/18 (`c65d2796-5c5b-4cc6-ac34-c12703deee52`), including the 33 navigator-report
+cases through the actual private production helper, and the ordinary smoke consumer passes
+production wasm checking. These results precede the mapper-preflight successor below.
+
+Independent API review identifies a newly exposed command contract gap: installation uses the
+real App mapper, while binding-syntax string preflight still only resolves OS aliases. A
+Windows shifted digit can therefore install as ctrl-$ while preflight tries ctrl-shift-4.
+String preflight must use the same App mapper and loading policy; already normalized event
+input must not be mapped a second time. Keep this distinction through action-map, Center and
+palette APIs, and qualify single-key plus pending/full-chord consumers with a changing mapper.
+
+Independent Core review also identifies an inherited fixed-target Div defect: modifier and
+click callbacks register only if secondary was already held when the debug label painted.
+The actual input-order test fails 0/1 before the correction
+(`0fdb9304-2b74-474e-a676-21d420092676`) when secondary is pressed after that clean frame.
+This is not introduced by official runtime identity. The separate fork correction registers
+label callbacks with the accepted displayed geometry, checks incoming click modifiers and
+draws the underline only while secondary is held. No forced redraw is added to the new test;
+press and release must route correctly through actual input. Retain exact projected-label
+bounds and hitbox-target admission. Later qualification follows below.
+
+Public/Div execution first passes 4/5 with a fixture predicate syntax error (`os = value`
+instead of the predicate grammar's `os == value`, `79376568-d182-49a1-9655-8bfbb24bc22c`).
+The corrected predicate reaches the next fixture error: checking internal focus metadata
+inside the remove_window borrow rather than after the owner boundary
+(`58488088-63e2-463f-8608-d39ce670e6b7`, 4/5). Keep the strict public post-retirement
+invalid-handle/empty-App-window, root/subscription release and old-prefix/timeout isolation
+assertions. The repaired fixture and both Div regressions pass 5/5
+(`aff63995-2a09-4170-bd1d-c4b112c4b373`), exercising all fourteen OS/delivery combinations
+through real rendered callbacks on the test platform. No removal/focus production contract
+is changed to satisfy the fixture.
+
+The first Windows native trajectory reaches the expected retirement boundary and then
+incorrectly enters the retired input slot via with_handler, which must raise RetiredSlot
+instead of reporting a live slot's missing handler. Initial 0/1
+(`9f68ee1c-d2a0-493e-a1e0-9c79985333ba`) and diagnostic 0/1
+(`54b1141a-958e-40d1-b363-c54375784d93`) retain this evidence. The fixture uses take's
+declared terminal-state observation after retirement, preserving zero live handler,
+resource release and successor-isolation assertions. No callback admission is widened.
+
+The repaired native trajectory passes 1/1 (`3eb8fb69-e5e8-43cf-8f15-d2165c9271df`),
+including exact registered synthetic callbacks, WM_CHAR, rendered labels/text, nonempty
+Submitted frame, GPU readback and exact resource/window retirement. This does not claim a
+physical keyboard, IME or compositor scanout. At that checkpoint the complete Core/Windows
+libraries pass 1,889/1,889 (`38190c69-1658-46d5-9086-f394c3317ba6`) with ten declared skips.
+That pass predates the sibling-focus correction below and cannot qualify its final source.
+
+A second inherited Div regression keeps keyboard focus in a sibling while hovering the debug
+source label. Its accepted-Scene underline assertion fails 0/1
+(`e2c3a771-4629-4140-995b-9ca5730d2739`). The first debug-only Window-normalization refresh
+correction still fails the focused cohort, 88/89 (`9a539ddb-eeeb-40ce-a88e-955edf6f0fc1`);
+diagnosis and final qualification follow below. No forced redraw is added to the post-input
+assertion to conceal invalidation failure. Independent DevTools review also identifies stale
+headless session fields after the owned-DTO migration. Regenerate them through the existing
+explicit-Windows App sample producer and preserve exact comparison and canary absence checks.
+
+The diagnostic 0/1 (`4adde2f5-e891-4b51-bc7b-d02c9f362833`) shows two fixture defects:
+the sibling source element never requests a hitbox, so it has no interactive debug label,
+and the underline predicate ignores the test Window's 2x scale. Add the existing occluding
+hitbox behavior and compare the logical one-pixel underline at the actual scale. An initial
+Pixels/ScaledPixels compilation mismatch is corrected with Pixels::scale. With the valid
+oracle, temporarily removing only the new Window refresh reproduces 0/1
+(`7265a533-8a77-43f8-b994-70aa97c3ffb4`). Restoring that correction passes the final focused
+Core/public cohort 92/92 (`dd1e95c4-527e-48a8-8c5a-5d30b14f1aac`). Debug modifier
+normalization now refreshes through the existing Window owner, independently of the focused
+dispatch path; the redundant Div key listener is removed. Release input adds no debug refresh.
+The initially invalid-oracle failures above are not independent evidence of production failure.
+
+The first ordinary independent run passes 3/4: the actual Windows App/mapper child passes,
+while the benchmark-platform runtime fixture asserts activation before its asynchronous
+foreground callback runs. Drain the existing threaded dispatcher and require the exact
+activation ticket's Activated result. An initial attempt uses the private snapshot field;
+the public status() accessor corrects that compilation error. Final independent execution
+passes 4/4 (`4fbfd230-46bc-4e09-8087-7903c8d90853`), without enabling test-support.
+The mapper child opens no Window and does not establish an external-loop seam. Broader Gallery
+compilation also finds the shared shortcut expectation helper still using direct Display;
+it now receives the same App's explicit OS and uses the official display(os) adapter.
+
+The existing ignored fixture producer passes 1/1
+(`a33ffb82-135c-4cdd-ac64-594901855e36`). Structural comparison of gallery-session.json
+finds exactly eight projected-count field renames and forty-eight diagnostic-source renames;
+gallery-report.json is byte-for-byte unchanged. Keep the producer equality and canary absence
+tests as the owning regression checks, rather than adopting a new fixture migration tool.
+
+Independent native review narrows the pixel claim: capture_frame re-renders the accepted scene,
+separately associated with its actual nonempty Submitted record. Readback does not sample the
+earlier swapchain buffer or prove exact shortcut glyphs. The fixture checks full shaped source,
+row ink and marker color. Review also finds that the original plain pending prefix creates no
+timer. Add an actual single-key fallback, observe it dispatch after its real one-second timeout,
+then retire a second live prefix under that same binding. Pump beyond its deadline while the
+successor remains live, retaining exact old/new calls, pending observations and release checks.
+Final native execution follows below; the original 1/1 does not qualify this added timeout path.
+
+Before executing that successor, independent review catches the late-added fallback binding
+masking the earlier chord. Register fallback followed by chord, assert the exact pending
+keystroke and unchanged calls immediately after both prefixes, and wait for an existing
+same-executor foreground barrier before retirement. The first timer task and the barrier use
+the same priority and FIFO Windows queue, so observing the barrier proves the timer task has
+reached its first poll. Exact pending and unchanged calls exclude premature completion.
+This is a fixture correction caught before execution, not a passed timer regression. Final
+Core, mapper, DevTools/Gallery and browser/native source reviews leave no confirmed P1/P2;
+execution scope remains the authority for the results below.
+
+Complete command/component/DevTools/Gallery execution passes 1,230/1,230
+(`091bb17e-3285-490d-afad-a7c4572ef127`), with only the explicit fixture-regeneration test
+skipped in the aggregate. This includes App-mapped preflight, runtime capture and tooltip
+workflows, same-probe DTO replacement/error propagation, same-workbench published samples,
+strict headless fixtures, privacy controls and existing full-window table/overlay/focus
+trajectories. Runtime is 474.915 seconds; this is qualification duration, not a product
+performance measurement. Root, ordinary-consumer and smoke-consumer source formatting follows.
+
+The final native trajectory passes 1/1 (`641da2be-c77e-447e-9260-46f932e6688e`) in 3.809
+seconds after the timeout/priority/barrier corrections. Both timed prefixes first remain
+pending without dispatching fallback; the first actually expires, and the second starts before
+exact window retirement. Original and successor calls/pending observations remain unchanged
+beyond the retired timer's deadline. Registered input, WM_CHAR, accepted-scene labels/text,
+nonempty Submitted association, DirectX scene re-render/readback and complete handler/root/
+registration/platform retirement retain their original assertions and stated pixel limits.
+
+The first complete browser execution passes original WebGL/auto/WebGPU input, capture,
+docking, activation, renderer and resize cases, then times out at the new original-host
+explicit Command control. Its original Windows-host browser probe has dispatched the secondary single
+and chord, but Command receives Shift because the new driver uses modifier bit 8. The
+[official CDP Input definition](https://chromedevtools.github.io/devtools-protocol/tot/Input/#method-dispatchKeyEvent)
+specifies Control=2, Meta/Command=4 and Shift=8, confirmed from its browser_protocol.json
+parameter description. Replace the new driver's literals with named Control/Meta constants;
+no backend/keymap change or timeout relaxation follows.
+Rebuild xtask and rerun the complete existing browser matrix, including restoration and
+clipboard successors, before claiming browser qualification.
+
+The rebuilt xtask's complete browser matrix passes on Windows/Edge with both WebGL and WebGPU
+available. It executes original-host plus ten controlled navigator samples, trusted single/
+chord/explicit Command/Control input for original/Mac/Windows/Linux cases, iPhone/iPad and five
+throwing-getter controls, and a fresh App identity read after navigator mutation in every case.
+All reports and init scripts restore before the existing clipboard permission/text/image/
+focus/retirement gate passes. Original backend/input/capture/docking/activation and renderer
+resize checks pass for WebGL, auto and WebGPU, with 22/22 fixed screenshot samples at both
+800x600 and 960x720, DPR 1. Explicit WebGL software refusal and controlled WebGPU-unavailable
+auto fallback also pass. The identity fixture's render/paint counters remain callbacks rather
+than submission/pixel receipts; separate renderer screenshots do not qualify foreign native
+OS backends, hardware loss, compositor scanout or numeric performance budgets.
+
+The complete Core/WGPU/Windows library/public checkpoint passes 2,130/2,130
+(`7b5ee647-6497-42b9-a3e1-df90b8356dee`), with ten declared interactive/global-desktop skips
+in that default aggregate. The new runtime-identity native test is qualified separately above;
+the remaining skips do not inherit its result. This final cohort supersedes the earlier 1,889
+library-only checkpoint and runs after the inherited debug refresh correction.
+
+The remaining UI core/docking/Canvas consumers pass 2,077/2,077
+(`3f6bc235-7ebd-46a5-a528-42e8bdc2f60d`), with no skips. Together with the separately
+executed component/Gallery cohort, these preserve existing composition, scoped focus,
+canvas and canonical/legacy docking consumers; they do not complete canonical-docking U4-U9.
+
+Ordinary independent integrations pass 88/88 with profiler only
+(`5d6222bf-42df-4611-92be-26fa10204fdd`) and 72/72 with no optional fixture feature
+(`867474e3-508f-42c0-a0ff-f1b773c28526`), without skips. The earlier focused bench-support
+4/4 separately executes the host App/activation workflow. These selections retain their
+explicit feature scope; the all-feature ordinary renderer/benchmark consumer follows below.
+
+Before committing, extend the valid sibling-focus oracle with pointer movement out of and
+back into the displayed label while staying inside the same hitbox. It fails 0/1
+(`33cfd747-ba02-4ae3-83c2-fb98382a66cf`): the underline remains after leaving the text.
+The inherited listener watches hitbox membership only and is absent when the frame starts
+outside the label. Register it throughout the existing hovered debug-hitbox scope and watch
+both hitbox and projected-text membership. Invalidate the existing current View; keep the
+same exact incoming-modifier/bounds/target admission for clicks and require label hover for
+the underline. No new input/cache owner or release-build behavior follows. The prior complete
+checkpoint above precedes this final debug-only correction; rerun affected Core/public/native
+cohorts and final compiler/static gates before assigning qualification to the final revision.
+
+That final focused Core/public rerun passes 92/92
+(`afe43e2f-01f0-4672-b702-c066938a533e`). The valid same-hitbox movement assertions execute
+for Mac/Windows/Linux test identities without forced post-input drawing. Independent bounded
+review finds no confirmed P1/P2 in the projected-geometry/cached-replay path; the added case
+directly exercises pointer membership and sibling focus rather than a new affine/clip matrix.
+
+After that correction, locked Rust 1.95 workspace all-target checking passes. The final complete
+Core/WGPU/Windows library/public rerun passes 2,130/2,130
+(`1043abc0-79a9-4d67-958a-4a37d7c52092`), retaining the same ten declared aggregate skips.
+This is the final shared-runtime checkpoint rather than a carry-forward of the earlier pass.
+
+The independently locked all-feature ordinary consumer passes 102/102
+(`91d0ec41-2e07-4f7d-81c3-22d36d9f50d0`), with its three declared skips. This includes the
+complete renderer/benchmark/encoding fixture selection in addition to the narrower profiler
+and feature-free cohorts above. Actual application-owned-device atlas upload/release and the
+native mapper child execute; neither is a Nara engine View or external-loop qualification.
+
+The disabled-profiler Core library/public identity cohort passes 1,393/1,393
+(`ab3ecc43-a2c3-4d24-8123-5af34d2356bb`), without skips. A final exact native trajectory
+also passes 1/1 (`56b76220-99fe-47e7-88ba-449921c8f083`) after the final debug-label source
+correction. Migration notes explicitly identify the
+required custom-Platform report and DevTools' fallible owned-snapshot callback/count field.
+
+Locked Rust 1.95 ordinary-consumer all-target/all-feature checking and correctness Clippy pass
+for Core/WGPU/Windows/Web, command/components/DevTools/Gallery and xtask. Actual Windows
+Rust 1.93 all-target/all-feature checks pass for the selected runtime/platform/component/
+command/DevTools closure and independently locked ordinary/test-support consumers; the
+hot-reload consumer also passes its all-target check. These are Windows compiler-floor
+results, not execution of cfg-excluded foreign backends. Production dependencies and compiler
+requirements do not change; the ordinary fixture adds only the existing Windows command
+dev-dependency edge. All thirteen implementation, review and successor-research threads close.
+
+Implementation is local `70b993c9660772b157546f46c4a65c0ebd4375e6`, adopting official
+`389c22e1c747d1a433c3b51c176936166c9cc1cf` under the unchanged fixed target. Final stable
+production wasm checks pass with profiler off/on. Root, ordinary and smoke source fmt checks,
+workflow YAML parsing and existing import/API/document/release checks pass; no remote CI or
+publication occurs. The final commit preserves the official mechanism and records inherited
+Div fixes, mapper preflight and owned-DTO adaptation separately in its rationale.
+
+Native Mac/Linux/FreeBSD execution, physical keyboard translation, live IME, numerical costs,
+the remaining fixed-target mechanisms, canonical-docking U4-U9 and real Nara GPU/Host/View
+integration remain open. The optional shared-memory runtime is unchanged and is not requalified
+by this unit. Continue the source-prepared restart-arguments successor; completing this scoped
+identity mechanism does not close the framework refresh or its engine-maintenance handoff.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

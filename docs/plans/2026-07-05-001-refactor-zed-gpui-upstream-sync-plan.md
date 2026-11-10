@@ -2430,7 +2430,87 @@ as their dependencies permit. These five entries neither exhaust every backend d
 qualify the fixed refresh or Nara's GPU/Host/View seam. The separate framework-maintenance
 session follows the fixed refresh and first real engine consumer, as defined above.
 
+Execution starts after `6613f6b0075c7df818518687f06128c7b19b1619`. Disjoint lanes implement
+Core identity/keystrokes, backend reporting, fork command/components, ordinary/native consumers
+and the existing browser-smoke consumer. Main owns Window/Div/input simulation, remaining
+callers and serial verification. The actual Div source-label capture needs runtime secondary
+and displayed text bounds, while pure serialization fixtures select an explicit OS. Dynamic
+loading uses the real App mapper; static explicit binding construction retains its official
+DummyKeyboardMapper implementation. DevTools sampling remains an owned-facts boundary rather
+than moving App onto a sampler thread. No qualification is inferred from this execution map.
+
+Review separates three fork correction areas from official runtime identity: debug source-label
+callbacks must capture incoming secondary state and projected-text entry/exit after a clean frame; debug
+modifier changes refresh through the existing Window input owner even with sibling focus;
+and command binding-syntax preflight uses the actual App mapper while normalized event input
+remains unmapped. DevTools converts the App-owned projection to an owned DTO before publishing
+to its existing thread-safe sampler, and updates the same long-lived Gallery workbench.
+The [qualification record](../verification.md#runtime-platform-identity-and-keybindings)
+retains original fixture errors, a valid sibling-focus red-to-green oracle and exact headless
+fixture changes. Native captures re-render accepted scenes rather than reading earlier
+swapchain submissions. Actual browser, timeout-retirement and complete-cohort results still
+own their separate qualification; no complete refresh or engine handoff follows from this unit.
+
+Implementation is `70b993c9660772b157546f46c4a65c0ebd4375e6`. Final focused Core/public
+92, complete framework/public/Windows 2,130, command/components/DevTools/Gallery 1,230 and
+UI core/docking/Canvas 2,077 pass. Independent all-feature/profiler-only/feature-free cohorts
+pass 102/88/72, plus the actual bench-platform activation/mapper selection 4 and disabled
+Core/public 1,393. The native identity trajectory passes after a real timeout-start/retirement
+barrier, preserving exact input/text/accepted-scene/Submitted/readback/lifetime assertions.
+The complete browser matrix passes original/controlled identity, trusted shortcuts and cached
+host reads alongside existing renderer/input/docking/clipboard coverage. Original fixture and
+driver failures remain recorded. Locked workspace/consumer checks, expanded correctness
+Clippy, actual Windows Rust 1.93 framework/three-consumer checks, production wasm profiler
+off/on, formatting/YAML and existing static gates pass. Thirteen lanes close. Mac/Linux native
+execution, numeric costs, full fixed-target closure and the engine consumer remain open.
+Continue the restart-arguments successor and other remaining platform dispositions.
+
+### Restart Arguments Successor
+
+After runtime-identity qualification, adopt the complete argument path from
+`715076597926d566d560b30b806749e1a2166080` and the fixed target's Windows corrections
+`4c6c4750d3f87f0b93c937c9bda7b50639c0d07d` and
+`bcf6582ce3500df93a8a39366640173e6786cea6`. This unit does not depend on live windowing-mode
+switching. Application::with_restart_arguments configures the existing App with Vec<OsString>;
+App::restart delivers the selected executable and arguments through each Platform owner.
+Preserve native bytes/code units, empty arguments and ordered argv. The application chooses
+which arguments and resolved paths to retain; Zed's updater and data-directory policy stay
+outside the framework closure.
+
+Windows must select PowerShell explicitly, encode arguments with the official UTF-16 quoting
+algorithm, and pass executable/PID/argv through child-scoped environment rather than interpolate
+paths into script source. Preserve fixed-target PowerShell discovery, including custom SCOOP.
+Keep the existing foreground executor's deferred process spawn and native shutdown/retirement
+owners. Linux retains independent positional arguments and its process-group/PID wait;
+Mac retains bundle/executable selection, open --args and asynchronous quit. TestPlatform records
+the exact request; VisualTest and Web keep their non-restarting behavior. No new dependency,
+restart transaction or process-lifecycle authority is justified by the source audit.
+
+Qualify Core builder/default/observer/one-shot/isolation cases, Windows native encoding and
+missing-shell/spawn failures, then a dedicated ordinary worker-to-recorder executable. The test
+must explicitly choose its own restart target, compare native argv, observe restart-before-quit,
+confirm worker exit and avoid leaking the temporary transport environment. Own and retire its
+process descendants through the existing native platform facilities; never restart the test
+runner or a user's application. Unit encoding equality does not qualify the actual launcher.
+Mac and Linux need their own execution gates rather than inheriting Windows evidence.
+
+The current void API consumes the request before backend launch. Missing PowerShell or failed
+shell spawn keeps the current process alive without restoring consumed options; successful
+launcher spawn does not prove the final target started. Preserve that official distinction
+instead of adding retries implicitly. The separate Restart Manager/on_quit return-contract
+change must be reconciled against the fork's existing ingress and native-retirement contracts
+in its own lifecycle disposition. This preparation is source evidence only, not implementation
+or qualification of restart arguments.
+
 ## Maintained Baseline Before Engine Adaptation
+
+Runtime identity/keybindings are qualified at `70b993c9660772b157546f46c4a65c0ebd4375e6`,
+with the exact official source and fork adaptations above. Final complete framework 2,130,
+command/components/DevTools/Gallery 1,230, other UI consumers 2,077 and ordinary all/profiler/
+off 102/88/72 pass. Actual native and full browser workflows execute, and Windows Rust 1.93,
+production wasm and static gates pass. Continue restart arguments, scoped idle-sleep guards,
+native appearance, live windowing and remaining fixed-target reconciliation before the real
+Nara GPU/Host/View consumer. This does not qualify foreign native execution or maintenance handoff.
 
 The [credential record](../verification.md#credential-storage-and-add-only-keychain) qualifies
 Windows and ordinary consumers at `3f943ea373f4da87a4c8b0f7d5a84e7101874824`, with the

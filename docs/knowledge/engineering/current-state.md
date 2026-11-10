@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-10T05:48:00+08:00
+timestamp: 2026-11-10T08:21:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,23 @@ verified_by:
 ---
 
 # Current State
+
+- Runtime platform identity/keybindings are implemented at
+  `70b993c9660772b157546f46c4a65c0ebd4375e6`, from official `389c22e1c747` against fixed
+  target `635026fabc38440fce5e1767d125026a17b12012`. Backend/App identity, static/dynamic
+  parsing, actual mapper loading, host labels/contexts and fork command/components migrate
+  together. DevTools publishes App-prepared owned facts to its existing sampler. Inherited
+  source-label click/secondary/sibling-focus/text-boundary fixes retain distinct provenance.
+  Final focused 92, framework/public/Windows 2,130, command/components/DevTools/Gallery 1,230,
+  other UI consumers 2,077, ordinary all/profiler/off 102/88/72 and disabled Core/public 1,393
+  pass. Actual native timed-prefix retirement, accepted-scene/Submitted/readback and full
+  browser host controls/trusted input/cache/restoration execute. The
+  [record](../../verification.md#runtime-platform-identity-and-keybindings) preserves original
+  fixture/driver failures, exact skips and pixel limits. Locked workspace/consumer checks,
+  correctness Clippy, actual Windows Rust 1.93 framework/three-consumer checks, stable wasm
+  profiler off/on, formatting/YAML and existing static gates pass. Thirteen threads close.
+  Foreign native execution, numeric budgets, complete fixed-target reconciliation and the
+  actual Nara consumer remain open before maintenance handoff.
 
 - Credential contracts are implemented at `3f943ea373f4da87a4c8b0f7d5a84e7101874824`, after
   separate clipboard-fixture correction `510cfc5613dd02d38d30f2497587cf6abb2995d9`. Complete
@@ -843,10 +860,10 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Continue the [runtime platform and secondary-keybinding successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#runtime-platform-identity-and-secondary-keybindings-successor)
-  after the scoped credential qualification. Carry actual host OS through parsing, mapping,
-  formatting, dispatch, Div and fork command/component consumers. The bounded public audit also
-  queues windowing-mode switching, idle-sleep guards, restart arguments and native appearance.
+- Continue the [restart-arguments successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#restart-arguments-successor)
+  after scoped runtime-identity qualification. Preserve native argv through the existing
+  Application/App/backend owners and qualify a dedicated worker-to-recorder launcher.
+  The bounded public audit also queues windowing-mode switching, idle-sleep guards and native appearance.
   Actual Mac Keychain and Linux Secret Service gates remain open; a source port is not native proof.
   Keep the [Mac pasteboard native gates](../../verification.md#desktop-clipboard-normalization-and-owned-pasteboard)
   open until actual Apple compilation and all twelve tests execute. Full fixed-target closure
