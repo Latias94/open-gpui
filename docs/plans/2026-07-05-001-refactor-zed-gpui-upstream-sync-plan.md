@@ -3088,6 +3088,18 @@ fallback remains outside this framework closure.
 
 ## Maintained Baseline Before Engine Adaptation
 
+The [portable-path record](../verification.md#portable-paths-and-utility-consumers) qualifies
+`a4e6fd03642fdcdc25b507271682a6d1dbfeb26c`: the complete official Apache path owner replaces
+duplicate utility types through actual utility/native-dialog and independent public consumers.
+The same complete utility source adopts UNC/position parsing, lenient globs and extension
+sorting. Focused 89/89, independent public 5/5 and downstream real-home 1/1 pass; affected
+path/util/Windows compilation/correctness Clippy, actual package Rust 1.93/wasm compilation and
+format/static gates pass. Three scoped lanes close without P1/P2. Source differences are
+limited to aliases/retained home controls, Rustdoc links and one stable empty-Path equivalent;
+no external package version/source changes or unrelated matrices follow. Continue remaining
+utility/backend/render owners, then the real Nara GPU/Host/View consumer before separate
+maintenance. Foreign filesystem/browser execution and numeric costs remain unqualified.
+
 The [HTTP/download/archive record](../verification.md#http-deadlines-release-downloads-and-pax-archives)
 qualifies `8223d68d89bd2a012dee3f279297266dc97b2d0e`: official request-local reqwest redirects,
 read/request deadlines, platform verifier fallback and separate release Task downloads replace
@@ -3096,8 +3108,9 @@ archive features are selected. Release 10/10, final native transport 9/9 and ind
 4/4 pass; affected correctness Clippy, stable wasm, format/static gates and repaired actual
 dependency-health pass. The record retains compile/fixture failures, security findings and
 targeted patched closure rather than advisory ignores. Five unit lanes close without P1/P2.
-The separate next-path preparation lane closes with an unregistered source draft; finish its
-real utility/public migration before qualification. Actual TLS fallback/foreign execution,
+The separate next-path preparation lane closes with an unregistered source draft at that
+checkpoint; the complete path/utility consumer successor above subsequently qualifies it.
+Actual TLS fallback/foreign execution,
 download Task-drop cancellation, numeric costs, remaining target owners and the real Nara
 GPU/Host/View consumer remain open before separate maintenance.
 

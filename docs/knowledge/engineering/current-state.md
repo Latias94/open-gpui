@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-10T21:29:00+08:00
+timestamp: 2026-11-10T21:50:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -18,6 +18,18 @@ verified_by:
 
 # Current State
 
+- Portable paths and utility consumers are implemented at
+  `a4e6fd03642fdcdc25b507271682a6d1dbfeb26c`. The complete official Apache path package replaces
+  duplicate utility types; the actual matching/order/navigation and native-byte consumers use
+  its canonical APIs. The complete utility source also adopts UNC/position parsing, lenient
+  globs and extension sorting. The [qualification](../../verification.md#portable-paths-and-utility-consumers)
+  records focused 89/89, independently locked public 5/5 and downstream real-home 1/1 passes,
+  affected path/util/Windows compilation/correctness Clippy, actual package Rust 1.93/wasm
+  compilation and format/static gates. No external package version/source changes are made.
+  Three lanes close without P1/P2. Remaining utility/backend/render owners and the real Nara
+  GPU/Host/View consumer still precede separate maintenance; foreign filesystem/browser
+  execution and numerical costs are not qualified. Full target and foundation closure stay open.
+
 - HTTP/download/archive owners are implemented at `8223d68d89bd2a012dee3f279297266dc97b2d0e`.
   The complete official request/read deadlines, platform verifier fallback and separate release
   Task APIs use fixed reqwest/async-tar sources. The registry client-reconstruction cache and
@@ -27,8 +39,8 @@ verified_by:
   affected correctness Clippy/wasm compilation, dependency-health and format/static gates.
   The actual gate exposes retained advisory versions; targeted fixed selections pass without
   new ignores. Five unit lanes close without reviewed P1/P2; the next portable-path preparation
-  lane also closes, leaving only its unregistered source draft uncommitted. Preserve that work.
-  Continue path/utility migration and remaining backend/render owners before the real Nara
+  lane closes before its subsequently qualified utility/public migration above.
+  Continue remaining utility/backend/render owners before the real Nara
   GPU/Host/View consumer and separate maintenance. Active download Task-drop cancellation,
   actual TLS fallback/foreign execution and numeric budgets remain unqualified.
 
@@ -1056,8 +1068,8 @@ historical scope and is not current branch or CI qualification.
 - Continue the [residual source inventory](../../imports/zed-gpui-upstream-sync-candidates.md#november-10-residual-source-reconciliation)
   after qualified identity/diagnostics/list precision, element layout/drawing, gestures/
   scroll/padding/hover, cursor/native file drag, process/dedicated/string and HTTP/download/
-  archive support, rather than treating the earlier public-Platform audit as exhaustive.
-  Complete the prepared path owner's real util/public-consumer migration, then the remaining
+  archive support and canonical path/utility migration, rather than treating the earlier
+  public-Platform audit as exhaustive. Continue the remaining
   supporting utility/dependency and backend/render groups, including native popup,
   in their recorded prerequisite order. Build on qualified
   [shared Apple topology](../../verification.md#shared-apple-framework-topology) and

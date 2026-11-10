@@ -8125,6 +8125,59 @@ consumer before maintenance handoff. No whole fixed-target or foundation complet
 Full fixed-target closure, remaining support/backend/render owners and the real Nara GPU/Host/
 View consumer remain open before separate framework maintenance.
 
+## Portable Paths And Utility Consumers
+
+Implementation: `a4e6fd03642fdcdc25b507271682a6d1dbfeb26c`.
+
+The November 10 successor adopts the complete Apache-2.0 singular path package from fixed
+Zed `635026fabc38440fce5e1767d125026a17b12012`. This is not the GPL product paths package.
+PathStyle, checked relative paths, local absolute paths, component/prefix parsing, native
+byte/WTF-8 conversion and optional serde have one open-gpui-path owner. The source comparison
+finds only qualified Rustdoc links and one stable empty-Path spelling in the verbatim-join
+branch. The latter uses as_os_str().is_empty() on the actual &Path; it preserves the declared
+Rust 1.93 floor without changing the algorithm. All original path tests remain intact.
+
+The complete official utility paths source consumes that package, replacing its duplicate
+RelPath/RelPathBuf and PathStyle implementations. Its UNC/position parsing, lenient glob error
+callback and extension sorting include the previously queued predecessors. Local normalization,
+strict lexical validation, home/compaction, matching and SanitizedPath retain their distinct
+official policies and actual utility/native-dialog consumers. Byte decoding forwards to the
+canonical owner. Superseded util::rel_path and util-root normalize_path exports are removed;
+no compatibility aliases are introduced. Qualified Open-GPUI home tests keep their existing
+test-only names. Ordinary consumers continue to observe the platform's actual home.
+
+Affected path/util/Windows all-feature/all-target compilation passes on Windows/Rust 1.95.
+The focused path, utility/path-list and composed integration cohort passes 89/89, with 61
+unrelated tests outside the selection (`e6acf87a-6ee5-4f64-8f79-e4822a054f8a`). The ordinary
+independently locked consumer passes 5/5 (`fb360f60-f0c4-4aa7-9cf2-2ed99a2d0690`): remote
+Unix/drive/UNC/verbatim normalization and rejoin, checked persisted paths/local absolute
+resolution, rejected escaping/component edits, actual matching/extension order/navigation
+composition and native non-Unicode bytes. On Windows the last case round-trips an isolated
+UTF-16 surrogate through public WTF-8 conversion while checked Unicode conversion rejects it.
+These are real API calls without test-support, not typed unexecuted closures.
+
+Root and five independent locks are refreshed serially. Each tracked lock adds only the local
+path package identity, moving the existing tendril edge to its canonical owner. No external
+package version/source is added or removed. The ordinary and hot-reload locks also reselect
+compatible dependency edges among already locked Windows/getrandom versions; those are not
+external version upgrades. The ignored hello_web lock remains a local build artifact.
+
+The new package passes actual Windows Rust 1.93 all-feature/all-target compilation and stable
+wasm32-unknown-unknown library compilation with serde. Affected path/util/Windows correctness
+Clippy passes with existing non-correctness warnings. The existing util home integration passes
+1/1 with test-support enabled (`e305761a-4615-4e24-87ce-793bc359f9c4`), preserving the real
+downstream platform value alongside the library's test-only fixed value.
+
+Root and ordinary-consumer formatting, whitespace, affected TOML/workflow syntax, complete
+Apache license/NOTICE and existing import-boundary/public-API/document/release gates pass.
+
+Three scoped implementation/review lanes close without P1/P2. Trust unchanged official
+algorithms and coverage; no unrelated full runtime, component, native-renderer or compiler
+matrix is repeated. Foreign native filesystem execution, browser runtime and numerical costs
+remain unqualified. Remaining utility/backend/render owners and the real Nara GPU/Host/View
+consumer still precede separate framework maintenance. No full fixed-target or foundation
+completion, remote CI, push or publication follows.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:
