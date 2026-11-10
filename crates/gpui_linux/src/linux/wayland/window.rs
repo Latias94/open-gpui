@@ -824,6 +824,11 @@ impl WaylandWindowCommandTarget {
             | PlatformWindowCommand::ToggleSimpleFullscreen => {
                 PlatformWindowCommandOutcome::Unsupported
             }
+            PlatformWindowCommand::ShowSoftKeyboard
+            | PlatformWindowCommand::HideSoftKeyboard
+            | PlatformWindowCommand::TextInputStateChanged(_) => {
+                PlatformWindowCommandOutcome::Accepted
+            }
             PlatformWindowCommand::Activate { .. } if state.globals.activation.is_none() => {
                 PlatformWindowCommandOutcome::Unsupported
             }
@@ -2889,6 +2894,11 @@ impl PlatformWindow for WaylandWindow {
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
         let input_handler_slot = self.borrow().input_handler.clone();
         input_handler_slot.take()
+    }
+
+    fn take_input_handler_for_frame(&mut self) -> Option<PlatformInputHandler> {
+        let slot = self.borrow().input_handler.clone();
+        slot.take_for_frame()
     }
 
     fn prompt(

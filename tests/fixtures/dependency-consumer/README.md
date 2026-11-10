@@ -2023,3 +2023,57 @@ private observations do not qualify Wayland input pass-through, layer-shell rese
 validation, native popup positioning/grab/dismissal, or Mac screen/notch coverage and shared
 presentation-option restoration. Those behaviors retain their native backend gates; no renderer,
 fake compositor, successful popup implementation or engine-specific UI owner is introduced here.
+
+## Ordinary text input sessions and visible geometry
+
+The `text_input_sessions` target consumes the complete public input configuration, UTF-16
+selection/editable-range and visible-geometry interfaces from fixed Zed target
+[`635026fabc38440fce5e1767d125026a17b12012`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012).
+The relevant source units are
+[`8fc1a8a0c6f`](https://github.com/zed-industries/zed/commit/8fc1a8a0c6f),
+[`d84e5d4992b`](https://github.com/zed-industries/zed/commit/d84e5d4992b), and
+[`6ad3c7f278e`](https://github.com/zed-industries/zed/commit/6ad3c7f278e), including their
+fixed-target follow-ups and the full `WindowInsets` predecessor.
+
+The feature-free test consumes every `Autocapitalize`, `TextInputAction` and
+`TextInputStateChange` variant, all `TextInputConfiguration` fields, and `WindowInsets` with
+`safe_area`, `ime`, `corner_radii` and `effective`. Function references and uninvoked backend
+closures check the ordinary Window and PlatformWindow interfaces, keyboard requests/dismissal,
+text/selection notifications, frame preparation, and PlatformInputHandler's UTF-16 length,
+editable range, selection mutation and batched selection geometry. This configuration creates
+no App or test-only context.
+
+With the existing optional `bench-support` feature, an ordinary `Application::run_embedded`
+uses the returning headless benchmark platform and `NoopTextSystem`. Its real entity renders a
+focus-tracked field and installs an `ElementInputHandler` through `Window::handle_input`.
+The consumer checks accepted frame/focus ownership, executes keyboard and state notification
+requests, and exercises entity forwarding with surrogate pairs, a bounded editable range,
+native selection updates, batched geometry and application-owned edits. Default visible
+geometry retains the full layout size. Blur, normal close and App shutdown complete through
+the existing owners. Neither configuration enables `test-support`.
+
+The companion crate-external `crates/gpui/tests/text_input_sessions.rs` target uses public
+TestAppContext controls to observe configuration/state histories and keyboard requests. It
+checks unchanged configuration across repeated frames, focus switches within one entity and
+between entities, focused configuration edits, nonediting registered handlers retaining their
+configuration, ignored unfocused notifications, handler loss,
+irreversible quiescence, native retirement and replacement windows. Actual atlas-refused and
+prepaint/paint-unwound candidates retain the accepted configuration, input handler, focus and
+keyboard request count. UTF-16 geometry queries use the native input lease and the accepted
+element transform, including batched rectangle projection and inverse point projection.
+Viewport and complete inset simulations exercise the ordinary Window
+queries, including offset viewports, keyboard occlusion, corner radii, fully covered content
+and restoration without a layout resize.
+
+Run these targets serially with `CARGO_BUILD_JOBS=1`, the existing lockfiles and shared target:
+
+```text
+cargo nextest run --locked -p open-gpui --features test-support --test text_input_sessions --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test text_input_sessions --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --test text_input_sessions --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+These commands are verification instructions, not execution results. Headless consumers do
+not qualify DOM textarea/beforeinput/composition behavior, actual software keyboards, browser
+visual-viewport/safe-area sampling, native IME presentation, GPU submission or an engine Host/View
+integration. Those claims remain with their backend and product qualification owners.

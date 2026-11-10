@@ -8100,6 +8100,11 @@ impl PlatformWindow for WindowsWindow {
                 }
 
                 match command {
+                    PlatformWindowCommand::ShowSoftKeyboard
+                    | PlatformWindowCommand::HideSoftKeyboard
+                    | PlatformWindowCommand::TextInputStateChanged(_) => {
+                        PlatformWindowCommandOutcome::Accepted
+                    }
                     PlatformWindowCommand::CompleteNativeFrame => window.complete_native_frame(),
                     PlatformWindowCommand::CompleteInitialPresentation { activate } => {
                         window.complete_initial_presentation(activate)
@@ -8404,6 +8409,10 @@ impl PlatformWindow for WindowsWindow {
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
         self.state.input_handler.take()
+    }
+
+    fn take_input_handler_for_frame(&mut self) -> Option<PlatformInputHandler> {
+        self.state.input_handler.take_for_frame()
     }
 
     fn prompt(

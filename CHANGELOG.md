@@ -40,6 +40,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - `GlobalElementId::new` constructs a complete root-first path with its cached hash. Window element stacks retain prefix hashes through deferred drawing and candidate rollback. App borrow conflicts now report attempted and original borrow locations through panics and fallible window updates.
 
+- Web text input uses a textarea mirror with UTF-16 selection, composition, bounded editable context and per-handler `TextInputConfiguration`. `Window` exposes content/selection notifications, virtual-keyboard requests, visual viewport bounds and `WindowInsets`. Configuration and text-session effects publish with accepted frames; native commands execute after the App borrow is released. The mirror retires with its window.
+- Breaking: exhaustive matches on `PlatformWindowCommand` and native callback diagnostic operation enums must handle the new text-session variants. Backend implementors that use `PlatformInputHandlerSlot` should delegate `take_input_handler_for_frame` to `take_for_frame`, preserving a checked-out handler during refused redraws. New `InputHandler`, `EntityInputHandler` and optional platform methods have default implementations.
+
 - `open-gpui-apple` owns the shared Apple dispatcher, Metal renderer/atlas, CoreText/OpenType, Keychain and process services. CoreVideo surfaces are available on macOS/iOS; this shared substrate does not add an iOS application backend. macOS window options expose the official opt-in Display P3 color space.
 
 - Windows forwards Restart Manager session shutdown from application windows to the platform quit callback. Completed shutdown flushes logs and exits; asynchronous shutdown retains the official best-effort quit fallback.

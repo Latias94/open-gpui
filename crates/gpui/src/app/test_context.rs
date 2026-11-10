@@ -1232,6 +1232,63 @@ impl TestAppContext {
             .block_presentation_shutdown(blocked);
     }
 
+    /// Simulates a platform visual-viewport observation without changing layout size.
+    pub fn simulate_window_visual_viewport_change(
+        &self,
+        window: AnyWindowHandle,
+        bounds: Bounds<Pixels>,
+    ) {
+        self.test_window(window)
+            .simulate_visual_viewport_change(bounds);
+    }
+
+    /// Simulates system-reserved window insets through the registered platform callback.
+    pub fn simulate_window_insets_change(
+        &self,
+        window: AnyWindowHandle,
+        insets: crate::WindowInsets,
+    ) {
+        self.test_window(window).simulate_insets_change(insets);
+    }
+
+    /// Returns the text configurations actually forwarded to a platform window.
+    pub fn window_text_input_configurations(
+        &self,
+        window: AnyWindowHandle,
+    ) -> Vec<crate::TextInputConfiguration> {
+        self.test_window(window).text_input_configurations()
+    }
+
+    /// Returns the text-state notifications actually forwarded to a platform window.
+    pub fn window_text_input_state_changes(
+        &self,
+        window: AnyWindowHandle,
+    ) -> Vec<crate::TextInputStateChange> {
+        self.test_window(window).text_input_state_changes()
+    }
+
+    /// Returns the number of forwarded virtual-keyboard requests.
+    pub fn window_virtual_keyboard_requests(&self, window: AnyWindowHandle) -> usize {
+        self.test_window(window).virtual_keyboard_requests()
+    }
+
+    /// Returns the number of forwarded virtual-keyboard dismissals.
+    pub fn window_virtual_keyboard_dismissals(&self, window: AnyWindowHandle) -> usize {
+        self.test_window(window).virtual_keyboard_dismissals()
+    }
+
+    /// Calls the installed native input handler after releasing the App and Window borrows.
+    pub fn with_window_input_handler<R>(
+        &mut self,
+        window: AnyWindowHandle,
+        f: impl FnOnce(&mut crate::PlatformInputHandler) -> R,
+    ) -> Option<R> {
+        use crate::PlatformWindow as _;
+        let platform_window = self.test_window(window);
+        let slot = platform_window.input_handler_slot_for_test()?;
+        slot.with_handler(f)
+    }
+
     /// Retains a read-only activation counter for `window` across logical window removal.
     pub fn window_activation_probe(&self, window: AnyWindowHandle) -> TestWindowActivationProbe {
         TestWindowActivationProbe {

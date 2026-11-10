@@ -576,6 +576,11 @@ impl X11WindowCommandTarget {
             | PlatformWindowCommand::ToggleSimpleFullscreen => {
                 PlatformWindowCommandOutcome::Unsupported
             }
+            PlatformWindowCommand::ShowSoftKeyboard
+            | PlatformWindowCommand::HideSoftKeyboard
+            | PlatformWindowCommand::TextInputStateChanged(_) => {
+                PlatformWindowCommandOutcome::Accepted
+            }
             PlatformWindowCommand::Activate { .. }
                 if state.activation_policy.accepts_activation =>
             {
@@ -2806,6 +2811,11 @@ impl PlatformWindow for X11Window {
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
         let input_handler_slot = self.0.state.borrow().input_handler.clone();
         input_handler_slot.take()
+    }
+
+    fn take_input_handler_for_frame(&mut self) -> Option<PlatformInputHandler> {
+        let slot = self.0.state.borrow().input_handler.clone();
+        slot.take_for_frame()
     }
 
     fn prompt(

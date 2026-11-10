@@ -1,6 +1,8 @@
 use crate::display::WebDisplay;
 use crate::frame_loop::WebFrameLoop;
+use crate::ime_mirror::ImeMirror;
 use crate::platform::set_body_cursor;
+use crate::viewport::WebViewport;
 use crate::{
     events::{WebEventListener, WebEventListeners, WebInteractionGate, is_mac_platform},
     pointer_session::{ClickState, WebPointerCaptureState},
@@ -20,10 +22,11 @@ use open_gpui::{
     PlatformWindowActiveStatusObservation, PlatformWindowCommand, PlatformWindowCommandDispatcher,
     PlatformWindowCommandOutcome, PlatformWindowInteractionQuiescence,
     PlatformWindowPresentOutcome, Point, PointerCancelReason, PreparedPlatformPresentationShutdown,
-    PromptButton, PromptLevel, RequestFrameOptions, Scene, Size, WindowActivationPolicy,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
-    WindowCoordinateSpace, WindowCreationFacts, WindowDecorations, WindowParams,
-    WindowPlatformFacts, WindowPresentationShutdownTicket, WindowVisibility, px,
+    PromptButton, PromptLevel, RequestFrameOptions, Scene, Size, TextInputConfiguration,
+    TextInputStateChange, WindowActivationPolicy, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControlArea, WindowControls, WindowCoordinateSpace, WindowCreationFacts,
+    WindowDecorations, WindowInsets, WindowParams, WindowPlatformFacts,
+    WindowPresentationShutdownTicket, WindowVisibility, px,
 };
 use open_gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig, WgpuSurfaceShutdownProgress};
 use wasm_bindgen::prelude::*;
@@ -37,6 +40,7 @@ pub(crate) struct WebWindowCallbacks {
     pub(crate) visibility_change: Option<Box<dyn FnMut(WindowVisibility)>>,
     pub(crate) hover_status_change: Option<Rc<dyn Fn(bool)>>,
     pub(crate) resize: Option<Rc<dyn Fn(Size<Pixels>, f32)>>,
+    pub(crate) visual_viewport_changed: Option<Box<dyn FnMut()>>,
     pub(crate) moved: Option<Rc<dyn Fn()>>,
     pub(crate) should_close: Option<Box<dyn FnMut() -> bool>>,
     pub(crate) close: Option<Box<dyn FnOnce()>>,
@@ -65,7 +69,8 @@ pub(crate) struct WebWindowInner {
     pub(crate) browser_window: web_sys::Window,
     pub(crate) root_element: web_sys::HtmlElement,
     pub(crate) canvas: web_sys::HtmlCanvasElement,
-    pub(crate) input_element: web_sys::HtmlInputElement,
+    pub(crate) ime_mirror: ImeMirror,
+    pub(crate) viewport: RefCell<WebViewport>,
     pub(crate) has_device_pixel_support: bool,
     pub(crate) is_mac: bool,
     pub(crate) touch_input: bool,
@@ -97,6 +102,7 @@ pub(crate) struct WebWindowInner {
     activation_policy: WindowActivationPolicy,
     accepts_pointer_input: bool,
     is_mapped: Cell<bool>,
+    owns_dom_focus: Cell<bool>,
     initial_presentation_completed: Cell<bool>,
     frame_loop: WebFrameLoop,
     raf_function: RefCell<Option<js_sys::Function>>,
@@ -115,6 +121,8 @@ pub struct WebWindow {
     _raf_closure: Closure<dyn FnMut()>,
     _resize_observer: Option<web_sys::ResizeObserver>,
     _resize_observer_closure: Closure<dyn FnMut(js_sys::Array)>,
+    _safe_area_observer: Option<web_sys::ResizeObserver>,
+    _safe_area_observer_closure: Closure<dyn FnMut(js_sys::Array)>,
     event_listeners: Option<WebEventListeners>,
 }
 
@@ -194,36 +202,14 @@ impl WebWindow {
             .append_child(&canvas)
             .map_err(|e| anyhow::anyhow!("Failed to append canvas to GPUI root: {e:?}"))?;
 
-        let input_element: web_sys::HtmlInputElement = document
-            .create_element("input")
-            .map_err(|e| anyhow::anyhow!("Failed to create input element: {e:?}"))?
-            .dyn_into()
-            .map_err(|e| anyhow::anyhow!("Created element is not an input: {e:?}"))?;
-        let input_style = input_element.style();
-        input_element.set_tab_index(-1);
         let touch_input = browser_window
             .match_media("(pointer: coarse)")
             .ok()
             .flatten()
             .is_some_and(|query| query.matches());
-        if touch_input {
-            input_element
-                .set_attribute("inputmode", "none")
-                .map_err(|error| anyhow::anyhow!("Failed to configure input mode: {error:?}"))?;
-        }
-        input_style.set_property("position", "fixed").ok();
-        input_style.set_property("top", "0").ok();
-        input_style.set_property("left", "0").ok();
-        input_style.set_property("width", "1px").ok();
-        input_style.set_property("height", "1px").ok();
-        input_style.set_property("opacity", "0").ok();
-        // Android Chrome zooms the visual viewport onto a focused text input
-        // whose font is smaller than 16px; with page zoom disabled the user
-        // can never zoom back out, so keep the hidden IME input at 16px.
-        input_style.set_property("font-size", "16px").ok();
-        root_element
-            .append_child(&input_element)
-            .map_err(|e| anyhow::anyhow!("Failed to append input to GPUI root: {e:?}"))?;
+        let ime_mirror = ImeMirror::new(&document, &root_element, touch_input)?;
+        let mut viewport = WebViewport::new(&document)?;
+        viewport.update(&browser_window, &canvas)?;
 
         let device_size = Size {
             width: DevicePixels(0),
@@ -268,7 +254,8 @@ impl WebWindow {
             browser_window,
             root_element,
             canvas,
-            input_element,
+            ime_mirror,
+            viewport: RefCell::new(viewport),
             has_device_pixel_support,
             is_mac,
             touch_input,
@@ -294,6 +281,7 @@ impl WebWindow {
             activation_policy: params.activation_policy,
             accepts_pointer_input: params.accepts_pointer_input,
             is_mapped: Cell::new(false),
+            owns_dom_focus: Cell::new(false),
             initial_presentation_completed: Cell::new(false),
             frame_loop: WebFrameLoop::default(),
             raf_function: RefCell::new(None),
@@ -310,6 +298,26 @@ impl WebWindow {
         let resize_observer =
             web_sys::ResizeObserver::new(resize_observer_closure.as_ref().unchecked_ref()).ok();
         let event_listeners = Some(inner.register_event_listeners());
+        let safe_area_observer_closure = Closure::wrap(Box::new({
+            let inner = Rc::downgrade(&inner);
+            move |_: js_sys::Array| {
+                if let Some(inner) = inner.upgrade() {
+                    inner.notify_viewport_changed();
+                }
+            }
+        }) as Box<dyn FnMut(js_sys::Array)>);
+        let safe_area_observer =
+            match web_sys::ResizeObserver::new(safe_area_observer_closure.as_ref().unchecked_ref())
+            {
+                Ok(observer) => {
+                    inner.viewport.borrow().observe_safe_area(&observer);
+                    Some(observer)
+                }
+                Err(error) => {
+                    log::warn!("Failed to observe safe area: {error:?}");
+                    None
+                }
+            };
 
         Ok(Self {
             inner,
@@ -319,6 +327,8 @@ impl WebWindow {
             _raf_closure: raf_closure,
             _resize_observer: resize_observer,
             _resize_observer_closure: resize_observer_closure,
+            _safe_area_observer: safe_area_observer,
+            _safe_area_observer_closure: safe_area_observer_closure,
             event_listeners,
         })
     }
@@ -386,6 +396,36 @@ impl WebWindow {
 }
 
 impl WebWindowInner {
+    fn sample_viewport(&self) -> bool {
+        match self
+            .viewport
+            .borrow_mut()
+            .update(&self.browser_window, &self.canvas)
+        {
+            Ok(changed) => changed,
+            Err(error) => {
+                log::warn!("Failed to update browser viewport: {error:#}");
+                false
+            }
+        }
+    }
+
+    pub(crate) fn notify_viewport_changed(&self) {
+        if !self.is_mapped.get() {
+            return;
+        }
+        let callback = self.callbacks.borrow_mut().visual_viewport_changed.take();
+        if let Some(mut callback) = callback {
+            callback();
+            if self.is_mapped.get() {
+                self.callbacks
+                    .borrow_mut()
+                    .visual_viewport_changed
+                    .get_or_insert(callback);
+            }
+        }
+    }
+
     fn update_size_from_canvas_rect(&self) {
         let rect = self.canvas.get_bounding_client_rect();
         let dpr = self.browser_window.device_pixel_ratio();
@@ -492,7 +532,25 @@ impl WebWindowInner {
         if self.suppress_focus_status_events.get() {
             return;
         }
-        let is_active = self.input_is_focused();
+        let owns_dom_focus = self.browser_window.document().is_some_and(|document| {
+            if self.ime_mirror.is_focused() {
+                return true;
+            }
+            let active = document.active_element();
+            let body = document.body().map(web_sys::Element::from);
+            let root = document.document_element();
+            self.owns_dom_focus.get() && (active.is_none() || active == body || active == root)
+        });
+        self.owns_dom_focus.set(owns_dom_focus);
+        let is_active = !self.interaction_gate.is_quiesced()
+            && self.is_mapped.get()
+            && owns_dom_focus
+            && document_visibility(&self.browser_window).is_visible()
+            && self
+                .browser_window
+                .document()
+                .and_then(|document| document.has_focus().ok())
+                .unwrap_or(false);
 
         let changed = {
             let mut state = self.state.borrow_mut();
@@ -528,21 +586,15 @@ impl WebWindowInner {
         }
     }
 
-    fn focus_input(&self) -> bool {
+    pub(crate) fn focus_input(&self) -> bool {
         if self.interaction_gate.is_quiesced() || !self.is_mapped.get() {
             return false;
         }
-        let options = js_sys::Object::new();
-        let focused = js_sys::Reflect::set(&options, &"preventScroll".into(), &true.into())
-            .and_then(|_| {
-                let focus = js_sys::Reflect::get(&self.input_element, &"focus".into())?
-                    .dyn_into::<js_sys::Function>()?;
-                focus.call1(&self.input_element, &options)
-            });
-        if let Err(error) = focused {
-            log::warn!("failed to focus GPUI web input: {error:?}");
+        self.ime_mirror.focus();
+        if !self.ime_mirror.is_focused() {
             return false;
         }
+        self.owns_dom_focus.set(true);
 
         self.sync_dom_activation();
         !self.interaction_gate.is_quiesced()
@@ -564,6 +616,72 @@ impl WebWindowInner {
         !self.interaction_gate.is_quiesced()
             && self.is_mapped.get()
             && self.activation_policy.focus_on_click
+    }
+
+    pub(crate) fn allows_virtual_keyboard_request(&self) -> bool {
+        !self.interaction_gate.is_quiesced()
+            && self.is_mapped.get()
+            && (self.activation_policy.focus_on_click || self.state.borrow().is_active)
+    }
+
+    fn hide_virtual_keyboard(self: &Rc<Self>) {
+        if !self.touch_input || self.interaction_gate.is_quiesced() {
+            return;
+        }
+        self.ime_mirror.set_virtual_keyboard_enabled(false);
+        self.suppress_focus_status_events.set(true);
+        self.ime_mirror.blur();
+        self.suppress_focus_status_events.set(false);
+        let callback = Closure::once_into_js({
+            let inner = Rc::downgrade(self);
+            move || {
+                if let Some(inner) = inner.upgrade()
+                    && !inner.interaction_gate.is_quiesced()
+                    && !inner.ime_mirror.virtual_keyboard_enabled()
+                    && inner.state.borrow().is_active
+                {
+                    inner.suppress_focus_status_events.set(true);
+                    let _ = inner.focus_input();
+                    inner.suppress_focus_status_events.set(false);
+                }
+            }
+        });
+        if let Err(error) = self
+            .browser_window
+            .set_timeout_with_callback(callback.unchecked_ref())
+        {
+            log::warn!("failed to restore keyboard event receiver: {error:?}");
+        }
+    }
+
+    fn apply_text_input_state_change(self: &Rc<Self>, change: TextInputStateChange) {
+        if self.interaction_gate.is_quiesced() {
+            return;
+        }
+        ImeMirror::schedule_sync(self);
+        if self.touch_input {
+            match change {
+                TextInputStateChange::FocusGained if self.state.borrow().is_active => {
+                    self.show_virtual_keyboard();
+                }
+                TextInputStateChange::FocusGained => {}
+                TextInputStateChange::FocusLost => self.hide_virtual_keyboard(),
+                TextInputStateChange::SelectionChanged | TextInputStateChange::ContentChanged => {}
+            }
+            return;
+        }
+        match change {
+            TextInputStateChange::FocusGained => {
+                self.ime_mirror.set_read_only(false);
+                if !self.ime_mirror.is_focused() && self.state.borrow().is_active {
+                    self.focus_ime_mirror();
+                }
+            }
+            TextInputStateChange::FocusLost => {
+                self.ime_mirror.set_read_only(true);
+            }
+            TextInputStateChange::SelectionChanged | TextInputStateChange::ContentChanged => {}
+        }
     }
 
     fn complete_initial_presentation(&self, activate: bool) {
@@ -685,10 +803,7 @@ impl WebWindowInner {
             && self.browser_window.document().is_some_and(|document| {
                 let is_visible = document_visibility(&self.browser_window).is_visible();
                 let document_has_focus = document.has_focus().unwrap_or(false);
-                let input_element: &web_sys::Element = self.input_element.as_ref();
-                let input_has_focus = document.active_element().as_ref() == Some(input_element);
-
-                is_visible && document_has_focus && input_has_focus
+                is_visible && document_has_focus && self.ime_mirror.is_focused()
             })
     }
 
@@ -718,8 +833,9 @@ impl WebWindowInner {
     fn quiesce_interaction(&self) {
         self.interaction_gate.quiesce();
         self.is_composing.set(false);
-        self.input_element.set_value("");
-        self.input_element.set_disabled(true);
+        self.owns_dom_focus.set(false);
+        self.ime_mirror.disable_for_retirement();
+        self.ime_mirror.set_virtual_keyboard_enabled(false);
         self.root_element.set_attribute("aria-hidden", "true").ok();
 
         {
@@ -780,7 +896,7 @@ impl WebWindowInner {
         }
         drop(blockers);
 
-        self.input_element.blur().ok();
+        self.ime_mirror.blur();
         self.canvas.blur().ok();
     }
 }
@@ -893,7 +1009,17 @@ impl Drop for WebWindow {
             .set(crate::platform::WebWindowLifecycle::Closed);
         self.inner.interaction_gate.quiesce();
         self.inner.callbacks.borrow_mut().visibility_change = None;
+        self.inner.callbacks.borrow_mut().visual_viewport_changed = None;
         self.event_listeners.take();
+        self.inner.ime_mirror.set_read_only(true);
+        self.inner.ime_mirror.set_virtual_keyboard_enabled(false);
+        self.inner.ime_mirror.blur();
+        if let Some(observer) = self._resize_observer.as_ref() {
+            observer.disconnect();
+        }
+        if let Some(observer) = self._safe_area_observer.as_ref() {
+            observer.disconnect();
+        }
         let can_release_surface = self
             .inner
             .state
@@ -918,9 +1044,6 @@ impl Drop for WebWindow {
         input_handler.terminate();
 
         self.inner.stop_raf();
-        if let Some(observer) = self._resize_observer.as_ref() {
-            observer.disconnect();
-        }
         self.inner.mql_handle.borrow_mut().take();
 
         let close_callback = {
@@ -929,6 +1052,7 @@ impl Drop for WebWindow {
             callbacks.active_status_change = None;
             callbacks.hover_status_change = None;
             callbacks.resize = None;
+            callbacks.visual_viewport_changed = None;
             callbacks.moved = None;
             callbacks.should_close = None;
             callbacks.appearance_changed = None;
@@ -936,7 +1060,9 @@ impl Drop for WebWindow {
             callbacks.close.take()
         };
         self.inner.state.borrow_mut().is_active = false;
+        self.inner.owns_dom_focus.set(false);
         self.inner.update_active_window(false);
+        self.inner.ime_mirror.remove();
 
         if let Some(parent) = self.inner.root_element.parent_node() {
             parent.remove_child(&self.inner.root_element).ok();
@@ -977,6 +1103,18 @@ impl PlatformWindow for WebWindow {
                 PlatformWindowCommand::RestoreNativeWindowState(_)
                 | PlatformWindowCommand::ToggleSimpleFullscreen => {
                     PlatformWindowCommandOutcome::Unsupported
+                }
+                PlatformWindowCommand::ShowSoftKeyboard => {
+                    inner.show_virtual_keyboard();
+                    PlatformWindowCommandOutcome::Accepted
+                }
+                PlatformWindowCommand::HideSoftKeyboard => {
+                    inner.hide_virtual_keyboard();
+                    PlatformWindowCommandOutcome::Accepted
+                }
+                PlatformWindowCommand::TextInputStateChanged(change) => {
+                    inner.apply_text_input_state_change(change);
+                    PlatformWindowCommandOutcome::Accepted
                 }
                 PlatformWindowCommand::ShowWindowMenu(_)
                 | PlatformWindowCommand::StartWindowMove
@@ -1071,6 +1209,7 @@ impl PlatformWindow for WebWindow {
         self.inner.is_mapped.set(true);
 
         self.inner.update_size_from_canvas_rect();
+        self.inner.sample_viewport();
         if let Some(observer) = self._resize_observer.as_ref() {
             self.inner.observe_canvas(observer);
             self.inner.watch_dpr_changes(observer);
@@ -1175,6 +1314,45 @@ impl PlatformWindow for WebWindow {
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
         let input_handler_slot = self.inner.state.borrow().input_handler.clone();
         input_handler_slot.take()
+    }
+
+    fn take_input_handler_for_frame(&mut self) -> Option<PlatformInputHandler> {
+        let slot = self.inner.state.borrow().input_handler.clone();
+        slot.take_for_frame()
+    }
+
+    fn set_text_input_configuration(&mut self, configuration: TextInputConfiguration) {
+        if !self.inner.interaction_gate.is_quiesced() {
+            self.inner.ime_mirror.apply_configuration(&configuration);
+        }
+    }
+
+    fn show_soft_keyboard(&self) {
+        self.inner.show_virtual_keyboard();
+    }
+
+    fn hide_soft_keyboard(&self) {
+        self.inner.hide_virtual_keyboard();
+    }
+
+    fn visual_viewport_bounds(&self) -> Bounds<Pixels> {
+        self.inner.viewport.borrow().visible_bounds
+    }
+
+    fn prepare_frame(&self) -> bool {
+        self.inner.sample_viewport()
+    }
+
+    fn on_visual_viewport_changed(&self, callback: Box<dyn FnMut()>) {
+        self.inner.callbacks.borrow_mut().visual_viewport_changed = Some(callback);
+    }
+
+    fn insets(&self) -> WindowInsets {
+        self.inner.viewport.borrow().insets.clone()
+    }
+
+    fn text_input_state_changed(&self, change: TextInputStateChange) {
+        self.inner.apply_text_input_state_change(change);
     }
 
     fn prompt(

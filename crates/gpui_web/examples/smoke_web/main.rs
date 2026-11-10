@@ -19,6 +19,7 @@ use wasm_bindgen::JsValue;
 
 mod clipboard;
 mod platform_info;
+mod text_input;
 mod touch;
 
 const GRID_COLUMNS: usize = 128;
@@ -1013,6 +1014,10 @@ fn main() {
         };
         if touch::requested() {
             touch::open(cx, graphics_probe);
+            return;
+        }
+        if text_input::requested() {
+            text_input::open(cx, graphics_probe);
             return;
         }
         publish_startup_probe(graphics_probe, "platform-ready");

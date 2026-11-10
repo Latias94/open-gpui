@@ -145,6 +145,13 @@ impl AsyncApp {
         );
     }
 
+    pub(crate) fn enqueue_window_visual_viewport_changed(&self, window_id: WindowId) {
+        self.enqueue_native_window_event(
+            window_id,
+            super::native_event_ingress::NativeWindowEvent::VisualViewportChanged,
+        );
+    }
+
     pub(crate) fn enqueue_window_display_changed(&self, window_id: WindowId) {
         self.enqueue_native_window_event(
             window_id,

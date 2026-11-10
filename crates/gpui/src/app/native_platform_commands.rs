@@ -504,6 +504,15 @@ impl NativePlatformCommand {
             PlatformWindowCommand::ToggleSimpleFullscreen => {
                 (NativePlatformCommandKind::ToggleSimpleFullscreen, None)
             }
+            PlatformWindowCommand::ShowSoftKeyboard => {
+                (NativePlatformCommandKind::ShowSoftKeyboard, None)
+            }
+            PlatformWindowCommand::HideSoftKeyboard => {
+                (NativePlatformCommandKind::HideSoftKeyboard, None)
+            }
+            PlatformWindowCommand::TextInputStateChanged(_) => {
+                (NativePlatformCommandKind::TextInputStateChanged, None)
+            }
         };
         NativeBoundaryDiagnostic::pending(
             sequence,

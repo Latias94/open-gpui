@@ -22,7 +22,7 @@ const STATE: &str = r#"
         keys: globalThis.__platformInfoKeys ?? null,
         navigator: report,
         getterFailures,
-        inputFocused: document.activeElement === document.querySelector('input'),
+        inputFocused: document.activeElement === document.querySelector('textarea'),
         canvas: rect ? {x: rect.x, y: rect.y, width: rect.width, height: rect.height} : null,
     };
 })()
@@ -230,7 +230,7 @@ fn qualify_case(
     )?;
     cdp.evaluate(
         r#"(() => {
-        const input = document.querySelector('input');
+        const input = document.querySelector('textarea');
         if (!input) throw new Error('platform info input is missing');
         input.focus();
         const keys = {trusted: 0, untrusted: 0, input: 0, lastKey: ''};

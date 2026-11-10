@@ -101,6 +101,7 @@ pub enum NativeCallbackKind {
     Resized,
     Moved,
     WindowStateChanged,
+    VisualViewportChanged,
     DisplayChanged,
     WindowMutationObserved,
     ShouldClose,
@@ -124,6 +125,9 @@ pub enum NativeCallbackKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeInputHandlerOperation {
     SelectedTextRange,
+    SetSelectedTextRange,
+    TextLengthUtf16,
+    TextInputEditableRange,
     MarkedTextRange,
     TextForRange,
     ReplaceTextInRange,
@@ -131,11 +135,13 @@ pub enum NativeInputHandlerOperation {
     UnmarkText,
     Paste,
     BoundsForRange,
+    SelectionBoundsForRange,
     ElementBounds,
     ApplePressAndHoldEnabled,
     ImeCandidateBounds,
     CharacterIndexForPoint,
     AcceptsTextInput,
+    AcceptsFocusedTextInput,
     PrefersImeForPrintableKeys,
 }
 
@@ -153,6 +159,9 @@ pub enum NativePlatformCommandKind {
     StartWindowResize,
     RestoreNativeWindowState,
     ToggleSimpleFullscreen,
+    ShowSoftKeyboard,
+    HideSoftKeyboard,
+    TextInputStateChanged,
     ReleasePointerCapture,
     CompleteCapturedDragRelease,
     RetireNativeWindow,

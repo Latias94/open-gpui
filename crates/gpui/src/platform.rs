@@ -41,8 +41,8 @@ pub type PlatformPixelBuffer = objc2_core_foundation::CFRetained<objc2_core_vide
 
 use crate::{
     Action, AnyWindowHandle, App, AppCell, AsyncApp, AsyncWindowContext, BackgroundExecutor,
-    Bounds, DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, FocusId, Font, FontId,
-    FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
+    Bounds, Corners, DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, FocusId, Font,
+    FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
     LineLayout, ModifiersChangedEvent, MouseButton, NativeInputBoundary,
     NativeInputHandlerOperation, NativeInvariantFailure, Pixels, PlatformGestures, PlatformInput,
     Point, PointerCancelReason, Priority, RenderGlyphParams, RenderImage, RenderImageParams,
@@ -4372,6 +4372,9 @@ pub enum PlatformWindowCommand {
     StartWindowResize(ResizeEdge),
     RestoreNativeWindowState(Arc<[u8]>),
     ToggleSimpleFullscreen,
+    ShowSoftKeyboard,
+    HideSoftKeyboard,
+    TextInputStateChanged(TextInputStateChange),
 }
 
 impl PlatformWindowCommand {
@@ -4386,6 +4389,12 @@ impl PlatformWindowCommand {
                 | Self::StartWindowMove
                 | Self::StartWindowResize(_)
                 | Self::ToggleSimpleFullscreen
+                | Self::ShowSoftKeyboard
+                | Self::TextInputStateChanged(
+                    TextInputStateChange::FocusGained
+                        | TextInputStateChange::ContentChanged
+                        | TextInputStateChange::SelectionChanged
+                )
         )
     }
 }
@@ -5806,6 +5815,42 @@ mod platform_window_interaction_quiescence_tests {
     }
 }
 
+/// Regions of a window that are obscured or reserved by the system.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct WindowInsets {
+    /// Regions covered by system UI or hardware such as display cutouts and navigation bars.
+    pub safe_area: Edges<Pixels>,
+    /// The region covered by the keyboard, when present.
+    pub ime: Edges<Pixels>,
+    /// The radii of the window's visible corners, or zero where unavailable.
+    pub corner_radii: Corners<Pixels>,
+}
+
+impl WindowInsets {
+    /// Returns the combined inset content should avoid.
+    pub fn effective(&self) -> Edges<Pixels> {
+        Edges {
+            top: self.safe_area.top.max(self.ime.top),
+            right: self.safe_area.right.max(self.ime.right),
+            bottom: self.safe_area.bottom.max(self.ime.bottom),
+            left: self.safe_area.left.max(self.ime.left),
+        }
+    }
+}
+
+/// A change in the state of the focused text input.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum TextInputStateChange {
+    /// The window changed from having no active text input to having one.
+    FocusGained,
+    /// The window no longer has an active text input.
+    FocusLost,
+    /// The selection or caret moved.
+    SelectionChanged,
+    /// The document content changed outside of platform-initiated edits.
+    ContentChanged,
+}
+
 #[expect(missing_docs)]
 pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn command_dispatcher(&self) -> PlatformWindowCommandDispatcher;
@@ -5852,6 +5897,24 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
     fn window_bounds(&self) -> WindowBounds;
     fn content_size(&self) -> Size<Pixels>;
+    /// Returns the visible viewport in logical pixels relative to the content origin.
+    ///
+    /// This may be smaller or offset when a keyboard or zoom obscures content;
+    /// it must not change the full layout size returned by `content_size`.
+    /// Implementations should return a frame snapshot, not query platform layout here.
+    fn visual_viewport_bounds(&self) -> Bounds<Pixels> {
+        Bounds::new(Point::default(), self.content_size())
+    }
+    /// Registers a callback when visible geometry may have changed.
+    ///
+    /// This requests a frame; backends sample viewport and safe-area geometry in `prepare_frame`.
+    fn on_visual_viewport_changed(&self, _callback: Box<dyn FnMut()>) {}
+    /// Samples platform geometry before drawing, returning whether caches must be invalidated.
+    ///
+    /// Geometry getters stay consistent during the draw. This method must not invoke callbacks.
+    fn prepare_frame(&self) -> bool {
+        false
+    }
     fn scale_factor(&self) -> f32;
     fn appearance(&self) -> WindowAppearance;
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>>;
@@ -5861,6 +5924,18 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn capslock(&self) -> Capslock;
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler);
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler>;
+    /// Takes an available handler for candidate-frame preparation without retiring a live checkout.
+    ///
+    /// Backends using [`PlatformInputHandlerSlot`] delegate to its `take_for_frame` method.
+    /// Candidate rejection must not revoke the native callback whose accepted handler is borrowed.
+    #[doc(hidden)]
+    fn take_input_handler_for_frame(&mut self) -> Option<PlatformInputHandler> {
+        self.take_input_handler()
+    }
+    /// Applies the focused text region's configuration when it changes.
+    ///
+    /// Reconfiguring an unchanged live session can restart the platform's IME connection.
+    fn set_text_input_configuration(&mut self, _configuration: TextInputConfiguration) {}
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
     fn input_handler_slot_for_test(&self) -> Option<PlatformInputHandlerSlot> {
@@ -6137,6 +6212,18 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn gpu_specs(&self) -> Option<GpuSpecs>;
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
+    /// Returns the regions currently obscured or reserved by the system.
+    fn insets(&self) -> WindowInsets {
+        WindowInsets::default()
+    }
+    /// Registers a callback when system insets change, including animated transitions.
+    fn on_insets_changed(&self, _callback: Box<dyn FnMut(WindowInsets)>) {}
+    /// Requests that the soft keyboard be shown.
+    fn show_soft_keyboard(&self) {}
+    /// Requests that the soft keyboard be hidden.
+    fn hide_soft_keyboard(&self) {}
+    /// Informs the platform that the focused text input state changed.
+    fn text_input_state_changed(&self, _change: TextInputStateChange) {}
 
     fn play_system_bell(&self) {}
 
@@ -7132,6 +7219,23 @@ pub struct PlatformInputHandlerSlot {
 }
 
 impl PlatformInputHandlerSlot {
+    /// Takes an available handler without revoking a callback when the slot is checked out.
+    ///
+    /// Frame preparation uses this reversible boundary. Installing the accepted handler or
+    /// explicitly taking/terminating the slot still retires the previous callback generation.
+    #[doc(hidden)]
+    pub fn take_for_frame(&self) -> Option<PlatformInputHandler> {
+        let mut state = self.state.borrow_mut();
+        if state.terminal || state.handler.is_none() {
+            return None;
+        }
+        state.generation = state
+            .generation
+            .checked_add(1)
+            .expect("platform input-handler generation overflowed");
+        state.handler.take()
+    }
+
     /// Replaces the current handler and invalidates any handler checked out by an active callback.
     pub fn set(&self, handler: PlatformInputHandler) {
         let previous = {
@@ -7402,6 +7506,30 @@ impl PlatformInputHandler {
         )
     }
 
+    /// Updates the document selection from native text interaction in UTF-16 coordinates.
+    pub fn set_selected_text_range(&mut self, range_utf16: Range<usize>) {
+        self.native_callback(
+            NativeInputHandlerOperation::SetSelectedTextRange,
+            |handler, window, cx| handler.set_selected_text_range(range_utf16, window, cx),
+        )
+    }
+
+    /// Returns the document length in UTF-16 code units when available.
+    pub fn text_length_utf16(&mut self) -> Option<usize> {
+        self.native_callback(
+            NativeInputHandlerOperation::TextLengthUtf16,
+            |handler, window, cx| handler.text_length_utf16(window, cx),
+        )
+    }
+
+    /// Returns the editable document range in UTF-16 code units.
+    pub fn text_input_editable_range(&mut self) -> Option<Range<usize>> {
+        self.native_callback(
+            NativeInputHandlerOperation::TextInputEditableRange,
+            |handler, window, cx| handler.text_input_editable_range(window, cx),
+        )
+    }
+
     #[cfg_attr(target_os = "windows", allow(dead_code))]
     pub fn marked_text_range(&mut self) -> Option<Range<usize>> {
         self.native_callback(
@@ -7475,6 +7603,20 @@ impl PlatformInputHandler {
             |handler, window, cx| handler.bounds_for_range(range_utf16, window, cx),
         )
         .and_then(|bounds| transform.try_project_bounds(bounds).ok())
+    }
+
+    /// Returns selection fragments projected into platform window coordinates.
+    pub fn selection_bounds_for_range(&mut self, range_utf16: Range<usize>) -> Vec<Bounds<Pixels>> {
+        let transform = self.transform;
+        let bounds = self.native_callback(
+            NativeInputHandlerOperation::SelectionBoundsForRange,
+            |handler, window, cx| handler.selection_bounds_for_range(range_utf16, window, cx),
+        );
+        bounds
+            .into_iter()
+            .map(|bounds| transform.try_project_bounds(bounds))
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap_or_default()
     }
 
     /// Returns the focused element's bounds projected into platform window coordinates.
@@ -7584,11 +7726,34 @@ impl PlatformInputHandler {
         window.with_input_transaction(cx, |window, cx| handler.accepts_text_input(window, cx))
     }
 
+    /// Returns text-assistance preferences through the current direct Window update.
+    pub fn text_input_configuration(
+        &mut self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> TextInputConfiguration {
+        let handler = self.handler.as_mut();
+        window.with_input_transaction(cx, |window, cx| {
+            handler.text_input_configuration(window, cx)
+        })
+    }
+
     #[allow(dead_code)]
     pub fn query_accepts_text_input(&mut self) -> bool {
         self.native_callback(
             NativeInputHandlerOperation::AcceptsTextInput,
             |handler, window, cx| handler.accepts_text_input(window, cx),
+        )
+    }
+
+    /// Checks eligibility against the current focus before the next frame is drawn.
+    pub fn query_accepts_focused_text_input(&mut self) -> bool {
+        let focus_id = self.focus_id;
+        self.native_callback(
+            NativeInputHandlerOperation::AcceptsFocusedTextInput,
+            |handler, window, cx| {
+                window.focus == Some(focus_id) && handler.accepts_text_input(window, cx)
+            },
         )
     }
 
@@ -7631,6 +7796,15 @@ pub trait InputHandler: 'static {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<UTF16Selection>;
+
+    /// Sets the selection from native text interaction in document UTF-16 coordinates.
+    fn set_selected_text_range(
+        &mut self,
+        _range_utf16: Range<usize>,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) {
+    }
 
     /// Get the range of the currently marked text, if any
     /// Corresponds to [markedRange()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438250-markedrange)
@@ -7705,6 +7879,19 @@ pub trait InputHandler: 'static {
         cx: &mut App,
     ) -> Option<Bounds<Pixels>>;
 
+    /// Returns selection rectangles in document order, in untransformed layout coordinates.
+    ///
+    /// Return line or shaped-run fragments rather than one rectangle per character. GPUI
+    /// projects all fragments through the focused element's committed subtree transform.
+    fn selection_bounds_for_range(
+        &mut self,
+        _range_utf16: Range<usize>,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Vec<Bounds<Pixels>> {
+        Vec::new()
+    }
+
     /// Get the focused text element's bounds in untransformed window-layout coordinates, if known.
     ///
     /// GPUI projects the result through the focused element's committed subtree transform before
@@ -7738,6 +7925,36 @@ pub trait InputHandler: 'static {
         true
     }
 
+    /// Returns the document length in UTF-16 code units when known.
+    fn text_length_utf16(&mut self, _window: &mut Window, _cx: &mut App) -> Option<usize> {
+        None
+    }
+
+    /// Returns text-assistance preferences for the current focused region.
+    ///
+    /// GPUI queries this after accepting a frame and forwards only changes, so the method
+    /// should be cheap and may vary with application state.
+    fn text_input_configuration(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> TextInputConfiguration {
+        TextInputConfiguration::default()
+    }
+
+    /// Returns the editable document range, in UTF-16 code units.
+    ///
+    /// The range bounds mirrored IME context and must contain the current selection.
+    /// A selection spanning its boundary degrades the context instead of widening it.
+    /// None imposes no bound.
+    fn text_input_editable_range(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Option<Range<usize>> {
+        None
+    }
+
     /// Returns whether printable keys should be routed to the IME before keybinding
     /// matching when a non-ASCII input source (e.g. Japanese, Korean, Chinese IME)
     /// is active. This prevents multi-stroke keybindings like `jj` from intercepting
@@ -7749,6 +7966,59 @@ pub trait InputHandler: 'static {
     fn prefers_ime_for_printable_keys(&mut self, _window: &mut Window, _cx: &mut App) -> bool {
         false
     }
+}
+
+/// Platform text-assistance preferences for the focused text region.
+///
+/// The default disables text assistance and requests no particular action-key presentation.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TextInputConfiguration {
+    /// Whether the platform may automatically correct entered text.
+    pub autocorrect: bool,
+    /// How software keyboards automatically capitalize entered text.
+    pub autocapitalize: Autocapitalize,
+    /// Whether software keyboards may offer word suggestions and spellcheck.
+    pub suggestions: bool,
+    /// The action advertised on a software keyboard's confirm key.
+    pub input_action: TextInputAction,
+}
+
+/// Automatic capitalization applied by software keyboards.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Autocapitalize {
+    /// No automatic capitalization.
+    #[default]
+    None,
+    /// Capitalize the first letter of each word.
+    Words,
+    /// Capitalize the first letter of each sentence.
+    Sentences,
+    /// Capitalize every letter.
+    Characters,
+}
+
+/// The action a software keyboard advertises on its confirm key.
+///
+/// This affects key presentation; pressing it is still delivered as ordinary input.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TextInputAction {
+    /// Let the platform choose its default presentation.
+    #[default]
+    Unspecified,
+    /// Inserting a line break.
+    Enter,
+    /// Committing the field's value.
+    Done,
+    /// Navigating to the typed target.
+    Go,
+    /// Moving to the next field.
+    Next,
+    /// Moving to the previous field.
+    Previous,
+    /// Executing a search.
+    Search,
+    /// Sending a message.
+    Send,
 }
 
 /// An application-bound, generation-safe reference to a live top-level owner window.

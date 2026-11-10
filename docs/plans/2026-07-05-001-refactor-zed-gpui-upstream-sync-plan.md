@@ -3266,6 +3266,51 @@ whole-framework matrices. Actual compositor popup/region behavior and Apple full
 effects remain distinct from source compilation and TestPlatform controls. Preserve prior
 foreign/runtime failures without treating them as reasons to omit a complete official owner.
 
+### Web Text Sessions And Viewport Successor
+
+Continue after `77b56a6af1b2a80ab05c11c42def3522077fd8da` against the same fixed target.
+Adopt complete official `224373ab888`, `8fc1a8a0c6f`, `d84e5d4992b` and `6ad3c7f278e`,
+including the final `e773a56d6c` keyboard/activity and `5a773a406e` autoscroll corrections.
+The missing WindowInsets, editable-range, selection and text-configuration interfaces are
+prerequisites rather than optional facade-only declarations. Canvas font fallback and its
+selected-face prerequisite remain a separate complete unit.
+
+Preserve official textarea mirroring, bounded UTF-16 context, editable-region limits, selection
+direction, beforeinput/edit intent, composition and duplicate-commit behavior, configuration
+mapping and virtual-keyboard policy. The native input handler remains the sole text mutation
+owner. The DOM mirror is browser context, not a second document or history model. Preserve
+fork callback/input-handler generation leases, per-window focus, pointer/touch terminal custody,
+trusted tap rules, existing paste routing and irreversible interaction/renderer retirement.
+
+Only an accepted candidate may publish new text configuration or focused-input state. Refused
+or unwound rendering must keep the accepted platform session and retained handler. Text/selection
+notifications validate the accepted focused handler; configuration changes are deduplicated so
+ordinary paint does not restart a live IME. App-borrow reentry uses existing input/foreground
+owners instead of a second dispatch queue. New handler queries keep exact native diagnostic and
+geometry projection contracts. Preserve public EntityInputHandler composition.
+
+Accepted effects are local to their acceptance attempt before any callback runs. Query focus,
+claim revision and accepted generation must remain current; panic or staleness authorizes no
+publication. Newer committed keyboard requests supersede older staged requests. A nested
+refused draw cannot erase an outer accepted record or invalidate an outstanding input-handler
+checkout; a nested accepted draw keeps its newer session. Candidate handler capture therefore
+uses take_input_handler_for_frame/take_for_frame, while explicit replacement and termination
+retain their generation invalidation.
+
+Adopt official visual viewport and CSS safe-area snapshots in canvas coordinates. Browser
+viewport callbacks enter the existing ordered native event owner and request a frame; the
+pre-draw sample invalidates view caches when it changes. Getters do not force DOM layout or
+change the full layout viewport when the software keyboard changes the visible area. A
+request/dismiss keyboard operation changes neither component focus nor layout size.
+
+Compile affected Core/Web owners and independently locked consumers. Retain the official
+configuration/focus regressions and add concrete candidate refusal/unwind, generation, range,
+retirement and viewport controls. Execute the public browser smoke workflow for actual DOM
+input, selection, synthetic composition, focus and resize where available, preserving existing
+touch/clipboard routes. Label synthetic events separately from trusted input and real OS IME;
+desktop browser results do not qualify mobile keyboard hardware or numerical performance.
+Trust unchanged official mirror/viewport algorithms and avoid unrelated full-framework matrices.
+
 ## Maintained Baseline Before Engine Adaptation
 
 The [native control/popup record](../verification.md#native-regions-layer-shell-fullscreen-and-popups)

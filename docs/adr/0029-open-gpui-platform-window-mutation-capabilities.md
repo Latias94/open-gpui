@@ -253,6 +253,36 @@ window or domain event.
 | Mutation observation | FIFO and non-droppable | Ordered with placement facts and close | Reject a stale full ID, domain, or mutation generation before committing facts | Exactly one accepted terminal per current ticket |
 | Immediate input | Native callback order; never mailbox-coalesced | Must first settle older ingress barriers; pointer cancellation and close end their sessions | A missing or retired ID is an invariant failure at callback entry | Returns one exact disposition before native handling continues |
 
+The official text configuration, editable-range and selection interfaces retain that same native
+input-handler lease and UTF-16 document authority. Selection rectangles use the committed
+subtree transform, as caret geometry already does. Browser textarea context is a bounded mirror,
+not a second editable document or mutation owner.
+
+Candidate preparation uses `take_input_handler_for_frame`: an empty slot checked out by a live
+native callback keeps its generation until the candidate is accepted. Rejection must allow the
+same checkout to restore the previous handler. Explicit `take_input_handler`, replacement and
+termination retain their invalidating semantics; accepting an empty input session must still
+retire the old checkout. All built-in native backends delegate to the same slot implementation.
+
+Text configuration and active-input state publish only after candidate acceptance. Configuration
+is independent of whether the registered handler currently accepts editing, and unchanged values
+are not forwarded again. User queries may redirect focus or accept another frame; the caller
+revalidates current focus/revision and accepted generation before publishing or restoring its
+handler. Rejected or unwound candidates cannot issue keyboard or text-state effects. Their
+small pending intents move to an acceptance-local record before callbacks and require a valid
+current session before publication. A nested refused draw cannot erase that record; a newer
+committed keyboard request supersedes its older staged request. Invalid queries and superseded
+accepted generations discard the old record.
+
+Virtual-keyboard requests and active text-state effects use the existing post-borrow native
+command FIFO so synchronous DOM blur/composition callbacks can enter the established input
+boundary after App and callback leases are released. This is the current native event turn,
+not another foreground queue. Irreversible focus-loss cleanup remains permitted after native
+interaction quiescence; it cannot restore interaction. Default desktop/headless text services
+remain no-ops. Browser viewport and inset callbacks only request a frame through the existing
+native ingress; pre-draw sampling owns the stable visual/safe-area snapshot and cache refresh.
+The full layout viewport remains independent of the software keyboard's visible rectangle.
+
 The ingress sequence is application-wide and monotonic. It is allocated before attempting to
 borrow `App`, deciding on inline delivery, or coalescing. Inline delivery is legal only while the
 queue is empty, no drain owns the queue, and no unresolved barrier exists. A callback created

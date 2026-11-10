@@ -29,15 +29,16 @@ use crate::{
     SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow,
     SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
     SubtreeClip, SubtreeClipError, SubtreePresentation, SubtreeTransform, SubtreeTransformError,
-    SystemWindowTab, SystemWindowTabController, TaffyLayoutEngine, Task, TextRenderingMode,
-    TextStyle, TextStyleRefinement, Underline, UnderlineStyle, WindowActivationPolicy,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
-    WindowCreationFacts, WindowDecorations, WindowFrameSubmissionOutcome,
-    WindowFrameSubmissionSnapshot, WindowFrameSubmissionTicket, WindowInitialPresentationOrder,
-    WindowInitialPresentationStatus, WindowKind, WindowMutationDispatch, WindowMutationDomain,
-    WindowMutationOutcome, WindowOptions, WindowParams, WindowPhysicalPlacementRequest,
-    WindowPlacementRequest, WindowPlacementState, WindowPlatformFacts, WindowPresentAttemptFacts,
-    WindowPresentationFacts, WindowProvisionalOpeningClaim, WindowProvisionalPlacementOutcome,
+    SystemWindowTab, SystemWindowTabController, TaffyLayoutEngine, Task, TextInputConfiguration,
+    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, Underline,
+    UnderlineStyle, WindowActivationPolicy, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControls, WindowCreationFacts, WindowDecorations,
+    WindowFrameSubmissionOutcome, WindowFrameSubmissionSnapshot, WindowFrameSubmissionTicket,
+    WindowInitialPresentationOrder, WindowInitialPresentationStatus, WindowInsets, WindowKind,
+    WindowMutationDispatch, WindowMutationDomain, WindowMutationOutcome, WindowOptions,
+    WindowParams, WindowPhysicalPlacementRequest, WindowPlacementRequest, WindowPlacementState,
+    WindowPlatformFacts, WindowPresentAttemptFacts, WindowPresentationFacts,
+    WindowProvisionalOpeningClaim, WindowProvisionalPlacementOutcome,
     WindowProvisionalPlacementRequest, WindowProvisionalPlacementTicket,
     WindowProvisionalRevealCancellationOutcome, WindowProvisionalRevealOutcome,
     WindowProvisionalRevealTicket, WindowProvisionalSemanticsOutcome,
@@ -1964,6 +1965,11 @@ pub struct Window {
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
+    last_text_input_configuration: Option<TextInputConfiguration>,
+    focused_text_input: Option<FocusId>,
+    candidate_text_notifications: Cell<(Option<FocusId>, u8)>,
+    candidate_virtual_keyboard_request: Cell<Option<bool>>,
+    virtual_keyboard_request_revision: Cell<u64>,
     candidate_accessibility_focus: Option<FocusId>,
     pending_focus_claim: Option<PendingFocusClaim>,
     pending_focus_reveal_fence: Option<PendingFocusRevealFence>,
@@ -2027,6 +2033,13 @@ struct CandidateFrameTransfers {
     element_states: Vec<(GlobalElementId, TypeId)>,
     mouse_listeners: Vec<(usize, usize)>,
     input_handlers: Vec<(usize, usize)>,
+}
+
+struct CandidateTextInputEffects {
+    accepted_generation: u64,
+    notifications: (Option<FocusId>, u8),
+    keyboard: Option<bool>,
+    keyboard_revision: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2784,6 +2797,14 @@ impl Window {
                 cx.enqueue_window_frame_requested(handle.window_id(), request_frame_options);
             }
         }));
+        platform_window.on_visual_viewport_changed(Box::new({
+            let cx = cx.to_async();
+            move || cx.enqueue_window_visual_viewport_changed(handle.window_id())
+        }));
+        platform_window.on_insets_changed(Box::new({
+            let cx = cx.to_async();
+            move |_| cx.enqueue_window_visual_viewport_changed(handle.window_id())
+        }));
         invalidator.set_platform_waker(platform_window.frame_waker());
         platform_window.on_resize(Box::new({
             let cx = cx.to_async();
@@ -3105,6 +3126,11 @@ impl Window {
             refreshing: false,
             activation_observers: SubscriberSet::new(),
             focus: None,
+            last_text_input_configuration: None,
+            focused_text_input: None,
+            candidate_text_notifications: Cell::new((None, 0)),
+            candidate_virtual_keyboard_request: Cell::new(None),
+            virtual_keyboard_request_revision: Cell::new(0),
             candidate_accessibility_focus: None,
             pending_focus_claim: None,
             pending_focus_reveal_fence: None,
@@ -4686,6 +4712,17 @@ impl Window {
                     }
                 })),
                 "interaction-quiescence IME cleanup",
+            );
+            retain_first_window_cleanup_panic(
+                &mut first_panic,
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    if self.last_text_input_configuration.is_some()
+                        || self.focused_text_input.is_some()
+                    {
+                        self.publish_text_input_session(None, TextInputConfiguration::default());
+                    }
+                })),
+                "interaction-quiescence text session cleanup",
             );
             retain_first_window_cleanup_panic(
                 &mut first_panic,
@@ -7054,6 +7091,58 @@ impl Window {
         self.viewport_size
     }
 
+    /// Returns the platform's visible viewport in window-local logical pixels.
+    ///
+    /// Unlike the full layout viewport, this can shrink or move when a keyboard opens.
+    /// Getters use the latest frame snapshot rather than synchronously querying platform layout.
+    pub fn visual_viewport_bounds(&self) -> Bounds<Pixels> {
+        self.platform_window.visual_viewport_bounds()
+    }
+
+    /// Returns system-reserved and keyboard insets from the latest platform snapshot.
+    pub fn insets(&self) -> WindowInsets {
+        self.platform_window.insets()
+    }
+
+    /// Returns a conservative rectangle avoiding platform-known obscured content.
+    pub fn fully_visible_bounds(&self) -> Bounds<Pixels> {
+        let insets = self.insets().effective();
+        let viewport = self.viewport_size();
+        let left = insets.left.max(Pixels::ZERO).min(viewport.width);
+        let top = insets.top.max(Pixels::ZERO).min(viewport.height);
+        let right = (viewport.width - insets.right.max(Pixels::ZERO)).max(left);
+        let bottom = (viewport.height - insets.bottom.max(Pixels::ZERO)).max(top);
+        let safe_bounds = Bounds::from_corners(point(left, top), point(right, bottom));
+        let mut visible = safe_bounds.intersect(&self.visual_viewport_bounds());
+        visible.size.width = visible.size.width.max(Pixels::ZERO);
+        visible.size.height = visible.size.height.max(Pixels::ZERO);
+        visible
+    }
+
+    /// Requests the virtual keyboard for the focused input without changing its focus.
+    ///
+    /// Call from a user gesture on platforms that require one. The platform may decline.
+    pub fn request_virtual_keyboard(&self) {
+        if self.user_interaction_is_admitted() {
+            if self.has_unaccepted_text_candidate() {
+                self.candidate_virtual_keyboard_request.set(Some(true));
+            } else {
+                self.enqueue_virtual_keyboard_request(true);
+            }
+        }
+    }
+
+    /// Requests keyboard dismissal without changing the component's focus.
+    pub fn dismiss_virtual_keyboard(&self) {
+        if self.user_interaction_is_admitted() {
+            if self.has_unaccepted_text_candidate() {
+                self.candidate_virtual_keyboard_request.set(Some(false));
+            } else {
+                self.enqueue_virtual_keyboard_request(false);
+            }
+        }
+    }
+
     /// Returns whether this window is focused by the operating system (receiving key events).
     pub fn is_window_active(&self) -> bool {
         self.active.get()
@@ -7838,6 +7927,8 @@ impl Window {
         unwound: bool,
         cx: &mut App,
     ) -> CandidateFrameTransaction {
+        self.candidate_text_notifications.set((None, 0));
+        self.candidate_virtual_keyboard_request.set(None);
         let rejected_attempt = self
             .candidate_frame_transaction
             .take()
@@ -7953,6 +8044,9 @@ impl Window {
         #[cfg(feature = "profiler")]
         self.window_profiler.begin_draw();
 
+        if self.platform_window.prepare_frame() {
+            self.refresh();
+        }
         self.invalidate_entities();
         debug_assert!(self.rendered_entity_stack.is_empty());
         debug_assert!(self.subtree_presentation_stack.borrow().is_empty());
@@ -7968,6 +8062,8 @@ impl Window {
         debug_assert!(self.candidate_atlas_lease_failure.is_none());
         debug_assert!(!self.candidate_pending_input_clear);
         debug_assert!(!self.candidate_pending_input_notification);
+        self.candidate_text_notifications.set((None, 0));
+        self.candidate_virtual_keyboard_request.set(None);
         let authority_checkpoint = self.candidate_frame_authority_checkpoint();
         self.candidate_accessibility_focus = None;
         self.candidate_atlas_lease_failure = None;
@@ -7992,7 +8088,7 @@ impl Window {
         // expected position.
         let rendered_input_handlers_len = self.rendered_frame.input_handlers.len();
         let mut restored_input_handler_index = None;
-        if let Some(input_handler) = self.platform_window.take_input_handler() {
+        if let Some(input_handler) = self.platform_window.take_input_handler_for_frame() {
             let validity = input_handler.validity();
             if let Some((index, slot)) = self
                 .rendered_frame
@@ -8219,6 +8315,12 @@ impl Window {
             .as_mut()
             .expect("the swapped candidate must retain its frame transaction")
             .mark_accepted();
+        let candidate_text_input_effects = CandidateTextInputEffects {
+            accepted_generation: self.rendered_frame.generation,
+            notifications: self.candidate_text_notifications.replace((None, 0)),
+            keyboard: self.candidate_virtual_keyboard_request.take(),
+            keyboard_revision: self.virtual_keyboard_request_revision.get(),
+        };
         cx.set_native_window_hit_test_snapshot(
             self.handle.window_id(),
             Arc::new(CommittedWindowHitTestSnapshot::from_frame(
@@ -8351,6 +8453,17 @@ impl Window {
         );
         self.schedule_focus_claim_resolution_dispatch(cx);
 
+        let mut text_session_validated = false;
+        retain_first_window_cleanup_panic(
+            &mut completion_panic,
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                text_session_validated = self.update_text_input_session_from_committed_handler(cx);
+            })),
+            "accepted frame text input session",
+        );
+        if text_session_validated {
+            self.publish_candidate_text_input_effects(candidate_text_input_effects);
+        }
         retain_first_window_cleanup_panic(
             &mut completion_panic,
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -12665,6 +12778,188 @@ impl Window {
                 )),
                 validity,
             ));
+        }
+    }
+
+    /// Notifies native text services that the accepted focused component's text changed.
+    ///
+    /// Call after application-driven edits, alongside the normal redraw notification.
+    pub fn notify_text_input_changed(&self, focus_handle: &FocusHandle) {
+        if self.user_interaction_is_admitted()
+            && self.focused_text_input == Some(focus_handle.id)
+            && focus_handle.is_focused(self)
+        {
+            self.notify_text_input_state(focus_handle.id, TextInputStateChange::ContentChanged);
+        }
+    }
+
+    /// Notifies native text services that the accepted focused component's selection changed.
+    pub fn notify_text_selection_changed(&self, focus_handle: &FocusHandle) {
+        if self.user_interaction_is_admitted()
+            && self.focused_text_input == Some(focus_handle.id)
+            && focus_handle.is_focused(self)
+        {
+            self.notify_text_input_state(focus_handle.id, TextInputStateChange::SelectionChanged);
+        }
+    }
+
+    fn has_unaccepted_text_candidate(&self) -> bool {
+        self.candidate_frame_transaction
+            .as_ref()
+            .is_some_and(|candidate| !candidate.is_accepted())
+    }
+
+    fn notify_text_input_state(&self, focus: FocusId, change: TextInputStateChange) {
+        if self.has_unaccepted_text_candidate() {
+            let bit = match change {
+                TextInputStateChange::ContentChanged => 1,
+                TextInputStateChange::SelectionChanged => 2,
+                TextInputStateChange::FocusGained | TextInputStateChange::FocusLost => {
+                    unreachable!()
+                }
+            };
+            let (_, pending) = self.candidate_text_notifications.get();
+            self.candidate_text_notifications
+                .set((Some(focus), pending | bit));
+        } else {
+            self.platform_command_sink
+                .enqueue(PlatformWindowCommand::TextInputStateChanged(change));
+        }
+    }
+
+    fn enqueue_virtual_keyboard_request(&self, show: bool) {
+        self.virtual_keyboard_request_revision.set(
+            self.virtual_keyboard_request_revision
+                .get()
+                .checked_add(1)
+                .expect("virtual keyboard request revision overflowed"),
+        );
+        self.platform_command_sink.enqueue(if show {
+            PlatformWindowCommand::ShowSoftKeyboard
+        } else {
+            PlatformWindowCommand::HideSoftKeyboard
+        });
+    }
+
+    fn publish_candidate_text_input_effects(&self, effects: CandidateTextInputEffects) {
+        let (focus, notifications) = effects.notifications;
+        if !self.user_interaction_is_admitted()
+            || self.rendered_frame.generation != effects.accepted_generation
+        {
+            return;
+        }
+        if focus.is_some() && focus == self.focused_text_input && focus == self.focus {
+            for (bit, change) in [
+                (1, TextInputStateChange::ContentChanged),
+                (2, TextInputStateChange::SelectionChanged),
+            ] {
+                if notifications & bit != 0 {
+                    self.platform_command_sink
+                        .enqueue(PlatformWindowCommand::TextInputStateChanged(change));
+                }
+            }
+        }
+        if let Some(show) = effects.keyboard {
+            if self.virtual_keyboard_request_revision.get() == effects.keyboard_revision
+                && (!show
+                    || self
+                        .focused_text_input
+                        .is_some_and(|focus| self.focus == Some(focus)))
+            {
+                self.enqueue_virtual_keyboard_request(show);
+            }
+        }
+    }
+
+    fn update_text_input_session_from_committed_handler(&mut self, cx: &mut App) -> bool {
+        let mut focused = None;
+        let mut configuration = TextInputConfiguration::default();
+        let mut registered = false;
+        let generation = self.rendered_frame.generation;
+        let focus_revision = self.focus_claim_revision;
+        let mut query_current = true;
+        if let Some(mut input_handler) = self.platform_window.take_input_handler() {
+            let focus_id = input_handler.focus_id();
+            let mut first_panic = None;
+            retain_first_window_cleanup_panic(
+                &mut first_panic,
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    if self.user_interaction_is_admitted()
+                        && self.focus == Some(focus_id)
+                        && self.rendered_frame.focus_path().last().copied() == Some(focus_id)
+                    {
+                        let accepts = input_handler.accepts_text_input(self, cx);
+                        if self.rendered_frame.generation == generation
+                            && self.focus == Some(focus_id)
+                            && self.focus_claim_revision == focus_revision
+                            && self.user_interaction_is_admitted()
+                        {
+                            configuration = input_handler.text_input_configuration(self, cx);
+                        }
+                        if self.user_interaction_is_admitted()
+                            && self.focus == Some(focus_id)
+                            && self.focus_claim_revision == focus_revision
+                            && self.rendered_frame.generation == generation
+                            && self.rendered_frame.focus_path().last().copied() == Some(focus_id)
+                        {
+                            registered = true;
+                            focused = accepts.then_some(focus_id);
+                        } else {
+                            query_current = false;
+                        }
+                    } else if self.user_interaction_is_admitted() {
+                        query_current = false;
+                    }
+                })),
+                "accepted text input configuration query",
+            );
+            retain_first_window_cleanup_panic(
+                &mut first_panic,
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    if self.rendered_frame.generation == generation {
+                        self.restore_input_handler_if_admitted(input_handler, cx);
+                    }
+                })),
+                "accepted text input handler restoration",
+            );
+            if let Some(panic) = first_panic {
+                std::panic::resume_unwind(panic);
+            }
+        }
+        if !query_current || self.rendered_frame.generation != generation {
+            return false;
+        }
+        if !registered {
+            configuration = TextInputConfiguration::default();
+        }
+        self.publish_text_input_session(focused, configuration);
+        true
+    }
+
+    fn publish_text_input_session(
+        &mut self,
+        focused: Option<FocusId>,
+        configuration: TextInputConfiguration,
+    ) {
+        if self.last_text_input_configuration.as_ref() != Some(&configuration) {
+            self.platform_window
+                .set_text_input_configuration(configuration.clone());
+            self.last_text_input_configuration = Some(configuration);
+        }
+        let focused = focused.filter(|_| self.user_interaction_is_admitted());
+        let previous = mem::replace(&mut self.focused_text_input, focused);
+        if previous.is_some() != focused.is_some() {
+            let change = if focused.is_some() {
+                TextInputStateChange::FocusGained
+            } else {
+                TextInputStateChange::FocusLost
+            };
+            if self.user_interaction_is_admitted() {
+                self.platform_command_sink
+                    .enqueue(PlatformWindowCommand::TextInputStateChanged(change));
+            } else {
+                self.platform_window.text_input_state_changed(change);
+            }
         }
     }
 

@@ -40,7 +40,7 @@ pub(super) fn qualify(cdp: &mut CdpClient, url: &str) -> Result<(), String> {
             && state["installedTarget"] == 0
             && number(state, "acceptedGeneration") > 0
     })?;
-    cdp.evaluate("document.querySelector('input').focus(); true")?;
+    cdp.evaluate("document.querySelector('textarea').focus(); true")?;
     let previous_text =
         cdp.evaluate("navigator.clipboard.readText().then(text => ({text})).catch(() => ({}))")?;
     let outcome = qualify_contents(cdp, origin);

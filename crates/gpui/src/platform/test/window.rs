@@ -12,13 +12,13 @@ use crate::{
     PlatformWindowMutationTerminal, PlatformWindowMutationUnobservedTerminal,
     PlatformWindowPhysicalGeometry, PlatformWindowPresentOutcome, Point,
     PreparedPlatformPointerCaptureRelease, PreparedPlatformPresentationShutdown, PromptButton,
-    RequestFrameOptions, Scene, Size, TestPlatform, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControlArea, WindowCreationFacts, WindowMutationDomain,
-    WindowMutationRequest, WindowParams, WindowPlacementState, WindowPlatformFacts,
-    WindowPresentationShutdownTicket, WindowProvisionalPlacementNativeFacts,
-    WindowProvisionalPlacementOutcome, WindowProvisionalPlacementRequest,
-    WindowProvisionalRevealNativeFacts, WindowProvisionalRevealZOrder, WindowProvisionalSession,
-    WindowVisibility,
+    RequestFrameOptions, Scene, Size, TestPlatform, TextInputConfiguration, TextInputStateChange,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
+    WindowCreationFacts, WindowInsets, WindowMutationDomain, WindowMutationRequest, WindowParams,
+    WindowPlacementState, WindowPlatformFacts, WindowPresentationShutdownTicket,
+    WindowProvisionalPlacementNativeFacts, WindowProvisionalPlacementOutcome,
+    WindowProvisionalPlacementRequest, WindowProvisionalRevealNativeFacts,
+    WindowProvisionalRevealZOrder, WindowProvisionalSession, WindowVisibility,
 };
 #[cfg(test)]
 use crate::{
@@ -39,44 +39,56 @@ use std::{
 
 static NEXT_EMERGENCY_PRESENTATION_SHUTDOWN_GENERATION: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Default)]
-struct TestWindowVisibilityCallback {
-    callback: RefCell<Option<Box<dyn FnMut(WindowVisibility)>>>,
-    pending: RefCell<VecDeque<WindowVisibility>>,
+type TestWindowVisibilityCallback = TestWindowChangeCallback<WindowVisibility>;
+
+struct TestWindowChangeCallback<T> {
+    callback: RefCell<Option<Box<dyn FnMut(T)>>>,
+    pending: RefCell<VecDeque<T>>,
     delivering: Cell<bool>,
     terminated: Cell<bool>,
 }
 
-impl TestWindowVisibilityCallback {
-    fn set(&self, callback: Box<dyn FnMut(WindowVisibility)>) {
+impl<T> Default for TestWindowChangeCallback<T> {
+    fn default() -> Self {
+        Self {
+            callback: RefCell::new(None),
+            pending: RefCell::new(VecDeque::default()),
+            delivering: Cell::new(false),
+            terminated: Cell::new(false),
+        }
+    }
+}
+
+impl<T> TestWindowChangeCallback<T> {
+    fn set(&self, callback: Box<dyn FnMut(T)>) {
         if !self.terminated.get() {
             self.callback.replace(Some(callback));
         }
     }
 
-    fn call(&self, visibility: WindowVisibility) {
+    fn call(&self, value: T) {
         if self.terminated.get() {
             return;
         }
-        self.pending.borrow_mut().push_back(visibility);
+        self.pending.borrow_mut().push_back(value);
         if self.delivering.replace(true) {
             return;
         }
-        let mut delivery = TestWindowVisibilityCallbackDelivery {
+        let mut delivery = TestWindowChangeCallbackDelivery {
             slot: self,
             callback: None,
         };
         while !self.terminated.get() {
-            let visibility = self.pending.borrow_mut().pop_front();
-            let Some(visibility) = visibility else {
+            let value = self.pending.borrow_mut().pop_front();
+            let Some(value) = value else {
                 break;
             };
             delivery.callback = self.callback.take();
             let Some(callback) = delivery.callback.as_mut() else {
-                self.pending.borrow_mut().push_front(visibility);
+                self.pending.borrow_mut().push_front(value);
                 break;
             };
-            callback(visibility);
+            callback(value);
             delivery.restore_callback();
         }
     }
@@ -88,12 +100,12 @@ impl TestWindowVisibilityCallback {
     }
 }
 
-struct TestWindowVisibilityCallbackDelivery<'a> {
-    slot: &'a TestWindowVisibilityCallback,
-    callback: Option<Box<dyn FnMut(WindowVisibility)>>,
+struct TestWindowChangeCallbackDelivery<'a, T> {
+    slot: &'a TestWindowChangeCallback<T>,
+    callback: Option<Box<dyn FnMut(T)>>,
 }
 
-impl TestWindowVisibilityCallbackDelivery<'_> {
+impl<T> TestWindowChangeCallbackDelivery<'_, T> {
     fn restore_callback(&mut self) {
         if !self.slot.terminated.get() {
             let mut callback = self.slot.callback.borrow_mut();
@@ -105,7 +117,7 @@ impl TestWindowVisibilityCallbackDelivery<'_> {
     }
 }
 
-impl Drop for TestWindowVisibilityCallbackDelivery<'_> {
+impl<T> Drop for TestWindowChangeCallbackDelivery<'_, T> {
     fn drop(&mut self) {
         self.restore_callback();
         self.slot.delivering.set(false);
@@ -177,11 +189,19 @@ pub(crate) struct TestWindowState {
     defer_frame_requests: bool,
     deferred_frame_request: Option<RequestFrameOptions>,
     resize_callback: Option<Rc<dyn Fn(Size<Pixels>, f32)>>,
+    visual_viewport: Option<Bounds<Pixels>>,
+    visual_viewport_callback: Option<Rc<TestWindowChangeCallback<()>>>,
+    insets: WindowInsets,
+    insets_callback: Option<Rc<TestWindowChangeCallback<WindowInsets>>>,
+    virtual_keyboard_requests: usize,
+    virtual_keyboard_dismissals: usize,
     moved_callback: Option<Rc<dyn Fn()>>,
     display_changed_callback: Option<Rc<TestDisplayChangeCallback>>,
     window_state_change_callback: Option<Rc<dyn Fn()>>,
     mutation_observation_callback: Option<Rc<dyn Fn(PlatformWindowMutationObservation)>>,
     input_handler: PlatformInputHandlerSlot,
+    text_input_configurations: Vec<TextInputConfiguration>,
+    text_input_state_changes: Vec<TextInputStateChange>,
     ime_position_history: Vec<Bounds<Pixels>>,
     is_minimized: bool,
     is_maximized: bool,
@@ -459,11 +479,19 @@ impl TestWindow {
                 frame_scheduled: false,
                 frame_callback_pending: false,
                 resize_callback: None,
+                visual_viewport: None,
+                visual_viewport_callback: None,
+                insets: WindowInsets::default(),
+                insets_callback: None,
+                virtual_keyboard_requests: 0,
+                virtual_keyboard_dismissals: 0,
                 moved_callback: None,
                 display_changed_callback: None,
                 window_state_change_callback: None,
                 mutation_observation_callback: None,
                 input_handler: PlatformInputHandlerSlot::default(),
+                text_input_configurations: Vec::new(),
+                text_input_state_changes: Vec::new(),
                 ime_position_history: Vec::new(),
                 is_minimized: false,
                 is_maximized: matches!(params.window_bounds, WindowBounds::Maximized(_)),
@@ -840,6 +868,11 @@ impl TestWindow {
                 }
                 self.toggle_simple_fullscreen();
             }
+            PlatformWindowCommand::ShowSoftKeyboard => self.show_soft_keyboard(),
+            PlatformWindowCommand::HideSoftKeyboard => self.hide_soft_keyboard(),
+            PlatformWindowCommand::TextInputStateChanged(change) => {
+                self.text_input_state_changed(change)
+            }
             #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
             PlatformWindowCommand::CompleteNativeFrame => {}
             PlatformWindowCommand::ShowWindowMenu(_)
@@ -984,6 +1017,51 @@ impl TestWindow {
             .cloned()
             .map(normalize_accessibility_tree_update)
             .collect()
+    }
+
+    pub fn simulate_visual_viewport_change(&self, bounds: Bounds<Pixels>) {
+        let callback = {
+            let mut state = self.0.lock();
+            if state.closed {
+                return;
+            }
+            state.visual_viewport = Some(bounds);
+            state.visual_viewport_callback.clone()
+        };
+        if let Some(callback) = callback {
+            callback.call(());
+        }
+    }
+
+    pub fn simulate_insets_change(&self, insets: WindowInsets) {
+        let callback = {
+            let mut state = self.0.lock();
+            if state.closed {
+                return;
+            }
+            state.insets = insets.clone();
+            state.insets_callback.clone()
+        };
+        if let Some(callback) = callback {
+            callback.call(insets);
+        }
+    }
+
+    pub fn virtual_keyboard_requests(&self) -> usize {
+        self.0.lock().virtual_keyboard_requests
+    }
+
+    pub fn virtual_keyboard_dismissals(&self) -> usize {
+        self.0.lock().virtual_keyboard_dismissals
+    }
+
+    /// Every [`TextInputConfiguration`] forwarded to this window, in order.
+    pub fn text_input_configurations(&self) -> Vec<TextInputConfiguration> {
+        self.0.lock().text_input_configurations.clone()
+    }
+
+    pub fn text_input_state_changes(&self) -> Vec<TextInputStateChange> {
+        self.0.lock().text_input_state_changes.clone()
     }
 
     pub fn simulate_resize(&mut self, size: Size<Pixels>) {
@@ -1350,6 +1428,8 @@ impl TestWindow {
             input_callback,
             input_handler,
             visibility_callback,
+            visual_viewport_callback,
+            insets_callback,
             mut native_drop_callback,
             callback,
             retired_callbacks,
@@ -1405,6 +1485,8 @@ impl TestWindow {
                 state.input_callback.clone(),
                 state.input_handler.clone(),
                 state.visibility_callback.take(),
+                state.visual_viewport_callback.take(),
+                state.insets_callback.take(),
                 state.native_drop_callback.take(),
                 callback,
                 (
@@ -1427,6 +1509,12 @@ impl TestWindow {
         input_callback.terminate();
         input_handler.terminate();
         if let Some(callback) = visibility_callback {
+            callback.terminate();
+        }
+        if let Some(callback) = visual_viewport_callback {
+            callback.terminate();
+        }
+        if let Some(callback) = insets_callback {
             callback.terminate();
         }
         drop(retired_callbacks);
@@ -1607,6 +1695,59 @@ impl TestWindow {
 }
 
 impl PlatformWindow for TestWindow {
+    fn visual_viewport_bounds(&self) -> Bounds<Pixels> {
+        let state = self.0.lock();
+        state
+            .visual_viewport
+            .unwrap_or_else(|| Bounds::new(Point::default(), state.bounds.size))
+    }
+
+    fn on_visual_viewport_changed(&self, mut callback: Box<dyn FnMut()>) {
+        let slot = {
+            let mut state = self.0.lock();
+            if state.closed {
+                return;
+            }
+            state
+                .visual_viewport_callback
+                .get_or_insert_with(|| Rc::new(TestWindowChangeCallback::default()))
+                .clone()
+        };
+        slot.set(Box::new(move |()| callback()));
+    }
+
+    fn insets(&self) -> WindowInsets {
+        self.0.lock().insets.clone()
+    }
+
+    fn on_insets_changed(&self, callback: Box<dyn FnMut(WindowInsets)>) {
+        let slot = {
+            let mut state = self.0.lock();
+            if state.closed {
+                return;
+            }
+            state
+                .insets_callback
+                .get_or_insert_with(|| Rc::new(TestWindowChangeCallback::default()))
+                .clone()
+        };
+        slot.set(callback);
+    }
+
+    fn show_soft_keyboard(&self) {
+        let mut state = self.0.lock();
+        if !state.closed && !state.interaction_quiesced {
+            state.virtual_keyboard_requests += 1;
+        }
+    }
+
+    fn hide_soft_keyboard(&self) {
+        let mut state = self.0.lock();
+        if !state.closed {
+            state.virtual_keyboard_dismissals += 1;
+        }
+    }
+
     fn map_window(&mut self) -> anyhow::Result<()> {
         let close_during_map = {
             let mut state = self.0.lock();
@@ -2020,6 +2161,27 @@ impl PlatformWindow for TestWindow {
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
         let input_handler_slot = self.0.lock().input_handler.clone();
         input_handler_slot.take()
+    }
+
+    fn take_input_handler_for_frame(&mut self) -> Option<PlatformInputHandler> {
+        let slot = self.0.lock().input_handler.clone();
+        slot.take_for_frame()
+    }
+
+    fn set_text_input_configuration(&mut self, configuration: TextInputConfiguration) {
+        let mut state = self.0.lock();
+        if !state.closed {
+            state.text_input_configurations.push(configuration);
+        }
+    }
+
+    fn text_input_state_changed(&self, change: TextInputStateChange) {
+        let mut state = self.0.lock();
+        if !state.closed
+            && (!state.interaction_quiesced || change == TextInputStateChange::FocusLost)
+        {
+            state.text_input_state_changes.push(change);
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]

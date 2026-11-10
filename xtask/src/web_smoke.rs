@@ -2,6 +2,7 @@ use serde_json::{Value, json};
 
 mod clipboard;
 mod platform_info;
+mod text_input;
 use std::{
     env, fs,
     io::{ErrorKind, Read, Write},
@@ -112,7 +113,7 @@ const WEB_PREFLIGHT_EXPRESSION: &str = r#"
 const SMOKE_STATE_EXPRESSION: &str = r#"
 (() => {
     const canvas = document.querySelector("canvas");
-    const input = document.querySelector("input");
+    const input = document.querySelector("textarea");
     const rect = canvas ? canvas.getBoundingClientRect() : null;
     const probe = globalThis.__OPEN_GPUI_WEB_SMOKE__ ?? null;
     const diagnostics = globalThis.__OPEN_GPUI_WEB_SMOKE_DIAGNOSTICS__ ?? null;
@@ -145,7 +146,7 @@ const SMOKE_STATE_EXPRESSION: &str = r#"
             mousePointerCaptured: canvas.hasPointerCapture(1),
         } : null,
         input: input ? {
-            count: document.querySelectorAll("input").length,
+            count: document.querySelectorAll("textarea").length,
             focused: document.activeElement === input,
             mode: input.getAttribute("inputmode"),
         } : null,
@@ -221,6 +222,21 @@ fn qualify_browser(cdp: &mut CdpClient, url: &str, allow_unavailable: bool) -> R
         }
     };
     let mut cases = Vec::new();
+    if let Ok(case) = env::var("OPEN_GPUI_WEB_SMOKE_CASE") {
+        let case_url = format!(
+            "{url}&backend={}&software={}",
+            if webgl { "webgl" } else { "webgpu" },
+            !webgl
+        );
+        return match case.as_str() {
+            "text-input" => text_input::qualify(cdp, &case_url),
+            "clipboard" => clipboard::qualify(cdp, &case_url),
+            "platform-info" => platform_info::qualify(cdp, &case_url),
+            _ => Err(format!(
+                "OPEN_GPUI_WEB_SMOKE_CASE must be text-input, clipboard, or platform-info; got `{case}`"
+            )),
+        };
+    }
     if let Ok(requested) = env::var("OPEN_GPUI_WEB_SMOKE_TOUCH_BACKEND") {
         let actual = match requested.as_str() {
             "auto" => {
@@ -292,6 +308,14 @@ fn qualify_browser(cdp: &mut CdpClient, url: &str, allow_unavailable: bool) -> R
         ),
     )?;
     clipboard::qualify(
+        cdp,
+        &format!(
+            "{url}&backend={}&software={}",
+            if webgl { "webgl" } else { "webgpu" },
+            !webgl
+        ),
+    )?;
+    text_input::qualify(
         cdp,
         &format!(
             "{url}&backend={}&software={}",
@@ -1102,7 +1126,7 @@ fn run_touch_smoke(cdp: &mut CdpClient) -> Result<(), String> {
     cdp.evaluate(
         r#"(async () => {
         await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-        const input = document.querySelector("input");
+        const input = document.querySelector("textarea");
         input.blur();
         input.setAttribute("inputmode", "none");
         return true;
@@ -1501,7 +1525,7 @@ fn run_browser_smoke(cdp: &mut CdpClient) -> Result<(), String> {
     })?;
     cdp.evaluate(
         r#"(() => {
-            const input = document.querySelector("input");
+            const input = document.querySelector("textarea");
             if (!input) {
                 throw new Error("web smoke input is missing");
             }
@@ -1585,7 +1609,7 @@ fn run_browser_smoke(cdp: &mut CdpClient) -> Result<(), String> {
             delete document.hasFocus;
             delete document.visibilityState;
             window.dispatchEvent(new Event("focus"));
-            const input = document.querySelector("input");
+            const input = document.querySelector("textarea");
             if (!document.hasFocus()
                 || document.visibilityState !== "visible"
                 || document.activeElement !== input) {
@@ -1651,7 +1675,7 @@ fn run_browser_smoke(cdp: &mut CdpClient) -> Result<(), String> {
             delete document.visibilityState;
             document.dispatchEvent(new Event("visibilitychange"));
             window.dispatchEvent(new Event("focus"));
-            const input = document.querySelector("input");
+            const input = document.querySelector("textarea");
             if (!document.hasFocus()
                 || document.visibilityState !== "visible"
                 || document.activeElement !== input) {
@@ -1717,7 +1741,7 @@ fn run_browser_smoke(cdp: &mut CdpClient) -> Result<(), String> {
             delete document.visibilityState;
             const restored = document.hasFocus()
                 && document.visibilityState === "visible"
-                && document.activeElement === document.querySelector("input");
+                && document.activeElement === document.querySelector("textarea");
             if (!restored) {
                 throw new Error("already-focused reactivation prerequisites were not restored");
             }
@@ -1738,7 +1762,7 @@ fn run_browser_smoke(cdp: &mut CdpClient) -> Result<(), String> {
     })?;
     cdp.evaluate(
         r#"(() => {
-            const input = document.querySelector("input");
+            const input = document.querySelector("textarea");
             if (!input) {
                 throw new Error("web smoke input is missing");
             }
@@ -1894,7 +1918,7 @@ fn run_activation_policy_smoke(
 
     cdp.evaluate(
         r#"(() => {
-            const input = document.querySelector("input");
+            const input = document.querySelector("textarea");
             if (!input) {
                 throw new Error("activation probe input is missing");
             }

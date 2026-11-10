@@ -2,7 +2,7 @@
 <html lang="en">
     <head>
         <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, user-scalable=0" />
+        <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, user-scalable=0, interactive-widget=resizes-visual" />
         <title>Open GPUI Web Smoke</title>
         <script>
             (() => {
@@ -165,6 +165,108 @@
                 });
             }
         </script>
+        <script>
+            if (new URLSearchParams(location.search).get("text_input") === "1") {
+                const events = [];
+                const nodes = new WeakMap();
+                let nextNodeId = 0;
+                const state = {
+                    observation: "dom-editable-mirror",
+                    compositionEvidence: "DOM events only; synthetic events do not establish OS IME behavior",
+                    events,
+                    overflow: false,
+                    focusIns: 0,
+                    focusOuts: 0,
+                    compositionStarts: 0,
+                    compositionEnds: 0,
+                };
+                const editable = target => target instanceof HTMLTextAreaElement;
+                const snapshot = () => {
+                    const input = document.querySelector("textarea");
+                    if (input && !nodes.has(input)) nodes.set(input, ++nextNodeId);
+                    const viewport = window.visualViewport;
+                    return {
+                        documentFocused: document.hasFocus(),
+                        activeElement: document.activeElement?.tagName ?? null,
+                        activeElementId: document.activeElement?.id ?? null,
+                        mirror: input ? {
+                            nodeId: nodes.get(input),
+                            tagName: input.tagName,
+                            value: input.value,
+                            selectionStart: input.selectionStart,
+                            selectionEnd: input.selectionEnd,
+                            selectionDirection: input.selectionDirection,
+                            focused: document.activeElement === input,
+                            readOnly: input.readOnly,
+                            disabled: input.disabled,
+                            tabIndex: input.tabIndex,
+                            inputMode: input.getAttribute("inputmode"),
+                            autocorrect: input.getAttribute("autocorrect"),
+                            autocapitalize: input.getAttribute("autocapitalize"),
+                            spellcheck: input.getAttribute("spellcheck"),
+                            enterKeyHint: input.getAttribute("enterkeyhint"),
+                        } : null,
+                        layout: { width: window.innerWidth, height: window.innerHeight },
+                        visual: viewport ? {
+                            x: viewport.offsetLeft, y: viewport.offsetTop,
+                            width: viewport.width, height: viewport.height, scale: viewport.scale,
+                        } : null,
+                    };
+                };
+                Object.defineProperty(state, "current", { enumerable: true, get: snapshot });
+                globalThis.__OPEN_GPUI_WEB_TEXT_INPUT_DOM__ = state;
+                const refresh = () => {
+                    const output = document.getElementById("text-input-dom");
+                    if (output) output.textContent = JSON.stringify(snapshot(), null, 2);
+                };
+                for (const type of [
+                    "beforeinput", "input", "select", "selectionchange",
+                    "compositionstart", "compositionupdate", "compositionend", "focusin", "focusout",
+                ]) {
+                    document.addEventListener(type, event => {
+                        if (!editable(event.target)
+                            && !(type === "selectionchange" && editable(document.activeElement))) return;
+                        if (type === "focusin") state.focusIns++;
+                        if (type === "focusout") state.focusOuts++;
+                        if (type === "compositionstart") state.compositionStarts++;
+                        if (type === "compositionend") state.compositionEnds++;
+                        if (events.length < 256) events.push({
+                            kind: type,
+                            trusted: event.isTrusted,
+                            inputType: event.inputType ?? null,
+                            data: event.data ?? null,
+                            isComposing: event.isComposing ?? null,
+                            defaultPrevented: event.defaultPrevented,
+                            current: snapshot(),
+                        });
+                        else state.overflow = true;
+                        refresh();
+                    }, { passive: true });
+                }
+                new MutationObserver(mutations => {
+                    if (mutations.some(mutation =>
+                        editable(mutation.target)
+                        || mutation.target.id === "text-input-model"
+                        || Array.from(mutation.addedNodes).some(node =>
+                            node instanceof Element
+                            && (editable(node) || node.querySelector("textarea"))))) refresh();
+                }).observe(document.documentElement, {
+                    childList: true, subtree: true, attributes: true,
+                    attributeFilter: ["inputmode", "autocorrect", "autocapitalize", "spellcheck", "enterkeyhint", "readonly"],
+                });
+                window.addEventListener("resize", refresh, { passive: true });
+                window.addEventListener("focus", refresh, { passive: true });
+                window.addEventListener("blur", refresh, { passive: true });
+                window.visualViewport?.addEventListener("resize", refresh, { passive: true });
+                window.visualViewport?.addEventListener("scroll", refresh, { passive: true });
+                document.addEventListener("DOMContentLoaded", () => {
+                    document.getElementById("text-input-observations").hidden = false;
+                    const model = globalThis.__OPEN_GPUI_WEB_TEXT_INPUT_MODEL__;
+                    if (model) document.getElementById("text-input-model").textContent = JSON.stringify(model);
+                    refresh();
+                }, { once: true });
+            }
+        </script>
         <link data-trunk rel="rust" data-bin="smoke_web" data-bindgen-target="web" data-keep-debug data-wasm-opt="0" />
         <style>
             * {
@@ -191,7 +293,37 @@
                 touch-action: none;
                 user-select: none;
             }
+
+            #text-input-observations {
+                position: fixed;
+                z-index: 10;
+                right: 8px;
+                bottom: 8px;
+                max-width: min(420px, calc(100vw - 16px));
+                max-height: 45vh;
+                overflow: auto;
+                padding: 8px;
+                color: #f0f4fa;
+                background: #18212d;
+                border: 1px solid #58a6ff;
+                font: 12px/1.4 monospace;
+            }
+
+            #text-input-observations pre {
+                white-space: pre-wrap;
+                overflow-wrap: anywhere;
+            }
         </style>
     </head>
-    <body></body>
+    <body>
+        <details id="text-input-observations" hidden>
+            <summary>Text input: App model / DOM mirror</summary>
+            <button id="text-input-external-focus" type="button">Focus outside GPUI</button>
+            <p>Accepted Rust App model (document UTF-16 offsets):</p>
+            <pre id="text-input-model" data-observation="accepted-app-model"></pre>
+            <p>Browser textarea mirror (local UTF-16 offsets):</p>
+            <pre id="text-input-dom" data-observation="dom-editable-mirror"></pre>
+            <p>Synthetic composition events do not establish real OS IME behavior.</p>
+        </details>
+    </body>
 </html>

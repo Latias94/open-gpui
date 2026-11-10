@@ -1806,6 +1806,11 @@ impl NativeEventEnvelope {
                     window.update_visibility(visibility, app)
                 })
             }
+            NativeWindowEvent::VisualViewportChanged => {
+                deliver_window_event(app, window_id, ingress_sequence, |window, _| {
+                    window.refresh()
+                })
+            }
             NativeWindowEvent::ButtonLayoutChanged => deliver_window_event(
                 app,
                 window_id,
@@ -2205,6 +2210,7 @@ pub(super) enum NativeWindowEvent {
     Resized,
     Moved,
     WindowStateChanged,
+    VisualViewportChanged,
     DisplayChanged,
     ButtonLayoutChanged,
     CloseRequested,
@@ -2237,6 +2243,7 @@ impl NativeWindowEvent {
             }
             Self::ButtonLayoutChanged => Some(NativeWindowEventCoalesceDomain::ButtonLayout),
             Self::DisplayChanged => Some(NativeWindowEventCoalesceDomain::Display),
+            Self::VisualViewportChanged => Some(NativeWindowEventCoalesceDomain::VisualViewport),
             Self::RequestFrame(_) => Some(NativeWindowEventCoalesceDomain::Frame),
             #[cfg(not(target_family = "wasm"))]
             Self::AccessibilityAction { .. } | Self::AccessibilityActiveChanged { .. } => None,
@@ -2308,6 +2315,7 @@ impl NativeWindowEvent {
             Self::Resized => (NativeCallbackKind::Resized, None),
             Self::Moved => (NativeCallbackKind::Moved, None),
             Self::WindowStateChanged => (NativeCallbackKind::WindowStateChanged, None),
+            Self::VisualViewportChanged => (NativeCallbackKind::VisualViewportChanged, None),
             Self::DisplayChanged => (NativeCallbackKind::DisplayChanged, None),
             Self::ButtonLayoutChanged => (NativeCallbackKind::ButtonLayoutChanged, None),
             Self::CloseRequested => (NativeCallbackKind::ShouldClose, None),
@@ -2371,6 +2379,7 @@ enum NativeWindowEventCoalesceDomain {
     Bounds,
     Display,
     ButtonLayout,
+    VisualViewport,
     Frame,
 }
 

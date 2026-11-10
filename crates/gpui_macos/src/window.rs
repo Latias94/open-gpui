@@ -4274,6 +4274,9 @@ fn dispatch_mac_window_command(
     }
 
     match command {
+        PlatformWindowCommand::ShowSoftKeyboard
+        | PlatformWindowCommand::HideSoftKeyboard
+        | PlatformWindowCommand::TextInputStateChanged(_) => PlatformWindowCommandOutcome::Accepted,
         PlatformWindowCommand::CompleteInitialPresentation { activate } => {
             if complete_mac_initial_presentation(&window_state, activate) {
                 PlatformWindowCommandOutcome::Accepted
@@ -4841,6 +4844,11 @@ impl PlatformWindow for MacWindow {
             lock.input_handler.clone()
         };
         input_handler_slot.take()
+    }
+
+    fn take_input_handler_for_frame(&mut self) -> Option<PlatformInputHandler> {
+        let slot = self.0.as_ref().lock().input_handler.clone();
+        slot.take_for_frame()
     }
 
     fn prompt(

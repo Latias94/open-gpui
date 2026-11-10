@@ -8,6 +8,8 @@ mod events;
 mod frame_loop;
 #[cfg(target_family = "wasm")]
 mod http_client;
+#[cfg(target_family = "wasm")]
+mod ime_mirror;
 #[cfg(any(target_family = "wasm", test))]
 mod interaction;
 #[cfg(target_family = "wasm")]
@@ -22,6 +24,8 @@ mod platform_info;
 mod pointer_session;
 #[cfg(any(target_family = "wasm", test))]
 mod touch_session;
+#[cfg(target_family = "wasm")]
+mod viewport;
 #[cfg(target_family = "wasm")]
 mod window;
 
