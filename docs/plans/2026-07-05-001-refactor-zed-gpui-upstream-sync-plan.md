@@ -2989,6 +2989,18 @@ framework, component, renderer or compiler matrices.
 
 ## Maintained Baseline Before Engine Adaptation
 
+The [cursor/native-file-drag record](../verification.md#cursor-and-complete-native-file-drag)
+qualifies `fc6c9dc4403a8839b84528236075ca4ae70ab8ec`: complete official cursor, exit/lazy payload,
+source restoration and selected native mechanisms share current App/Window/ingress owners.
+Final Core 18, Linux URI 5 and ordinary independent API 3 pass. Affected host/Mac all-target
+compilation/correctness Clippy, actual Wayland-only Linux production compilation, formatting and
+existing static gates pass. Five lanes close without reviewed P1/P2. The record keeps the
+reproduced A-to-B-to-A defect, exact-cancellation correction and fixture failures explicit.
+Real Mac/Wayland cross-application input and numeric costs remain unqualified. Continue the
+supporting utility/dependency and remaining backend/render owners, including native popup,
+before the real Nara GPU/Host/View consumer and separate framework maintenance. Full fixed-target
+closure and whole foundation gates remain open.
+
 The [gesture/scroll/hover record](../verification.md#gestures-scroll-sources-and-hover) qualifies
 `1b0aee8b4006acc23a13294646d809297cd3b2ab`: complete official portable recognition and selected
 backend producers retain existing fork clock, input/terminal and committed geometry custody.

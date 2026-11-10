@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-10T18:40:45+08:00
+timestamp: 2026-11-10T19:31:58+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,19 @@ verified_by:
 ---
 
 # Current State
+
+- Cursor and native file drag are implemented at `fc6c9dc4403a8839b84528236075ca4ae70ab8ec`.
+  Complete official cursor/exit/lazy payload and Mac/Wayland source mechanisms preserve current
+  fork geometry, candidate listeners and exact native generation/ingress. The
+  [qualification](../../verification.md#cursor-and-complete-native-file-drag) records Core 18,
+  Linux URI 5 and ordinary independent API 3 passes, affected host/Mac all-target compilation/
+  correctness Clippy, actual Wayland-only production compilation and format/static gates.
+  Source restoration survives other-window destination wrappers; exact cancellation retires
+  the platform marker while retaining reserved terminal/release facts. Reproduced defects and
+  fixture failures remain explicit. All five lanes close without reviewed P1/P2. Real native
+  cross-application drag and numeric costs remain unqualified. Continue supporting utilities/
+  dependencies and remaining backend/render owners, including native popup, then the real Nara
+  GPU/Host/View consumer. Full fixed-target closure and separate maintenance handoff remain open.
 
 - Gestures, scroll sources, snapped padding and hover-listener policy are implemented at
   `1b0aee8b4006acc23a13294646d809297cd3b2ab`. Complete official portable mechanisms and selected
@@ -1012,10 +1025,10 @@ historical scope and is not current branch or CI qualification.
 # Next Action
 
 - Continue the [residual source inventory](../../imports/zed-gpui-upstream-sync-candidates.md#november-10-residual-source-reconciliation)
-  after qualified identity/diagnostics/list precision, element layout/drawing and gestures/
-  scroll/padding/hover, rather than treating the earlier public-Platform audit as exhaustive.
-  Continue cursor/external drag and the supporting dependency/backend groups in their recorded
-  prerequisite order. Build on qualified
+  after qualified identity/diagnostics/list precision, element layout/drawing, gestures/
+  scroll/padding/hover and cursor/native file drag, rather than treating the earlier public-
+  Platform audit as exhaustive. Continue supporting utility/dependency and remaining backend/
+  render groups, including native popup, in their recorded prerequisite order. Build on qualified
   [shared Apple topology](../../verification.md#shared-apple-framework-topology) and
   [native quit/session shutdown](../../verification.md#native-quit-completion-and-restart-manager).
   Trust unchanged official coverage and concentrate compilation/regressions on affected fork

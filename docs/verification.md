@@ -7835,6 +7835,92 @@ component/docking/runtime, renderer, foreign-platform or compiler matrix is repe
 fixed-target closure, numerical budgets and the actual Nara GPU/Host/View consumer remain open
 before separate framework maintenance. This unit is a local commit with no remote publication.
 
+## Cursor And Complete Native File Drag
+
+Implementation `fc6c9dc4403a8839b84528236075ca4ae70ab8ec` starts at
+`d1de3e3800784b28bbab2ae8dcf0e1192ec2f3ff` against fixed Zed target
+`635026fabc38440fce5e1767d125026a17b12012`. It adopts official `c7bea34383`, `693962917b`,
+`1a84d5d92b`, `f52fd9ac44b`, `a8491e63b54`, `72c53bf0aae` and `c7aea6cbbd4`, with the target's
+UTType icon path from `f14592c4a5`. Active drag cursors resolve after listeners and before the
+next paint. Mouse/file-exit listeners retain the previous physical hit for leave dispatch,
+then clear hover. Payloads resolve once after move/leave listeners. Complete platform-owned
+suspension, destination visits, source reentry and native completion use existing App/Window
+state; Mac and Wayland retain their respective official native source mechanisms.
+
+The fork keeps per-window cursors, targeted committed geometry, candidate-owned listeners,
+pointer-capture starts and non-forgeable native drag generations. PlatformExternalDragSession
+is one concrete native-start argument, forwarding source callbacks through existing native
+ingress with the original WindowId/generation. Old completion cannot restore or terminate a
+replacement drag. Source resolver code is revalidated after arbitrary application effects.
+Temporary ExternalPaths wrappers in other destination windows do not replace the original
+suspended source authority. No second event queue, scheduler or lifecycle manager is introduced.
+
+The first locked Core check stops because the new native feature edges require a lock update.
+Minimal offline resolution first adds the existing block2 dependency edge; completion of the
+target icon path adds only objc2-uniform-type-identifiers 0.3.2 and required edges. Retained
+external versions do not change. Production Core compilation passes.
+
+The first eight-case Core run passes six and fails two
+(`98e81226-1cc4-4c57-a297-368ab41c5e43`). The candidate-refusal fixture's fake 1px SVG tile
+maps to a half-pixel sprite after SVG smoothing, then snaps away; enlarging its canvas cannot
+create the missing lease request. Use a visible image primitive introduced only in the replacement
+candidate so rejection exercises a real first-use texture lease. The resolver-action loop
+closes its last window, initiating App shutdown before the next iteration; retain an independent
+window for the loop. These corrections preserve the actual candidate/refusal and resolver
+assertions. No official production behavior changes in response.
+
+Bounded review identifies the official A-to-B-to-A source-restoration scenario as a concrete fork
+regression. The next three-case run reproduces loss of the platform marker at destination B
+(`cfcb2bb1-71d9-4c2e-ae84-31e1fadf2616`); the resolver fixture now passes and the atlas fixture
+still fails before the visible-image correction. Normalization now records a temporary
+destination wrapper in the existing platform-owned state without replacing native source G1.
+Drop, stop, cancellation and candidate-abort cleanup retire only the authority matching the
+actual drag. A genuine new source gesture still retires the old session. Exact completion
+clears only its restored source or associated destination wrapper.
+
+The next focused run passes 16/17 (`9f5413b0-aaed-4c6e-b508-c858bcac9c8f`), including the
+restoration regression and eight affected existing pointer contracts, while still exposing the
+SVG fixture issue. A further source review finds two direct exact-cancellation branches bypassing
+platform marker cleanup. Route them through existing clear_active_drag_for_window after their
+terminal and release token have been reserved; retirement retains those terminal facts. Add
+actual restored-source controls for ordinary pointer cancellation and the public exact API.
+
+Final Core passes 18/18 (`4fddb959-a8cd-48b4-9c43-1f49132f0312`), with 1,522 outside the
+selection. It covers the visible-image candidate refusal/recovery, Inert/clip/listener ownership,
+transformed capture and immediate per-window cursor, lazy resolver decline/replacement/quiesce/
+close, exact source reentry, other-window destination visits, stale completion and both exact
+cancellation paths. Bounded Core/native seam rereview closes both P2s without further findings.
+Mac production initially passes an actual aarch64-apple-darwin check with runtime_shaders and
+font-kit. Wayland offline checking stops on an uncached objc2-core-text index entry; the online
+affected check then passes on Ubuntu 26.04 WSL/x86_64-unknown-linux-gnu with the locked graph,
+Wayland only and one build job. It compiles the actual wl_data_source send/complete/cancel and
+teardown owners, rather than the Windows cfg facade. Existing warnings remain; this does not
+execute a compositor or a native drag.
+
+The five selected Linux URI controls pass 5/5
+(`11d67aab-d720-447c-bc70-4b822982810f`), with 105 outside the selection, including delimiter/
+line-ending escaping and non-UTF-8 path bytes. They do not execute a compositor. The ordinary
+independently locked consumer passes 3/3 (`dfd2db60-287e-4e83-9aa4-54c05a6218c3`) after
+affected all-target compilation through components/docking/native platform composition. Payload
+metadata and event conversions execute; listener/capability/session closures type-check without
+an application runtime or test-support feature. Its lock adds the same single UTI package and
+edges, without upgrading retained external versions.
+
+Affected Core/Windows all-target correctness Clippy passes with test/bench support. Actual Mac
+all-target foreign correctness Clippy passes with runtime_shaders, font-kit and test-support,
+including four source-sequence/button controls and native examples; those Mac cases are
+type-checked, not executed. Existing non-correctness warnings remain. Root/ordinary-consumer
+formatting, whitespace, manifest/workflow syntax and existing import-boundary/public-API/
+document/release gates pass. CI registers the ordinary external_drag target; no remote CI or
+publication occurs. All five implementation/review lanes close without reviewed P1/P2.
+
+Verification reuses unchanged official implementation/coverage and targets actual fork seams.
+No unrelated component/docking/runtime, renderer or compiler matrix is repeated. Mac/Wayland
+cross-application execution, physical input and numeric costs remain unqualified. Native popup
+and the residual framework owners remain queued. Full fixed-target closure and the real Nara
+GPU/Host/View consumer still precede separate maintenance; no engine dependency, UI default or
+whole foundation gate changes here.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:
