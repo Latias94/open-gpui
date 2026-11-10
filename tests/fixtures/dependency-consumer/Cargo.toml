@@ -26,6 +26,7 @@ open_gpui_platform = { package = "open-gpui-platform", path = "../../../crates/g
 open_gpui_ui_components = { package = "open-gpui-ui-components", path = "../../../crates/ui_components" }
 open_gpui_docking = { package = "open-gpui-docking", path = "../../../crates/gpui_docking" }
 open_gpui_http_client = { package = "open-gpui-http-client", path = "../../../crates/http_client" }
+open_gpui_path = { package = "open-gpui-path", path = "../../../crates/path", features = ["serde"] }
 open_gpui_util = { package = "open-gpui-util", path = "../../../crates/util" }
 open_gpui_wgpu = { package = "open-gpui-wgpu", path = "../../../crates/gpui_wgpu", default-features = false, optional = true }
 criterion = { version = "0.8.2", optional = true }

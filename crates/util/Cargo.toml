@@ -26,6 +26,7 @@ test-support = ["rand", "open_gpui_util_macros"]
 anyhow.workspace = true
 async_zip.workspace = true
 open_gpui_collections.workspace = true
+open_gpui_path = { workspace = true, features = ["serde"] }
 dunce.workspace = true
 futures-lite.workspace = true
 futures.workspace = true
@@ -65,7 +66,6 @@ async-process.workspace = true
 mach2.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-tendril = "0.5"
 windows.workspace = true
 
 [dev-dependencies]

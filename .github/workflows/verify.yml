@@ -328,7 +328,10 @@ jobs:
 
       - name: Test independent layout, interaction and support APIs
         if: matrix.name == 'windows'
-        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --test layout_drawing --test gestures --test external_drag --test support_primitives --test http_downloads --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --test layout_drawing --test gestures --test external_drag --test support_primitives --test http_downloads --test portable_paths --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test canonical path and utility integration
+        run: cargo nextest run --locked -p open-gpui-path -p open-gpui-util --all-features --lib --test portable_paths -E 'package(open-gpui-path) | test(paths::) | test(path_list::) | binary(portable_paths)' --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test HTTP deadlines and release download seams
         run: cargo nextest run --locked -p open-gpui-reqwest-client -p open-gpui-github-releases --lib --tests --test-threads=1 --no-fail-fast --no-tests fail

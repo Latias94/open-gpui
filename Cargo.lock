@@ -4825,6 +4825,17 @@ name = "open-gpui-motion"
 version = "0.2.0"
 
 [[package]]
+name = "open-gpui-path"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "dunce",
+ "serde",
+ "tempfile",
+ "tendril",
+]
+
+[[package]]
 name = "open-gpui-platform"
 version = "0.2.0"
 dependencies = [
@@ -5019,6 +5030,7 @@ dependencies = [
  "nix 0.29.0",
  "open-gpui-collections",
  "open-gpui-core-util",
+ "open-gpui-path",
  "open-gpui-util-macros",
  "percent-encoding",
  "pretty_assertions",
@@ -5033,7 +5045,6 @@ dependencies = [
  "smol",
  "take-until",
  "tempfile",
- "tendril",
  "unicase",
  "url",
  "walkdir",

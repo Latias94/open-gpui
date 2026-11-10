@@ -127,6 +127,25 @@ runtime replace the registry parser/Tokio bridge. Platform TLS initialization fo
 rustls-platform-verifier 0.7 and bundled WebPKI roots on initialization failure. Source selection
 and license evidence do not establish native TLS, browser execution or engine adoption.
 
+## November 10 Portable Path Package
+
+The path successor imports the complete Apache-2.0 singular `crates/path` package from fixed
+target `635026fabc38440fce5e1767d125026a17b12012` as `open-gpui-path`. It preserves PathStyle,
+checked normalized relative paths, local absolute paths, component/prefix iteration and native
+byte/WTF-8 conversion. The plural Zed product `crates/paths` remains excluded. Source commits
+include `f181a2f47b`, `2610332077`, `a84689073d`, `51a3a0e971`, `f929b3f7ce`, `a4a3a968d1`
+and `9521840152`; the package retains full Apache text and the component parsers' attribution.
+
+The utility successor consumes the canonical package with serde instead of implementing another
+RelPath/RelPathBuf or PathStyle. Home-directory presentation, file matching/ordering, position
+parsing and SanitizedPath remain utility responsibilities with their actual native consumers.
+The complete fixed-target utility file also carries lenient globs, extension ordering and
+UNC/position parsing; earlier public APIs and duplicate relative-path sources are removed.
+Native byte decoding forwards to the path package. One `&Path` emptiness spelling uses the
+equivalent stable `as_os_str().is_empty()` to preserve the declared compiler floor. Fixed
+home-directory tests retain Open-GPUI names while ordinary consumers still see the real home.
+Qualification and any remaining platform scope belong to the existing plan/verification guide.
+
 ## November 10 Shared Apple Package
 
 The shared Apple successor adopts the Apache-2.0 `gpui_apple` framework closure as

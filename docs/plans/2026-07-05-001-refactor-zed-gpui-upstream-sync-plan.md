@@ -3057,8 +3057,8 @@ remaining framework groups and the real Nara GPU/Host/View consumer retain separ
 
 Continue with the complete Apache-2.0 `crates/path` owner from the fixed target, including
 `f181a2f47b`, `2610332077`, `a84689073d`, `51a3a0e971`, `f929b3f7ce`, `a4a3a968d1` and
-`9521840152`. The prepared open-gpui-path sources remain unregistered and unqualified until
-their actual consumers migrate. This is the singular framework path crate, not the GPL product
+`9521840152`. Register the prepared open-gpui-path sources with their actual consumers and
+remove the duplicate utility owner before qualification. This is the singular framework path crate, not the GPL product
 paths package. Keep complete PathStyle, normalized relative paths, local absolute paths, native
 byte/WTF-8 conversion and optional serde; do not reduce it to an unused exported type set.
 
@@ -3070,12 +3070,21 @@ real utility/native-dialog consumers unless the official target provides a compl
 Do not expose compatibility aliases or leave parallel normalization authorities. Qualified
 restart/command and platform custody remain in their owning modules.
 
-The target's Path::is_empty spelling must fit the declared compiler floor through its exact
-OsStr empty equivalent, or receive an explicit justified compiler decision; merely importing
-the target's toolchain does not qualify a floor change. Add the actual Windows tendril feature
-closure at the package owner. Trust unchanged official algorithms and coverage, compiling the
+The target's verbatim-join `&Path::is_empty` spelling uses the exact stable OsStr empty
+equivalent to preserve the declared compiler floor; merely importing the target's toolchain
+does not qualify a floor change. Add the actual Windows tendril feature closure at the package
+owner. Trust unchanged official algorithms and coverage, compiling the
 affected utility/native consumers and independently locked public path composition. Test the
 actual changed normalization/serde/consumer seams and preserve platform execution limits.
+
+The complete utility source in this same owner includes official path-position parsing
+(`a51d23c93d`, `72d073d642`, `347f171a3f`, `e21ff1b368`), lenient glob construction
+(`887149bbdd`) and extension sorting (`d7adf3e7e2`). Adopt these mechanisms and their existing
+regressions together instead of keeping a half-migrated file. Keep the utility policies for
+local normalization and strict lexical validation distinct from PathStyle's portable lexical
+operation; the target deliberately exposes those different contracts. Reuse canonical types
+and byte decoding, not parallel type or parser implementations. Product-specific existence
+fallback remains outside this framework closure.
 
 ## Maintained Baseline Before Engine Adaptation
 

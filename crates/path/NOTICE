@@ -1,0 +1,43 @@
+Open GPUI Path
+
+Target package: open-gpui-path (Rust crate open_gpui_path)
+Target repository: https://github.com/Latias94/open-gpui
+Target path: crates/path
+
+Derived from the Apache-2.0 path package in the Zed repository:
+  Copyright 2022 - 2025 Zed Industries, Inc.
+  Licensed under the Apache License, Version 2.0.
+  Source: https://github.com/zed-industries/zed
+  Snapshot: 635026fabc38440fce5e1767d125026a17b12012
+  Original paths: crates/path/Cargo.toml
+                  crates/path/LICENSE-APACHE
+                  crates/path/src/path.rs
+                  crates/path/src/abs_path.rs
+                  crates/path/src/rel_path.rs
+                  crates/path/src/path_component.rs
+                  crates/path/src/windows_prefix.rs
+
+The source package is named path (singular), not the GPL-3.0-or-later
+Zed product package paths (plural). No source from crates/paths is included.
+The source LICENSE-APACHE link resolves to the Zed repository's
+LICENSE-APACHE, whose complete text is included in this package.
+
+The component and Windows prefix parsers retain the source's attribution
+to the Rust standard library at revision 315ecf4a9.
+
+Open GPUI modifications:
+  Copyright 2026 Mingzhen Zhuang and Open GPUI contributors.
+  Licensed under the Apache License, Version 2.0.
+  Cargo.toml: renamed the package and library and adopted Open GPUI
+  workspace metadata and lints; preserved source features and dependencies.
+  src/path.rs: qualified the relative-path type links in crate documentation
+  with their public module paths. Algorithms, APIs and tests are unchanged.
+  src/path_component.rs: used Path::as_os_str().is_empty() in the verbatim
+  join branch instead of Path::is_empty(), preserving the same empty-path
+  check on the workspace's Rust 1.93 compiler floor.
+
+Original Open GPUI public-consumer integration coverage lives in
+tests/fixtures/dependency-consumer/tests/portable_paths.rs. It composes the
+public path package with serde and the utility path APIs.
+
+Third-party dependencies retain their own copyright notices and license terms.

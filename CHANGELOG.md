@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- `open-gpui-path` provides portable Unix/Windows path operations, checked normalized relative paths, local absolute paths, native byte conversion and optional serde. Utility matchers, ordering and file-position parsing consume these canonical path types.
+
+- Path matchers can skip invalid glob patterns with an error callback. Extension sorting and host-independent file-position parsing follow the complete official utility owner.
+
 - HTTP requests support complete-request deadlines, and the native client supports per-read idle timeouts. Redirect overrides use the original client's configuration. Platform TLS initialization falls back to bundled WebPKI roots if loading the platform verifier fails.
 
 - `open-gpui-github-releases` owns release discovery and background-task downloads with digest normalization, status validation and staging. Its fixed official archive parser handles PAX values containing embedded newlines.
@@ -54,6 +58,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Optional native debug hot reload follows the official GPUI/Subsecond 0.7.10 mechanism: build/process-matched patches, foreground application, window refresh, and typed, stateless and stored erased View render boundaries. Run with `dx serve --hot-patch`; compatible render-body edits preserve existing model state. Release/WebAssembly transport exclusion, failed loads, required restarts and disconnects remain explicit. The independently locked native consumer provides an actual edit/build/apply and Submitted-scene pixel acceptance procedure, including the required upstream dx x64 jump-stub backport for the qualified Windows tool.
 
 ### Breaking Changes and Migration Notes
+
+- Import relative path types and their conversion trait from `open_gpui_path::{rel_path, PathExt}`; `open_gpui_util::rel_path` is removed. `PathStyle::Posix` becomes `Unix`, and its join/prefix APIs follow the portable package's checked component semantics. Use `RelPath::from_unix_str` for already-normalized input. The utility `normalize_path` function moves from the root to `open_gpui_util::paths`; no old root alias remains. Handle `SortOrder::Extension` in exhaustive matches.
 
 - GitHub APIs move out of `open_gpui_http_client::{github, github_download}` into `open_gpui_github_releases`. Pass a `BackgroundExecutor` to `download_server_binary` / `download_server_raw_binary` and await their returned `Task`. The lower HTTP package no longer reexports `anyhow` helpers or owns native archive/download dependencies.
 

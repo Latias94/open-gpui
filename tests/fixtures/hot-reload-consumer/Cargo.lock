@@ -3042,6 +3042,16 @@ name = "open-gpui-motion"
 version = "0.2.0"
 
 [[package]]
+name = "open-gpui-path"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "dunce",
+ "serde",
+ "tendril",
+]
+
+[[package]]
 name = "open-gpui-refineable"
 version = "0.2.0"
 dependencies = [
@@ -3132,6 +3142,7 @@ dependencies = [
  "nix 0.29.0",
  "open-gpui-collections",
  "open-gpui-core-util",
+ "open-gpui-path",
  "percent-encoding",
  "regex",
  "rust-embed",
@@ -3143,7 +3154,6 @@ dependencies = [
  "smol",
  "take-until",
  "tempfile",
- "tendril",
  "unicase",
  "url",
  "walkdir",
@@ -4622,7 +4632,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.6",
  "windows-sys 0.61.2",

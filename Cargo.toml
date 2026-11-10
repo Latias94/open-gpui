@@ -24,6 +24,7 @@ members = [
     "crates/http_client_tls",
     "crates/media",
     "crates/motion",
+    "crates/path",
     "crates/resource",
     "crates/ui_components",
     "crates/ui_core",
@@ -81,6 +82,7 @@ open_gpui_macos = { package = "open-gpui-macos", version = "0.2.0", path = "crat
 open_gpui_macros = { package = "open-gpui-macros", version = "0.2.0", path = "crates/gpui_macros" }
 open_gpui_media = { package = "open-gpui-media", version = "0.2.0", path = "crates/media" }
 open_gpui_motion = { package = "open-gpui-motion", version = "0.2.0", path = "crates/motion" }
+open_gpui_path = { package = "open-gpui-path", version = "0.2.0", path = "crates/path" }
 open_gpui_platform = { package = "open-gpui-platform", version = "0.2.0", path = "crates/gpui_platform", default-features = false }
 open_gpui_refineable = { package = "open-gpui-refineable", version = "0.2.0", path = "crates/refineable" }
 open_gpui_refineable_derive = { package = "open-gpui-refineable-derive", version = "0.2.0", path = "crates/refineable/derive_refineable" }
@@ -207,6 +209,7 @@ strum = { version = "0.27.2", features = ["derive"] }
 syn = { version = "2.0.101", features = ["full", "extra-traits", "visit-mut"] }
 take-until = "0.2.0"
 tempfile = "3.20.0"
+tendril = "0.5"
 thiserror = "2.0.12"
 tokio = "1"
 tokio-util = { version = "0.7.18", features = ["compat"] }

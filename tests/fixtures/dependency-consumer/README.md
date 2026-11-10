@@ -4,6 +4,14 @@ This application is its own Cargo workspace. It consumes Open GPUI through path 
 without inheriting the repository workspace's dependency resolution or lockfile. Its own
 `Cargo.lock` records the consumer resolution.
 
+The `portable_paths` target directly consumes `open-gpui-path` with serde. Its public workflows
+compose portable Unix/Windows drive/UNC/verbatim normalization and prefix/join operations,
+persist checked relative paths, resolve them against a local absolute base and pass the same
+types through utility matching, extension ordering and file-position navigation. Host-native
+non-Unicode bytes round-trip separately from checked Unicode relative paths. It does not read
+or modify external files, launch an App or exercise a native file dialog. Run
+`cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --test portable_paths --target-dir target --test-threads=1 --no-fail-fast --no-tests fail`.
+
 The `http_downloads` target composes public request deadline/redirect extensions, executes
 release metadata discovery against a local in-memory HTTP implementation and checks normalized
 digests. Its uninvoked download closure type-checks the executor-bound Task API without writing
