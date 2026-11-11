@@ -2140,7 +2140,7 @@ Its signature closures are explicitly unexecuted. Only display-publication value
 in that configuration; no App or platform window is constructed.
 
 With `bench-support`, an ordinary embedded headless App executes a deliberately unsupported
-attachment factory. The test checks its original typed error, `NativeCreateOrMap`, skipped root
+attachment factory. The test checks its original typed error, `PlatformCreateOrMap`, skipped root
 construction, reservation cleanup and a subsequent ordinary window with a different full identity.
 Neither configuration enables `test-support` or supplies a native host adapter.
 
@@ -2164,3 +2164,40 @@ cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Ca
 
 Run these configurations serially with `CARGO_BUILD_JOBS=1` and the shared target directory.
 Native attachment and complete application-hosting qualification remain with their own consumers.
+
+## Production hosted-surface consumers
+
+The feature-free `hosted_surfaces` target constructs the actual production `HostedSurface` with
+an application-owned `HostedSurfaceRenderer` and the public CPU `HeadlessAtlas`. It executes
+geometry validation and upward-rounded physical extents, clone-shared frame demand, unbound
+execution refusal, geometry/activity/visibility controls and terminal close refusal. No renderer
+draw or shutdown operation executes for these unbound surfaces. Its App/Window and renderer
+signature closures are deliberately unexecuted; this configuration constructs no platform,
+scheduler, event loop or logical root.
+
+The separate crate-external `crates/gpui/tests/hosted_surfaces.rs` target binds production
+surfaces to typed roots through `App::open_surface` using the existing `TestAppContext` CPU
+platform and executors. A manual renderer explicitly simulates immediate/deferred submission
+and exact shutdown quiescence. The bounded public workflows cover initial and successor
+publication with the original token, last-submitted control hit routing and UTF-16 edits through
+the original input-handler lease, independent roots and focus, captured adapter capabilities,
+unsupported desktop mutations/activation, resize/equal-size/ABA and same-physical-extent scale
+invalidation, zero-extent opening and suspension/restoration, invalid geometry, duplicate binding,
+initial refusal and root unwind rollback. Exact close releases the root and old token after original
+presentation quiescence, observes binding detachment without native terminal destruction and
+leaves a TestPlatform window and a logical sibling usable.
+
+Hosted `WindowPresentationFacts` must keep `native_created` and `native_visible` false while
+reporting admitted/submitted generations normally. Simulated submission qualifies framework
+lifecycle behavior only. These consumers do not qualify GPU execution, pixels, native handles,
+an OS compositor, physical IME, a native event loop or an external engine integration. Actual
+renderer/native GPU consumers retain their own execution evidence.
+
+Verification instructions, not execution results:
+
+```text
+cargo nextest run --locked -p open-gpui --no-default-features --features test-support --test hosted_surfaces --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test hosted_surfaces --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+Run these configurations serially with `CARGO_BUILD_JOBS=1` and the shared target directory.

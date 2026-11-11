@@ -197,6 +197,31 @@ close use the existing lifecycle. Ordinary synchronous platforms retain their de
 mode and the same prepared/commit owner. Logical UI roots without native windows and actual
 engine adapters still require their own consumers.
 
+### Hosted Logical Surfaces
+
+A host-driven surface may use an ordinary App/Window without an OS window. The framework keeps
+the original entity, layout/text, candidate, input and submitted-publication owners; the host
+supplies local geometry, frame wakeups, directed input, renderer delivery and presentation
+shutdown. This is a concrete platform adapter, not another UI runtime or a requirement to split
+each mechanism into a crate. Desktop windows keep their existing platform capability checks.
+A hosted opening instead captures the hosted adapter's own capabilities before root creation.
+
+Native handles, desktop placement and activation transactions are unsupported for this target.
+Logical activity does not prove native activation. Native creation/visibility facts remain false
+even when the logical surface is renderable and has submitted output. The initial-presentation
+gate still settles through the original exact submission and command path. Changing geometry,
+scale, visibility or lifetime revokes the original pending token before later host work can
+submit it, including same-size ABA and zero-extent suspension. Discarded draws cannot report
+successful submission; a deliberately non-rendering execution mode needs its own contract.
+
+The application retains its actual device, queue, target and original GPU completion custody.
+Recorded offscreen output can establish a real renderer submission without a swapchain present.
+Closing the logical binding first quiesces its original use, then terminates that binding without
+claiming OS-window destruction. Sibling roots and the host's native window keep their own state.
+Text input uses the original leased handler; the host selects and bridges the active native text
+service. Physical IME, player routing, world-space materials and engine assets need their own
+consumers. A portable adapter does not qualify those capabilities merely by compiling.
+
 ## Alternatives Considered
 
 ### Keep accepted-frame admission

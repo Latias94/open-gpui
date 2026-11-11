@@ -12,6 +12,7 @@ deferred delivery paths; their scoped qualification and remaining platform limit
 | Win32 renderer selection | `WindowsPlatform::new_with_renderer` | Application supplies a synchronous renderer and text service; GPUI owns HWND, message loop, input/IME and retirement. |
 | External Win32 HWND/event loop | `new_external_host`, `attach_window`, `pretranslate_message` | Application retains its native window/loop; adapter supplies native UI services and detaches after synchronous submission quiesces. See scoped qualification. |
 | Delayed Scene delivery | `PlatformFrameDeliveryMode::Deferred`, `draw_with_submission` | Original Window retains one prepared candidate and its submitted publications; application completes the exact original token after actual submission. |
+| Logical root without a native window | `HostedSurface`, `App::open_surface` | Application drives geometry, directed input, frame demand and renderer delivery; framework retains the original root lifecycle. See scoped qualification. |
 
 Use the workspace's exact WGPU source and compatible package requirements. A matching Rust type is
 necessary; supplying the same original device is an additional requirement. Never reinterpret
@@ -252,6 +253,47 @@ CPU state-ordering tests, actual native GPU submissions, readback scope and rema
 input/platform/performance requirements. Deferred profiler samples retain CPU draw completion
 before the host wait and the original submission timestamp; no measured GPU duration or scanout
 latency is inferred from processing a completion message.
+
+## Drive A Logical Surface Without A Native Window
+
+`HostedSurface` is a production platform adapter for a logical UI root. It runs through the
+same App/Window creation, layout/text, interaction, candidate and exact submission owners as
+ordinary windows. It creates no native window, device or loop. The application supplies a
+`HostedSurfaceRenderer`, initial logical size/scale and a wake callback, then opens the root
+with `App::open_surface`. A surface binds once; create another surface for another root.
+
+The renderer supplies its original atlas and records the delivered Scene against the supplied
+`HostedSurfaceGeometry`. It may return `Submitted` only after real submission, or retain the
+original `PlatformFrameSubmission` and return `Deferred`. Offscreen queue submission does not
+require a swapchain present. Keep the recording and output allocation through their original
+GPU completion and any later host sampling. Geometry and token validation do not turn a Scene
+clone into a GPU resource lease.
+
+Call `needs_frame`/`drive_frame` from the existing host loop after releasing App and Window
+borrows. Wake callbacks may run during framework updates and must only arrange later host
+work. The adapter coalesces demand; it does not start a timer, executor or rendering loop.
+Directed input uses `dispatch_input` and the original propagation result. Text operations use
+`with_input_handler` and the existing leased handler, while `text_input_state` exposes the
+current configuration, caret bounds and revisions for a host text-service bridge. Each root
+retains its own local focus and text state; the host arbitrates which root receives native
+text, pointer and keyboard input.
+
+Use `set_geometry`, `set_visible` and `set_active` for host observations. Size and scale are
+validated before changing state. Geometry or visibility changes revoke pending attempts before
+updating their basis, including same-size ABA. Zero extent suspends output without creating a
+replacement one-pixel target or acknowledging discarded output as submitted. Resume with usable
+geometry and drive the retained demand. Logical activity is not native activation.
+
+`close` requests retirement through the original Window. The renderer's prepared shutdown must
+quiesce exact retained use before binding retirement; a host-owned output may outlive the root
+when the host retains its allocation. Other roots and native windows retain their own lifetime.
+Native handles return `NotSupported`, desktop mutations are unsupported, and native creation and
+visibility facts remain false. Accessibility bridging, physical IME, game clocks/player focus,
+world-space depth/materials and engine asset delivery require their own consumers.
+
+The ordinary application adds `--logical-root --smoke` to its normal owned, external-host and
+external deferred modes. Its executed qualification is recorded separately; an available command
+or this interface description is not evidence that a platform trajectory passed.
 
 See [the executable recording consumer](../crates/gpui_wgpu/tests/external_scene.rs),
 [the native supplied-renderer trajectory](../crates/gpui_windows/src/native_custom_renderer_tests.rs),

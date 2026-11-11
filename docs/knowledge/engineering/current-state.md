@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-11T18:10:00+08:00
+timestamp: 2026-11-11T20:50:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,21 @@ verified_by:
 ---
 
 # Current State
+
+- The no-native-window hosted-surface successor is implemented at `2910b52424e` (Core) and
+  `8809f12929e` (ordinary GPU consumers).
+  `App::open_surface` captures its own capabilities and reuses the original Window's layout/text,
+  candidate, input and exact submission owners. The
+  [record](../../verification.md#host-driven-logical-surfaces-without-native-windows) retains
+  first compilation failures, the real retained-composition red/fix, candidate-source capture
+  diagnosis, lazy Windows IME HWND probe correction and independent reviews. Earlier affected
+  CPU/public controls pass 45/45; the final source-specific rerun also passes 45/45. All four actual
+  ordinary WGPU trajectories pass, including offscreen UI-output readbacks and isolated wake
+  progress followed by native-entry close with a live logical sibling. Independent interfaces
+  5/5, profiler-disabled capture 1/1 and affected native lifecycle 14/14 pass. Correctness Clippy,
+  production wasm compilation, root/independent formatting and document checks pass. This does
+  not qualify the Nara consumer,
+  physical IME/accessibility, game-time/player/world-space contracts or numerical budgets.
 
 - The deferred Scene/submitted-publication successor is implemented at `797372013ab` and
   `69d0992f2a0`, with standalone native-feature correction `ec576a20dc1`.
@@ -1324,12 +1339,12 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Complete the
+- Continue the
   [external WGPU application workflow](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#external-wgpu-application-hosting-successor)
   beyond its qualified recorder, imported-image, supplied-renderer and synchronous external
-  HWND/loop and deferred original-candidate prerequisites. Qualify logical roots independently of native windows
-  through a named consumer. Preserve ordinary standalone applications and complete component
-  behavior/skin reuse; no Nara dependency enters the framework.
+  HWND/loop, deferred original-candidate and hosted logical-root prerequisites. Qualify actual
+  engine GPU-source/Host/View integration and complete component behavior/skin reuse. Preserve
+  ordinary standalone applications; no Nara dependency enters the framework.
 - Follow the [maintained-baseline engine gate](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#maintained-baseline-before-engine-adaptation)
   with a real Nara GPU/Host/View consumer before separate framework-maintenance handoff.
   The [bounded source exit](../../verification.md#fixed-cycle-source-adoption-exit) records

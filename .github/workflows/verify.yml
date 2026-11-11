@@ -425,6 +425,30 @@ jobs:
         if: matrix.name == 'windows'
         run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test deferred_frames --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 
+      - name: Test hosted logical surface lifecycle
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked -p open-gpui --all-features --lib --test hosted_surfaces -E 'binary(hosted_surfaces) | test(platform::hosted_surface::)' --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test independent hosted surface interfaces
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test hosted_surfaces --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test hosted surface without profiler capture
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked -p open-gpui --no-default-features --lib -E 'test(platform::hosted_surface::tests::frame_demand_uses_original_merge_and_drives_one_turn_without_borrows)' --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Run offscreen roots in ordinary GPU hosts
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          cargo run --locked -p open-gpui-wgpu-native --no-default-features -- --logical-root --smoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo run --locked -p open-gpui-wgpu-native --no-default-features -- --external-host --logical-root --smoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo run --locked -p open-gpui-wgpu-native --no-default-features -- --external-host --deferred --logical-root --smoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo run --locked -p open-gpui-wgpu-native --no-default-features -- --logical-root --smoke --native-close
+
       - name: Test independent platform-window factory
         if: matrix.name == 'windows'
         run: |

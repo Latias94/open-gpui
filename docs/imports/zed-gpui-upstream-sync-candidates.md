@@ -133,6 +133,15 @@ The record owns final focused 57/57, affected shared 626/626, native 22/22, inde
 actual producer pixel readbacks and synchronous controls. These are fork-owned extensions;
 logical roots, physical/platform/numeric qualification and the Nara consumer remain open.
 
+The next fork-owned [hosted-surface unit](../verification.md#host-driven-logical-surfaces-without-native-windows)
+adds a production no-native-window adapter through the original App/Window, with its own captured
+capability profile and host renderer/input/frame services. Core production compilation and 45/45
+affected CPU/public controls pass, including retained composition cleanup on close. All four
+ordinary GPU trajectories, profiler-disabled capture 1/1, native lifecycle 14/14 and independent
+interfaces 5/5 pass. Core is `2910b52424e`; ordinary consumers are `8809f12929e`. Final static
+qualification stays in the record. This work does not add official-adoption credit or select an
+engine UI dependency.
+
 ### Fixed Revisions And Provenance
 
 The repository [upstream-sync skill](../../.agents/skills/open-gpui-upstream-sync/SKILL.md)

@@ -96,6 +96,137 @@ atlas and independent shared-device controls do not complete it. Full platform/f
 qualification, Nara R11 and Editor acceptance, separate framework maintenance and its handoff
 remain open; this exit grants none of those gates.
 
+## Host-Driven Logical Surfaces Without Native Windows
+
+This fork-owned successor starts at `c9fc89bd5fc0f0b438c396be067fd2a1356de74d` after the
+fixed official source audit. It reuses App's reservation and Window's prepared/submitted frame
+lifecycle through `App::open_surface`, with a concrete `HostedSurface` platform adapter. The
+adapter owns no native window, GPU device, executor or event loop. Its captured capabilities
+are independent of the App's desktop platform; native operations remain unsupported.
+Core implementation is `2910b52424ea39c28a330056d7ea04e4f5beaa6f`; ordinary GPU consumers are
+`8809f12929eb1aeca4db5d42f06a9c58381b8a4e`. Both are local commits.
+
+The selected hosted workflow is qualified on Windows/Rust 1.95.0 through affected CPU/public
+45/45, profiler-disabled capture 1/1, independent interfaces 5/5, native lifecycle 14/14 and four
+ordinary production GPU trajectories. The final correctness Clippy, production wasm compile,
+root/independent formatting and document checks pass. Configured remote CI remains unexecuted.
+
+The first public-suite compilation found a fixture consuming a move-only capture inside an
+existing `Fn` publication callback. The callback now retains and reads that capture, leaving
+destruction to its original owner; no product callback interface or lifecycle was weakened.
+The failed compilation executed no tests.
+
+The first executable focused run passes 44/45 (`074865d1-3f3d-476f-96c8-99d80cfab5e7`).
+Its failing fixture expected a publication discard when an unaccepted candidate is cancelled.
+The owning transaction explicitly publishes neither callback without an accepted-frame fence;
+the corrected assertion requires zero discards and unchanged submitted publication. An
+independent review also found that hosted close terminated the text handler before Window could
+finish composition. A real marked-text, externally retained entity reproduces that defect:
+the two-case red run passes the cancellation control and fails exact close with a retained
+`Some(0..2)` marked range (`37f48afe-4245-4c95-bf32-e7b17e4bde45`). The owning correction keeps
+the original handler available for Window cleanup while immediately refusing new host input,
+then terminates it at binding retirement.
+The corrected two-case run passes 2/2 (`13298044-4216-4aa6-a0a8-ae34f59b016d`), including
+exactly one unmark with the authored composition text retained. Bounded independent re-review
+finds no remaining P1/P2 in that owning correction.
+The final affected focused run passes 45/45 with 1,865 skips
+(`68ab48a3-238c-447a-a3c7-bf60174313fe`): 15 adapter controls, 11 public hosted workflows,
+the original deferred/factory/native-control public consumers and exact-owner preflight control.
+The independently locked follow-up was no longer active when checked, and its log was empty.
+The shared build directory was also cleared by another task. These observations establish no
+consumer result or cause of termination; the independent check must be rerun.
+The completed independent rerun passes 5/5 (`193988ed-1c93-40dd-b034-a139468b8c6d`): four
+hosted constructor/geometry/control/interface cases and the existing public factory interface.
+Its type-only App closures remain unexecuted; the ordinary GPU applications supply execution
+evidence separately. Rebuilding the cleared independent dependency graph takes 11m08s; the
+tests themselves run in 0.165s. This is an uncontrolled rebuild observation, not a build budget.
+
+Independent GPU-consumer review identified two ordinary-use gaps before runtime qualification:
+a newly recorded deferred packet must wake another host turn after asynchronous frame ingress,
+and closing the sole native entry must request normal App quit while a logical root remains.
+Periodic smoke advancement must not substitute for isolated demand progress or this close
+policy. Their corrections and actual consumer results belong to this same qualification.
+Bounded independent re-review finds no remaining P1/P2 in those two consumer corrections.
+The first ordinary-consumer type check found the Win32 HWND-enumeration probe treating a `BOOL`
+as `Result`; the probe now uses the native result conversion. The corrected no-default-feature
+all-target consumer check passes. No product renderer interface changed for that fixture repair.
+Source reconciliation also found missing local-request capture in the hosted adapter. Its
+existing merge owner now fills an unavailable timestamp/source pair through the same
+feature-gated `PlatformFrameSignal::capture` used by native backends, preserving supplied pairs.
+The existing reentrant-demand test checks local source and feature-on/off timestamp behavior.
+The final source rerun with `test-support,bench-support,profiler` passes the same 45 affected
+controls with 1,855 skips (`6f5445e3-30fd-4be9-92b5-f3f84426a35f`), including local signal
+capture and the retained-composition correction. No unrelated component matrix is repeated.
+The profiler-disabled capture control passes 1/1 with 1,621 skips
+(`9b9aedc0-3487-4988-b532-5713ff337b97`), confirming no local timestamp capture while the
+original known-pair merge and reentrant demand remain intact.
+Affected native lifecycle controls pass 14/14 with 296 skips
+(`b73f30e2-8e1c-471c-a85b-de25aef7888c`): external attachment/input services, supplied WGPU
+renderer, cached replay, Unicode text, visibility and explicit windowing/retirement paths.
+This is the selected affected cohort, not an aggregate native accessibility/platform result.
+
+The first ordinary GPU run reaches the post-input output check, then refuses unchanged field
+pixels. The initial fixture hypothesis was that a reused producer count admitted an older
+receiver candidate. Recovery now uses a distinct source value and explicitly refuses older
+packets, but the second run still reproduces identical typed/final hashes. That correction is
+insufficient, so actual entity rendering and original output were traced before assigning the
+owning defect. At that checkpoint, no GPU pass was claimed and the output hash remained required.
+Tracing then shows an older Scene with its original button/text, while the producer label was
+read from mutable source at later recording time. Entity Render and Scene bounds agree with
+their own candidates; the text-layout key review finds no cross-text match. The consumer now
+captures its producer value during root Render, before the original Window parks that Scene.
+The recording and its label use that captured value. Recovery can refuse the older candidate
+without mislabelling it as the later source. Temporary traces and raw readback exports were
+removed; final output comparison remains unchanged.
+The corrected GPU trajectory next reaches retirement, where a total thread-HWND assertion
+detects a lazily created Windows `MSCTFIME UI` helper. Enumerated class/identity evidence shows
+the original GPUI UI HWNDs unchanged. The probe now compares their exact sorted identities,
+excluding only the known `IME` and `MSCTFIME UI` helper classes; unknown/new window classes still
+fail. Renderer and native surface creation counters remain independent required controls.
+
+All four ordinary production trajectories pass on Windows using the same final executable,
+built with `--no-default-features` and no test/bench runtime. Each of the first three preserves
+its original native smoke and adds the complete offscreen root workflow:
+
+| Ordinary arguments | Actual result |
+| --- | --- |
+| `--logical-root --smoke` | Pass; GPUI output background/button/glyph/image/field readbacks, frozen A/B, submitted input, invalidation/recovery and logical close with live native sibling; native prefix 4 quiesces. |
+| `--external-host --logical-root --smoke` | Pass; same logical workflow plus original external native input/geometry, enabled host HWND, userdata/private messages and host quit; native prefix 6 quiesces. |
+| `--external-host --deferred --logical-root --smoke` | Pass; same logical workflow plus original native deferred A/B, hidden initial submission, input, refusal/ABA and host detachment; native prefix 13 quiesces. |
+| `--logical-root --smoke --native-close` | Pass; one isolated demand advances original logical prefix 1 to 2 through host wake turns 2 to 4 and packet wakes 1 to 2. The timer only observes. Real `WM_CLOSE` retires the native entry, requests normal App quit and quiesces/detaches the still-live logical root. |
+
+The deferred native control again reads original producer pixels `[217,89,38,255]` and
+`[38,140,217,255]`. Original native recording custody is retained before and after quiescing
+prefix 13, with observed callback completion already at 13; this does not prove hardware was
+still busy. Logical controls separately read actual final offscreen GPUI output. The two external
+host idle observations are fixture facts (199 messages/347.7378 ms blocked and 56/340.49 ms),
+not performance budgets. No additional UI HWND identity, native renderer or native surface is
+created by opening, using or closing the logical root.
+
+Final all-target correctness Clippy passes for Core, Windows, the adapted Docking consumer and
+the ordinary WGPU executable with the affected support/profiler selections. Production
+Core/WGPU/Web compilation for `wasm32-unknown-unknown` passes; this is not browser execution.
+Root and independent `cargo fmt --check`, ordinary `git diff --check`, 339 local link targets
+in changed framework documents, new link fragments, TOML/lock and workflow YAML checks pass.
+The build-directory cleanup removed the previous xtask executable; the broad xtask suite was
+not rebuilt for this unit, which changes no manifests, lockfiles or existing API-tier exports.
+No aggregate component/release or compiler-floor qualification is claimed. Existing compiler
+floor remains Rust 1.93, with no dependency-source change. Independent source/API, adapter and
+GPU-consumer reviews closed all concrete P1/P2 findings before final execution.
+
+The public CPU consumer uses the production adapter with TestAppContext and a manually settled
+renderer. It can qualify original candidate/publication, input/text, geometry, creation and
+retirement behavior, but cannot qualify real GPU output. The independently locked consumer
+distinguishes executed value/construction controls from unexecuted typed App closures.
+The ordinary WGPU application must use real Render output, the same existing device/queue and
+its own offscreen target; retain the original commands, recording and allocation through exact
+completion. Actual output readbacks, target invalidation, independent roots and sibling use
+after close are separate evidence from producer-only pixels or no-render headless draws.
+
+Physical IME/DPI, foreign-platform execution, native accessibility bridging, game clocks/player
+focus, world-space/depth/materials, cooked resources, numerical costs and actual Nara integration
+remain separately qualified work. Logical binding detachment never proves OS-window destruction.
+
 ## Deferred Scene Submission And Submitted Publications
 
 The continuation from `af68cbad113` implements Core delivery at

@@ -5,7 +5,7 @@ for Rust, forked from Zed's GPUI framework code.
 
 ## Getting Started
 
-Open GPUI is still in active development and is pre-1.0. There will often be breaking changes between versions. The current workspace MSRV is Rust 1.92. Add the following to your `Cargo.toml`:
+Open GPUI is still in active development and is pre-1.0. There will often be breaking changes between versions. The current workspace MSRV is Rust 1.93. Add the following to your `Cargo.toml`:
 
 ```toml
 open_gpui = { package = "open-gpui", version = "0.2.0" }
@@ -16,6 +16,13 @@ open_gpui_platform = { package = "open-gpui-platform", version = "0.2.0" }
 - [Accessibility](src/_accessibility.rs)
 
 Everything in Open GPUI starts with an `Application`. You can create one with `open_gpui_platform::application()`, and kick off your application by passing a callback to `Application::run()`. Inside this callback, you can create a new window with `App::open_window()`, and register your first root view.
+
+An existing application may instead supply platform and renderer services. `App::open_surface`
+opens a host-driven logical root without creating a native window, while retaining ordinary
+elements, text, input and exact submission lifetime. The
+[external WGPU guide](../../docs/external-wgpu.md#drive-a-logical-surface-without-a-native-window)
+describes the host's geometry, wakeup, input, recording and shutdown responsibilities. This does
+not require depending on an editor, docking or a game engine.
 
 ## Views And Reusable Components
 

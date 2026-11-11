@@ -3754,6 +3754,34 @@ the actual failed fixtures and review fixes in that record. Continue the logical
 actual engine dependency/GPU/Host/View consumers; complete game, cost and maintenance handoff
 acceptance does not follow from the desktop hosting checkpoint.
 
+The next fork-owned unit supplies a production hosted surface with no native window. Its logical
+root remains an ordinary App/Window with the original reservation, candidate, input/text,
+accessibility, frame-demand and retirement owners. The hosted adapter supplies truthful local
+geometry and capabilities, explicit host-driven input/frame delivery, an application renderer
+and exact presentation shutdown. Native handles and desktop mutations remain unsupported rather
+than being fabricated. Reuse the existing deferred-submission token and renderer resource leases;
+there is no second UI executor, GPU device owner or scheduling loop.
+
+Keep desktop opening validated against its original platform. A hosted opening captures the
+adapter's own creation/mutation capabilities so a desktop platform's unrelated capabilities do
+not decide a logical root's lifecycle. Qualify independent roots, text/control interaction,
+pending submission, geometry/visibility invalidation, refusal, callback unwind and close through
+the public production interface. A normal application must record real root output into a
+host-owned offscreen WGPU texture on its existing device and retain that recording through the
+original GPU completion. Test-only Scene production and discarded headless draws are separate
+controls, not evidence of that workflow. Do not infer player/gamepad, world-space/depth, physical
+IME, Nara integration or numerical performance support from this prerequisite.
+
+This hosted unit is implemented at `2910b52424e` (Core/public interfaces) and `8809f12929e`
+(ordinary GPU consumers). The [record](../verification.md#host-driven-logical-surfaces-without-native-windows)
+preserves the actual composition and source-snapshot defects, fixes and review results. Final
+affected CPU/public controls pass 45/45, profiler-disabled capture 1/1 and independent interfaces
+5/5. All four normal Windows GPU trajectories pass, including original offscreen UI-output
+readbacks, isolated wake progress and both close orders. Affected native lifecycle 14/14,
+correctness Clippy, production wasm, formatting and document checks pass, with exact scope
+in that record. Actual engine GPU-source/Host/View, complete control skins,
+authored game-runtime selection and numerical costs remain subsequent consumers.
+
 The [standalone logger](../verification.md#standalone-logging-and-tracing) at
 `9e7b9c3a36fb0266ef68ec7ee7280b2eb8646554` and the
 [Window/Win32 successor](../verification.md#window-controls-lazy-inspector-and-win32-dispatch)
