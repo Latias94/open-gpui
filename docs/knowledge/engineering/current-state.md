@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-11T11:01:43+08:00
+timestamp: 2026-11-11T11:50:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,29 @@ verified_by:
 ---
 
 # Current State
+
+- Application-owned GPU recording is implemented at
+  `0259c88f9deb26e4caa026ebd39be179d19a3ae5`. The existing renderer stages per-scene
+  uploads in host-encoder order and retains exact atlas uses through caller completion.
+  All 117 existing WGPU library controls pass at the affected refactor checkpoint; the final
+  real public GPU trajectory passes 1/1 with distinct scenes before one submit, Load,
+  clip/path/image pixels, multi-mip target, capability refusal, preserved host callback and
+  exact resource release. The [qualification](../../verification.md#application-owned-wgpu-scene-recording)
+  retains three earlier fixture failures and the five corrected review findings. Affected
+  correctness Clippy, production wasm, actual Windows Rust 1.93, root formatting and static
+  gates pass. Generic texture import, production external UI driving/submission acknowledgement,
+  the standalone native WGPU application and Nara consumer remain incomplete.
+
+- The November 11 layered comparison selects convenient externally hosted WGPU applications
+  as the next reusable framework capability. Open-GPUI remains independent: application
+  window/loop/device ownership, UI runtime driving, renderer recording and retained-image
+  import have distinct contracts. The official Windows D3D11 construction may be refactored;
+  existing UI/layout/text/components remain reusable. First qualify a normal non-Nara WGPU
+  consumer, then the actual engine Host/View integration. The
+  [successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#external-wgpu-application-hosting-successor)
+  records the incomplete production driver, Scene/submission acknowledgement and imported
+  texture scope. The external-device recording implementation is its current prerequisite,
+  not proof of full external hosting or an Editor/game-runtime switch.
 
 - Bounded source adoption is reconciled at framework checkpoint
   `424a3a0f7c2e71f6ce5a933de00138919c50893d` against fixed Zed
@@ -1244,6 +1267,11 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
+- Complete the generic recording prerequisite and the
+  [external WGPU application workflow](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#external-wgpu-application-hosting-successor)
+  with normal components, production input/frame driving, generic texture import and truthful
+  host-submission/close handling. Preserve ordinary standalone applications while decoupling
+  concrete native rendering; no Nara dependency enters the framework.
 - Follow the [maintained-baseline engine gate](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#maintained-baseline-before-engine-adaptation)
   with a real Nara GPU/Host/View consumer before separate framework-maintenance handoff.
   The [bounded source exit](../../verification.md#fixed-cycle-source-adoption-exit) records

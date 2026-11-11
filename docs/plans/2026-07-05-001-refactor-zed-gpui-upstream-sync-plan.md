@@ -106,15 +106,17 @@ composition stays in Nara; a framework correction motivated by that consumer nee
 Open-GPUI regression. The existing source-consumption and renderer tests do not yet qualify that
 engine boundary or complete the handoff.
 
-The November 11 owner clarification keeps Open-GPUI independently useful and requires a layered
-comparison before selecting the first engine composition. Compare a GPUI-hosted Editor with
-retained engine-viewport import against an engine-hosted GPUI adapter. Window/event-loop hosting,
-GPU source/device sharing, renderer recording and ordered viewport sampling are separate choices.
-The external-encoder implementation below is a candidate reusable module; it does not select the
-native owner or require every Nara control to enter the engine render graph. Nara owns its optional
+The November 11 owner clarification selects convenient external WGPU application hosting as a
+framework development target after the layered comparison. Refactor inherited native coupling
+where needed; the official Windows D3D11 backend does not constrain the new interface.
+Window/event-loop hosting, GPU source/device sharing, renderer recording and ordered viewport
+sampling remain separate responsibilities. First qualify an ordinary non-Nara WGPU application
+using its own window/loop/device and normal components; Nara then consumes that same public path.
+The external-encoder implementation below is only its first prerequisite. Nara owns its optional
 integration and graph placement; no engine dependency, public engine graph or universal widget
-description enters the standalone framework. Existing component modules also precede any decision
-to add a second behavior library. The engine's layered research owns that comparison.
+description enters the standalone framework. Existing component modules precede another behavior
+library. The [framework decision](../adr/0001-open-gpui-fork-strategy.md#independently-hosted-wgpu-applications)
+owns this direction; the engine's layered study records alternatives and source evidence.
 
 The November 9 bounded source check identifies concrete adapter work: WgpuContext's private
 construction installs device-wide callbacks, WgpuRenderer's private record operation submits
@@ -3620,6 +3622,37 @@ data and retained resources, and recover from an invalid target. This qualifies 
 recording prerequisite, not the subsequent Nara View or input mapping. Align concrete WGPU
 source identity through that consumer before freezing an engine dependency choice; retain one
 device/encoder/submission owner and keep Nara's immutable outputs and original retirement.
+
+### External WGPU Application Hosting Successor
+
+Complete scene recording, generic retained-image import and the production external-host driver
+as separately testable responsibilities. Keep the existing core/platform/WGPU packages; add a
+package only when its independently consumable dependency closure requires one. Do not use the
+test/bench headless platform as the production host or rewrite mature primitive/text/path shaders
+in an engine-specific renderer to avoid an ownership correction.
+
+The host declares required GPU features/limits before device creation, supplies its actual
+device/queue/target/encoder, and owns final submit/present and resource-completion observation.
+The framework driver accepts native events/text/geometry and exposes its existing foreground
+work, wakeups and frame demand. Accepted Scene identity must survive deferred encoding and join
+the actual host submission before Window input/presentation admission. Refusal, panic, stale
+resources, device loss and close settle through their original owners. Encoded commands alone
+are never a submission receipt.
+
+Imported images need ordinary painter ordering, placement, UVs, sampling, nested clips/transforms,
+color/alpha and retained exact native resources. This is distinct from copying CPU images into
+the atlas. A custom canvas/Element and an imported GPU viewport must both compose with normal
+controls. Break concrete Win32 renderer/DirectWrite-device coupling behind the owning platform
+and renderer seams as required; the current D3D11 path remains a qualified reference until a
+replacement's complete native consumer passes, not a permanent compatibility requirement.
+
+Use one normal standalone application without Nara or test-support runtime. It owns a native
+window, device and event loop, drives text/keyboard/pointer/IME and repaint demand, and draws
+real changing external textures beneath clipped/overlapping UI. Verify pause/idle behavior,
+resize/DPI, exact submission/refusal and close with in-flight resources. Then consume those same
+interfaces from Nara's existing Host/View owners. Reuse Nara's actual typed graph/program only
+where a declared intermediate dependency needs it; the framework's internals require no second
+public render graph. Record work/memory and copies/submissions for the matched workloads.
 
 The [standalone logger](../verification.md#standalone-logging-and-tracing) at
 `9e7b9c3a36fb0266ef68ec7ee7280b2eb8646554` and the

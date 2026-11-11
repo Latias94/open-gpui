@@ -102,6 +102,21 @@ compatibility, not a broad component redesign.
 
 ## Architecture
 
+### Independently Hosted WGPU Applications
+
+The November 11 direction makes Open-GPUI usable as a UI library in an application's existing
+window, loop and WGPU device. Preserve the mature UI, layout, text and component mechanisms while
+separating platform services and concrete renderer construction. The application can supply its
+enabled device, target and encoder and retain submission/presentation authority. Open-GPUI owns
+reusable runtime/platform/renderer adapters; it imports no Nara document, ECS, render graph or Host.
+
+The official Windows D3D11 backend is an implementation, not a requirement for the public
+embedding interface. Refactor or replace that coupling when the ordinary WGPU application
+consumer qualifies the complete input, frame-demand, presentation and shutdown workflow.
+Retaining official algorithms by default does not freeze inherited backend ownership. Existing
+desktop use and a host-driven WGPU application are both ordinary consumers of the framework;
+supporting many GPU backends or defining a new RHI is not a prerequisite.
+
 ```mermaid
 flowchart TD
     ZedApache[Zed Apache GPUI crates] --> Core[open-gpui core workspace]

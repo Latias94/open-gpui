@@ -96,6 +96,81 @@ atlas and independent shared-device controls do not complete it. Full platform/f
 qualification, Nara R11 and Editor acceptance, separate framework maintenance and its handoff
 remain open; this exit grants none of those gates.
 
+## Application-Owned WGPU Scene Recording
+
+This November 11 prerequisite follows the audited framework checkpoint `424a3a0f7c2` and the
+source-adoption record `e7debc21222`. Implementation `0259c88f9deb26e4caa026ebd39be179d19a3ae5`
+adds the ordinary, ungated
+`open-gpui-wgpu::{WgpuSceneRenderer,WgpuSceneRecording}` surface. The caller supplies the actual
+adapter, enabled Device/Queue, target and encoder. The renderer installs no device callbacks,
+requests no device or surface, and performs no submit/present or event-loop work.
+
+The existing scene shaders, pipelines, clip data, path raster/composite passes and atlas remain
+the implementation. A host-encoder mode stages per-scene uniform, clip and instance uploads as
+ordered buffer copies before each scene's draws. This avoids reusable Queue writes overwriting
+the earlier scene before one submit. Ordinary surface/headless renderers keep their queue-write
+and original own-submit path; both storage and packed texture transports remain supported there.
+Recorded staging bytes have a checked cumulative bound; this adds no allocation or speedup claim.
+The returned value retains the original exact atlas lease until the host's actual completion.
+
+The new recording path supports explicit Clear/Load, matching RGBA/BGRA unorm/sRGB or RGBA16Float,
+and mip-zero rendering into a complete single-layer, single-sample 2D attachment. Device limits
+are validated against the actual fixed layouts before resource creation. Native recording also
+declares four combined buffers per shader stage as its supported minimum, even for a host using
+strict WebGPU validation. This is a recording capability requirement, not a claim that every
+valid WGPU device is supported. Target-contract refusal occurs before encoding; a later error
+requires the caller to discard the encoder. Same-device handle compatibility remains the caller's
+contract. Platform video surfaces and external GPU-image import are not implemented by this API.
+
+The first affected run executes 118 tests (`42e8b0ff-ae8f-4d20-9b95-c920fe061b67`): all 117
+existing WGPU library tests pass, including real storage/packed mixed-scene pixels, path allocation
+growth/refusal, clip and atlas lifetime/reset controls. The new public test fails during initial
+headless window admission: its scene exporter returns an error to avoid simulated submission.
+TestPlatform requires a simulated successful initial presentation. The fixture now explicitly
+models that admission solely to produce real GPUI-painted Scenes; it supplies no native
+presentation or production external-host evidence. Its screenshot callback exports a Scene and
+returns an error rather than inventing screenshot pixels.
+
+The next run (`b0f02984-611c-4b0f-b735-618dada0ff9e`) exposes the obsolete assertion that this
+simulated headless window has no submitted generation. After the fixture correction, a host
+background pass still creates an all-mips attachment view and invalidates the encoder. Both the
+renderer and host pass now explicitly select mip zero. These fixture failures do not establish
+that the earlier unexecuted mip regression failed in production. Independent source review finds
+the initial recorder's missing mip selection and insufficient host limits; the follow-up corrects
+uniform-layout count, WGPU attachment-byte cost and native aggregate-buffer admission as well.
+
+The preliminary public GPU run passes 1/1 (`6c8e9fd2-0519-451c-9a35-ad01cd1843c4`). After the
+final limit corrections, it again passes 1/1 (`6ee302a4-2050-4849-b2bf-99307fff4e45`). The final
+trajectory paints two different GPUI scenes at different physical extents, records both before
+one host-owned submit, and reads back both targets. Exact overlap, nested clip, path, image and
+Clear/Load background pixels pass. A two-level mip target uses its base level. Invalid
+format/usage/layer/sample targets refuse without poisoning the same encoder; insufficient
+bind-group, uniform, attachment-byte and aggregate-buffer devices refuse without a GPU error
+callback. Two intentional invalid-buffer probes prove the application's callback remains installed.
+After both original windows, Scenes, atlas handles and renderer are released, the recording leases
+retain exact removed image instances through submission/completion and release the atlas after
+the final token drops. This is real GPU execution, not native window submission or scanout.
+
+```text
+cargo +1.95.0 nextest run --locked -p open-gpui-wgpu --all-features --lib --test external_scene --test-threads=1 --no-fail-fast --no-tests fail
+cargo +1.95.0 nextest run --locked -p open-gpui-wgpu --all-features --test external_scene --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+The [external-host successor](plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#external-wgpu-application-hosting-successor)
+still needs production event/text/IME driving, frame-demand/wakeup integration, accepted Scene
+delivery, actual host-submission acknowledgement and generic retained-image import. TestPlatform
+admission is not that driver. The standalone WGPU window, Nara Host/View consumer, game runtime,
+new native backend/default, numeric costs and full maintenance handoff remain open.
+
+Affected all-target/all-feature WGPU correctness Clippy passes on Rust 1.95. The ordinary
+production renderer compiles for wasm32 without test support and on actual Windows Rust 1.93,
+preserving the declared floor. Root formatting and existing import/API/document/release scans
+pass; workflow YAML parses and adds the qualified public consumer to the Windows gate.
+No remote CI run is implied. Independent bounded review closes all five identified target/limit
+defects and finds no remaining concrete P1/P2 in this recorder scope. The separate layered-design
+review finds no blocking ownership or feasibility conflict; neither review executes the pending
+production external-host or engine consumer.
+
 ## Independent Dependency Consumer
 
 The separately locked [dependency consumer](../tests/fixtures/dependency-consumer/README.md)
