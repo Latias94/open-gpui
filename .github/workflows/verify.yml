@@ -413,6 +413,18 @@ jobs:
         if: matrix.name == 'windows'
         run: cargo run --locked -p open-gpui-wgpu-native --no-default-features -- --external-host --smoke
 
+      - name: Test deferred Scene custody and original completion
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked -p open-gpui --all-features --lib --test deferred_frames -E 'binary(deferred_frames) | test(platform::frame_delivery::) | test(window::deferred_frame::) | test(app::native_event_ingress::tests::frame_submission_) | test(profiler::deferred_draw_tests::)' --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Run ordinary deferred Win32 WGPU host
+        if: matrix.name == 'windows'
+        run: cargo run --locked -p open-gpui-wgpu-native --no-default-features -- --external-host --deferred --smoke
+
+      - name: Test independent deferred Scene interfaces
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test deferred_frames --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
       - name: Test independent platform-window factory
         if: matrix.name == 'windows'
         run: |

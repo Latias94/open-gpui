@@ -96,6 +96,120 @@ atlas and independent shared-device controls do not complete it. Full platform/f
 qualification, Nara R11 and Editor acceptance, separate framework maintenance and its handoff
 remain open; this exit grants none of those gates.
 
+## Deferred Scene Submission And Submitted Publications
+
+The continuation from `af68cbad113` implements Core delivery at
+`797372013abf6da74b301972515dc02a9e596801` and native/ordinary consumption at
+`69d0992f2a083f7d3ad7161700d3e2735cc8fc41`. Standalone raw-handle feature correction is
+`ec576a20dc177616b1ba6b70d66181251c8def92`. The unit separates candidate preparation from the common
+Window commit path. An explicitly deferred platform receives a non-reusable attempt token;
+one prepared candidate retains its Scene, resources, authority overlay and publication material
+while the submitted frame keeps its listeners, text handler and accessibility dispatch. Completion
+returns the original attempt through ordered native ingress. Initial hidden reveal uses the same
+pending lifecycle. These are fork-owned hosting changes, not additional official source adoption.
+
+The first production Core/Windows check exposes a missing standalone feature from the preceding
+attachment unit: `HandleError` lacks its `std::error::Error` implementation without raw-window-handle's
+`std` feature. Enabling that existing feature in the Windows dependency fixes the native package's
+independent production closure without version or lockfile changes. Core/Windows production checks
+then pass. The first public-test build also misses a `StatefulInteractiveElement` trait import;
+adding the actual public trait fixes that fixture compile error.
+
+The first public ordinary CPU consumer passes 7/7
+(`84a43803-30ea-41f9-baa4-1e07a0927a3c`). It checks hidden first submission, submitted cached
+controls/focus/text/semantics, old button/text mutation, candidate-only dependency changes, exact
+same-generation retry authority and close with late completion. Its ordinary App uses the existing
+headless platform; `bench-support,test-support` are explicit and renderer outcomes are simulated.
+This is framework lifecycle evidence, not real GPU execution or native input qualification.
+
+Independent native review identifies an unowned pending token when the platform returns Deferred
+before reaching the renderer while minimized or hidden. That branch now settles the original token
+as RepaintRequired, preserving progress through the same ingress. Core review identifies earlier
+ingress actions being overtaken by cancellation's eager Submitted publication, accepted-publication
+unwind skipping physical-submission completion, and empty first scenes losing their wakeup. The
+owning fixes keep asynchronous completion in ingress order, finish the exact accepted submission
+before rethrowing a publication panic, and share the existing bounded initial-presentation progress.
+Their new regressions and the final combined qualification are recorded below when executed.
+
+The first real deferred ordinary application builds and reaches normal shutdown after original GPU
+prefix 13, but exits 1: its Closing probe queries a Window already removed by WM_CLOSE. The correction
+checks the original no-submit close invariant before querying any live Window facts. All original
+retirement, discarded-packet, host quit and userdata assertions remain in the trajectory. This failed
+execution is not a passing native result; the corrected run is recorded separately when complete.
+
+The next native run reaches the same prefix but finds a second close-probe assumption: normal
+GPUI WM_CLOSE handling removes the Window without setting the application's fallback close flag.
+Closing now observes that actual logical-window absence before querying live facts. The following
+run exits 0 through the complete deferred/native trajectory and typed detach. Independent consumer
+review then strengthens two evidence gaps rather than treating packet metadata as pixels or an
+earlier outstanding callback as proof of unfinished GPU work at close.
+
+The strengthened native run also exits 0. A and B each encode a producer-to-buffer pixel copy
+inside their original retained command buffer, using the same single queue submit. Readback is
+bound to the exact token, submitted prefix and SubmissionIndex: prefix 2 yields
+`[217,89,38,255]`, prefix 3 yields `[38,140,217,255]` (per-channel tolerance 1). These qualify
+the frozen producer input, not full swapchain pixel conformance. The same trajectory retains all
+hidden-initial/publication, original A after source B, native button/text, resize/same-size ABA,
+rejection/recovery, minimized/hidden restore and close-with-unsubmitted-packet assertions.
+It quiesces original prefix 13, preserves host userdata/private messages/quit and exits normally.
+The bounded idle sample is 110 messages / 306.5205 ms blocked, not a numerical performance budget.
+Close, quiesce entry and after-wait observations all retain the original recording. Their observed
+completion is already prefix 13 at close; this proves exact custody through the wait and release,
+not that hardware is still executing at that point. No completion polling is artificially delayed.
+
+The first combined affected run executes 44 tests
+(`43639985-3001-48b0-a629-00f897df4a3b`): 36 pass, including ingress ordering, all selected
+Core/focus/unwind controls, seven profiler tests and the empty-initial retry. Eight public cases
+fail only during all-feature leak detection: their fixture declares ApplicationHandle before its
+retained Entity fields, so the App is dropped first. Reordering the fixture fields drops those
+consumer handles before the App without disabling the checker or removing lifecycle assertions.
+Normal-phase prepaint callback unwind is additionally brought under the same accepted-frame
+completion cleanup, with both Normal and Publication panic positions checked by the public case.
+
+Profiler review also identifies consumed dirty samples being restored after successful submission
+and original input ending before deferred acceptance losing its exact covered-draw attribution.
+The prepared candidate now owns the taken dirty accumulator, restoring it only on refusal/cancel;
+newer dirty demand remains live. Exact original input activities share the private prepared timing
+coverage while finishing, with reset/power checks retained. Six additional profiler regressions
+and a Window-level dirty-successor control qualify those corrections in the final run below.
+
+The next combined run passes 56/57
+(`71afb3a6-8a41-4459-a4d6-21b5a5a0d637`), including all nine public lifecycle cases,
+thirteen profiler cases and the prior public factory controls. The new Window dirty-successor
+fixture reads its candidate before draining the simulated callback ingress. The correction
+delivers that actual callback first and observes newer dirty custody either live or in the
+TestApp's automatically prepared successor. Both require the newer timestamp, excluding the
+submitted frame's consumed sample. Final focused execution passes 57/57
+(`c68c428c-9ede-404d-86c2-ae834c04a226`, 1,823 unrelated tests skipped).
+No lifecycle assertion or leak check is disabled. Both existing ordinary synchronous application
+smoke modes pass on the current executable, quiescing original prefixes 3 and 6. The external
+synchronous sample records 115 messages / 299.8033 ms blocked with host quit custody intact.
+
+The affected shared-Window, ingress, clipboard/accessibility and profiler selection passes
+626/626 (`6f9c2215-0a1f-470d-8df7-a94b448da0e8`, 1,240 unrelated tests skipped). The final
+native regression cohort passes 22/22 (`c7733b5f-36a5-47b4-8882-cbefa37b6600`, 297 unrelated
+tests skipped), retaining existing cache, actual custom renderer, native text/input, visibility,
+shutdown retry, windowing/recovery and exact registration controls. These scopes do not turn the
+separately recorded preconnected-observer accessibility fixture into a passing aggregate.
+
+The independently locked, feature-free interface consumer passes 1/1
+(`f7fc89fc-6537-43a8-a987-2ea9b0ee0fd4`); its typed delivery closures remain unexecuted and
+do not replace the ordinary lifecycle/native consumers above. Affected all-target/all-feature
+correctness Clippy passes for Core, Windows and the native application. Production Core/WGPU/Web
+compilation passes for `wasm32-unknown-unknown` without default features; this qualifies shared
+portability compilation rather than browser deferred-host execution. Existing import/document/
+release/public-API scans and manifest/workflow parsing pass. No dependency versions, WGPU source
+or compiler floor change. Remote CI execution, logical roots, other native hosts, physical
+IME/DPI and numeric budgets retain separate incomplete qualification.
+Root and independently locked consumer formatting checks pass. All Cargo qualification used
+Windows 11, Rust 1.95.0, one job and the shared target; no additional compiler-floor run is
+claimed for these unchanged requirements.
+
+Retained profiling captures CPU draw completion before the host wait and publishes its original
+timing only after actual submission. The token records the submission report's timestamp; processing
+its queued completion later does not extend input latency. No GPU execution-duration measurement,
+scanout timestamp, numerical performance budget or game-runtime adoption follows.
+
 ## Supplied Platform Windows And External Win32 Driving
 
 The continuation from `12f9bb50e8e` implements the supplied platform-window factory and neutral

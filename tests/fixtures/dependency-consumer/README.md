@@ -4,6 +4,12 @@ This application is its own Cargo workspace. It consumes Open GPUI through path 
 without inheriting the repository workspace's dependency resolution or lockfile. Its own
 `Cargo.lock` records the consumer resolution.
 
+The feature-free `deferred_frames` target type-checks the exact public submission identity,
+delivery mode and platform entry points without constructing private authority. Its closures
+are deliberately unexecuted; actual candidate publication and native GPU submission belong to
+the framework's ordinary App and external WGPU consumers. Run
+`cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test deferred_frames --target-dir target --test-threads=1 --no-fail-fast --no-tests fail`.
+
 The `portable_paths` target directly consumes `open-gpui-path` with serde. Its public workflows
 compose portable Unix/Windows drive/UNC/verbatim normalization and prefix/join operations,
 persist checked relative paths, resolve them against a local absolute base and pass the same

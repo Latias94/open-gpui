@@ -3731,6 +3731,29 @@ and both real-GPU ordinary host smoke modes. Preserve the actual failed fixtures
 lifetime diagnosis and owning corrections in that record. Delayed Scene/last-submitted
 publication, logical roots, physical IME/DPI, numeric budgets and the Nara consumer remain open.
 
+The delayed-submission successor keeps a single pending candidate in the original Window.
+Separate candidate preparation from the common publication/previous-state-release operation;
+carry the candidate's exact original attempt, geometry/resource basis and completion state.
+Retain last-submitted hit/focus/text/accessibility authority while delivery is pending. Cached
+move-only listeners and handlers must remain available to that authority, and unpublished
+candidate callbacks, subscriptions and focus results must not leak. Actual host submission may
+admit only that original candidate; refusal, superseding work, resize/device invalidation and
+shutdown settle it without manufacturing submission or committing stale publications. Keep
+ordinary synchronous consumers on the same candidate lifecycle and qualify a normal external
+GPU application which delays actual submission. A typed ticket or a Scene clone alone does not
+complete this unit. Logical-root and engine adoption consumers remain separate subsequent work.
+
+The [implemented deferred checkpoint](../verification.md#deferred-scene-submission-and-submitted-publications)
+is `797372013ab` for Core and `69d0992f2a0` for native/ordinary consumers. Exact hidden
+initial submission, last-submitted input/text/accessibility, dirty/dependency demand, callback
+unwind, target/resource invalidation and original shutdown custody use the original owners.
+Focused Core/public 57/57, affected shared controls 626/626, native 22/22 and independent
+interfaces 1/1 pass; all three ordinary GPU smoke modes and original A/B producer pixel
+readbacks pass. Correctness Clippy, production wasm and existing static gates pass. Preserve
+the actual failed fixtures and review fixes in that record. Continue the logical-root and
+actual engine dependency/GPU/Host/View consumers; complete game, cost and maintenance handoff
+acceptance does not follow from the desktop hosting checkpoint.
+
 The [standalone logger](../verification.md#standalone-logging-and-tracing) at
 `9e7b9c3a36fb0266ef68ec7ee7280b2eb8646554` and the
 [Window/Win32 successor](../verification.md#window-controls-lazy-inspector-and-win32-dispatch)

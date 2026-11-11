@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-11T15:54:00+08:00
+timestamp: 2026-11-11T18:10:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,19 @@ verified_by:
 ---
 
 # Current State
+
+- The deferred Scene/submitted-publication successor is implemented at `797372013ab` and
+  `69d0992f2a0`, with standalone native-feature correction `ec576a20dc1`.
+  The [record](../../verification.md#deferred-scene-submission-and-submitted-publications)
+  retains the standalone native dependency correction, intermediate failures and review fixes.
+  Final focused Core/public 57/57, affected shared controls 626/626, native 22/22 and independent
+  interfaces 1/1 pass. All three ordinary GPU smoke modes pass; actual A/B producer readbacks
+  differ and original GPU-prefix retirement retains exact recording custody. One candidate is
+  prepared without replacing
+  submitted input/text/accessibility authority. The ordinary host now retains real unsubmitted
+  commands and completes exact tokens only after queue submission/presentation. Correctness
+  Clippy, production wasm, root/consumer formatting and existing static/document checks pass. No actual Nara Host/View,
+  logical-root, physical IME/DPI or numeric-budget acceptance follows from this scoped unit.
 
 - The supplied platform-window and synchronous external-Win32 composition is implemented at
   `6ad133d3662` and `911e628c0e9`, continuing from `12f9bb50e8e`.
@@ -1314,8 +1327,7 @@ historical scope and is not current branch or CI qualification.
 - Complete the
   [external WGPU application workflow](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#external-wgpu-application-hosting-successor)
   beyond its qualified recorder, imported-image, supplied-renderer and synchronous external
-  HWND/loop prerequisites. Implement original-Window delayed submission/admission and
-  last-submitted interaction custody. Qualify logical roots independently of native windows
+  HWND/loop and deferred original-candidate prerequisites. Qualify logical roots independently of native windows
   through a named consumer. Preserve ordinary standalone applications and complete component
   behavior/skin reuse; no Nara dependency enters the framework.
 - Follow the [maintained-baseline engine gate](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#maintained-baseline-before-engine-adaptation)

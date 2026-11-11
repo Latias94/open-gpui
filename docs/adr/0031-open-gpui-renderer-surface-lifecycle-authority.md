@@ -172,6 +172,31 @@ The latter still requires last-submitted interaction, text/accessibility publica
 candidate custody in the original Window. An externally owned HWND or a detached receipt does
 not establish those asynchronous frame guarantees.
 
+### Prepared Candidate Delivery
+
+An explicitly deferred platform receives a Scene with the original full WindowId, candidate
+generation and non-reusable attempt authority. The original Window retains at most one prepared
+candidate; its last-submitted frame remains the interaction/text/accessibility authority while
+the platform waits. Cached move-only listeners and input handlers return to that submitted frame
+until the candidate resumes the common commit path. Framework publications, focus results and
+composition cleanup remain deferred; this is not rollback of arbitrary application code executed
+during rendering.
+
+Recording is not submission. The host checks the original token and its native/resource basis
+before submitting, then completes that token through the existing ordered App ingress after its
+actual submission/presentation handoff. Completion cannot substitute a newer frame, accept a
+same-generation replacement attempt or release GPU resources before their original completion.
+Native resize/DPI, renderer invalidation and shutdown revoke pending delivery before later host
+work can submit it. Mutating input continues through the submitted frame and settles or cancels
+the candidate before changing its interaction basis.
+
+Initial hidden presentation uses the same pending candidate and original completion command.
+The App creation transaction may return a still-hidden pending window; no input tree or native
+reveal is admitted until its exact initial submission succeeds. Refusal, fresh-frame retry and
+close use the existing lifecycle. Ordinary synchronous platforms retain their default delivery
+mode and the same prepared/commit owner. Logical UI roots without native windows and actual
+engine adapters still require their own consumers.
+
 ## Alternatives Considered
 
 ### Keep accepted-frame admission

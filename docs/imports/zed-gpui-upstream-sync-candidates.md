@@ -125,6 +125,14 @@ unit's actual results and failures remain in its qualification; delayed Scene/in
 broader surface hosting and the Nara consumer keep separate gates. These are framework extensions
 after the fixed-source audit, not additional official source-adoption credit.
 
+The [deferred-delivery successor](../verification.md#deferred-scene-submission-and-submitted-publications)
+implements original candidate custody at `797372013ab` and native/ordinary WGPU driving at
+`69d0992f2a0`, with standalone feature correction `ec576a20dc1`. Submitted interaction and
+publications remain authoritative until exact host submission returns through ordered ingress.
+The record owns final focused 57/57, affected shared 626/626, native 22/22, independent 1/1,
+actual producer pixel readbacks and synchronous controls. These are fork-owned extensions;
+logical roots, physical/platform/numeric qualification and the Nara consumer remain open.
+
 ### Fixed Revisions And Provenance
 
 The repository [upstream-sync skill](../../.agents/skills/open-gpui-upstream-sync/SKILL.md)

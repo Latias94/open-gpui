@@ -19,12 +19,17 @@ fn deferred_delivery_uses_the_original_public_submission_identity() {
     let _: fn(&PlatformFrameSubmission, PlatformWindowPresentOutcome) -> bool =
         PlatformFrameSubmission::complete;
 
-    let _deliver = |window: &dyn PlatformWindow,
-                    scene: &Scene,
-                    submission: &PlatformFrameSubmission| {
-        assert_eq!(window.frame_delivery_mode(), PlatformFrameDeliveryMode::Deferred);
-        window.draw_with_submission(scene, submission)
-    };
+    let _deliver =
+        |window: &dyn PlatformWindow, scene: &Scene, submission: &PlatformFrameSubmission| {
+            assert_eq!(
+                window.frame_delivery_mode(),
+                PlatformFrameDeliveryMode::Deferred
+            );
+            window.draw_with_submission(scene, submission)
+        };
     let _clone = |submission: &PlatformFrameSubmission| submission.clone();
-    assert_eq!(PlatformFrameDeliveryMode::default(), PlatformFrameDeliveryMode::Synchronous);
+    assert_eq!(
+        PlatformFrameDeliveryMode::default(),
+        PlatformFrameDeliveryMode::Synchronous
+    );
 }

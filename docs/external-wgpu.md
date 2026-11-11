@@ -2,8 +2,8 @@
 
 Open-GPUI can reuse an application's existing WGPU device and encode UI work in the application's
 command encoder. GPU recording, imported images, native renderer selection and external event-loop
-hosting are separate capabilities. Application-owned Win32 hosting supports synchronous renderer
-submission; deferred Scene delivery and last-submitted interaction remain in development.
+hosting are separate capabilities. Application-owned Win32 hosting has synchronous and explicitly
+deferred delivery paths; their scoped qualification and remaining platform limits are separate.
 
 | Capability | Interface | Owner |
 | --- | --- | --- |
@@ -11,7 +11,7 @@ submission; deferred Scene delivery and last-submitted interaction remain in dev
 | Imported GPU image | `WgpuAtlas::import_image`, `Window::paint_image_texture` | Application orders producer work and retains its allocation; framework preserves UI ordering and leases. |
 | Win32 renderer selection | `WindowsPlatform::new_with_renderer` | Application supplies a synchronous renderer and text service; GPUI owns HWND, message loop, input/IME and retirement. |
 | External Win32 HWND/event loop | `new_external_host`, `attach_window`, `pretranslate_message` | Application retains its native window/loop; adapter supplies native UI services and detaches after synchronous submission quiesces. See scoped qualification. |
-| Delayed Scene delivery | Not yet a supported complete driver | Requires last-submitted interaction/publication custody in the original Window lifecycle. |
+| Delayed Scene delivery | `PlatformFrameDeliveryMode::Deferred`, `draw_with_submission` | Original Window retains one prepared candidate and its submitted publications; application completes the exact original token after actual submission. |
 
 Use the workspace's exact WGPU source and compatible package requirements. A matching Rust type is
 necessary; supplying the same original device is an additional requirement. Never reinterpret
@@ -152,9 +152,8 @@ waits for the changed-image submission, then requests normal application shutdow
 the original quiesced GPU prefix; it does not replace pixel or physical input/IME qualification.
 
 This mode still uses GPUI-created windows, its native loop and ordinary synchronous candidate
-acceptance. Application-owned HWNDs use the separate mode below. Preserving a last-submitted
-interaction tree across asynchronous Scene delivery still requires work in the original Window,
-rather than a parallel state machine.
+acceptance. Application-owned HWNDs use the separate mode below. Deferred delivery is an explicit
+mode in that same Window lifecycle; selecting a synchronous renderer does not enable it.
 
 ## Drive An Application-Owned Win32 Window
 
@@ -209,9 +208,50 @@ cargo run --locked -p open-gpui-wgpu-native -- --external-host --smoke
 
 The [consumer guide](../examples/wgpu-native/README.md) describes its actual message, geometry,
 resource and shutdown controls. Queue-driven UTF-16/key checks do not qualify physical IME or
-monitor/DPI transitions. This mode still submits synchronously; it does not provide asynchronous
-Scene export, submission acknowledgement or a last-submitted interaction tree across deferred
-encoding. It also does not establish Nara Host/View or authored game-UI acceptance.
+monitor/DPI transitions. The default renderer mode submits synchronously. Neither mode by itself
+establishes Nara Host/View, a production no-native-window logical root or authored game-UI acceptance.
+
+## Defer An Original Candidate
+
+A Windows renderer opts into `PlatformFrameDeliveryMode::Deferred` and implements
+`draw_with_submission(scene, background, submission)`. The normal `draw` remains the synchronous
+entry. The deferred callback may encode the Scene into an application-owned command buffer,
+retain its `WgpuSceneRecording`, acquired target and original `PlatformFrameSubmission`, then
+return `Deferred`. Retain one packet; do not replace it with the newest description or read current
+application values later to reconstruct the original producer work.
+
+After the callback and any App borrow return, the host validates that same packet's native target,
+physical extent and device/resource basis. Check `submission.is_pending()` immediately before
+recording or submitting: resource invalidation settles the original attempt as `RepaintRequired`.
+The native adapter revokes it before resize/DPI or shutdown changes can authorize later work.
+Submit/present the original commands, then call `submission.complete(Submitted)`. Recording alone
+does not permit completion. GPU completion separately controls the original recording's lifetime.
+Drop an invalidated packet without submitting it; do not retarget it to the current surface.
+
+Completion is UI-thread work and enters the original ordered App ingress. It does not reenter the
+App from the renderer. Clones share one terminal outcome; late or duplicate completion cannot
+accept a replacement which reuses a frame generation. A pending candidate preserves the submitted
+hit/focus/text/accessibility publications. Mutating input or another invalidation cancels pending
+work before changing that basis, while ordinary source updates retain their next-frame demand.
+Publication callbacks run only when the original candidate is committed. This does not roll back
+arbitrary application writes performed by render/prepaint callbacks.
+
+The initial open may return a still-hidden window whose initial-presentation status is `Pending`.
+Keep pumping; the original native reveal command waits for its exact nonempty submission. Do not
+manually show it or expose its candidate interaction before completion. Refusal and empty scenes
+use the original bounded initial-presentation recovery, and close cancels unfinished delivery.
+
+Run the ordinary host-controlled trajectory:
+
+```text
+cargo run --locked -p open-gpui-wgpu-native -- --external-host --deferred --smoke
+```
+
+The [qualification](verification.md#deferred-scene-submission-and-submitted-publications) distinguishes
+CPU state-ordering tests, actual native GPU submissions, readback scope and remaining physical
+input/platform/performance requirements. Deferred profiler samples retain CPU draw completion
+before the host wait and the original submission timestamp; no measured GPU duration or scanout
+latency is inferred from processing a completion message.
 
 See [the executable recording consumer](../crates/gpui_wgpu/tests/external_scene.rs),
 [the native supplied-renderer trajectory](../crates/gpui_windows/src/native_custom_renderer_tests.rs),
