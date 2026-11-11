@@ -385,11 +385,23 @@ jobs:
 
       - name: Test WGPU atlas resources and prepared-frame lifetime
         if: matrix.name == 'windows'
-        run: cargo nextest run --locked -p open-gpui-wgpu --all-features --lib -E 'test(wgpu_atlas::tests::) | test(wgpu_renderer::atlas_tests::) | test(wgpu_renderer::webgl_tests::)' --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui-wgpu --all-features --lib -E 'test(wgpu_atlas::tests::) | test(wgpu_atlas::imported_image::tests::) | test(wgpu_renderer::atlas_tests::) | test(wgpu_renderer::webgl_tests::)' --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test application-owned WGPU scene recording
         if: matrix.name == 'windows'
         run: cargo nextest run --locked -p open-gpui-wgpu --all-features --test external_scene --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test retained image paint authority
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked -p open-gpui --all-features --lib -E 'test(window::imported_image::)' --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test native application-supplied Windows renderer
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(native_custom_renderer_submits_imported_texture_resizes_and_retires_exact_gpu_prefix)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Run ordinary application-owned WGPU window
+        if: matrix.name == 'windows'
+        run: cargo run --locked -p open-gpui-wgpu-native --no-default-features -- --smoke
 
       - name: Test independent application-owned WGPU atlas
         if: matrix.name == 'windows'

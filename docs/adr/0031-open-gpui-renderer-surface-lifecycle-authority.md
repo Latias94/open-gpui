@@ -113,6 +113,38 @@ outcomes without acknowledging a recording as Submitted. Generic imported images
 painter order, clip/UV/color/alpha and original resource retention through the caller's completion.
 No application-specific asset or View type belongs in this framework contract.
 
+### Retained Imported Images And Win32 Renderer Selection
+
+The WGPU atlas can register one explicit mip, array layer and nonempty texel region from an
+application-owned texture without copying its texels. The resulting renderer-local image carries
+its original atlas authority/epoch, transfer, sampled alpha convention and filtering policy.
+Normal painter order, subtree clip/transform and opacity apply. Backend import refuses known
+unsupported descriptors before registration. The application orders producer writes before
+sampling, supplies the same actual device, and does not destroy an allocation while it is in use.
+Retaining an allocation does not snapshot mutable GPU contents.
+
+Live frame leases prevent atlas-slot reuse. A scene recording additionally retains the exact
+texture/view and optional application allocation owner through the original GPU completion,
+independently of a later atlas reset or renderer drop. Host-owner destructors run outside the
+atlas lock. Sampling-time sRGB decode and alpha conventions are explicit; conversion preserves
+the existing GPUI working values rather than introducing linear-light composition, tone mapping
+or wide-gamut color management.
+
+The Windows platform may select an application-supplied synchronous renderer factory and text
+system while retaining its original native Window, input/IME and shutdown owners. Windowing
+availability is independent of whether Direct3D devices exist. The ordinary DirectX implementation
+and a supplied WGPU implementation use the same resize, draw and exact quiescence seam. A factory
+failure fails the original open transaction; a successful shutdown releases native surface
+references and retains the original submitted GPU prefix before native destruction.
+
+This is renderer selection within the GPUI-owned native composition. It does not attach another
+application's HWND, relinquish the message loop or permit a renderer to report deferred recording
+as Submitted. Full delayed Scene delivery must also change the original Window's interaction,
+text and accessibility publication lifecycle: current ordinary candidate acceptance publishes
+those effects before synchronous presentation. Submission tickets alone do not preserve the last
+submitted interaction tree. The external-host successor must close that distinction, including
+first hidden presentation and late acknowledgements during shutdown.
+
 ## Alternatives Considered
 
 ### Keep accepted-frame admission

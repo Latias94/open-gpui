@@ -96,6 +96,156 @@ atlas and independent shared-device controls do not complete it. Full platform/f
 qualification, Nara R11 and Editor acceptance, separate framework maintenance and its handoff
 remain open; this exit grants none of those gates.
 
+## Retained GPU Images And Supplied Win32 Renderers
+
+The November 11 continuation from `ba43dd8d182` implements the next two external-host
+prerequisites through the existing core, atlas, renderer and native Window owners. Retained
+images are committed at `a5d7dea101ca643a9fd462f1c0476499967c9276`; supplied Win32
+renderers and the ordinary application at `f0a51dd041b1312b87724d6b6f4f9be48aeb3d01`.
+The separate cache-fixture correction is `43a36754102858deea8bf1668e6cdaabab40f0d6`. The
+[application guide](external-wgpu.md) distinguishes their public interfaces from the incomplete
+external-HWND/loop and delayed-Scene driver. No default platform or Nara toolkit switches.
+
+`WgpuAtlas::import_image` creates a view of the original texture's explicit mip/layer and
+nonempty region without copying texels. `ImageTexture` carries exact atlas identity/epoch and
+the sampled transfer, alpha and filtering policy. Normal Window painting retains its original
+atlas instance and applies ordinary ordering, clips, transforms, corners and opacity. Known
+unsupported descriptors and stale/foreign images refuse before admission. Host owner destruction
+occurs outside the atlas lock. Recordings retain original texture/view/allocation owners directly,
+including after reset and renderer drop. Sampling normalization preserves GPUI's current working
+values; it does not qualify linear-light UI composition, HDR tone mapping or wide-gamut rendering.
+
+Independent review identifies one concrete retention omission: the built-in renderer releases
+its local receipt after submission, allowing an imported pooled-allocation owner to retire before
+GPU completion. The shared `record_frame` submission now captures imported resources in its queue
+completion callback. This covers built-in surface/headless paths without moving UI-thread atlas
+custody across threads. The new regression keeps the GPU texture and bind group alive while
+checking the independent host owner before polling and after original-prefix completion.
+The affected production wasm build then exposes a browser-specific custody error: WGPU's queue
+completion callback requires `Send`, while browser texture/view resources cannot cross threads.
+The native path retains its original Send resource callback. The wasm path instead publishes
+only a oneshot completion signal and retains/releases resources in a local browser future.
+No unsafe Send implementation or second completion owner is introduced. The corrected locked
+production wasm build and wasm correctness Clippy pass. This is compile qualification; the new
+imported-image browser execution and completion trajectory remain unexecuted. The root and
+ordinary-consumer locks add only the existing `futures` dependency edge, without version updates.
+The portability correction is committed at `7c5c0cd810f15c3e4c3591c400e42aa72f25a2b4`.
+Bounded independent review finds no P1/P2 in prefix association, completion/cancellation or
+thread custody, and identifies the separately locked Web smoke consumer's missing direct edge.
+That edge is also added without version churn; the ignored generated hello-Web lock receives
+the same local edge. After the custody correction, the native imported-image/retention selection
+passes 6/6 (`408d3346-0f66-487a-b2d2-4ded3b07e97e`, 117 unrelated library tests skipped).
+Root formatting, ordinary locked metadata and the import-boundary check pass again.
+The separately locked production `smoke_web` manifest then compiles for
+`wasm32-unknown-unknown` with `--locked`, including its component/docking/Web composition.
+This closes the identified lock-edge build failure, without executing the new browser image
+or GPU-completion path.
+
+The first cold run executes 10 tests (`864daad5-41c6-4f78-b144-107ac273a515`): five imported-atlas
+controls, three storage/packed/subpixel shader validators and the original external recorder pass;
+the new public image consumer fails its clipped pixel at logical x=5. Its clip wrapper is outside
+the transform wrapper, so the fixture incorrectly expects that clip to inherit the inner transform.
+The correction places the clip inside the translated subtree and preserves the intended outside,
+inside and opposite-side pixel assertions. This is a fixture composition correction, not a renderer
+clip failure or a passing final image trajectory. Later results below must establish that trajectory.
+
+The corrected focused run passes 13/13 (`a77f04e9-38f8-4ca2-8503-5b375c3671cb`), including
+two core image-paint authority controls, five atlas/import controls, the built-in completion-owner
+regression, three complete shader validators and both public GPU trajectories. The new GPU
+trajectory produces eight textures and a transformed/clipped occurrence, checks distinct mip and
+array-layer sentinels, midtone/alpha formats, both filtering modes and region-edge isolation, then
+records two atlas lifetimes before one host submission. Both original producers, UI contexts,
+image handles, atlas and renderer may be released before that submission; each recording retains
+its exact pooled owner through completion and releases it separately. These are real GPU pixels,
+with simulated headless Window admission explicitly limited to Scene production.
+
+The complete affected WGPU library and both public GPU consumers then pass 125/125
+(`b72f3d5b-da87-412f-bba9-276b380cf507`), with no skipped cases. Existing atlas reset/removal,
+recorded and built-in owner retention, storage/packed mixed-scene pixels, paths and shader
+contracts remain covered. This is the final changed-renderer cohort; it does not broaden the
+separate native-platform or complete external-host claim.
+
+The Win32 implementation separates windowing connection from Direct3D presence. A supplied
+`WindowsRendererFactory` and `PlatformTextSystem` use the same native Window, IME, geometry,
+registration and shutdown coordinator as the default DirectX path. Renderer creation failures
+fail the original open transaction; actual synchronous submission and original-prefix quiescence
+remain required. Two native review findings expose provider-panic seams: resize must still deliver
+new native geometry, and quiescence must retain the retirement item for retry. The custom-provider
+seam converts those panics into unsuccessful attempts without changing ordinary DirectX delegation.
+
+The first Windows test build exposes the current WGPU `Option<RawDisplayHandle>` requirement;
+the native fixture and ordinary example now supply `Some`. The first actual native run
+(`1159c6b4-b59e-4234-9aec-fe765c0a5915`) refuses startup because the selected DX12 surface does
+not advertise the fixture's required `COPY_SRC` usage. The fixture explicitly selects Vulkan
+for direct submitted-pixel observation; the production example requires no surface readback.
+That attempt (`4c3baf1a-db16-4dbb-b490-fb8f4889bf34`) exposes a genuine native interface omission:
+the borrowed Win32 raw handle lacks its original HINSTANCE. The renderer target now includes the
+HWND's actual HINSTANCE, enabling Vulkan surface creation without guessing a process module.
+
+The corrected native trajectory passes 1/1 (`787f7c78-17b2-42c2-8921-899ebcc3b710`). It checks
+actual Vulkan surface pixels, injected Cosmic glyphs, normal control activation, changing
+imported content, deferred attempts, resize-panic recovery without a second geometry mutation,
+minimize/restore and quiescence-panic recovery through the original shutdown ticket. The
+registered HWND and exact image owner remain live during refusal; the original submitted GPU
+prefix completes before native terminal. Headless/windowed reconnection still creates no D3D
+device in this supplied-renderer mode.
+
+The affected native cohort executes 18 tests (`3d52f998-56b5-4a5f-a5cd-8cd7b8e27340`), with
+17 passing: the new supplied renderer, ordinary DirectX windowing/Unicode text, visibility,
+retirement timers, keyboard routing and registry-generation controls. The existing deferred-cache
+case fails its first-replay render-count assertion: `(4, 4, 1)` instead of `(3, 3, 1)`. Its assertion
+is preserved. A clean detached pre-change `ba43dd8d182` worktree executes the same test and fails
+identically (`26ab931b-92c3-4528-83fe-30873b322037`), establishing that this failure predates
+the current renderer/import changes. A diagnostic rerun
+(`cf1490c6-6f97-4b4f-8a50-e2b86f4d701a`) identifies accessibility active and native hover false.
+The official View path explicitly disables caching while accessibility is active; the cache-only
+fixture had assumed the contrary under a connected accessibility observer. It now constructs
+`Application::new_inaccessible`, asserts that prerequisite and retains its original exact counters,
+all four deferred combinations, native submissions and retirement assertions. The production
+default and separate native accessibility test remain enabled. This is a deterministic fixture
+policy correction, not a production cache change or an accessibility performance improvement.
+
+With that prerequisite explicit, the original affected native selection passes 18/18
+(`73511cf3-3356-4c8b-9d3d-e65631d9c464`). An expanded 19-test attempt
+(`32cb373f-a27a-4017-a6a2-b77c32221c64`) has those 18 passes and a separate unchanged
+accessibility-startup failure: the synthetic activation fixture expects no inspected tree before
+its own activation, but an actual external accessibility observer has already activated it.
+The retained pre-change `ba43dd8d182` test binary reproduces the same assertion at line 356 with
+its clean source worktree restored. Running that binary after deleting the source worktree first
+fails its runtime shader-path lookup instead; that failed setup is not the baseline control.
+The original accessibility assertion remains intact. This record does not qualify that fixture
+under a preconnected observer or claim a complete all-green native aggregate.
+
+The ordinary independently locked public atlas consumer passes 1/1
+(`9a005a45-d859-4d10-811c-65b7a49fa296`) with `--no-default-features --features wgpu-renderer`.
+It consumes the retained import descriptor, refuses an invalid mip before retry, preserves image
+clones and sampled-transfer facts, and releases the original leased atlas. Its separate dependency
+closure builds without using a test-support application runtime.
+Affected Windows/WGPU all-target, all-feature Clippy passes with `-D clippy::correctness`;
+existing advisory warnings are not a warning-free claim.
+
+The first normal-application smoke build succeeds, but its process fails before Rust entry with
+`STATUS_ENTRYPOINT_NOT_FOUND` (`0xc0000139`). The direct Windows consumer omitted the core
+`windows-manifest` feature normally enabled by the platform selector. A debugger confirms that
+the loader selects Common Controls 5.82 while the executable imports `TaskDialogIndirect`.
+The application now requests the existing v6 manifest feature; no platform loader shim or test
+runtime is added. The passing native fixture alone did not catch that executable configuration.
+The corrected ordinary executable passes its actual smoke run: initial submission, normal
+application-state update, changed-image submission at prefix 3 and normal shutdown with the
+original GPU prefix 3 quiesced. It exits successfully with no reported uncaptured GPU error.
+This is an ordinary production application without test/bench support, not a pixel, screenshot
+or physical input/IME oracle. Both root and independent-consumer formatting pass, as do the
+existing import-boundary, public-API, document-link and release-document checks. The workflow
+adds the same ordinary smoke command; no remote CI execution is claimed.
+
+The production `open-gpui-wgpu-native` example uses application-created GPU objects and GPUI-owned
+Win32 windows and loop. The native fixture separately observes real submitted pixels, normal controls, supplied
+text rasterization, a changing imported texture, resize/minimize/restore, deferred attempts and
+quiescence before exact HWND retirement. Readback belongs only to that fixture. Neither path
+qualifies an application-owned HWND/loop, delayed Scene acknowledgement, last-submitted input
+publication or the actual Nara Host/View consumer. Physical IME, dynamic DPI, device-loss behavior
+and numerical performance retain their own unqualified scope.
+
 ## Application-Owned WGPU Scene Recording
 
 This November 11 prerequisite follows the audited framework checkpoint `424a3a0f7c2` and the

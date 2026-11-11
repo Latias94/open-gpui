@@ -63,6 +63,7 @@ During local development, use workspace path dependencies instead of registry ve
 - Use `open-gpui-motion` when a component or domain crate needs deterministic, renderer-neutral motion samples and frame-demand facts. It is not a global animation engine.
 - Use `open-gpui-docking` for retained tab stacks, splits, product panel placement, in-window floating panels, and capability-gated platform viewport windows. Start with the minimal example before the diagnostic dogfood example.
 - Use `open-gpui-web` only for web backend work; most applications should continue to enter through `open-gpui-platform`.
+- Use `open-gpui-wgpu` for [application-owned Scene recording and retained GPU images](docs/external-wgpu.md). The recording module reuses your device and encoder; complete external window/event-loop hosting remains in development.
 
 ## Product Correctness Primitives
 

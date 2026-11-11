@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- `WgpuAtlas::import_image` registers an application-owned GPU texture subresource without copying its texels. `Window::paint_image_texture` composes its retained `ImageTexture` with normal controls, clips and transforms. Mip/layer/region, filtering, transfer and sampled-alpha conventions are explicit; recording receipts retain the original host allocation through GPU completion, including atlas reset. This does not provide a complete external-host driver or linear-light UI composition.
+
+- `WindowsPlatform::new_with_renderer` accepts application-supplied synchronous renderers and text services while retaining the existing Win32 window, input/IME and retirement implementation. The default DirectX renderer remains available. This mode does not create Direct3D devices, attach application-owned HWNDs, replace the native loop or acknowledge delayed submissions.
+
 - `open-gpui-wgpu::WgpuSceneRenderer` records GPUI scenes into an application's existing device, target and command encoder. The application owns submission and presentation; `WgpuSceneRecording` retains exact atlas resources until that submission completes. Multiple scenes can be recorded before one submit with explicit Clear/Load. This renderer does not provide a native external-host driver or external GPU-image import.
 
 - Keystroke observers and interceptors receive the official `InputPreference`, allowing extensions to follow the platform's text-first policy. Breaking: downstream `KeystrokeEvent` constructors must supply `input_preference`.

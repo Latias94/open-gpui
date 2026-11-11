@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-11T11:50:00+08:00
+timestamp: 2026-11-11T14:22:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -18,6 +18,32 @@ verified_by:
 
 # Current State
 
+- Retained GPU-image import and supplied Win32 renderers are implemented at `a5d7dea101c`
+  and `f0a51dd041b`, continuing from `ba43dd8d182`.
+  The [qualification](../../verification.md#retained-gpu-images-and-supplied-win32-renderers)
+  records focused 13/13, complete changed WGPU/public GPU 125/125 and the real Vulkan
+  surface/normal-control/resize/refusal/retirement trajectory 1/1. Imported mip/layer/regions,
+  filtering, sampled transfer/alpha and host allocation lifetime use the original atlas,
+  Scene and submission owners. Independent review's built-in submission retention and
+  native provider-panic defects are fixed through their existing owners.
+  The final affected native cohort passes 18/18. The inherited cache-count failure reproduces
+  on clean pre-change `ba43dd8d182`; accessibility activation selects the official cache bypass.
+  Fixture correction `43a36754102` explicitly disables accessibility for that cache-only
+  trajectory while preserving its four combinations and exact counters. The separate
+  unchanged synthetic-accessibility fixture still fails under a preconnected observer, also
+  reproduced with the pre-change executable; it is not part of the green 18-test selection.
+  The independently locked public consumer passes 1/1 without test support. The standalone
+  `open-gpui-wgpu-native` application passes its actual smoke run with a changed-image
+  submission and original-prefix quiescence at 3 after enabling the normal Windows manifest.
+  Affected correctness Clippy, formatting and existing static checks pass.
+  Production wasm and wasm correctness Clippy pass after `7c5c0cd810f` keeps non-Send browser
+  resources in a local future and publishes only queue completion from the callback; final affected
+  native retention controls pass 6/6. The new imported-image browser trajectory is unexecuted.
+  The separately locked production Web smoke composition also compiles after its direct
+  dependency edge is reconciled without version changes.
+  External HWND/loop driving, delayed Scene/admission publication, physical IME/DPI and
+  the actual Nara consumer remain incomplete.
+
 - Application-owned GPU recording is implemented at
   `0259c88f9deb26e4caa026ebd39be179d19a3ae5`. The existing renderer stages per-scene
   uploads in host-encoder order and retains exact atlas uses through caller completion.
@@ -27,8 +53,9 @@ verified_by:
   exact resource release. The [qualification](../../verification.md#application-owned-wgpu-scene-recording)
   retains three earlier fixture failures and the five corrected review findings. Affected
   correctness Clippy, production wasm, actual Windows Rust 1.93, root formatting and static
-  gates pass. Generic texture import, production external UI driving/submission acknowledgement,
-  the standalone native WGPU application and Nara consumer remain incomplete.
+  gates pass. The later image/supplied-renderer record above supersedes the original missing
+  image-import prerequisite; external UI driving/submission acknowledgement and the actual
+  Nara consumer remain incomplete.
 
 - The November 11 layered comparison selects convenient externally hosted WGPU applications
   as the next reusable framework capability. Open-GPUI remains independent: application
@@ -1267,11 +1294,12 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Complete the generic recording prerequisite and the
+- Complete the
   [external WGPU application workflow](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#external-wgpu-application-hosting-successor)
-  with normal components, production input/frame driving, generic texture import and truthful
-  host-submission/close handling. Preserve ordinary standalone applications while decoupling
-  concrete native rendering; no Nara dependency enters the framework.
+  beyond its qualified recorder, imported-image and supplied-native-renderer prerequisites.
+  Qualify the ordinary application without test-support, then implement original-Window
+  submission/admission, external HWND/loop, production input/frame driving and truthful close
+  handling. Preserve ordinary standalone applications; no Nara dependency enters the framework.
 - Follow the [maintained-baseline engine gate](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#maintained-baseline-before-engine-adaptation)
   with a real Nara GPU/Host/View consumer before separate framework-maintenance handoff.
   The [bounded source exit](../../verification.md#fixed-cycle-source-adoption-exit) records

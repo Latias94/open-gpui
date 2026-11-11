@@ -1100,6 +1100,12 @@ same-key retry, actual upload and bounded queue completion, public texture leasi
 backend-owner release. This proves the device/atlas boundary rather than full Nara renderer
 or native Window integration.
 
+The same consumer imports an application-owned GPU mip/layer region through the public
+`WgpuImportedImageDescriptor`, checks explicit transfer/alpha and shared image-handle lifetime,
+and refuses an invalid mip before a valid retry. This qualifies ordinary API/dependency consumption,
+not a production external window/loop driver or actual sampled pixels. The root `external_scene`
+GPU consumer and native supplied-renderer trajectory own those separate execution observations.
+
 The application-owned `vulkan-surface` feature enables `wgpu/vulkan` and `wgpu/wgsl`.
 Its Windows `vulkan_surface` tests create and retire an actual HWND and Vulkan surface while
 an acquired texture remains alive, with and without submitted clear work. They are ignored

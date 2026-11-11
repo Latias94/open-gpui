@@ -3631,6 +3631,22 @@ package only when its independently consumable dependency closure requires one. 
 test/bench headless platform as the production host or rewrite mature primitive/text/path shaders
 in an engine-specific renderer to avoid an ownership correction.
 
+The first implementation sequence completes retained texture composition, then separates
+Win32 native services from concrete renderer creation, and finally qualifies application-owned
+window/loop driving. A backend-injection checkpoint remains a prerequisite, not external HWND
+support. Reuse the original `WindowsWindowInner`, registration generations and retirement
+coordinator when attaching native services; do not overwrite the host's window userdata or
+destroy an application-owned HWND during UI detachment. Preserve host message processing,
+keyboard translation, IME and bounded foreground scheduling.
+
+The current Window commits candidate focus/text/accessibility work before its synchronous
+renderer call. A deferred Scene handoff therefore needs an explicit extension of the original
+admission and frame lifecycle, including first-window presentation and close. Merely adding a
+`Pending` renderer enum or acknowledging the newest generation later is insufficient.
+Use a complete synchronous application-owned encode/submit callback as an intermediate consumer
+only with its actual submission evidence; it cannot qualify delayed delivery. Keep the complete
+external-host target below until those original owners support the real consumer.
+
 The host declares required GPU features/limits before device creation, supplies its actual
 device/queue/target/encoder, and owns final submit/present and resource-completion observation.
 The framework driver accepts native events/text/geometry and exposes its existing foreground
@@ -3646,6 +3662,14 @@ controls. Break concrete Win32 renderer/DirectWrite-device coupling behind the o
 and renderer seams as required; the current D3D11 path remains a qualified reference until a
 replacement's complete native consumer passes, not a permanent compatibility requirement.
 
+The retained-image prerequisite uses the original atlas instance/epoch and shader sprite ABI,
+with explicit one-mip/layer views and bounded texel regions. Reuse normal painter order and
+clip/transform authority; preserve both filtering modes, automatic sRGB view decode and explicit
+sampled-domain alpha. Host-produced GPU patterns, midtones and translucent pixels must establish
+those semantics, not just opaque primary colors. Retain arbitrary pooled-allocation owners
+through both external recordings and built-in submission completion, including resets before
+completion. Refuse unsupported formats, subresources and stale/foreign images without admission.
+
 Use one normal standalone application without Nara or test-support runtime. It owns a native
 window, device and event loop, drives text/keyboard/pointer/IME and repaint demand, and draws
 real changing external textures beneath clipped/overlapping UI. Verify pause/idle behavior,
@@ -3653,6 +3677,21 @@ resize/DPI, exact submission/refusal and close with in-flight resources. Then co
 interfaces from Nara's existing Host/View owners. Reuse Nara's actual typed graph/program only
 where a declared intermediate dependency needs it; the framework's internals require no second
 public render graph. Record work/memory and copies/submissions for the matched workloads.
+
+Record accessibility state in cache and cost workloads. The inherited View path intentionally
+bypasses cached rendering while accessibility is active; a cache-only test must establish the
+inactive/disabled precondition explicitly, while the normal accessible consumer remains qualified.
+Do not report inactive-cache work counts as accessible production performance.
+
+The [retained-image and supplied-renderer qualification](../verification.md#retained-gpu-images-and-supplied-win32-renderers)
+records implementations `a5d7dea101c` and `f0a51dd041b`, focused 13/13, complete changed
+WGPU/public 125/125, final affected native 18/18 and
+ordinary independently locked consumption 1/1. The normal `open-gpui-wgpu-native` application
+submits a changing imported image and quiesces its original prefix before normal shutdown.
+The cache-only fixture correction and preconnected-observer accessibility failure retain
+separate baseline evidence. These implement the image and synchronous renderer-selection
+prerequisites, preserving GPUI-owned HWNDs/loop. Application-owned HWND/loop driving, delayed
+Scene/input publication and the real Nara consumer remain the next complete responsibilities.
 
 The [standalone logger](../verification.md#standalone-logging-and-tracing) at
 `9e7b9c3a36fb0266ef68ec7ee7280b2eb8646554` and the

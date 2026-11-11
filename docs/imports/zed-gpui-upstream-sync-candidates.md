@@ -110,6 +110,13 @@ implemented successors and explicit exclusions below. This bounded source dispos
 grant complete macro/API parity, full platform qualification, Nara R11 or consumer acceptance,
 or a framework-maintenance handoff.
 
+The subsequent [external WGPU prerequisites](../verification.md#retained-gpu-images-and-supplied-win32-renderers)
+are fork-owned framework improvements after that fixed source audit. They add retained texture
+import and separate Win32 native services from concrete renderer construction; they do not change
+the fixed Zed target or retroactively describe these extensions as official implementations.
+Ordinary DirectX remains a control. An application-owned HWND/loop, delayed Scene/submission
+publication and the actual Nara Host/View consumer retain separate incomplete gates in the plan.
+
 ### Fixed Revisions And Provenance
 
 The repository [upstream-sync skill](../../.agents/skills/open-gpui-upstream-sync/SKILL.md)
