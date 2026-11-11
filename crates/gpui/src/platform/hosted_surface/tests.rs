@@ -1,4 +1,45 @@
 use super::*;
+
+#[test]
+fn physical_attachment_extents_round_trip_at_fractional_scales() {
+    for width in [0, 1, 843, 1351, 1919, 3841] {
+        for scale in [0.75, 1.0, 1.25, 1.5, 1.75, 2.25] {
+            let extent = size(DevicePixels(width), DevicePixels(width + 2));
+            let geometry = HostedSurfaceGeometry::from_physical_size(extent, scale).unwrap();
+            assert_eq!(
+                geometry.physical_size(),
+                extent,
+                "width={width}, scale={scale}"
+            );
+            assert_eq!(
+                HostedSurfaceGeometry::new(geometry.size(), scale)
+                    .unwrap()
+                    .physical_size(),
+                extent
+            );
+        }
+    }
+    for scale in [0.0, -1.0, f32::INFINITY, f32::NAN] {
+        assert!(
+            HostedSurfaceGeometry::from_physical_size(
+                size(DevicePixels(843), DevicePixels(641)),
+                scale
+            )
+            .is_err()
+        );
+    }
+    assert!(
+        HostedSurfaceGeometry::from_physical_size(size(DevicePixels(-1), DevicePixels(1)), 1.0)
+            .is_err()
+    );
+    assert!(
+        HostedSurfaceGeometry::from_physical_size(
+            size(DevicePixels(i32::MAX), DevicePixels(1)),
+            1.0
+        )
+        .is_err()
+    );
+}
 use crate::{
     HeadlessAtlas, MouseMoveEvent, PlatformFrameDeliveryMode, PlatformFrameSubmissionStatus,
     PlatformInputCallback, PlatformNativeWindowRetirementOutcome,

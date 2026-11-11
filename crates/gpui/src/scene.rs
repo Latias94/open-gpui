@@ -7,8 +7,9 @@ use serde::{Deserialize, Serialize};
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use crate::PlatformPixelBuffer;
 use crate::{
-    AtlasTextureInstanceId, AtlasTile, Background, Bounds, Corners, Edges, Hsla, Pixels, Point,
-    ScaledPixels, Size, SubtreeTransformError,
+    AtlasTextureInstanceId, AtlasTextureLease, AtlasTextureLeaseError, AtlasTile, Background,
+    Bounds, Corners, Edges, Hsla, Pixels, PlatformAtlas, Point, ScaledPixels, Size,
+    SubtreeTransformError,
     bounds_tree::BoundsTree,
     geometry::{
         ClipStackSnapshot, ResolvedClip, ResolvedSubtreeTransform, SubtreeGeometryError,
@@ -16,7 +17,7 @@ use crate::{
     },
     point,
 };
-use std::{fmt::Debug, iter::Peekable, ops::Range, slice};
+use std::{fmt::Debug, iter::Peekable, ops::Range, slice, sync::Arc};
 
 #[allow(non_camel_case_types, unused)]
 #[expect(missing_docs)]
@@ -210,6 +211,28 @@ impl Scene {
             .collect::<Vec<_>>()
             .into_boxed_slice();
         Ok((fragment, validities))
+    }
+
+    /// Retains this Scene's exact renderer-local atlas textures before delayed recording.
+    ///
+    /// Keep the lease with the Scene and validate it before recording. An atlas reset invalidates
+    /// the lease; it cannot make a Scene portable to another renderer. This protects atlas
+    /// residency, not accepted-frame or submission authority. After encoding, retain the
+    /// backend's recording resources through the host's corresponding GPU completion.
+    pub fn retain_atlas_textures(
+        &self,
+        atlas: Arc<dyn PlatformAtlas>,
+    ) -> Result<AtlasTextureLease, AtlasTextureLeaseError> {
+        let textures = self
+            .batches()
+            .filter_map(|batch| match batch {
+                PrimitiveBatch::MonochromeSprites { texture, .. }
+                | PrimitiveBatch::SubpixelSprites { texture, .. }
+                | PrimitiveBatch::PolychromeSprites { texture, .. } => Some(texture),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        atlas.retain_texture_instances(&textures)
     }
 
     pub(crate) fn atlas_texture_instances(&self) -> Vec<AtlasTextureInstanceId> {
@@ -1801,6 +1824,96 @@ mod tests {
             color: Hsla::default(),
             transform: PrimitiveTransform::IDENTITY,
         }
+    }
+
+    #[test]
+    fn parked_scene_retains_original_atlas_textures_after_source_key_removal() -> anyhow::Result<()>
+    {
+        use crate::{AtlasKey, HeadlessAtlas, ImageId, RenderImageParams};
+        use std::borrow::Cow;
+
+        let atlas = Arc::new(HeadlessAtlas::default());
+        let key = AtlasKey::Image(RenderImageParams {
+            image_id: ImageId(91),
+            frame_index: 0,
+        });
+        let tile = atlas
+            .get_or_insert_with(key.clone(), &mut || {
+                Ok(Some((
+                    Size::new(crate::DevicePixels(1), crate::DevicePixels(1)),
+                    Cow::Borrowed(&[255_u8; 4][..]),
+                )))
+            })?
+            .unwrap();
+        let mut scene = Scene::default();
+        scene
+            .insert_primitive_scoped(
+                PolychromeSprite {
+                    order: 0,
+                    pad: 0,
+                    tile,
+                    grayscale: false.into(),
+                    opacity: 1.0,
+                    bounds: scaled_bounds(0.0, 0.0, 4.0, 4.0),
+                    clip: ClipEnvelope::default(),
+                    corner_radii: Corners::default(),
+                    transform: PrimitiveTransform::IDENTITY,
+                },
+                &ClipStackSnapshot::root(logical_bounds(0.0, 0.0, 8.0, 8.0)),
+                1.0,
+                None,
+            )
+            .unwrap();
+        scene.finish();
+        let lease = scene.retain_atlas_textures(atlas.clone())?;
+        atlas.remove(&key);
+        let parked = scene.clone();
+        drop(scene);
+        assert!(lease.validate().is_ok());
+        assert!(parked.retain_atlas_textures(atlas.clone()).is_ok());
+        drop(lease);
+        assert!(parked.retain_atlas_textures(atlas).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn parked_scene_lease_uses_the_actual_renderer_sprite_arrays() -> anyhow::Result<()> {
+        use crate::{AtlasKey, HeadlessAtlas, ImageId, RenderImageParams};
+        use std::borrow::Cow;
+
+        let atlas = Arc::new(HeadlessAtlas::default());
+        let key = AtlasKey::Image(RenderImageParams {
+            image_id: ImageId(92),
+            frame_index: 0,
+        });
+        let tile = atlas
+            .get_or_insert_with(key.clone(), &mut || {
+                Ok(Some((
+                    Size::new(crate::DevicePixels(1), crate::DevicePixels(1)),
+                    Cow::Borrowed(&[255_u8; 4][..]),
+                )))
+            })?
+            .unwrap();
+        let mut scene = Scene::default();
+        scene.polychrome_sprites.push(PolychromeSprite {
+            order: 0,
+            pad: 0,
+            tile,
+            grayscale: false.into(),
+            opacity: 1.0,
+            bounds: scaled_bounds(0.0, 0.0, 4.0, 4.0),
+            clip: ClipEnvelope::default(),
+            corner_radii: Corners::default(),
+            transform: PrimitiveTransform::IDENTITY,
+        });
+        scene.finish();
+        let lease = scene.retain_atlas_textures(atlas.clone())?;
+        assert_eq!(lease.texture_instances(), &[tile.texture_instance()]);
+        atlas.remove(&key);
+        assert!(scene.retain_atlas_textures(atlas.clone()).is_ok());
+        drop(lease);
+        assert!(scene.retain_atlas_textures(atlas).is_err());
+        Ok(())
     }
 
     #[test]

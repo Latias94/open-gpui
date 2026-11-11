@@ -69,6 +69,48 @@ pub struct HostedSurfaceGeometry {
 }
 
 impl HostedSurfaceGeometry {
+    /// Converts an actual host attachment extent without adding a pixel through float rounding.
+    ///
+    /// The returned logical dimensions round upward to exactly the supplied physical extent.
+    /// Rejects negative dimensions, invalid scales and extents not representable at this scale.
+    pub fn from_physical_size(
+        physical_size: Size<DevicePixels>,
+        scale_factor: f32,
+    ) -> Result<Self> {
+        ensure!(
+            scale_factor.is_finite() && scale_factor > 0.0,
+            "hosted surface scale must be finite and positive"
+        );
+        let dimension = |physical: DevicePixels| -> Result<Pixels> {
+            ensure!(
+                physical.0 >= 0,
+                "hosted surface physical dimensions must be nonnegative"
+            );
+            let expected = f64::from(physical.0);
+            let scale = f64::from(scale_factor);
+            let mut logical = (expected / scale) as f32;
+            ensure!(
+                logical.is_finite(),
+                "hosted surface logical dimension exceeds Pixels"
+            );
+            if (f64::from(logical) * scale).ceil() > expected {
+                logical = logical.next_down();
+            }
+            ensure!(
+                logical >= 0.0 && (f64::from(logical) * scale).ceil() == expected,
+                "hosted surface physical extent is not representable at this scale"
+            );
+            Ok(px(logical))
+        };
+        Self::new(
+            size(
+                dimension(physical_size.width)?,
+                dimension(physical_size.height)?,
+            ),
+            scale_factor,
+        )
+    }
+
     /// Validates finite nonnegative dimensions and a positive finite scale.
     ///
     /// Physical dimensions round upward in double precision and must fit `DevicePixels`.

@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-11T20:50:00+08:00
+timestamp: 2026-11-11T23:02:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -1339,19 +1339,33 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
+- The actual Nara consumer now uses the
+  [Scene-custody and physical-extent corrections](../../verification.md#external-scene-custody-and-physical-attachment-extents).
+  Three owning regressions and its complete DX12 Scene/controls/edit/Undo/retirement trajectory
+  pass. Its Vulkan timeout exposed recovery from an acquired frame that did not present; requiring
+  reconfiguration through Nara's existing surface owner makes the full Vulkan trajectory pass.
+  Final engine child reruns pass on both backends with original Host submission/presentation
+  assertions; affected engine workspace, renderer/integration correctness Clippy and framework
+  Core no-default-feature correctness Clippy pass. Final revisions and remaining consumer
+  qualification belong to the two repositories' existing records.
+  Complete processed-content/color-alpha, failure/device-loss and
+  numerical-cost gates remain separate from this scoped consumer.
+
 - Continue the
   [external WGPU application workflow](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#external-wgpu-application-hosting-successor)
-  beyond its qualified recorder, imported-image, supplied-renderer and synchronous external
-  HWND/loop, deferred original-candidate and hosted logical-root prerequisites. Qualify actual
-  engine GPU-source/Host/View integration and complete component behavior/skin reuse. Preserve
+  beyond its qualified recorder, imported-image, supplied-renderer, external HWND/loop,
+  deferred original-candidate, hosted logical-root and scoped actual Nara Host/Scene consumers.
+  Complete processed-content/color-alpha, device-loss/reconstruction, busy-producer retirement
+  and numerical-cost acceptance; qualify complete public component behavior/skin reuse. Preserve
   ordinary standalone applications; no Nara dependency enters the framework.
 - Follow the [maintained-baseline engine gate](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#maintained-baseline-before-engine-adaptation)
-  with a real Nara GPU/Host/View consumer before separate framework-maintenance handoff.
+  through its remaining engine/frontend/game requirements before separate maintenance handoff.
   The [bounded source exit](../../verification.md#fixed-cycle-source-adoption-exit) records
-  checkpoint `424a3a0f7c2`; it does not complete this consumer. Reconcile the two WGPU source
-  identities and preserve the engine's device, target encoding, immutable output leases,
-  exact presentation/input and producer-local retirement. Existing
-  atlas, embedded-App and independently shared-device controls do not complete this consumer.
+  checkpoint `424a3a0f7c2`. The actual Nara consumer now shares the fixed WGPU source, device,
+  target encoding, immutable output leases, exact presentation/input and producer-local
+  retirement. A future common registry release must include the qualified fixes before migration;
+  a permanent Git source is not an architectural requirement. Neither the bounded source audit
+  nor the scoped engine consumer closes the complete adoption or handoff gate.
 - Preserve the original aggregate failures, default WSLg thread-exit crash and foreign lifecycle
   gates. Actual Mac Keychain, Linux Secret Service and the
   [Mac pasteboard native gates](../../verification.md#desktop-clipboard-normalization-and-owned-pasteboard)

@@ -96,6 +96,55 @@ atlas and independent shared-device controls do not complete it. Full platform/f
 qualification, Nara R11 and Editor acceptance, separate framework maintenance and its handoff
 remain open; this exit grants none of those gates.
 
+## External Scene Custody And Physical Attachment Extents
+
+This fork-owned integration successor starts from `5925a34f920563592cd6115e6f97867699f8dae6`.
+The actual Nara window consumer needs to acquire its original attachment before recording the
+delivered Scene. `Scene::retain_atlas_textures` retains exactly the sprite instances consumed by
+`Scene::batches`, including Scenes assembled through the public renderer arrays. It does not
+transfer candidate/submission authority or replace the backend recording's GPU lifetime.
+
+`HostedSurfaceGeometry::from_physical_size` converts an actual attachment extent into logical
+dimensions that round upward to that same physical extent. Ordinary f32 division can otherwise
+turn 843 pixels at scale 1.25 into 844 on reconstruction. The owning conversion adjusts the
+rounded logical value downward when required and rejects unrepresentable extents or invalid
+inputs. Existing logical-size construction retains its original contract.
+
+The focused Rust 1.95.0, profiler-disabled run passes **3/3**
+(`4ee1b224-ad29-4e42-9b3f-e75944312d02`): original key removal while a Scene is parked, public
+sprite-array resource coverage, and 36 physical-size/fractional-scale combinations plus invalid
+inputs. Initial test compilation exposed missing error-trait conversions in test assertions;
+the assertions were corrected without changing production error types. An independent source
+review closed the initial journal-versus-array coverage and float-rounding findings.
+
+Nara's independently assembled `tests/fixtures/gpui-engine-consumer` additionally executes the
+helpers through its original Host device, acquired window target and actual submission. Its
+DX12 trajectory passes real Scene pixels, glyphs/overlay, selection, prepared source edit/Undo,
+4096-byte draft presentation, IME, deferred submitted input, refusal/panic recovery, resize/ABA/
+zero-size, fractional-root geometry and independent-producer progress after UI close. The same
+frozen Scene is recorded into a qualification-only offscreen attachment in that original window
+submission for pixel assertions; it is not swapchain readback or scanout evidence. Initial
+Vulkan attempts time out after paint-failure controls. A diagnostic logger identifies reuse of
+a signaled acquire semaphore: the selected Vulkan discard implementation is a no-op. Nara's
+existing surface owner now requires reconfiguration after an acquired frame fails to present,
+preserving its device, submission and successful-frame fast path. The unchanged full Vulkan
+trajectory then passes. The final complete engine child passes again on DX12
+(`9a34f27b-416b-415d-b80b-af16a18b7c1c`) and Vulkan
+(`17e7598c-2abf-4934-8d4a-294d9cca513c`). Both report RTX 4090 and `Bgra8UnormSrgb`, actual
+center RGBA `[255,0,0,255]`, 1,679 glyph samples, nine successful UI submissions, seven discarded
+candidates and two intentional paint failures. Each successful UI window composition asserts
+one original Host submission and one present; the Scene producer remains separate work. The
+adapter creates zero GPUI native renderers. Input is injected, and the extra diagnostic replay
+is explicitly excluded from the normal path.
+
+The affected Nara renderer passes 405 tests, native window controls 14 on each backend, Runtime
+surface controls three on each backend, and incumbent independent image/program consumers four
+and three. Its final locked workspace check and renderer/integration correctness Clippy pass.
+The framework Core's no-default-feature correctness Clippy also passes. Exact engine run records
+remain in Nara's foundation plan rather than a new cross-repository verification system.
+This record does not claim foreign-platform/browser execution, GPU timing, numeric performance
+budgets, a selected game UI executor or complete framework-maintenance handoff.
+
 ## Host-Driven Logical Surfaces Without Native Windows
 
 This fork-owned successor starts at `c9fc89bd5fc0f0b438c396be067fd2a1356de74d` after the

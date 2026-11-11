@@ -3782,6 +3782,14 @@ correctness Clippy, production wasm, formatting and document checks pass, with e
 in that record. Actual engine GPU-source/Host/View, complete control skins,
 authored game-runtime selection and numerical costs remain subsequent consumers.
 
+The next [external Scene-custody correction](../verification.md#external-scene-custody-and-physical-attachment-extents)
+supplies the actual Nara consumer with an explicit atlas lease while recording waits for its
+own attachment. The lease follows the renderer's batch arrays; a second owning correction
+converts physical attachment sizes exactly at fractional scales. Keep engine-specific adapters
+and submission/retirement owners in Nara. These are generic framework corrections, not another
+Scene executor or extra official-source adoption. Owning regressions and the engine consumer
+qualify their actual scope before maintenance handoff.
+
 The [standalone logger](../verification.md#standalone-logging-and-tracing) at
 `9e7b9c3a36fb0266ef68ec7ee7280b2eb8646554` and the
 [Window/Win32 successor](../verification.md#window-controls-lazy-inspector-and-win32-dispatch)

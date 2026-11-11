@@ -66,6 +66,25 @@ transfer its original Window, atlas, accepted-frame or native-submission authori
 fixture uses a simulated headless Window solely to obtain Scenes; applications must not use that
 fixture as a production external-host driver.
 
+When the host delays recording until its own target is acquired, retain the delivered Scene's
+atlas textures before returning from `HostedSurfaceRenderer::draw`:
+
+```rust,ignore
+let lease = scene.retain_atlas_textures(original_atlas.clone())?;
+pending = Some((scene.clone(), lease, original_submission.clone()));
+```
+
+Before encoding, validate the lease and the original submission token. An atlas reset or cancelled
+attempt requires discarding that candidate. The Scene lease preserves renderer-local residency;
+after encoding, the backend recording must still live through the original host GPU completion.
+The host retains final encoding/submission authority and must provide custody on error and unwind
+paths as well as successful presentation. Acquiring a lease does not submit or accept the Scene.
+
+When a host starts from an acquired attachment's physical size, use
+`HostedSurfaceGeometry::from_physical_size` and pass its size/scale to `HostedSurface`. Dividing a
+physical integer by a fractional scale in f32 and then rounding upward can add a physical pixel.
+The conversion preserves the exact attachment extent or refuses an unrepresentable combination.
+
 ## Import An Application Texture
 
 Import a subresource through the renderer's original atlas:

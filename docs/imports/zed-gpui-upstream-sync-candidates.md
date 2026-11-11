@@ -142,6 +142,13 @@ interfaces 5/5 pass. Core is `2910b52424e`; ordinary consumers are `8809f12929e`
 qualification stays in the record. This work does not add official-adoption credit or select an
 engine UI dependency.
 
+The subsequent [Scene-custody and physical-extent correction](../verification.md#external-scene-custody-and-physical-attachment-extents)
+adds a public atlas lease for delayed recording and exact conversion from an application's
+physical attachment. Three owning regressions pass; the real Nara Host/Scene consumer exercises
+both through an independently assembled application. This is fork-owned adapter support after
+the fixed audit and does not add official-source adoption credit. Engine/platform scope and
+final integration results remain in their owning records.
+
 ### Fixed Revisions And Provenance
 
 The repository [upstream-sync skill](../../.agents/skills/open-gpui-upstream-sync/SKILL.md)
