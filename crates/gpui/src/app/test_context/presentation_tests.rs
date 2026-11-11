@@ -15,14 +15,14 @@ use open_gpui_refineable::Refineable as _;
 use crate::{
     AnyDrag, AnyElement, AnyView, AnyWindowHandle, App, AppContext as _, Bounds, Context,
     CursorStyle, DispatchPhase, Element, ElementId, Empty, Entity, FocusClaimOutcome, FocusHandle,
-    GlobalElementId, Hitbox, HitboxBehavior, InputHandler, InspectorElementId, InteractiveElement,
-    IntoElement, KeyBinding, Keystroke, LayoutId, Modifiers, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, PlatformInput, PointerCancelEvent,
-    PointerCancelReason, PointerCaptureError, PointerCaptureHandle, Render, ScrollHandle,
-    StatefulInteractiveElement, Style, StyleRefinement, Styled, Subscription, SubtreePresentation,
-    SubtreePresentationExt, TestAppContext, UTF16Selection, Window, WindowActivationStatus,
-    WindowActivationTerminal, WindowMouseEvent, canvas, deferred, div, fill, point, px, red, size,
-    window_portal,
+    GlobalElementId, Hitbox, HitboxBehavior, HoverListenerMode, InputHandler, InspectorElementId,
+    InteractiveElement, IntoElement, KeyBinding, Keystroke, LayoutId, Modifiers, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, PlatformInput,
+    PointerCancelEvent, PointerCancelReason, PointerCaptureError, PointerCaptureHandle, Render,
+    ScrollHandle, StatefulInteractiveElement, Style, StyleRefinement, Styled, Subscription,
+    SubtreePresentation, SubtreePresentationExt, TestAppContext, UTF16Selection, Window,
+    WindowActivationStatus, WindowActivationTerminal, WindowMouseEvent, canvas, deferred, div,
+    fill, point, px, red, size, window_portal,
 };
 
 crate::actions!(presentation_probe_actions, [PresentationProbeAction]);
@@ -4096,6 +4096,7 @@ fn deferred_and_window_portal_inherit_presentation(cx: &mut TestAppContext) {
 struct PresentationHoverView {
     presentation: SubtreePresentation,
     events: Rc<RefCell<Vec<bool>>>,
+    mode: HoverListenerMode,
 }
 
 impl Render for PresentationHoverView {
@@ -4105,6 +4106,7 @@ impl Render for PresentationHoverView {
             .id("presentation-hover-probe")
             .w(px(100.0))
             .h(px(100.0))
+            .hover_listener_mode(self.mode)
             .on_hover(move |hovered, _, _| events.borrow_mut().push(*hovered))
             .with_subtree_presentation(self.presentation)
     }
@@ -4112,45 +4114,169 @@ impl Render for PresentationHoverView {
 
 #[open_gpui::test]
 fn inert_transition_emits_terminal_hover_without_replaying_on_restore(cx: &mut TestAppContext) {
-    let events = Rc::new(RefCell::new(Vec::new()));
-    let typed_window = cx.open_window(size(px(320.0), px(200.0)), {
-        let events = events.clone();
-        move |_, _| PresentationHoverView {
-            presentation: SubtreePresentation::Visible,
-            events,
+    for mode in [
+        HoverListenerMode::InputModalityAware,
+        HoverListenerMode::InputModalityIndependent,
+    ] {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let typed_window = cx.open_window(size(px(320.0), px(200.0)), {
+            let events = events.clone();
+            move |_, _| PresentationHoverView {
+                presentation: SubtreePresentation::Visible,
+                events,
+                mode,
+            }
+        });
+        let view = typed_window.root(cx).unwrap();
+        let window = typed_window.into();
+        cx.run_until_parked();
+
+        cx.simulate_event(
+            window,
+            MouseMoveEvent {
+                position: point(px(10.0), px(10.0)),
+                pressed_button: None,
+                modifiers: Modifiers::none(),
+            },
+        );
+        assert_eq!(events.borrow().as_slice(), &[true]);
+
+        view.update(cx, |view, cx| {
+            view.presentation = SubtreePresentation::Inert;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert_eq!(events.borrow().as_slice(), &[true, false]);
+
+        view.update(cx, |view, cx| {
+            view.presentation = SubtreePresentation::Visible;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            events.borrow().as_slice(),
+            &[true, false],
+            "restoring a stationary pointer must not replay stale hover intent"
+        );
+        for _ in 0..3 {
+            cx.update_window(window, |_, window, cx| {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            })
+            .unwrap();
+            assert_eq!(events.borrow().as_slice(), &[true, false]);
         }
-    });
-    let view = typed_window.root(cx).unwrap();
-    let window = typed_window.into();
-    cx.run_until_parked();
+        cx.simulate_event(
+            window,
+            MouseMoveEvent {
+                position: point(px(10.0), px(10.0)),
+                pressed_button: None,
+                modifiers: Modifiers::none(),
+            },
+        );
+        assert_eq!(events.borrow().as_slice(), &[true, false, true]);
+    }
+}
 
-    cx.simulate_event(
-        window,
-        MouseMoveEvent {
-            position: point(px(10.0), px(10.0)),
-            pressed_button: None,
-            modifiers: Modifiers::none(),
-        },
-    );
-    assert_eq!(events.borrow().as_slice(), &[true]);
+struct PresentationHoverRollbackView {
+    presentation: SubtreePresentation,
+    mode: HoverListenerMode,
+    events: Rc<RefCell<Vec<bool>>>,
+    fail_paint: Rc<Cell<bool>>,
+}
 
-    view.update(cx, |view, cx| {
-        view.presentation = SubtreePresentation::Inert;
-        cx.notify();
-    });
-    cx.run_until_parked();
-    assert_eq!(events.borrow().as_slice(), &[true, false]);
+impl Render for PresentationHoverRollbackView {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let events = self.events.clone();
+        let fail_paint = self.fail_paint.clone();
+        div()
+            .child(
+                div()
+                    .id("revocable-hover")
+                    .size(px(100.))
+                    .hover_listener_mode(self.mode)
+                    .on_hover(move |hovered, _, _| events.borrow_mut().push(*hovered))
+                    .with_subtree_presentation(self.presentation),
+            )
+            .child(
+                canvas(
+                    |_, _, _| (),
+                    move |_, (), _, _| {
+                        assert!(!fail_paint.replace(false), "rejected hover candidate");
+                    },
+                )
+                .size(px(1.)),
+            )
+    }
+}
 
-    view.update(cx, |view, cx| {
-        view.presentation = SubtreePresentation::Visible;
-        cx.notify();
-    });
-    cx.run_until_parked();
-    assert_eq!(
-        events.borrow().as_slice(),
-        &[true, false],
-        "restoring a stationary pointer must not replay stale hover intent"
-    );
+#[open_gpui::test]
+fn hover_readmission_requires_accepted_revocation_and_fresh_pointer(cx: &mut TestAppContext) {
+    for mode in [
+        HoverListenerMode::InputModalityAware,
+        HoverListenerMode::InputModalityIndependent,
+    ] {
+        for presentation in [SubtreePresentation::Hidden, SubtreePresentation::Inert] {
+            let events = Rc::new(RefCell::new(Vec::new()));
+            let fail_paint = Rc::new(Cell::new(false));
+            let handle = cx.open_window(size(px(320.), px(200.)), {
+                let events = events.clone();
+                let fail_paint = fail_paint.clone();
+                move |_, _| PresentationHoverRollbackView {
+                    presentation: SubtreePresentation::Visible,
+                    mode,
+                    events,
+                    fail_paint,
+                }
+            });
+            cx.test_window(handle.into())
+                .defer_frame_requests_for_test();
+            cx.update_window(handle.into(), |root, window, cx| {
+                let root = root.downcast::<PresentationHoverRollbackView>().unwrap();
+                window.draw(cx).clear(cx);
+                let pointer = point(px(10.), px(10.));
+                window.simulate_mouse_move(pointer, cx);
+                assert_eq!(events.borrow().as_slice(), &[true]);
+                let generation = window.rendered_frame_revision();
+                root.update(cx, |view, cx| {
+                    view.presentation = presentation;
+                    view.fail_paint.set(true);
+                    cx.notify();
+                });
+                let failure = catch_unwind(AssertUnwindSafe(|| window.draw(cx).clear(cx)))
+                    .expect_err("the candidate must fail before publication");
+                assert_eq!(
+                    failure.downcast_ref::<&str>(),
+                    Some(&"rejected hover candidate")
+                );
+                assert_eq!(window.rendered_frame_revision(), generation);
+                assert_eq!(events.borrow().as_slice(), &[true]);
+                root.update(cx, |view, cx| {
+                    view.presentation = SubtreePresentation::Visible;
+                    cx.notify();
+                });
+                window.draw(cx).clear(cx);
+                assert_eq!(events.borrow().as_slice(), &[true]);
+                root.update(cx, |view, cx| {
+                    view.presentation = presentation;
+                    cx.notify();
+                });
+                window.draw(cx).clear(cx);
+                assert_eq!(events.borrow().as_slice(), &[true, false]);
+                root.update(cx, |view, cx| {
+                    view.presentation = SubtreePresentation::Visible;
+                    cx.notify();
+                });
+                window.draw(cx).clear(cx);
+                window.refresh();
+                window.draw(cx).clear(cx);
+                assert_eq!(events.borrow().as_slice(), &[true, false]);
+                window.simulate_mouse_move(pointer, cx);
+                assert_eq!(events.borrow().as_slice(), &[true, false, true]);
+            })
+            .unwrap();
+        }
+    }
 }
 
 struct PresentationScrollView {
@@ -4316,6 +4442,34 @@ fn hidden_cached_child_reconciles_hover_and_scroll_without_replaying_on_restore(
         initial_scroll_events,
         "a hidden viewport change must not replay after restoration"
     );
+    let restored_renders = renders.get();
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+        .unwrap();
+    assert_eq!(
+        renders.get(),
+        restored_renders,
+        "restored interaction must also remain withdrawn during cached replay"
+    );
+    assert_eq!(hover_events.borrow().as_slice(), &[true, false]);
+    for _ in 0..3 {
+        cx.update_window(window, |_, window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+        assert_eq!(hover_events.borrow().as_slice(), &[true, false]);
+        assert_eq!(scroll_events.get(), initial_scroll_events);
+    }
+    cx.simulate_event(
+        window,
+        MouseMoveEvent {
+            position: point(px(10.0), px(10.0)),
+            pressed_button: None,
+            modifiers: Modifiers::none(),
+        },
+    );
+    assert_eq!(hover_events.borrow().as_slice(), &[true, false, true]);
+    assert_eq!(scroll_events.get(), initial_scroll_events);
 }
 
 struct PresentationDragPreview {

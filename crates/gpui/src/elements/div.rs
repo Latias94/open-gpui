@@ -4341,10 +4341,11 @@ impl Interactivity {
                     .get_or_insert_with(Default::default)
                     .clone();
                 let hover_listener_mode = self.hover_listener_mode;
+                let pointer_state = was_hovered.clone();
                 let update_hover = move |is_hovered: bool, window: &mut Window, cx: &mut App| {
                     let mut was_hovered = was_hovered.borrow_mut();
-                    if is_hovered != *was_hovered {
-                        *was_hovered = is_hovered;
+                    if is_hovered != was_hovered.hovered {
+                        was_hovered.hovered = is_hovered;
                         drop(was_hovered);
                         hover_listener(&is_hovered, window, cx);
                     }
@@ -4355,6 +4356,7 @@ impl Interactivity {
                     let hitbox = hitbox.clone();
                     move |_: &MouseMoveEvent, phase, window, cx| {
                         if phase == DispatchPhase::Bubble {
+                            pointer_state.borrow_mut().awaiting_pointer = false;
                             let is_hovered = has_mouse_down.borrow().is_none()
                                 && !cx.has_active_drag()
                                 && !cx.has_active_platform_drag()
@@ -4846,6 +4848,12 @@ impl Interactivity {
     }
 }
 
+#[derive(Default)]
+struct HoverListenerState {
+    hovered: bool,
+    awaiting_pointer: bool,
+}
+
 /// The per-frame state of an interactive element. Used for tracking stateful interactions like clicks
 /// and scroll offsets.
 #[derive(Default)]
@@ -4854,7 +4862,7 @@ pub struct InteractiveElementState {
     pub(crate) clicked_state: Option<Rc<RefCell<ElementClickedState>>>,
     pub(crate) hover_state: Option<Rc<RefCell<ElementHoverState>>>,
     hover_opacity_prediction: Option<Rc<Cell<HoverOpacityPrediction>>>,
-    pub(crate) hover_listener_state: Option<Rc<RefCell<bool>>>,
+    hover_listener_state: Option<Rc<RefCell<HoverListenerState>>>,
     pub(crate) pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
     interaction_publication: Option<PrepaintPublicationId>,
     /// Keyboard activation retained across redraws and cancelled when an accepted frame withdraws it.
@@ -4931,7 +4939,14 @@ fn record_interaction_membership(
                 let hovered = !cx.has_active_drag()
                     && !cx.has_active_platform_drag()
                     && hover_listener_mode.is_hovered(&hitbox, window);
-                if state.replace(hovered) != hovered {
+                let mut state = state.borrow_mut();
+                if state.awaiting_pointer {
+                    return;
+                }
+                let changed = state.hovered != hovered;
+                state.hovered = hovered;
+                drop(state);
+                if changed {
                     listener(&hovered, window, cx);
                 }
             }
@@ -4950,9 +4965,11 @@ fn record_interaction_membership(
             if let Some(prediction) = &prediction {
                 prediction.set(HoverOpacityPrediction::default());
             }
-            let was_hovered = hover_listener_state
-                .as_ref()
-                .is_some_and(|hovered| mem::take(&mut *hovered.borrow_mut()));
+            let was_hovered = hover_listener_state.as_ref().is_some_and(|state| {
+                let mut state = state.borrow_mut();
+                state.awaiting_pointer = true;
+                mem::take(&mut state.hovered)
+            });
             if let Some(pending) = &pending {
                 pending.borrow_mut().take();
             }
