@@ -245,7 +245,6 @@ features = [
     "Globalization_DateTimeFormatting",
     "Storage_Search",
     "Storage_Streams",
-    "System_Threading",
     "UI_Notifications",
     "UI_ViewManagement",
     "Wdk_System_SystemServices",
