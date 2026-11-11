@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-11T08:15:06+08:00
+timestamp: 2026-11-11T09:56:33+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,21 @@ verified_by:
 ---
 
 # Current State
+
+- Official Apache standalone logging and Win32 background dispatch are implemented at
+  `9e7b9c3a36fb0266ef68ec7ee7280b2eb8646554` and
+  `9d9602bb46d5a66fc70ef1108073433fc7ce0e12`. Applications retain logger, subscriber and
+  allocator ownership; SumTree instrumentation does not automatically start Tracy. Logger/
+  SumTree passes 27/27 and ordinary hosts pass 2/2 and 3/3. Actual Rust 1.93 and wasm
+  instrumentation checks pass. The [Window and Inspector successor](../../verification.md#window-controls-lazy-inspector-and-win32-dispatch)
+  is implemented at `655e9610c77299e7704b0513f1bd77bf815b662c`. It
+  preserves focus/context and accepted geometry, with a two-window factory-panic recovery
+  correction; final focused Core/public/Windows passes 53/53. The deferred-candidate check
+  confirms the missing Wayland inactive-window IME gate while resolving Mac traffic-light
+  geometry to the typed-AppKit implementation. The bounded final check also confirms the
+  remaining InputPreference event, FocusMap release queue and focus-lost ancestor query.
+  Finish those explicit units and final source
+  dispositions before the actual Nara GPU/Host/View consumer and separate maintenance.
 
 - The official renderer batching and hollow-border successor is implemented at
   `36362708133c300cd7a04f35c7ac36ee1a0f1791`. DirectX reuses instance views, Metal preuploads
@@ -1198,42 +1213,25 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Continue the [residual source inventory](../../imports/zed-gpui-upstream-sync-candidates.md#november-10-residual-source-reconciliation)
-  after qualified identity/diagnostics/list precision, element layout/drawing, gestures/
-  scroll/padding/hover, cursor/native file drag, process/dedicated/string and HTTP/download/
-  archive support, canonical paths, complete utility composition/native helpers, source-over/
-  native child composition, Windows dialog/host/input safety, native restoration/attention and
-  native regions/layer-shell/fullscreen/popups, complete Web text/viewport and official Canvas
-  font fallback/selected-face reporting, Linux IME/effects/XKB/X11 metadata, typed Mac
-  input/AppKit/ScreenCaptureKit and renderer batching/hollow borders. The earlier public-Platform
-  audit is not exhaustive. Continue the logging group and the final public-method/dispatch
-  dispositions in their recorded prerequisite order. Build on qualified
-  [shared Apple topology](../../verification.md#shared-apple-framework-topology) and
-  [native quit/session shutdown](../../verification.md#native-quit-completion-and-restart-manager).
-  Trust unchanged official coverage and concentrate compilation/regressions on affected fork
-  seams. Keep the original aggregate failures, default WSLg thread-exit crash and foreign lifecycle
-  gates visible; configured/focused passes do not resolve their causes.
-  Actual Mac Keychain and Linux Secret Service gates remain open; a source port is not native proof.
-  Keep the [Mac pasteboard native gates](../../verification.md#desktop-clipboard-normalization-and-owned-pasteboard)
-  open until actual Apple compilation and all twelve tests execute. Full fixed-target closure
-  and the real Nara consumer still precede framework-maintenance handoff.
-- Continue after qualified
-  [system notifications](../../verification.md#system-notifications-and-ordered-app-responses),
-  [Spring/motion](../../verification.md#official-spring-and-shared-domain-sampling) and the
-  complete Send/Fetch successor. Preserve official regressions and ordinary independent
-  consumption, keeping Core/native and browser execution scope separate. Actual OS notification
-  delivery remains unqualified. Continue the
-  [bounded residual inventory](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#bounded-core-residual-inventory)
-  through complete official mechanisms; it is not an exhaustive semantic audit.
-- Continue remaining renderer/API/platform reconciliation after the complete
-  [WGPU dependency/shader/WebGL qualification](../../verification.md#wgpu-dependency-shaders-and-webgl)
-  and [image feature-policy qualification](../../verification.md#image-dependency-feature-policy).
-  Preserve ordinary downstream extension, retained formats, the declared compiler floor
-  and independently locked consumers through existing owners.
-  Keep historical native foreground-restoration failures and the current unchanged pass visible;
-  its real stateful edit/build/apply/output consumer has passed. Preserve ordinary/release feature exclusion,
-  the declared compiler floor and the distinct GPUI/fork/external-driver source provenance.
-  Successful body patching does not qualify engine adoption.
+- Finish the confirmed Wayland inactive-window IME gate and the
+  [input-priority/focus-lifetime successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#input-priority-and-focus-lifetime-successor),
+  then close the remaining [fixed-source dispositions](../../imports/zed-gpui-upstream-sync-candidates.md#november-10-residual-source-reconciliation).
+  Qualified text/layout, Spring, input/lifecycle, supporting dependencies, platform, renderer and
+  logging units retain their existing evidence. The earlier bounded inventories were not
+  exhaustive. Trust unchanged official coverage and verify actual fork seams rather than
+  repeating those completed units.
+- Follow the [maintained-baseline engine gate](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#maintained-baseline-before-engine-adaptation)
+  with a real Nara GPU/Host/View consumer before separate framework-maintenance handoff.
+  Reconcile the two WGPU source identities and preserve the engine's device, target encoding,
+  immutable output leases, exact presentation/input and producer-local retirement. Existing
+  atlas, embedded-App and independently shared-device controls do not complete this consumer.
+- Preserve the original aggregate failures, default WSLg thread-exit crash and foreign lifecycle
+  gates. Actual Mac Keychain, Linux Secret Service and the
+  [Mac pasteboard native gates](../../verification.md#desktop-clipboard-normalization-and-owned-pasteboard)
+  retain their separate execution requirements. Keep native foreground-restoration variability
+  visible alongside the passed stateful hot-patch consumer. Successful render-body patching does
+  not qualify Nara adoption; OS notification delivery and platform-specific input/visual behavior
+  also retain their own gates.
 - Apply the maintenance skill's official-baseline rule through existing owners. Preserve
   qualified fork admission, completed-action observation, source/geometry validity, exact native
   leases, accepted cache publication and App/post-borrow command authority while reconciling

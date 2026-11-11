@@ -76,9 +76,20 @@ The platform dependency enables `x11` and `wayland` on Linux and FreeBSD, and `f
 Windows uses the shared platform dependency without additional fixture-selected features.
 
 The `native_window_controls` target also consumes `Window::set_client_corner_radii` and the
-optional backend method. Its ordinary `bench-support` App executes the unsupported no-op
-alongside the existing native-control and close workflow. It does not qualify compositor blur;
-the affected Linux native tests retain that separate platform scope.
+optional backend method. Its ordinary `bench-support` App checks the public resize and minimize
+creation facts and the prompt query, then exercises the unsupported corner-radius no-op alongside
+the existing native-control and close workflow. It does not qualify compositor blur; the affected
+Linux native tests retain that separate platform scope.
+
+The optional `logging` target checks application-owned logger initialization and disabled span
+evaluation. With `logging-tracy`, the same target gives the host its own allocator and subscriber,
+observes actual SumTree work through the public List API and confirms that the Tracy client does
+not start merely because the application links the feature. Neither test starts a Tracy capture.
+
+```text
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features logging --test logging --target-dir target
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features logging-tracy --test logging --target-dir target
+```
 
 On macOS, `mac-screen-capture` enables the ordinary Mac backend's optional capture support.
 The `apple_screen_capture` target type-checks source enumeration, metadata, stream callbacks

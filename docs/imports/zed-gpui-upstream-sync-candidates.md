@@ -70,15 +70,15 @@ official mechanism remains queued until it receives an explicit disposition.
 | `479bce0995` | Split | Remote telemetry stays outside the closure. Public util::parse_os_release and official/public tests are implemented; scoped qualification is recorded below. |
 | `ccf4058b7a` | Split | Picker product changes stay outside the closure. Public Rems helpers and complete key-dispatch regressions are implemented; scoped qualification is recorded below. |
 | `10628c3d2c` | Split | Agent search stays outside the closure. Complete upward List normalization is implemented through the existing admitted commit; scoped qualification is recorded below. |
-| `6076ce2738` | Deferred | Markdown benchmark work may be useful later but is not a correctness fix in this plan. |
+| `6076ce2738` | Split | The framework's ready-foreground draining is present in the shared threaded dispatcher and BenchAppContext, with its official nonwaiting-handoff regression retained. The [complete benchmark qualification](../verification.md#complete-benchmark-context-and-measurements) owns that mechanism. Zed Markdown/edit-file benchmark workloads remain product consumers outside this closure. |
 | `362035d52a` | Split | File-existence fallback stays in product path derivation. The util parser already supports parenthesized positions; its official behavioral regression is imported and qualified below. |
 | `83d4847462` | Split | Settings product migration stays outside the framework closure. The complete synthetic-child callback/builder/Div mechanism is implemented and qualified below. Its separate composite-focus/keyboard owner is now implemented with scoped qualification below; the product disposition rejects neither framework slice. |
 | `c7ad65e468` | Split | Editor highlight consumers stay outside the closure. Complete measured TextLayout queries are implemented with owner/public/independent consumers; scoped qualification is recorded below. |
 | `1722fe63bc` | Split | Editor multi-cursor consumers stay outside the closure. Parameterized benchmark, real text-system and dispatcher/teardown mechanisms join the existing benchmark/report successor below. |
-| `138139f830` | Deferred | macOS traffic-light hitbox behavior appears mostly absorbed locally; revisit only if a focused diff proves a remaining framework regression. |
+| `138139f830` | Implemented: typed Mac successor | `0c1118e2f1a` carries the official titlebar-container/button frames and tracking-area updates for both normal and reset positioning. The [Mac qualification](../verification.md#macos-native-input-appkit-and-screen-capture) records foreign compilation; actual AppKit hitbox behavior still requires an Apple host. |
 | `60ed56b372` | Implemented: complete Darwin process successor | The inherited omission found by the November 10 audit is superseded at `5b1810abbcc`: owned descriptors, inherited stdio under CLOEXEC_DEFAULT and SIGPIPE restoration use the unified official process owner. The [qualification](../verification.md#process-reaping-dedicated-execution-and-shared-strings) separates source compilation from native Darwin execution. |
 | `e1bfcf85db` | Implemented: complete Darwin process successor | The complete pipe/dev-null and reaper owner at `5b1810abbcc` removes the former waitpid/Unblock implementation. Its fixed async-process selection is qualified with actual consumers; native Darwin process execution remains unqualified. |
-| `137e677a05` | Deferred | Multiple-window Wayland IME handling may overlap U3, but it needs a focused diff before expanding the accepted queue. |
+| `137e677a05` | Queued: confirmed residual | The November 11 source check confirms that the fixed target returns from `update_ime_enabled` for an inactive window, while the fork's current leased-handler adaptation lacks that gate. Add the official active-window check through the current Wayland input owner and compile the affected backend before claiming fixed-target closure. The earlier IME cursor/effects qualification does not cover this omission. |
 | `8036a3c74b` | Superseded | The implemented shared UAX wrapping mechanism from `f0210f1621` supersedes the old glue-specific policy. Do not restore the obsolete branch. |
 
 ## Verification Baseline
@@ -370,11 +370,22 @@ orders implementation and applies targeted upstream-trust verification.
 | Mac native input, blur and typed AppKit | `0a9eb81e6c`, `d86aa6e6b9`, `10cfb45944`, `d01f1258376`, `41126668013`, `db7f9ceed78`, `f6838a7c4af`, `382ff7a64b3`, `90d8514059`, `4b47ceb9d3` | Implemented at `0c1118e2f1a`: official keyboard/event, application/menu, window/display and ScreenCaptureKit owners replace cocoa_compat and Media. The [qualification](../verification.md#macos-native-input-appkit-and-screen-capture) records Apple-target checks, affected correctness Clippy, the independently locked capture-to-surface consumer and nullable view/retirement fixes. Native Apple execution and weak-linked startup remain separate. |
 | Renderer batching and overdraw | `be8c6f9fb35`, `b4ecc454225`, `0c51c7fd248`; `e91b82c106`, `e20d19d32f` | Implemented at `36362708133`: whole-view DirectX offsets, Metal video-surface bounds, exact atlas grouping, shared sprite ABI and hollow border raster strips. WGPU skips non-rasterized path composites and encodes at the acquired extent; configure-once was already covered. The [qualification](../verification.md#renderer-batching-and-hollow-borders) records Windows WARP and WGPU pixel evidence, Apple cross-compilation and ordinary consumer gates. Exact clip and atlas leases, uncertain sprite order and native retirement retain their existing owners. Native Metal execution and numeric costs remain separate. |
 
-Additional Core method-name findings still need behavioral comparison: resizable/minimizable and
-prompt queries, pending-input timeout pause, geometry helpers and Inspector getters. A missing
-symbol alone is not a missing mechanism. Likewise, Windows WinRT versus official Win32 dispatch
-needs an explicit disposition, not an assumed defect. iOS remains an unselected application
-backend; shared Core/Web mobile behavior is assessed in its own unit.
+The [logging, Window API and Windows dispatch successor](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#logging-window-api-and-windows-dispatch-successor)
+reconciles the additional method and dependency findings:
+
+| Mechanism | Fixed-target source | Disposition |
+| --- | --- | --- |
+| Logger and instrumentation | `ac5af8b9e1`, `crates/{zlog,ztracing,ztracing_macro}` | Restore the Apache packages and SumTree instrumentation. Explicit Cargo selections and host-owned globals replace Zed's build and installation policy. GPL `zlog_settings` remains outside the framework. See the [logging qualification](../verification.md#standalone-logging-and-tracing). |
+| Window controls and geometry | `e99616cdd4`, `058f01fa93`, `d85eade7ab`, `cf4deb270f`, `25b5569dd2` | Adopt the public creation and prompt facts, outside-click suppression, owned chord pause, visible-area centering and bottom anchors through the current owners. Windows already reports its work area. |
+| Lazy Inspector | `b0f53ad23b` | Adopt per-window lazy identities, renderer factories and frame-map release; retain the existing selection getters and accepted-frame geometry. Zed Inspector UI, LSP and application benchmarks remain product integrations. |
+| Win32 pool and timer | `2c4e44704c`, `72656afa6d`, `d544470d1d` | Adopt the official Win32 background owner and remove the unused WinRT feature. Retain the exact foreground queue, callback generation and profiler. See the [Window and Win32 qualification](../verification.md#window-controls-lazy-inspector-and-win32-dispatch). |
+| Keystroke input preference | `86c20cc911` | Queued: the current binding dispatcher already honors text preference, but public interceptors/observers lack the official `InputPreference` field. Restore the complete pre-interception and post-replay/binding computation through the existing admitted input-handler owner. |
+| Dropped focus-handle queue | `e463c5ab74` | In progress: the official FocusMap owner is prepared in a private module; App and current Window definitions still need integration. The current cleanup behavior works but scans all handles. Adopt last-strong-reference queueing and the empty-queue return while retaining fork cleanup of pending/provisional/fallback/candidate focus. No measured speedup is claimed. |
+| Focus-lost ancestor restoration | `b2d9c2e122` | Queued: public focus-lost listeners cannot query the closest surviving ancestor from the old path and current accepted dispatch tree. Adopt the framework query and its callback-scoped old path through existing admission/unwind rules. Zed workspace/agent-panel consumers stay outside this framework unit. |
+
+iOS remains an unselected application backend; shared Core/Web mobile behavior is assessed in
+its own unit. This inventory does not establish native coverage everywhere or exact source
+identity with the monorepo.
 
 Already covered mechanisms include shared image decoding, Taffy 0.15/grid-row intrinsic sizing,
 owning CachedLoad, animation/Spring parent composition and relevant collections/refineable/

@@ -9154,6 +9154,89 @@ scoped implementation/comparison/review lanes close. No numeric timing or native
 follows. The logging and residual API/dispatch dispositions and the real Nara GPU/Host/View
 consumer remain separate.
 
+## Standalone Logging And Tracing
+
+The [fixed-source import](imports/zed-gpui-import.md#november-11-logging-and-tracing) restores the
+Apache packages relicensed by `ac5af8b9e1`, implemented at
+`9e7b9c3a36fb0266ef68ec7ee7280b2eb8646554`. SumTree uses the official instrumentation facade;
+the application chooses whether to install a logger, tracing subscriber or profiled allocator.
+Native Tracy and browser performance instrumentation are explicit Cargo selections. Native
+Tracy uses `manual-lifetime`, so linking the layer alone does not start a client.
+
+The first focused run passed 25/26 (`af911281-dd1d-46fe-b3ec-0f82a10b13cf`): the imported filter
+test hard-coded the upstream crate name. The standalone file-sink consumer subsequently reproduced
+suppressed module TRACE and a leaked explicitly muted target (`3adb88cd-431c-48c3-9f5a-67f702798878`).
+Module rules now contribute to the highest enabled level, and both qualified and single-segment
+record targets take precedence over the source-crate fallback. Explicit scoped logger behavior
+stays unchanged. The sink opens before installing the path; the test verifies that a failed
+open can be retried, records reach the actual file, and the application cannot install twice.
+Final logger and SumTree tests pass **27/27**, run `2b5b4897-dbd5-4971-a687-df5e82df997a`.
+Locked native Tracy and wasm Web instrumentation compilation with SumTree pass; compilation
+does not establish Tracy capture or browser Performance Measure execution.
+
+The independently locked ordinary application passes **2/2** in
+`cf09bba6-7457-4362-9440-c63455bc13d8` with `logging`, then **3/3** in
+`1b1caae6-dcd4-4ea1-bddd-60fbbb83ab1f` with `logging-tracy,bench-support`. The first confirms
+disabled spans do not evaluate fields. The latter installs the host's allocator and subscriber,
+receives actual List/SumTree spans and checks that the linked Tracy client is not running. The
+same runs compile the public native-control API, and the enabled ordinary App executes its
+creation/query and no-op controls. No test-support feature is used by that consumer.
+
+## Window Controls, Lazy Inspector And Win32 Dispatch
+
+The [successor](plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#logging-window-api-and-windows-dispatch-successor)
+implements Win32 dispatch at `9d9602bb46d5a66fc70ef1108073433fc7ce0e12` and the scoped Window
+closure at `655e9610c77299e7704b0513f1bd77bf815b662c`. It uses official resize/minimize and
+prompt facts, entity-owned pending-input pauses, visible-area
+bounds, bottom anchors, and lazy Inspector IDs and factories. The existing Window owns focus,
+context, timeout replay and candidate admission. Inspector geometry publishes only with the
+existing accepted prepaint effects; closing an Inspector discards that window's frame identity
+maps and cached state renderers. Existing fork selection and hitbox observation remain usable;
+Zed's separate Inspector UI, LSP and application benchmarks are outside this import.
+
+Windows replaces the WinRT worker and timer with the official Win32 pool while retaining the
+existing foreground queue, HWND generation and task profiler. Relative due times round upward
+to at least one 100 ns tick. A native callback consumes the raw runnable once. Rejection leaves
+the original runnable pending and logs the failure; dropping the sender could incorrectly
+resolve an awaiting timer. A controlled rejection checks that no timer or task completes, then
+reclaims the test reference. This is not recovery from an actual OS allocation failure.
+
+The first public test build used the wrong test-context type. Using the existing `TestApp` API
+made the selection run: **51/52**, `7d0ef81b-fc63-4a82-bb37-73b8c2491695`. This includes the
+Win32 pool, native Send executor, credential/background IO and returning-quit controls, and
+affected Core keyboard, display, portal and Inspector tests. The only failure was the simulated
+native prompt answer's spelling (`OK` versus the platform-normalized `Ok`). All six public
+Window tests then pass, `bca4c658-95ce-4663-9720-ffb5bae5a372`. The prompt test retains a live
+background outside listener through the native prompt, rendered prompt and dismissal. The chord
+cases retain the actual executor clock, competing and released owners, remaining time, and the
+focus/context and observer boundaries.
+
+The existing projected-geometry Inspector and three-state presentation Gallery trajectories
+pass **2/2**, run `ac460363-d52c-4815-a46d-46fc86275525`, before the subsequent Inspector
+unwind correction. A bounded review identifies a fork-recovery seam: a first-use factory panic
+can drop the removed factory, App panel renderer and Window Inspector even though candidate
+admission rejects the draw. This requires preserving those registrations while rethrowing the
+panic, with a two-window recovery control. It is distinct from unchanged official algorithms
+and does not justify a new broad framework verification cycle.
+
+The correction retains the original callback exclusion and normal-return registration behavior.
+It restores removed registrations and the original Window Inspector before rethrowing, and
+borrows the active selection instead of taking it. The two-window regression catches a typed
+first-use panic, verifies that the rendered generation and original selection did not advance,
+uses the original registration in the second window, then retries the first. Final affected
+Core/public/Windows tests pass **53/53**, run `8455fbaf-82c9-46f2-899b-824fcb22146b`.
+Both existing Inspector Gallery trajectories pass again after that correction, **2/2** in
+`4fd59993-0d5a-47f0-8554-7d50778214f0`. The actual Inspector-disabled release configuration
+compiles, the affected native packages and test targets pass correctness Clippy, and the
+Core/Windows affected all-target configuration compiles on Windows with Rust 1.93.
+The independently locked consumer also passes its all-target/all-feature Rust 1.93 check.
+The dependency-health gate then finds a stale `bindgen` duplication exemption left after the
+earlier Mac Media/binding removal; that exemption is removed without changing resolution or
+adding scanner behavior. Rebuilt xtask passes dependency health; final root formatting and
+the existing import, document and release-document checks also pass. CI receives the new
+ordinary logging, public Window and Win32 controls and explicit Web instrumentation compile
+step; no remote workflow is executed here.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

@@ -98,6 +98,7 @@ jobs:
           cargo check -p open-gpui-web --target wasm32-unknown-unknown --locked -j 1
           cargo check -p open-gpui-platform --target wasm32-unknown-unknown --locked -j 1
           cargo check -p open-gpui-wgpu --target wasm32-unknown-unknown --locked -j 1
+          cargo check --locked -p open-gpui-tracing -p open-gpui-sum-tree --features open-gpui-tracing/web --target wasm32-unknown-unknown --lib -j 1
 
       - name: Run stable browser web smoke
         if: matrix.name == 'linux'
@@ -200,7 +201,7 @@ jobs:
           cargo nextest run --locked -p open-gpui --no-default-features --features test-support --lib --test window_appearance -E 'test(app::window_appearance_tests::) | binary(window_appearance)' --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test native state ownership and public services
-        run: cargo nextest run --locked -p open-gpui --all-features --lib --test native_window_services --test native_window_controls --test native_close_requests -E 'test(platform_command_tests::) | test(native_window_control_tests::) | test(native_close_request_tests::) | binary(native_window_services) | binary(native_window_controls) | binary(native_close_requests)' --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui --all-features --lib --test native_window_services --test native_window_controls --test native_close_requests --test window_public_api -E 'test(platform_command_tests::) | test(native_window_control_tests::) | test(native_close_request_tests::) | binary(native_window_services) | binary(native_window_controls) | binary(native_close_requests) | binary(window_public_api)' --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test windowing custody and public consumers
         run: |
@@ -233,6 +234,13 @@ jobs:
         run: |
           cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test native_window_services --test native_window_controls --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
           cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --test native_window_services --test native_window_controls --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test standalone logging and native tracing ownership
+        if: matrix.name == 'windows'
+        run: |
+          cargo nextest run --locked -p open-gpui-log -p open-gpui-sum-tree --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features logging --test logging --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features logging-tracy --test logging --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Check macOS appearance native consumers
         if: matrix.name == 'macos'
@@ -322,9 +330,9 @@ jobs:
           cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test send_foreground --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
           cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features profiler --test send_foreground --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 
-      - name: Test native Send dispatch, pixels and retirement
+      - name: Test Win32 pool, native Send dispatch, pixels and retirement
         if: matrix.name == 'windows'
-        run: cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(native_send_foreground_)' --run-ignored all --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(native_send_foreground_) | test(dispatcher::tests::win32_)' --run-ignored all --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test Spring state, shared solver and public composition
         run: |

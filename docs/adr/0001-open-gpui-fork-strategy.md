@@ -58,12 +58,17 @@ The initial import excluded the then-GPL-licensed Zed tracing revisions and repl
 with ordinary `tracing` or workspace-owned instrumentation. Official `ac5af8b9e1` subsequently
 relicensed zlog, ztracing and ztracing_macro to Apache-2.0; source inspection confirms those
 licenses at the fixed November target `635026fabc38440fce5e1767d125026a17b12012`.
-The [current reconciliation queue](../imports/zed-gpui-upstream-sync-candidates.md#november-10-residual-source-reconciliation)
-records that evidence. The existing ordinary tracing graph and import check's name exclusions
-remain the selected dependency disposition pending comparison of the complete logging/profiler
-owners. They are no longer a license-based rejection of these exact official revisions.
-Any later adoption updates this disposition and its import checks with concrete consumer and
-dependency evidence. GPL application code remains outside the framework closure.
+The [logging import record](../imports/zed-gpui-import.md#november-11-logging-and-tracing)
+selects those exact sources as the locally packaged `open-gpui-log`, `open-gpui-tracing` and
+`open-gpui-tracing-macro` owners. Keep the existing import check's bare Zed package exclusions:
+the standalone framework depends on its locally licensed and qualified packages. GPL
+application code, including `zlog_settings`, remains outside the framework closure.
+
+The application owns installation of the process logger, tracing subscriber and any global
+allocator. SumTree uses the official instrumentation facade, with native Tracy and browser
+performance output as explicit Cargo selections; the ordinary feature selection is inert.
+No library selects a process allocator or installs a subscriber. GPUI's frame and task profiler
+keeps its own responsibilities and does not require the application to install either facility.
 
 For permissively licensed third-party crates, the preferred order is:
 
@@ -104,7 +109,7 @@ flowchart TD
     Core --> Components[gpui-component ecosystem fork]
     Fret[Fret architecture references] -.ideas only.-> Core
     ZedGPL[Zed GPL application crates] -.excluded.-> Core
-    ZTracing[ztracing / ztracing_macro] -.replaced.-> Core
+    ZTracing[Apache Zed logging and tracing] --> Core
 ```
 
 ## Alternatives Considered
@@ -182,9 +187,8 @@ reference.
 
 - The repository starts as a virtual Cargo workspace with a minimal facade crate.
 - The first substantial code lane is GPUI core import and manifest normalization.
-- The initial import's `ztracing` replacement remains the current graph. The November successor
-  compares complete owners before changing that graph; the exact official revisions above are
-  permissively licensed.
+- The November successor restores the Apache logging and tracing owners at the exact fixed
+  source. Ordinary embedding retains application control of process logging and allocations.
 - `gpui-component` is intentionally delayed until the core framework has a verified build surface.
 - Some dependencies may become Open GPUI-owned forks when that is the cleanest way to preserve
   framework behavior without depending on Zed-controlled fork artifacts.

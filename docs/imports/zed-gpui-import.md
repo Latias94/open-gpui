@@ -209,3 +209,19 @@ have one Apple owner. Core no longer depends on unused Media/font/shader build p
 The new generated CoreText binding is registry `objc2-core-text` 0.3.2; existing dependencies
 keep their locked versions. Qualification and remaining Apple execution scope belong to the
 [shared Apple record](../verification.md#shared-apple-framework-topology).
+
+## November 11 Logging And Tracing
+
+Zed `ac5af8b9e1` relicensed `zlog`, `ztracing` and `ztracing_macro` as Apache-2.0. The source
+files and their Apache notices come from fixed `635026fabc38440fce5e1767d125026a17b12012`.
+Their standalone package names are `open-gpui-log`, `open-gpui-tracing` and
+`open-gpui-tracing-macro`; the GPL `zlog_settings` application package is excluded. The old
+import boundary still disallows the unpublished monorepo package names.
+
+SumTree restores the official `instrument` and its conditional test logger. The application
+chooses whether to install the standard `log` facade's process logger; the primary environment
+variable becomes `OPEN_GPUI_LOG` and retains `RUST_LOG` fallback. Native `tracy` and browser
+`web` features select the official tracing behavior without ambient Zed build variables.
+The Tracy allocator remains available as a type an application can select. No dependency
+installs it on the application's behalf. Neither tracing feature controls GPUI's foreground
+profiler. The actual checks are in the [verification record](../verification.md#standalone-logging-and-tracing).

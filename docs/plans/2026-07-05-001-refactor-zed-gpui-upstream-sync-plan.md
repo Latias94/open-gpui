@@ -211,8 +211,11 @@ Only an entire singleton-modifier prefix introduces the modifier timeout; a modi
 an otherwise untimed longer chord must not change its deadline policy.
 
 PendingInputStatus/pause APIs, InputPreference event fields and FocusMap queue optimization are
-separate final-target differences, not prerequisites established by these fixes. They require
-their own coherent API/consumer disposition rather than a new focus/input owner or scanner.
+separate final-target differences, not prerequisites established by these fixes. The pause APIs
+are subsequently implemented at `655e9610c77`; the input-preference and queue differences remain
+part of the [input/focus successor](#input-priority-and-focus-lifetime-successor), alongside the
+focus-lost ancestor query. They require their own coherent API/consumer disposition rather than
+a new focus/input owner or scanner.
 
 ### Native Upload And Mapped-Readback Safety
 
@@ -3462,7 +3465,93 @@ retain stale-resource/recovery controls. Qualify WebGL word access in a browser 
 Apple foreign compile/generated-layout evidence from native Metal execution. Only report a
 numerical rendering gain if it is measured on this fork.
 
+### Logging, Window API And Windows Dispatch Successor
+
+Continue from `be215e2d4fdc6cc90b7138e8da44a9b49ffbe4e2` against the same fixed target.
+Restore the Apache logger, tracing facade and disabled attribute macro relicensed by
+`ac5af8b9e1`; keep Zed's GPL application settings integration outside the framework. The
+actual framework edge is SumTree's instrumentation and test logger. Adopt the complete native
+Tracy and browser performance-layer implementations as explicit Cargo choices. A standalone
+application selects and installs its logger, subscriber and any profiled allocator. Never
+install an allocator from a reusable library: the benchmark harness and the Nara Editor already
+have application-owned allocator selection. Existing GPUI frame and task profiling remains a
+different responsibility and needs no logger or subscriber installed by the framework.
+
+Reconcile the remaining Window, geometry and Inspector functions by actual behavior, including
+the existing prompt, key dispatch, lifecycle and geometry owners. Record already-equivalent or
+internal/product-only behavior separately; preserve accepted admission and cancellation rules.
+For Windows, adopt the Win32 thread-pool and one-shot timer mechanism (`72656afa6d`) in place
+of the WinRT worker and timer path. Keep the main-thread message queue, priority semantics,
+dispatcher admission and the existing profiler scope. Verify native callback ownership and
+timing boundaries rather than repeating unrelated scheduler and platform suites.
+
+Use ordinary locked Cargo consumers and focused framework tests for the changed seams. For
+logging, retain the upstream filtering/sink regressions, compile explicit Tracy and browser
+choices, and check that a downstream binary can own its allocator and logging lifecycle.
+Record remaining native and instrumentation scope without treating feature compilation as a
+capture result. The real Nara GPU/Host/View trajectory and separate maintenance handoff still
+follow the fixed-target dispositions.
+
+The November 11 deferred-candidate check confirms one remaining Wayland omission:
+`137e677a05` and the fixed target return before an inactive window queries or updates IME
+enablement. The current leased-handler adaptation lacks that check. Add it through the current
+Wayland owner and compile that backend after the Window successor; preserve post-callback
+quiescence and exact handler custody. The typed Mac successor already includes `138139f830`'s
+traffic-light container/button frames and tracking-area refreshes. Keep native Apple hitbox
+execution separate from that source disposition. These findings prevent a whole-refresh claim
+from this final-method inventory alone.
+
+### Wayland Active Window IME Successor
+
+Continue from `655e9610c77299e7704b0513f1bd77bf815b662c` and restore the fixed target's
+`137e677a05` gate before an inactive window queries or changes shared IME enablement. Keep
+the existing handler slot, current native window and post-callback quiescence rules. No new
+input owner, compatibility API or alternate focus model is needed.
+
+Extend the existing native Wayland surface lifecycle with a narrow shared-client cache control:
+enable the client state, let its actual inactive window update IME, and verify that enablement
+is retained. Keep the original background, resize, late-callback and native retirement controls.
+Compile the affected Linux backend and run its existing cursor-cache and surface controls on
+the configured WSLg/Lavapipe environment. This proves native-window/cache behavior separately
+from real text-input protocol delivery or a physical IME session.
+
+### Input Priority And Focus Lifetime Successor
+
+The final bounded source check confirms three remaining mechanisms after the Window successor:
+public `InputPreference` (`86c20cc911`), queued FocusMap release (`e463c5ab74`) and
+`Window::focus_lost_restore_target` (`b2d9c2e122`). Adopt these complete official mechanisms;
+the fork's existing text-first binding choice is not an equivalent public keystroke event API.
+Keep input preference observable before interception and recompute after replay/interceptor
+effects before binding dispatch. Preserve exact handler checkout, admission and callback
+retirement behavior.
+
+Extract the current public focus types into one private focus module with the official map and
+dropped-handle queue. App drains that queue and returns when it is empty; window cleanup must
+still cover pending, provisional, fallback and candidate references after releasing the map
+lock. The ancestor query uses the previous committed path only during focus-lost notification
+and checks the new accepted dispatch tree. Nested callbacks and unwinding must restore the
+original callback scope. No second focus manager, compatibility map or speculative public
+abstraction is needed.
+
+Trust unchanged official cases and reuse focused input/focus/candidate regressions. Exercise
+the public interceptor/observer event and a real focused-child removal with ancestor recovery,
+plus exact retirement/refusal seams affected by these additions. Keep structural avoidance of
+full-map scans distinct from measured performance. Zed product integrations remain excluded.
+
 ## Maintained Baseline Before Engine Adaptation
+
+The [standalone logger](../verification.md#standalone-logging-and-tracing) at
+`9e7b9c3a36fb0266ef68ec7ee7280b2eb8646554` and the
+[Window/Win32 successor](../verification.md#window-controls-lazy-inspector-and-win32-dispatch)
+at `655e9610c77299e7704b0513f1bd77bf815b662c` and
+`9d9602bb46d5a66fc70ef1108073433fc7ce0e12` complete those scoped mechanisms. Application
+globals, exact foreground/native custody and admitted Inspector geometry remain in their
+existing owners. Logger/SumTree 27/27, final Core/public/Windows 53/53, final Inspector
+Gallery 2/2 and ordinary consumer selections pass. Actual native Rust 1.93, Web instrumentation,
+Inspector-disabled release compilation and correctness Clippy retain their recorded scopes.
+The confirmed Wayland inactive-window IME gate, input-priority/focus-lifetime successor and
+final source dispositions remain before
+the real Nara GPU/Host/View consumer; this is not whole-refresh or engine acceptance.
 
 The [renderer batching and hollow-border record](../verification.md#renderer-batching-and-hollow-borders)
 qualifies `36362708133c300cd7a04f35c7ac36ee1a0f1791`. Official whole-buffer DirectX offsets,
