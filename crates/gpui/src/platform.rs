@@ -4435,6 +4435,8 @@ pub enum PlatformNativeWindowRetirementOutcome {
     Accepted,
     /// The native window is already terminal.
     NativeWindowTerminal,
+    /// GPUI's native binding detached after exact presentation quiescence; the host window lives.
+    BindingDetached,
     /// Retirement was not accepted and must be retried while retaining the platform-window owner.
     Rejected,
 }
@@ -4454,6 +4456,7 @@ enum WindowPresentationShutdownPhase {
     Claimed,
     Quiesced,
     NativeTerminal,
+    Detached,
     TerminalBeforeQuiesce,
 }
 
@@ -4465,6 +4468,7 @@ pub struct WindowPresentationShutdownSnapshot {
     generation: u64,
     quiesced: bool,
     native_terminal: bool,
+    detached: bool,
     protocol_violation: bool,
 }
 
@@ -4487,6 +4491,16 @@ impl WindowPresentationShutdownSnapshot {
     /// Returns whether the native window published terminal state.
     pub const fn native_terminal(self) -> bool {
         self.native_terminal
+    }
+
+    /// Returns whether GPUI detached its native binding while the application's window survived.
+    pub const fn detached(self) -> bool {
+        self.detached
+    }
+
+    /// Returns whether this binding ended through native destruction or successful detachment.
+    pub const fn binding_terminal(self) -> bool {
+        self.native_terminal || self.detached
     }
 
     /// Returns whether native terminal was observed before renderer quiescence.
@@ -4529,12 +4543,14 @@ impl WindowPresentationShutdownTicket {
                 phase,
                 WindowPresentationShutdownPhase::Quiesced
                     | WindowPresentationShutdownPhase::NativeTerminal
+                    | WindowPresentationShutdownPhase::Detached
             ),
             native_terminal: matches!(
                 phase,
                 WindowPresentationShutdownPhase::NativeTerminal
                     | WindowPresentationShutdownPhase::TerminalBeforeQuiesce
             ),
+            detached: phase == WindowPresentationShutdownPhase::Detached,
             protocol_violation: phase == WindowPresentationShutdownPhase::TerminalBeforeQuiesce,
         }
     }
@@ -4557,7 +4573,8 @@ impl WindowPresentationShutdownTicket {
                 true
             }
             WindowPresentationShutdownPhase::Quiesced
-            | WindowPresentationShutdownPhase::NativeTerminal => true,
+            | WindowPresentationShutdownPhase::NativeTerminal
+            | WindowPresentationShutdownPhase::Detached => true,
             WindowPresentationShutdownPhase::TerminalBeforeQuiesce => false,
         }
     }
@@ -4576,7 +4593,27 @@ impl WindowPresentationShutdownTicket {
                 true
             }
             WindowPresentationShutdownPhase::NativeTerminal => true,
-            WindowPresentationShutdownPhase::TerminalBeforeQuiesce => false,
+            WindowPresentationShutdownPhase::Detached
+            | WindowPresentationShutdownPhase::TerminalBeforeQuiesce => false,
+        }
+    }
+
+    /// Acknowledges release of GPUI's native binding while leaving an application window alive.
+    ///
+    /// Detachment requires prior renderer quiescence and cannot replace native destruction or a
+    /// protocol violation. Once detached, this exact binding cannot later report OS destruction.
+    #[doc(hidden)]
+    pub fn acknowledge_detached(&self) -> bool {
+        let mut phase = self.phase.lock();
+        match *phase {
+            WindowPresentationShutdownPhase::Quiesced => {
+                *phase = WindowPresentationShutdownPhase::Detached;
+                true
+            }
+            WindowPresentationShutdownPhase::Detached => true,
+            WindowPresentationShutdownPhase::Claimed
+            | WindowPresentationShutdownPhase::NativeTerminal
+            | WindowPresentationShutdownPhase::TerminalBeforeQuiesce => false,
         }
     }
 }
@@ -9858,6 +9895,7 @@ mod presentation_shutdown_tests {
                 generation: 1,
                 quiesced: false,
                 native_terminal: true,
+                detached: false,
                 protocol_violation: true,
             }
         );
@@ -9866,6 +9904,41 @@ mod presentation_shutdown_tests {
         assert!(!ticket.acknowledge_native_terminal());
         assert!(!ticket.snapshot().quiesced());
         assert!(ticket.snapshot().protocol_violation());
+    }
+
+    #[test]
+    fn detached_binding_requires_quiescence_and_never_claims_os_destruction() {
+        let ticket = WindowPresentationShutdownTicket::new(WindowId::from(7), 2);
+        assert!(!ticket.acknowledge_detached());
+        assert!(!ticket.snapshot().binding_terminal());
+        assert!(ticket.acknowledge_quiesced());
+        assert!(ticket.acknowledge_detached());
+        assert!(ticket.acknowledge_detached());
+        assert!(ticket.acknowledge_quiesced());
+        let detached = ticket.snapshot();
+        assert!(detached.quiesced());
+        assert!(detached.detached());
+        assert!(detached.binding_terminal());
+        assert!(!detached.native_terminal());
+        assert!(!detached.protocol_violation());
+        assert!(!ticket.acknowledge_native_terminal());
+        assert_eq!(ticket.snapshot(), detached);
+    }
+
+    #[test]
+    fn destroyed_or_poisoned_binding_cannot_be_reclassified_as_detached() {
+        let destroyed = WindowPresentationShutdownTicket::new(WindowId::from(7), 3);
+        assert!(destroyed.acknowledge_quiesced());
+        assert!(destroyed.acknowledge_native_terminal());
+        assert!(!destroyed.acknowledge_detached());
+        assert!(destroyed.snapshot().native_terminal());
+        assert!(!destroyed.snapshot().detached());
+
+        let poisoned = WindowPresentationShutdownTicket::new(WindowId::from(7), 4);
+        assert!(!poisoned.acknowledge_native_terminal());
+        assert!(!poisoned.acknowledge_detached());
+        assert!(poisoned.snapshot().protocol_violation());
+        assert!(!poisoned.snapshot().detached());
     }
 }
 

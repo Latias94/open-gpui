@@ -2233,6 +2233,11 @@ impl Window {
         options: WindowOptions,
         interaction_authority: WindowInteractionAuthority,
         cx: &mut App,
+        create_platform_window: impl FnOnce(
+            AnyWindowHandle,
+            WindowParams,
+            crate::PlatformDisplaySnapshot,
+        ) -> Result<Box<dyn PlatformWindow>>,
     ) -> Result<Self> {
         let WindowOptions {
             window_bounds,
@@ -2370,7 +2375,7 @@ impl Window {
             .map(WindowProvisionalSession::claim_opening)
             .transpose()?;
         let window_title = titlebar.as_ref().and_then(|bar| bar.title.clone());
-        let platform_window = cx.platform.open_window_with_display_snapshot(
+        let platform_window = create_platform_window(
             handle,
             WindowParams {
                 window_bounds,

@@ -3394,6 +3394,7 @@ mod window_mutation_tests {
             .expect("the owner should be the latest native test window");
 
         let result = cx.update(|app| {
+            let platform = app.platform.clone();
             Window::new(
                 owner,
                 WindowOptions {
@@ -3402,6 +3403,9 @@ mod window_mutation_tests {
                 },
                 crate::window::WindowInteractionAuthority::new(),
                 app,
+                move |handle, params, displays| {
+                    platform.open_window_with_display_snapshot(handle, params, displays)
+                },
             )
         });
         let error = match result {

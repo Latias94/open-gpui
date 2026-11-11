@@ -217,6 +217,7 @@ pub(super) struct NativeWindowRetirement {
 pub(super) enum NativeWindowRetirementAttempt {
     Accepted,
     NativeWindowTerminal,
+    BindingDetached,
     Rejected,
 }
 
@@ -374,6 +375,13 @@ impl NativeWindowRetirement {
                 }
                 self.drop_owner();
                 NativeWindowRetirementAttempt::NativeWindowTerminal
+            }
+            PlatformNativeWindowRetirementOutcome::BindingDetached => {
+                if !shutdown.ticket().acknowledge_detached() {
+                    return NativeWindowRetirementAttempt::Rejected;
+                }
+                self.drop_owner();
+                NativeWindowRetirementAttempt::BindingDetached
             }
             PlatformNativeWindowRetirementOutcome::Rejected => {
                 NativeWindowRetirementAttempt::Rejected

@@ -256,6 +256,7 @@ enum NativeWindowRetirementState {
 enum NativeWindowTerminalObservation {
     Observed,
     Settled,
+    Detached,
 }
 
 struct NativeWindowRetirementBarrier {
@@ -902,6 +903,37 @@ impl AppCell {
             .contains_key(&window_id)
     }
 
+    fn observed_native_pointer_release_terminal(
+        &self,
+        window_id: WindowId,
+    ) -> Option<NativeCapturedDragReleaseTerminal> {
+        let observation = self
+            .observed_native_window_terminals
+            .borrow()
+            .get(&window_id)
+            .copied()?;
+        match observation {
+            NativeWindowTerminalObservation::Settled => {
+                Some(NativeCapturedDragReleaseTerminal::NativeWindowTerminal)
+            }
+            NativeWindowTerminalObservation::Detached => {
+                Some(NativeCapturedDragReleaseTerminal::Released)
+            }
+            NativeWindowTerminalObservation::Observed => self
+                .native_window_retirements
+                .borrow()
+                .get(&window_id)
+                .and_then(|barrier| barrier.presentation_shutdown.as_ref())
+                .map(|shutdown| {
+                    if shutdown.snapshot().detached() {
+                        NativeCapturedDragReleaseTerminal::Released
+                    } else {
+                        NativeCapturedDragReleaseTerminal::NativeWindowTerminal
+                    }
+                }),
+        }
+    }
+
     fn enqueue_native_captured_drag_release_completion(
         &self,
         barrier: NativeCapturedDragReleaseBarrier,
@@ -1016,6 +1048,9 @@ impl AppCell {
         &self,
         window_id: WindowId,
     ) {
+        let Some(terminal) = self.observed_native_pointer_release_terminal(window_id) else {
+            return;
+        };
         let tokens = self
             .pointer_capture_releases
             .borrow()
@@ -1023,10 +1058,7 @@ impl AppCell {
             .filter_map(|barrier| (barrier.token.window_id() == window_id).then_some(barrier.token))
             .collect::<Vec<_>>();
         for token in tokens {
-            self.complete_native_pointer_capture_release(
-                token,
-                NativeCapturedDragReleaseTerminal::NativeWindowTerminal,
-            );
+            self.complete_native_pointer_capture_release(token, terminal);
         }
         self.request_active_shutdown_completion();
     }
@@ -1038,7 +1070,10 @@ impl AppCell {
     ) -> NativePointerCaptureReleaseToken {
         let token =
             self.next_native_pointer_capture_release_token(window_id, captured_drag_generation);
-        if !self.native_window_terminal_was_observed(window_id) {
+        if self
+            .observed_native_pointer_release_terminal(window_id)
+            .is_none()
+        {
             let previous = self.pointer_capture_releases.borrow_mut().insert(
                 token.release_generation(),
                 NativePointerCaptureReleaseBarrier {
@@ -1065,14 +1100,12 @@ impl AppCell {
         let token = self.next_native_pointer_capture_release_token(window_id, Some(generation));
         let barrier = NativeCapturedDragReleaseBarrier::from_release_token(token)
             .expect("captured-drag release tokens must include their drag generation");
-        if self.native_window_terminal_was_observed(window_id) {
+        if let Some(terminal) = self.observed_native_pointer_release_terminal(window_id) {
             let previous = self.pointer_capture_releases.borrow_mut().insert(
                 token.release_generation(),
                 NativePointerCaptureReleaseBarrier {
                     token,
-                    state: NativePointerCaptureReleaseState::CompletionQueued(
-                        NativeCapturedDragReleaseTerminal::NativeWindowTerminal,
-                    ),
+                    state: NativePointerCaptureReleaseState::CompletionQueued(terminal),
                     retry_attempts: 0,
                     continuations: vec![continuation],
                 },
@@ -1124,10 +1157,8 @@ impl AppCell {
     ) {
         let terminal = if !required {
             Some(NativeCapturedDragReleaseTerminal::NotRequired)
-        } else if self.native_window_terminal_was_observed(token.window_id()) {
-            Some(NativeCapturedDragReleaseTerminal::NativeWindowTerminal)
         } else {
-            None
+            self.observed_native_pointer_release_terminal(token.window_id())
         };
         if let Some(terminal) = terminal {
             self.complete_native_pointer_capture_release(token, terminal);
@@ -1265,11 +1296,8 @@ impl AppCell {
         &self,
         token: NativePointerCaptureReleaseToken,
     ) {
-        if self.native_window_terminal_was_observed(token.window_id()) {
-            self.complete_native_pointer_capture_release(
-                token,
-                NativeCapturedDragReleaseTerminal::NativeWindowTerminal,
-            );
+        if let Some(terminal) = self.observed_native_pointer_release_terminal(token.window_id()) {
+            self.complete_native_pointer_capture_release(token, terminal);
             return;
         }
         let mut barriers = self.pointer_capture_releases.borrow_mut();
@@ -1565,7 +1593,7 @@ impl AppCell {
         }
     }
 
-    /// Settles a native terminal against its exact presentation authority. An observation
+    /// Settles a native binding terminal against its exact presentation authority. An observation
     /// received before preparation retains retirement and dependency custody until the real
     /// ticket is published and checked, before quiescence can conceal a protocol violation.
     pub(super) fn settle_native_window_terminal(&self, window_id: WindowId) {
@@ -1582,17 +1610,26 @@ impl AppCell {
             .and_then(|barrier| barrier.presentation_shutdown.as_ref())
             .map(|shutdown| {
                 let ticket = shutdown.ticket();
-                let acknowledged = ticket.acknowledge_native_terminal();
+                let acknowledged = if ticket.snapshot().detached() {
+                    ticket.acknowledge_detached()
+                } else {
+                    ticket.acknowledge_native_terminal()
+                };
                 (acknowledged, ticket.snapshot())
             });
         match terminal {
-            Some((true, _)) => {
+            Some((true, snapshot)) => {
                 self.native_window_retirements
                     .borrow_mut()
                     .remove(&window_id);
-                self.observed_native_window_terminals
-                    .borrow_mut()
-                    .insert(window_id, NativeWindowTerminalObservation::Settled);
+                self.observed_native_window_terminals.borrow_mut().insert(
+                    window_id,
+                    if snapshot.detached() {
+                        NativeWindowTerminalObservation::Detached
+                    } else {
+                        NativeWindowTerminalObservation::Settled
+                    },
+                );
             }
             Some((false, snapshot)) if snapshot.protocol_violation() => {
                 log::error!(
@@ -1623,7 +1660,13 @@ impl AppCell {
                 .observed_native_window_terminals
                 .borrow()
                 .get(&window_id)
-                == Some(&NativeWindowTerminalObservation::Settled) => {}
+                .is_some_and(|observation| {
+                    matches!(
+                        observation,
+                        NativeWindowTerminalObservation::Settled
+                            | NativeWindowTerminalObservation::Detached
+                    )
+                }) => {}
             None => {
                 log::error!(
                     "native window terminal was observed without a registered presentation-shutdown authority for window {:?}",
@@ -3716,7 +3759,10 @@ impl AppCell {
                                     self.request_active_shutdown_completion();
                                     terminal.settle(NativeBoundaryDisposition::DELIVERED);
                                 }
-                                Ok(Some(NativeWindowRetirementAttempt::NativeWindowTerminal)) => {
+                                Ok(Some(
+                                    NativeWindowRetirementAttempt::NativeWindowTerminal
+                                    | NativeWindowRetirementAttempt::BindingDetached,
+                                )) => {
                                     self.settle_native_window_terminal(window_id);
                                     terminal.settle(NativeBoundaryDisposition::DELIVERED);
                                 }

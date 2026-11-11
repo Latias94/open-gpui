@@ -171,6 +171,105 @@ fn settled_native_terminal_accepts_queued_closed_without_error(cx: &mut TestAppC
 }
 
 #[crate::test]
+fn detached_binding_settles_capture_and_late_close_without_os_destruction(cx: &mut TestAppContext) {
+    let errors = TerminalErrorCapture::start();
+    cx.update(|app| app.set_quit_mode(QuitMode::Explicit));
+    let window_id = WindowId::from(7);
+    let ticket = crate::WindowPresentationShutdownTicket::new(window_id, 1);
+    let shutdown = crate::PreparedPlatformPresentationShutdown::new(ticket.clone(), |ticket| {
+        assert!(ticket.acknowledge_quiesced());
+        PlatformPresentationShutdownOutcome::Quiesced
+    });
+    assert_eq!(
+        shutdown.quiesce(),
+        PlatformPresentationShutdownOutcome::Quiesced
+    );
+    cx.app.native_window_retirements.borrow_mut().insert(
+        window_id,
+        NativeWindowRetirementBarrier {
+            state: NativeWindowRetirementState::AwaitingNativeTerminal,
+            presentation_shutdown: None,
+            pending_retirement: None,
+        },
+    );
+    let generation = cx.update(|app| {
+        app.reserve_native_captured_drag_start()
+            .token()
+            .generation()
+    });
+    let completions = Rc::new(RefCell::new(Vec::new()));
+    let (_, original_barrier) = cx.app.reserve_native_captured_drag_release(
+        window_id,
+        generation,
+        Box::new({
+            let completions = completions.clone();
+            move |barrier, terminal, _| completions.borrow_mut().push((barrier, terminal))
+        }),
+    );
+    assert!(shutdown.snapshot().quiesced());
+    assert!(shutdown.ticket().acknowledge_detached());
+    cx.app.settle_native_window_terminal(window_id);
+    cx.run_until_parked();
+    assert!(completions.borrow().is_empty());
+    assert!(!cx.app.pointer_capture_release_barriers_are_clear());
+    assert!(
+        cx.app
+            .native_window_retirements
+            .borrow()
+            .contains_key(&window_id)
+    );
+    cx.app
+        .native_window_retirements
+        .borrow_mut()
+        .get_mut(&window_id)
+        .expect("an early close must retain retirement until the authority is published")
+        .presentation_shutdown = Some(shutdown.clone());
+    cx.app.settle_native_window_terminal(window_id);
+    cx.run_until_parked();
+    assert_eq!(
+        completions.borrow().as_slice(),
+        &[(
+            original_barrier,
+            NativeCapturedDragReleaseTerminal::Released
+        )]
+    );
+    assert!(shutdown.snapshot().detached());
+    assert!(!shutdown.snapshot().native_terminal());
+    assert!(!shutdown.snapshot().protocol_violation());
+    assert!(cx.app.native_window_retirement_barriers_are_clear());
+
+    let (_, late_barrier) = cx.app.reserve_native_captured_drag_release(
+        window_id,
+        generation,
+        Box::new({
+            let completions = completions.clone();
+            move |barrier, terminal, _| completions.borrow_mut().push((barrier, terminal))
+        }),
+    );
+    cx.run_until_parked();
+    assert_eq!(
+        completions.borrow().as_slice(),
+        &[
+            (
+                original_barrier,
+                NativeCapturedDragReleaseTerminal::Released
+            ),
+            (late_barrier, NativeCapturedDragReleaseTerminal::Released),
+        ]
+    );
+    cx.app.enqueue_native_window_event(
+        window_id,
+        crate::app::native_event_ingress::NativeWindowEvent::Closed,
+    );
+    cx.run_until_parked();
+    assert_eq!(completions.borrow().len(), 2);
+    assert!(shutdown.snapshot().detached());
+    assert!(!shutdown.snapshot().native_terminal());
+    assert!(cx.app.pointer_capture_release_barriers_are_clear());
+    assert!(errors.take().is_empty());
+}
+
+#[crate::test]
 fn native_terminal_without_authority_still_reports_an_error(cx: &mut TestAppContext) {
     let errors = TerminalErrorCapture::start();
     let window_id = WindowId::from(7);

@@ -53,13 +53,13 @@ use crate::{
     Global, HitboxId, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem,
     MouseButton, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
     PlatformDisplaySnapshot, PlatformFocusedWindow, PlatformHoveredWindow, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformViewportCapabilities, PlatformWindowCapabilities,
-    PlatformWindowProfile, Point, PointerCaptureHandle, PowerMode, Priority, PromptBuilder,
-    PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
-    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer,
-    SystemNotification, SystemNotificationResponse, Task, TextRenderingMode, TextSystem,
-    ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId,
-    WindowInvalidator, WindowKind, WindowTransientOwner,
+    PlatformKeyboardMapper, PlatformViewportCapabilities, PlatformWindow,
+    PlatformWindowCapabilities, PlatformWindowProfile, Point, PointerCaptureHandle, PowerMode,
+    Priority, PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
+    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
+    Subscription, SvgRenderer, SystemNotification, SystemNotificationResponse, Task,
+    TextRenderingMode, TextSystem, ThermalState, Window, WindowAppearance, WindowButtonLayout,
+    WindowHandle, WindowId, WindowInvalidator, WindowKind, WindowParams, WindowTransientOwner,
     asset_cache::CachedLoad,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
@@ -1829,6 +1829,38 @@ impl App {
         options: crate::WindowOptions,
         build_root_view: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
     ) -> std::result::Result<WindowHandle<V>, WindowOpenError> {
+        let platform = self.platform.clone();
+        self.open_window_with_platform_window(
+            options,
+            move |handle, params, displays| {
+                platform.open_window_with_display_snapshot(handle, params, displays)
+            },
+            build_root_view,
+        )
+    }
+
+    /// Opens a window using a supplied native-window factory and the normal creation transaction.
+    ///
+    /// The factory receives the reserved full window identity, resolved options and exact display
+    /// snapshot. It may attach an application-owned native window through a compatible platform
+    /// adapter. The returned platform window must retain its original native services and settle
+    /// presentation shutdown before releasing those services. Supplying a native window does not
+    /// replace the App's platform, scheduler, text system or creation/rollback authority.
+    ///
+    /// The factory runs once after common option/capability validation and before root creation.
+    /// Creation, root-building and first-presentation failures keep their normal typed stages.
+    /// An adapter must leave an application-owned native window intact on rollback or detachment.
+    /// The factory must not reenter this App or retain an active App borrow.
+    pub fn open_window_with_platform_window<V: 'static + Render>(
+        &mut self,
+        options: crate::WindowOptions,
+        create_platform_window: impl FnOnce(
+            AnyWindowHandle,
+            WindowParams,
+            PlatformDisplaySnapshot,
+        ) -> Result<Box<dyn PlatformWindow>>,
+        build_root_view: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
+    ) -> std::result::Result<WindowHandle<V>, WindowOpenError> {
         self.update(|cx| {
             let mut reservation =
                 window_registry::reserve(cx).map_err(WindowOpenError::from_reservation)?;
@@ -1840,6 +1872,7 @@ impl App {
                 options,
                 interaction_authority,
                 reservation.app_mut(),
+                create_platform_window,
             ) {
                 Ok(window) => {
                     let mut rollback = window_registry::WindowCreationRollback::new(
@@ -3477,6 +3510,8 @@ impl App {
     /// This is later than [`Self::on_window_closed`]: the backend's single-shot
     /// [`crate::PlatformWindow::on_close`] callback has delivered its terminal native `Closed`
     /// event and the logical window is already absent.
+    /// For an application-owned native window this releases GPUI's binding, not the OS window;
+    /// the exact presentation-shutdown snapshot distinguishes detachment from OS destruction.
     pub fn on_window_native_terminal(
         &self,
         on_terminal: impl FnMut(&mut App, WindowId) + 'static,
