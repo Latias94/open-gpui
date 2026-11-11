@@ -429,9 +429,9 @@ jobs:
         if: matrix.name == 'windows'
         run: cargo nextest run --locked -p open-gpui --all-features --lib --test hosted_surfaces -E 'binary(hosted_surfaces) | test(platform::hosted_surface::)' --test-threads=1 --no-fail-fast --no-tests fail
 
-      - name: Test public state locality and subscription retirement
+      - name: Test public state and keyed collection locality
         if: matrix.name == 'windows'
-        run: cargo nextest run --locked -p open-gpui --features test-support --test state_locality --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui --features test-support --test state_locality --test keyed_collections --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test independent hosted surface interfaces
         if: matrix.name == 'windows'

@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-12T01:41:42+08:00
+timestamp: 2026-11-12T02:16:42+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,12 @@ verified_by:
 ---
 
 # Current State
+
+- The [public keyed collection successor](../../verification.md#keyed-variable-height-collection-consumer)
+  qualifies five variable-height ListState consumers, with 10/10 in the combined state/collection
+  selection (`72777591-cc96-4d43-b0c5-17d6b8d5b3f8`). Logical source/filter/key metadata and
+  reconciliation remain O(logical rows), distinct from bounded visible callbacks. No new
+  production framework, native/GPU execution or numerical performance claim follows.
 
 - The [state-locality/compositor research direction](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#state-locality-and-compositor-research-direction)
   distinguishes Entity invalidation and cached View reuse from layout traversal, upload reuse,

@@ -181,6 +181,36 @@ retains the existing lint policy's unwrap warnings in this assertion-only fixtur
 Windows workflow now runs this target explicitly; YAML syntax is checked locally, with no remote
 CI execution claimed. Independent review finds no material issue in the bounded CPU evidence.
 
+## Keyed Variable-Height Collection Consumer
+
+The November 12 successor adds `crates/gpui/tests/keyed_collections.rs`, consuming the original
+`ListState` through public interfaces without a new production collection/cache mechanism.
+The five controls cover 10,000/100,000 logical rows at one fixed viewport, real text wrapping
+and variable row heights, clip/bounds/input agreement, structural insertion/deletion/reversal,
+key-plus-intra-row anchor preservation, offscreen same-key content changes, width/typography
+remeasurement and source/publication-bound pointer/keyboard refusal. Consumer reconciliation
+preserves a surviving key; removal falls forward through the old order, then backward, with
+zero offset. A separate control requires List-row Click exactly on release without an intervening
+frame, retaining the original source/revision/key.
+
+The first compile identifies a missing explicit KeyDownEvent type in the fixture listener;
+the corrected first execution passes 4/4 (`86b24bec-64d3-4e28-a1df-a948fee8be78`). The added
+Click control then passes with the full five (`c0036dcd-ba0d-4521-8744-e12ed4ce2459`). The final
+combined selection passes **10/10** (`72777591-cc96-4d43-b0c5-17d6b8d5b3f8`): five collection
+and five unchanged state-locality controls. Source-level independent review finds no P1/P2 in
+the bounded fixture. Test-platform accepted/nonempty Submitted facts qualify CPU publication;
+they are not native/GPU execution.
+
+The 96px viewport and 16px minimum row recipe bound measured row callbacks at 14 in the selected
+10k/100k cases. Filter/order/identity visits remain separately counted over all logical rows.
+The source, key map, filtered order and ListState retain O(logical rows) data; lifetime/heap-byte,
+latency, upload, GPU and native input budgets remain open. No general O(visible) claim follows.
+Nara's independent native consumer owns its real-source paging, Winit wheel and Host evidence.
+Focused correctness Clippy and workspace formatting pass, with the existing assertion-fixture
+unwrap warning policy retained. Local document links/fragments, YAML/front matter and whitespace
+checks pass. The existing Windows workflow explicitly includes the public target; remote CI is
+unexecuted. Unchanged production owners and unrelated full-framework/native suites are not rerun.
+
 ## External Scene Custody And Physical Attachment Extents
 
 This fork-owned integration successor starts from `5925a34f920563592cd6115e6f97867699f8dae6`.

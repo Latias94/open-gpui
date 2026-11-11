@@ -3857,6 +3857,14 @@ result rejection, and the documented non-View notify versus cached-View behavior
 no Signal runtime or new cache owner. The counters are callback observations; no elapsed-time,
 allocation, upload, GPU or native-platform budget follows.
 
+The [keyed collection successor](../verification.md#keyed-variable-height-collection-consumer)
+adds five ordinary public consumers of the original variable-height ListState, including
+10k/100k logical rows, structural/keyed scroll reconciliation, offscreen size/width/typography
+invalidation, stale input and release-time Click. The final combined state/collection run passes
+10/10 (`72777591-cc96-4d43-b0c5-17d6b8d5b3f8`). Full logical metadata and projection work stay
+explicitly distinct from the bounded visible callbacks. This introduces no framework production
+change, source-adoption credit, numeric performance budget or Nara default selection.
+
 The [standalone logger](../verification.md#standalone-logging-and-tracing) at
 `9e7b9c3a36fb0266ef68ec7ee7280b2eb8646554` and the
 [Window/Win32 successor](../verification.md#window-controls-lazy-inspector-and-win32-dispatch)
