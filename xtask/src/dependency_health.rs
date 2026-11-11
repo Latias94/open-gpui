@@ -13,7 +13,6 @@ const ALLOWED_DUPLICATE_CRATES: &[&str] = &[
     "accesskit_consumer",
     "async-channel",
     "base64",
-    "bindgen",
     "bitflags",
     "block-buffer",
     "block2",
