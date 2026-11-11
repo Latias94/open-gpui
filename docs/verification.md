@@ -96,6 +96,128 @@ atlas and independent shared-device controls do not complete it. Full platform/f
 qualification, Nara R11 and Editor acceptance, separate framework maintenance and its handoff
 remain open; this exit grants none of those gates.
 
+## Supplied Platform Windows And External Win32 Driving
+
+The continuation from `12f9bb50e8e` implements the supplied platform-window factory and neutral
+detachment lifecycle at `6ad133d36622851025eee882d63bb8a47787d524`, then external Win32
+hosting and its ordinary WGPU consumer at `911e628c0e9cd66cf63f5c04e7d46c0d87c67fdd`.
+The factory stays within App's existing creation transaction and distinguishes successful binding
+detachment from actual native-window destruction. Typed failure stages, full WindowId, display snapshot and
+rollback remain authoritative. A Win32 attachment and ordinary external-loop application use
+those owners. This checkpoint covers synchronous native submission; deferred Scene delivery
+and last-submitted interaction remain separate, incomplete Window responsibilities.
+
+The initial affected Core lifecycle run passes 21/21
+(`52998f3e-73b4-4ac2-9cbf-50e4409bc91e`, 1,816 unrelated tests skipped), including existing
+retirement/preparation-panic and windowing controls and the detached shutdown-value tests. This
+source checkpoint precedes the final capture-classification change and its new regression, so
+it is not the final result for that successor. An initial `--locked` metadata refusal identifies
+the ordinary application's new direct Win32/raw-handle dependencies; the root lock adds only
+those existing edges, without changing selected versions.
+
+Independent Core review finds one early-close classification edge: a callback observed before
+presentation preparation publishes its original ticket cannot distinguish OS destruction from
+binding detachment. Pointer-release completion now waits for that authority instead of inferring
+native destruction. A regression withholds the original ticket, verifies the pending barrier,
+then publishes that same detached authority and checks original/late capture release and queued
+close without manufacturing native destruction. Final execution and native qualification follow
+under this section when run; no physical IME/DPI, asynchronous Scene or Nara consumer claim follows.
+
+The next Core/public run executes 27 tests (`8c519f59-f0c0-4c91-840a-dc672b554b0d`): all
+five crate-external factory trajectories and the 21 existing/value lifecycle controls pass, while
+the new detached ordering test fails at `acknowledge_detached`. The held TestWindow close has
+already acknowledged OS destruction internally; delaying its callback cannot make it an attached
+window. The correction isolates the Core ordering test with its original prepared authority and
+unpublished retirement barrier instead of reclassifying that actual TestWindow terminal. The
+native consumer supplies real HWND-detachment evidence separately.
+After that fixture correction, final affected Core/public tests pass 27/27
+(`0f504019-a867-4916-9e37-2edd6627e0b9`, 1,816 unrelated tests skipped). The new early-close
+test retains pointer barriers while the original authority is unpublished and releases both
+original/late capture requests as `Released` after that same detached authority appears. Queued
+close remains idempotent without OS-terminal facts. Bounded Core rereview closes the original
+finding with no remaining P1/P2 in that correction.
+
+The first native production check compiles the Windows library but finds one missing type
+annotation in the ordinary example's KeyDown listener. After supplying the actual event type,
+the normal external-host application runs successfully with no test-support runtime. It creates
+its HWND and message loop, checks changed GPU images, native button/F6/UTF-16 queue routing,
+native/GPUI/renderer geometry after actual resize, and normal quit with original submitted GPU
+prefix 6 awaiting completion. Quiescence completes that prefix before the ticket reports
+`Detached`, with the host HWND alive/enabled and userdata/private messages intact. The host's
+queued `WM_QUIT` marker is preserved and retrieved by the host. During its bounded idle sample,
+111 messages execute and the host blocks for 302.8928 ms. These observations are fixture facts,
+not a fixed performance budget, physical keyboard/IME/DPI qualification or asynchronous Scene proof.
+
+The first native-test build finds a fixture import collision: wildcard platform imports expose
+GPUI's `test` macro, recursively expanding the new `#[test]`. The native-only tests now select
+the built-in test attribute explicitly; no recursion limit is raised. Independent native review
+also identifies two actual ownership edges: an already-detached ticket from another binding must
+not settle the current attachment after its operation was refused, and the initial IME-enabled
+cache must reflect an original null host HIMC. The implementation checks the current exact ticket
+and actual binding terminal, and initializes IME state from the real host association. New native
+controls cover old binding/same-id foreign authority and first focused text association followed
+by restoring the original null HIMC. Their execution is recorded when complete below.
+
+The first affected native selection executes 21 tests
+(`53e6495d-08c3-4f77-a70c-88f75bc1aa7d`): the original 18 controls pass; two new attachment
+tests abort with access violations and the new foreground-load test fails to retrieve its quit
+marker. CDB against the retained executable identifies the actual crash at
+`IUnknown::Drop -> IDirectManipulationManager -> DirectManipulationHandler -> WindowsWindowInner`
+after platform OLE cleanup, while the test deliberately retains its old native inner. Stopping
+Direct Manipulation had left its COM objects resident until that later drop. The handler now
+owns optional native resources and releases them during retryable retirement, outside its
+RefCell borrow, before detachment and OLE cleanup. A retained outer object is then harmless.
+The tests keep those original retained references rather than weakening their lifetime checks.
+
+The quit fixture switches from `PostQuitMessage`'s low-priority synthesized quit request to an
+explicit `PostThreadMessage(WM_QUIT)` marker, matching the ordinary host's queue-custody probe.
+It still forces the foreground task past its budget, then requires that exact marker to remain.
+The correction also passes the missing App context in the new native focus fixture and fixes
+an import for the explicit thread-post call; an intermediate misplaced unused-result edit is
+corrected without suppressing the fallible normal subclass-removal check.
+
+After the resource-retirement and fixture corrections, the new attachment selection passes 3/3
+(`2c2e3b38-6fc0-4cb0-b444-692ba1de9c83`, 315 unrelated tests skipped). Subsequent bounded
+review identifies the same COM-lifetime omission in GPUI-owned HWND destruction. That path now
+quiesces interaction and retires native input resources before destruction, retaining retry
+custody on failure. A real owned-window test retains the old inner through full OLE shutdown
+and checks resources are already released before dropping it. Reattachment generation routing
+also compares the old and current message against the live original App callback, before its
+shutdown authority is claimed. The final affected selection below must qualify those additions.
+That final native selection passes 22/22 (`a3220a96-8641-444c-b61d-ea5684193feb`, 297 unrelated
+tests skipped). It includes the four new host/attachment/OLE controls and all 18 previous affected
+native/registry/cache/text/input/retirement controls. The original failed 21-test aggregate remains
+recorded above; it is superseded for these corrected seams by this actual execution, not by a
+fixture assertion removal. The preconnected-observer accessibility fixture from the preceding
+unit remains outside this selection with its original baseline evidence.
+
+The independent feature-free factory consumer passes 1/1
+(`656b3f5a-3b09-4dd5-ba91-764b272bad84`) with its own locked dependency graph. It exercises
+public signatures and display-snapshot values; its typed attachment closure is deliberately
+unexecuted. The optional bench-support configuration passes 2/2
+(`aa0481f2-e6c7-4e96-8767-640a7e6d3587`), including an ordinary hostless App's actual
+factory refusal and clean retry. Neither fixture substitutes for the real native host trajectory.
+
+The final bounded native review closes the Direct Manipulation lifetime finding after checking
+the owned-HWND path's early retirement, retained retry custody and actual retained-inner
+regression. Together with the earlier Core and native authority/IME corrections, no P1/P2
+remains in the reviewed changes. Review closure does not broaden platform or input claims.
+
+Final affected all-target/all-feature correctness Clippy passes for Core, Windows and the ordinary
+WGPU native application. Both ordinary application smoke modes pass on the final source without
+test/bench support. External-host mode again changes images, routes native button/F6/UTF-16
+messages, checks actual resize and quiesces original submitted prefix 6 before typed detachment.
+The host HWND stays enabled; userdata, private messages and the host quit marker survive. Its
+bounded idle observation is 121 messages / 298.8977 ms blocked, a fixture observation rather than
+a performance budget. The original GPUI-owned mode submits its changed image and quiesces prefix 3.
+The checks use Rust 1.95.0 on Windows 11 with one Cargo job and the shared target. Existing import,
+document-link, release-document and public API checks pass; TOML/lockfiles and workflow YAML parse.
+The new CI steps are configured locally, with no remote execution or publication claim.
+Locked production Core/WGPU/Web compilation for `wasm32-unknown-unknown` passes without default
+features, qualifying the changed shared types' compilation rather than browser hosting behavior.
+Root and independent-consumer formatting checks pass. No new compiler-floor or foreign native
+execution claim follows from this Windows-owned unit.
+
 ## Retained GPU Images And Supplied Win32 Renderers
 
 The November 11 continuation from `ba43dd8d182` implements the next two external-host

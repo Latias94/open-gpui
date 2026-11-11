@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-11T14:22:00+08:00
+timestamp: 2026-11-11T15:54:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,23 @@ verified_by:
 ---
 
 # Current State
+
+- The supplied platform-window and synchronous external-Win32 composition is implemented at
+  `6ad133d3662` and `911e628c0e9`, continuing from `12f9bb50e8e`.
+  The [qualification](../../verification.md#supplied-platform-windows-and-external-win32-driving)
+  records final Core/public 27/27 and affected native 22/22, including exact detached authority,
+  real HWND reattachment/foreign-ticket refusal, null-HIMC first text activation, host quit
+  custody and retained native input resources through OLE shutdown. The ordinary external
+  application passes its final real GPU/input/resize/close trajectory, preserving host
+  userdata, enabled HWND and its quit marker; the original GPUI-owned smoke also passes.
+  Independent consumers pass 1/1 feature-free and 2/2 with ordinary headless execution.
+  Affected correctness Clippy and existing static/document checks pass. Bounded reviews close
+  the authority/IME/COM findings. The record retains actual native aborts, CDB diagnosis and fixes.
+  Production Core/WGPU/Web wasm compilation and root/consumer formatting checks pass; browser
+  hosting is not qualified by compilation.
+  Entry currently requires a hidden non-child normal/floating top-level window and synchronous
+  submit/present. Delayed Scene/last-submitted interaction, broader logical/child surface
+  hosting, physical IME/DPI, numeric costs and the real Nara Host/View remain incomplete.
 
 - Retained GPU-image import and supplied Win32 renderers are implemented at `a5d7dea101c`
   and `f0a51dd041b`, continuing from `ba43dd8d182`.
@@ -41,8 +58,8 @@ verified_by:
   native retention controls pass 6/6. The new imported-image browser trajectory is unexecuted.
   The separately locked production Web smoke composition also compiles after its direct
   dependency edge is reconciled without version changes.
-  External HWND/loop driving, delayed Scene/admission publication, physical IME/DPI and
-  the actual Nara consumer remain incomplete.
+  The later synchronous external HWND/loop checkpoint above supersedes that missing prerequisite;
+  delayed Scene/admission publication, physical IME/DPI and the Nara consumer remain incomplete.
 
 - Application-owned GPU recording is implemented at
   `0259c88f9deb26e4caa026ebd39be179d19a3ae5`. The existing renderer stages per-scene
@@ -1296,10 +1313,11 @@ historical scope and is not current branch or CI qualification.
 
 - Complete the
   [external WGPU application workflow](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#external-wgpu-application-hosting-successor)
-  beyond its qualified recorder, imported-image and supplied-native-renderer prerequisites.
-  Qualify the ordinary application without test-support, then implement original-Window
-  submission/admission, external HWND/loop, production input/frame driving and truthful close
-  handling. Preserve ordinary standalone applications; no Nara dependency enters the framework.
+  beyond its qualified recorder, imported-image, supplied-renderer and synchronous external
+  HWND/loop prerequisites. Implement original-Window delayed submission/admission and
+  last-submitted interaction custody. Qualify logical roots independently of native windows
+  through a named consumer. Preserve ordinary standalone applications and complete component
+  behavior/skin reuse; no Nara dependency enters the framework.
 - Follow the [maintained-baseline engine gate](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#maintained-baseline-before-engine-adaptation)
   with a real Nara GPU/Host/View consumer before separate framework-maintenance handoff.
   The [bounded source exit](../../verification.md#fixed-cycle-source-adoption-exit) records

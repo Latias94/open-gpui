@@ -145,6 +145,33 @@ those effects before synchronous presentation. Submission tickets alone do not p
 submitted interaction tree. The external-host successor must close that distinction, including
 first hidden presentation and late acknowledgements during shutdown.
 
+### Application-Owned Native Windows
+
+A platform-window factory participates in App's original reservation, resolved display snapshot,
+root construction, first presentation and rollback transaction. Supplying an application-owned
+native window changes the native attachment owner, not the full WindowId, scheduler or creation
+authority. The adapter retains the native owner until renderer quiescence and binding retirement;
+failed creation and successful detach leave the application's window intact.
+
+Native binding termination has two distinct facts: actual OS-window destruction and successful
+detachment after quiescence. A detached shutdown ticket must not report native destruction or
+retroactively change a terminal-before-quiescence violation. Pending capture/dependency work
+waits for the original prepared authority before classifying an early close. Detachment releases
+only the original binding's capture and services; it grants no authority over a later attachment
+which happens to use the same HWND.
+
+An externally driven Win32 platform uses the existing queue, dispatcher and native service owner.
+The application translates and dispatches messages, retains control of its own userdata, quit and
+process lifetime, and continues pumping through framework shutdown. The adapter may use a
+generation-bound subclass; it must not overwrite host userdata, consume/post host `WM_QUIT`,
+disable the host window as a detach policy or destroy it during GPUI retirement. Renderer
+quiescence precedes subclass/service removal, which precedes binding-terminal publication.
+
+Synchronous submission through this composition remains distinct from delayed Scene delivery.
+The latter still requires last-submitted interaction, text/accessibility publication and pending
+candidate custody in the original Window. An externally owned HWND or a detached receipt does
+not establish those asynchronous frame guarantees.
+
 ## Alternatives Considered
 
 ### Keep accepted-frame admission

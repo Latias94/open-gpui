@@ -117,6 +117,14 @@ the fixed Zed target or retroactively describe these extensions as official impl
 Ordinary DirectX remains a control. An application-owned HWND/loop, delayed Scene/submission
 publication and the actual Nara Host/View consumer retain separate incomplete gates in the plan.
 
+The following [supplied-window/external-Win32 unit](../verification.md#supplied-platform-windows-and-external-win32-driving)
+extends those fork-owned boundaries with App's explicit platform-window factory and a synchronous
+application-created HWND/loop composition. Exact binding detachment remains distinct from OS
+destruction, and native service/resource cleanup uses the original retirement authority. The
+unit's actual results and failures remain in its qualification; delayed Scene/input publication,
+broader surface hosting and the Nara consumer keep separate gates. These are framework extensions
+after the fixed-source audit, not additional official source-adoption credit.
+
 ### Fixed Revisions And Provenance
 
 The repository [upstream-sync skill](../../.agents/skills/open-gpui-upstream-sync/SKILL.md)

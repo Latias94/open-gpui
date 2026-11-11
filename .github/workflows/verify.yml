@@ -403,6 +403,22 @@ jobs:
         if: matrix.name == 'windows'
         run: cargo run --locked -p open-gpui-wgpu-native --no-default-features -- --smoke
 
+      - name: Test supplied platform-window creation and detachment
+        if: matrix.name == 'windows'
+        run: |
+          cargo nextest run --locked -p open-gpui --all-features --lib --test platform_window_factory -E 'test(platform::presentation_shutdown_tests::) | test(app::cell::native_terminal_tests::) | binary(platform_window_factory)' --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(native_attachment_) | test(native_external_host_)' --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Run ordinary external Win32 WGPU host
+        if: matrix.name == 'windows'
+        run: cargo run --locked -p open-gpui-wgpu-native --no-default-features -- --external-host --smoke
+
+      - name: Test independent platform-window factory
+        if: matrix.name == 'windows'
+        run: |
+          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test platform_window_factory --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --test platform_window_factory --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
       - name: Test independent application-owned WGPU atlas
         if: matrix.name == 'windows'
         run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features wgpu-renderer --test wgpu_atlas --target-dir target --test-threads=1 --no-fail-fast --no-tests fail

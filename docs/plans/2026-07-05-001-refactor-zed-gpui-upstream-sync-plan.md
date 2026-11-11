@@ -3693,6 +3693,44 @@ separate baseline evidence. These implement the image and synchronous renderer-s
 prerequisites, preserving GPUI-owned HWNDs/loop. Application-owned HWND/loop driving, delayed
 Scene/input publication and the real Nara consumer remain the next complete responsibilities.
 
+The next production checkpoint uses an application-created Win32 window and application-owned
+message loop with synchronous renderer submission. App reserves the original full WindowId and
+passes its resolved `WindowParams` and exact display snapshot to an explicit platform-window
+factory inside the same creation/rollback transaction. The ordinary open path delegates to the
+existing platform factory. Do not use a global or next-window attachment slot, bypass reservation
+validation, lose typed creation failure stages, or make the root builder own native retirement.
+
+The Windows adapter attaches its existing native services without replacing host userdata or
+claiming ownership of HWND destruction. Host message translation/dispatch, foreground wakeups,
+close policy and bounded service progress remain explicit. Detachment first revokes input and
+quiesces the original GPU prefix, then unregisters the exact attachment and restores the host
+message chain; the host remains alive and can continue or reattach. Failed initialization and
+quiescence must leave the host and unrelated windows intact. The ordinary supplied-renderer
+composition stays qualified through the same native owners.
+
+The non-Nara application must exercise real controls/text, host-produced GPU images, native
+geometry and input, refusal and successful detach with in-flight resources, including preserved
+host userdata/message handling and application control after GPUI shutdown. This qualifies the
+synchronous external-window/loop checkpoint only. The later asynchronous Scene path still needs
+one original pending-candidate transaction and last-submitted interaction/publication custody;
+it cannot reuse the synchronous checkpoint as evidence of delayed acknowledgement.
+
+Further reuse must distinguish a logical UI root/surface from an OS window. Screen regions,
+offscreen targets and multiple roots in one application must not require an extra native HWND
+merely to obtain layout, controls and text. Qualify that capability through a named ordinary
+consumer after the hosting prerequisites; do not simulate native submission with TestPlatform
+or publish a speculative second Window state machine. Keep coherent state, layout/text caches,
+hit testing and semantics under one executor per root. Component behavior/skin separation is
+an independent module interface and does not by itself establish this runtime capability.
+
+The synchronous checkpoint is implemented at `6ad133d3662` (App factory/detachment) and
+`911e628c0e9` (native adapter/ordinary application). Its
+[qualification](../verification.md#supplied-platform-windows-and-external-win32-driving)
+records final Core/public 27/27, affected native 22/22, independent consumers 1/1 and 2/2,
+and both real-GPU ordinary host smoke modes. Preserve the actual failed fixtures, native COM
+lifetime diagnosis and owning corrections in that record. Delayed Scene/last-submitted
+publication, logical roots, physical IME/DPI, numeric budgets and the Nara consumer remain open.
+
 The [standalone logger](../verification.md#standalone-logging-and-tracing) at
 `9e7b9c3a36fb0266ef68ec7ee7280b2eb8646554` and the
 [Window/Win32 successor](../verification.md#window-controls-lazy-inspector-and-win32-dispatch)

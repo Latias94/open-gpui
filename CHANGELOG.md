@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- `App::open_window_with_platform_window` supplies an explicit native factory inside the normal reserved-window creation and rollback transaction. `WindowsPlatform::new_external_host` and `attach_window` support an application-created hidden top-level Win32 window and application-owned message loop with synchronous renderer submission; the host retains userdata, quit and native-window lifetime. Breaking: custom exhaustive matches on `PlatformNativeWindowRetirementOutcome` must handle `BindingDetached`. Shutdown snapshots distinguish successful detachment from actual OS destruction.
+
 - `WgpuAtlas::import_image` registers an application-owned GPU texture subresource without copying its texels. `Window::paint_image_texture` composes its retained `ImageTexture` with normal controls, clips and transforms. Mip/layer/region, filtering, transfer and sampled-alpha conventions are explicit; recording receipts retain the original host allocation through GPU completion, including atlas reset. This does not provide a complete external-host driver or linear-light UI composition.
 
 - `WindowsPlatform::new_with_renderer` accepts application-supplied synchronous renderers and text services while retaining the existing Win32 window, input/IME and retirement implementation. The default DirectX renderer remains available. This mode does not create Direct3D devices, attach application-owned HWNDs, replace the native loop or acknowledge delayed submissions.

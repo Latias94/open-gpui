@@ -2,14 +2,16 @@
 
 Open-GPUI can reuse an application's existing WGPU device and encode UI work in the application's
 command encoder. GPU recording, imported images, native renderer selection and external event-loop
-hosting are separate capabilities. The complete external window/loop driver remains in development.
+hosting are separate capabilities. Application-owned Win32 hosting supports synchronous renderer
+submission; deferred Scene delivery and last-submitted interaction remain in development.
 
 | Capability | Interface | Owner |
 | --- | --- | --- |
 | Scene recording | `WgpuSceneRenderer` | Application supplies adapter, enabled device, queue, target and encoder; submits and presents. |
 | Imported GPU image | `WgpuAtlas::import_image`, `Window::paint_image_texture` | Application orders producer work and retains its allocation; framework preserves UI ordering and leases. |
 | Win32 renderer selection | `WindowsPlatform::new_with_renderer` | Application supplies a synchronous renderer and text service; GPUI owns HWND, message loop, input/IME and retirement. |
-| External HWND/event loop and delayed Scene delivery | Not yet a supported complete driver | Requires the original Window's frame and interaction lifecycle to support that composition. |
+| External Win32 HWND/event loop | `new_external_host`, `attach_window`, `pretranslate_message` | Application retains its native window/loop; adapter supplies native UI services and detaches after synchronous submission quiesces. See scoped qualification. |
+| Delayed Scene delivery | Not yet a supported complete driver | Requires last-submitted interaction/publication custody in the original Window lifecycle. |
 
 Use the workspace's exact WGPU source and compatible package requirements. A matching Rust type is
 necessary; supplying the same original device is an additional requirement. Never reinterpret
@@ -150,9 +152,66 @@ waits for the changed-image submission, then requests normal application shutdow
 the original quiesced GPU prefix; it does not replace pixel or physical input/IME qualification.
 
 This mode still uses GPUI-created windows, its native loop and ordinary synchronous candidate
-acceptance. It does not attach an application HWND or preserve a last-submitted interaction tree
-across asynchronous Scene delivery. The pending external-host work must resolve those contracts
-in the original Window, rather than create a parallel state machine.
+acceptance. Application-owned HWNDs use the separate mode below. Preserving a last-submitted
+interaction tree across asynchronous Scene delivery still requires work in the original Window,
+rather than a parallel state machine.
+
+## Drive An Application-Owned Win32 Window
+
+Construct `WindowsPlatform::new_external_host(text_system, renderer_factory)` and start
+`Application::with_platform(platform.clone()).run_embedded(...)`. Keep the returned
+`ApplicationHandle` and platform alive while the host message loop runs. This platform starts
+ordinary native services and launch but does not enter its own blocking loop or terminate the
+host process. It reuses the existing foreground dispatcher and native Window implementation.
+
+Inside launch, use the normal App creation transaction with a supplied platform-window factory:
+
+```rust,ignore
+let window = cx.open_window_with_platform_window(
+    options,
+    move |handle, params, displays| {
+        platform.attach_window(handle, params, displays, host_window.clone())
+    },
+    |window, cx| cx.new(|cx| Root::new(window, cx)),
+)?;
+```
+
+`host_window` implements `raw_window_handle::HasWindowHandle` and retains the actual native
+window. An `Rc` or `Arc` clone is suitable when it supplies that implementation. The adapter
+checks the actual Win32 handle, process/thread ownership and exact display snapshot. Its current
+entry accepts a hidden, non-child normal/floating top-level window on the platform's UI thread,
+without transient/provisional ownership, and requires input styles to match the supplied policy.
+The hidden first presentation remains in App's original creation/rollback transaction. Supplying
+an already-visible window or arbitrary child surface needs further capability work.
+
+The host owns its WndProc, userdata and non-client geometry. GPUI attaches native input/IME,
+accessibility and frame services through a generation-bound subclass. Call
+`platform.pretranslate_message(&message)` before `TranslateMessage`/`DispatchMessage`; consume
+that message only when it returns `true`. Native dispatch must happen outside an active
+`ApplicationHandle::update` borrow. The host continues to handle other messages, including its
+private messages and `WM_QUIT`. GPUI does not remove or post that quit message in external mode.
+
+Request ordinary GPUI quit or close, then keep pumping until `platform.is_shutdown_complete()`.
+The original renderer must quiesce its submitted GPU prefix before the adapter removes its
+services/subclass and publishes binding closure. Failed quiescence retains that original
+authority for retry. `WindowPresentationShutdownSnapshot::detached()` describes the successful
+binding release; `native_terminal()` remains reserved for actual OS destruction. The host HWND
+remains alive and enabled, with its userdata and original IME association restored. Only the host
+then chooses to destroy its native window or continue using it. Destroying the HWND prematurely
+can violate the renderer's shutdown ordering and is not successful detachment.
+
+Run the ordinary application in this mode:
+
+```text
+cargo run --locked -p open-gpui-wgpu-native -- --external-host
+cargo run --locked -p open-gpui-wgpu-native -- --external-host --smoke
+```
+
+The [consumer guide](../examples/wgpu-native/README.md) describes its actual message, geometry,
+resource and shutdown controls. Queue-driven UTF-16/key checks do not qualify physical IME or
+monitor/DPI transitions. This mode still submits synchronously; it does not provide asynchronous
+Scene export, submission acknowledgement or a last-submitted interaction tree across deferred
+encoding. It also does not establish Nara Host/View or authored game-UI acceptance.
 
 See [the executable recording consumer](../crates/gpui_wgpu/tests/external_scene.rs),
 [the native supplied-renderer trajectory](../crates/gpui_windows/src/native_custom_renderer_tests.rs),

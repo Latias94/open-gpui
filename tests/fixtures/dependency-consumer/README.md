@@ -2124,3 +2124,37 @@ These commands are verification instructions, not execution results. Headless co
 not qualify DOM textarea/beforeinput/composition behavior, actual software keyboards, browser
 visual-viewport/safe-area sampling, native IME presentation, GPU submission or an engine Host/View
 integration. Those claims remain with their backend and product qualification owners.
+
+## Ordinary platform-window factory boundary
+
+The feature-free `platform_window_factory` target consumes
+`App::open_window_with_platform_window` with its full reserved `AnyWindowHandle`, resolved
+`WindowParams`, `PlatformDisplaySnapshot`, owned single-use factory and typed `WindowOpenError`.
+Its signature closures are explicitly unexecuted. Only display-publication value checks execute
+in that configuration; no App or platform window is constructed.
+
+With `bench-support`, an ordinary embedded headless App executes a deliberately unsupported
+attachment factory. The test checks its original typed error, `NativeCreateOrMap`, skipped root
+construction, reservation cleanup and a subsequent ordinary window with a different full identity.
+Neither configuration enables `test-support` or supplies a native host adapter.
+
+The separate crate-external `crates/gpui/tests/platform_window_factory.rs` target also uses the
+existing `bench-support` platform constructor and an ordinary App, explicitly checked to have
+ordinary executors. TestPlatform owns its Scene-producing windows. Its bounded runtime cases
+cover factory arguments and ordering, root/render/submission before return, ordinary updates
+and pointer hit routing, factory error preservation, root panic/close and first-presentation
+refusal rollback, original TestWindow termination, retry identity, and owner/kind preflight
+before the factory. Configured TestPlatform `Submitted` facts and the refusing CPU renderer
+do not qualify GPU execution,
+borrowed HWND ownership, native input/IME services or an external event loop.
+
+Verification instructions, not execution results:
+
+```text
+cargo nextest run --locked -p open-gpui --no-default-features --features bench-support --test platform_window_factory --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test platform_window_factory --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --test platform_window_factory --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+Run these configurations serially with `CARGO_BUILD_JOBS=1` and the shared target directory.
+Native attachment and complete application-hosting qualification remain with their own consumers.
