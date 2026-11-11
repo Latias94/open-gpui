@@ -106,6 +106,16 @@ composition stays in Nara; a framework correction motivated by that consumer nee
 Open-GPUI regression. The existing source-consumption and renderer tests do not yet qualify that
 engine boundary or complete the handoff.
 
+The November 11 owner clarification keeps Open-GPUI independently useful and requires a layered
+comparison before selecting the first engine composition. Compare a GPUI-hosted Editor with
+retained engine-viewport import against an engine-hosted GPUI adapter. Window/event-loop hosting,
+GPU source/device sharing, renderer recording and ordered viewport sampling are separate choices.
+The external-encoder implementation below is a candidate reusable module; it does not select the
+native owner or require every Nara control to enter the engine render graph. Nara owns its optional
+integration and graph placement; no engine dependency, public engine graph or universal widget
+description enters the standalone framework. Existing component modules also precede any decision
+to add a second behavior library. The engine's layered research owns that comparison.
+
 The November 9 bounded source check identifies concrete adapter work: WgpuContext's private
 construction installs device-wide callbacks, WgpuRenderer's private record operation submits
 its own encoder, and WindowsWindowInner constructs a concrete DirectXRenderer. Public Arc
@@ -3574,6 +3584,42 @@ Implementation `8ff031e95f299a284738c722aa43e6b918fc5835` passes the complete af
 failures and their pre-input/focus reproduction; no suppression assertion is removed.
 
 ## Maintained Baseline Before Engine Adaptation
+
+### Fixed-Cycle Source Adoption Exit
+
+The bounded final review at `424a3a0f7c2e71f6ce5a933de00138919c50893d` finds no remaining
+undisposed framework mechanisms in the recorded inventory against fixed Zed
+`635026fabc38440fce5e1767d125026a17b12012` and the content-verified import reconstruction
+`6e9465a4288c332208643892e23b9d35d7be5c79`. This closes that source-adoption phase. It does
+not establish exact monorepo ancestry, complete macro/API parity or a final all-platform
+aggregate pass. Existing unit records own deliberate fork adaptations and actual qualification.
+The declared compiler floor is Rust 1.93; Taffy is 0.15 and WGPU retains the exact official
+Git source recorded in the candidate queue. Historical aggregate failures, foreign native
+execution, replacement-device/DPI/dual-source evidence and numerical costs remain explicit.
+
+### Shared-Device Scene Recording Prerequisite
+
+Begin the real engine consumer from the existing WGPU scene/pipeline/atlas owner. Expose a
+surface-independent renderer constructed from the host's existing adapter, device and queue.
+It creates no device, installs no global device callbacks, acquires no surface and performs
+no queue submission, presentation or event-loop work. Recording targets a validated complete
+single-layer, single-sample 2D texture and supports explicit Clear or Load.
+
+The existing renderer uploads reusable storage through queue writes. Merely exposing its
+private record function would let two recorded scenes overwrite one another before the host's
+first submit. Queue per-scene instance, clip and uniform uploads in the host's encoder before
+their draws, including complete path passes. Preserve storage and packed transports for the
+existing backends; the new native recording path uses ordinary storage. Prepare required atlas
+instances and retain their exact lease in the returned recording until the host submission
+completes. A recording is not a native submission or presentation receipt. A failed recording
+requires the caller to discard the encoder; target/schema rejection happens before recording.
+
+An ordinary public GPU consumer must record distinct GPUI scenes into host-owned targets
+before one host-owned submit, preserve preexisting pixels under Load, exercise clips/path/image
+data and retained resources, and recover from an invalid target. This qualifies the reusable
+recording prerequisite, not the subsequent Nara View or input mapping. Align concrete WGPU
+source identity through that consumer before freezing an engine dependency choice; retain one
+device/encoder/submission owner and keep Nara's immutable outputs and original retirement.
 
 The [standalone logger](../verification.md#standalone-logging-and-tracing) at
 `9e7b9c3a36fb0266ef68ec7ee7280b2eb8646554` and the

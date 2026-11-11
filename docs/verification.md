@@ -37,12 +37,73 @@ The gate runs:
 On Windows, `xtask verify` sets `CARGO_BUILD_JOBS=1` only on the two DevTools all-features child
 processes. It does not mutate the parent shell environment.
 
+## Fixed-Cycle Source-Adoption Exit
+
+On November 11, the bounded disposition audit reconciles the concrete named framework mechanisms
+in the [candidate inventory](imports/zed-gpui-upstream-sync-candidates.md) and its owning plan at
+the following immutable source checkpoint:
+
+| Input | Fixed identity and scope |
+| --- | --- |
+| Upstream target | Zed `635026fabc38440fce5e1767d125026a17b12012`; the advancing upstream HEAD is outside this cycle. |
+| Content-verified import anchor | Zed `6e9465a4288c332208643892e23b9d35d7be5c79`, reconstructed against Open GPUI import `c9571c486612f1bd9194faa028709e89e3f58b7e`. This is a content anchor; the exact original monorepo checkout remains unknown. |
+| Audited framework checkpoint | Open GPUI `424a3a0f7c2e71f6ce5a933de00138919c50893d`, after the final input/focus and Wayland successors. This record adds no Rust implementation qualification to that checkpoint. |
+| Declared compiler floor | Rust 1.93; actual Windows compiler checks retain their recorded affected-package and consumer scope. The fixed target's Rust 1.98.1 is not this fork's compiler contract. |
+| WGPU and Naga | Official gfx-rs Git source `https://github.com/gfx-rs/wgpu`, revision `cddb2f5d80dc0009b2ef6767635140cacf90a007`, resolved WGPU 30.0.0 in the root and ordinary consumer. Registry WGPU 30.0.1 is a distinct Rust type identity. |
+| Taffy | crates.io `taffy` 0.15.0 in both root and ordinary-consumer lockfiles (`registry+https://github.com/rust-lang/crates.io-index`). GPUI permits compatible `0.15` patches; the ordinary consumer selects `=0.15.0`. |
+
+All named source findings in that bounded inventory have an implementation, equivalent,
+superseding successor or explicit exclusion disposition. CoreText family identity and first
+nonempty-run size are present in the shared Apple owner; fixed-tree `git show` comparison resolves
+the stale text row. The later benchmark/report, View/accessibility, logging/Window/Win32 and
+input/focus owners supersede their earlier queued narratives. This closes bounded source adoption,
+without asserting exhaustive file, macro or public API parity.
+
+The final records retain actual fork-seam evidence: [logging](#standalone-logging-and-tracing)
+27/27 and ordinary hosts 2/2 and 3/3; [Window/Win32](#window-controls-lazy-inspector-and-win32-dispatch)
+53/53 and final Inspector Gallery 2/2; [Wayland](#wayland-inactive-window-ime) 13/13;
+[input/focus](#input-priority-and-focus-lifetime) and [hover readmission](#presentation-hover-readmission)
+113/113 in each profiling mode, actual Windows input/retirement 3/3, profiler reconstruction 1/1,
+and ordinary consumers 1/1 and 2/2. Earlier owner, independent-consumer, compiler and dependency
+results keep their original revisions and scope. This disposition audit runs no Cargo, formatting
+or new runtime cohort and claims no new complete aggregate pass.
+
+Retained differences include package/dependency extraction, the self-contained `util_macros::perf`
+adaptation, and qualified AppCell, accepted-candidate, geometry and exact-resource-lifetime
+contracts. Zed editor/product consumers, GPL application integrations and the unselected iOS
+backend stay excluded; shared mobile substrate does not select that backend. Source adoption
+does not supply unsupported macro/API combinations, general bidi/caret or fallback-policy parity.
+
+The following qualifications remain open under their existing owners:
+
+- Native Apple Metal/CoreText/AppKit/pasteboard/Keychain and other foreign-platform, physical
+  IME/input, compositor, notification and browser-worker execution retain their recorded limits.
+  Later Apple compilation supersedes earlier build-blocked scope, not unexecuted native tests.
+- [Atlas/renderer](#shared-atlas-ownership-and-retained-renderer-bindings) replacement-Device,
+  fractional/dynamic DPI and subpixel execution; [HTTP/download](#http-deadlines-release-downloads-and-pax-archives)
+  active Task-drop cancellation and actual TLS fallback; journal publisher-tail/backlog retirement;
+  and actual Tracy/browser performance capture remain distinct from source implementation.
+- Historical Windows foreground/activation/capture and other failed aggregates, and the default
+  WSLg thread-exit crash, retain their recorded unresolved causes. Focused or later successes do
+  not erase those histories or establish a final all-green native/integration gate.
+- Numerical overhead, frame/input timing, energy and resource-cost budgets remain unmeasured
+  beyond their explicitly recorded observations. Functional benchmark execution is not a budget.
+
+The next prerequisite is the actual
+[Nara GPU/Host/View consumer](plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#maintained-baseline-before-engine-adaptation),
+with its consumed framework revision and resolved GPU source identity. Existing embedded-App,
+atlas and independent shared-device controls do not complete it. Full platform/framework
+qualification, Nara R11 and Editor acceptance, separate framework maintenance and its handoff
+remain open; this exit grants none of those gates.
+
 ## Independent Dependency Consumer
 
 The separately locked [dependency consumer](../tests/fixtures/dependency-consumer/README.md)
 compiles the public framework, native platform, components and docking together with application-
-selected Taffy 0.15.0 and WGPU 30.0.1. Its optional `wgpu-renderer` feature also compiles the actual
-WGPU renderer under that selected patch. On macOS it additionally selects Core Foundation 0.10.1.
+selected Taffy 0.15.0 and WGPU 30.0.0 from the official pinned Git source recorded in the
+[fixed-cycle exit](#fixed-cycle-source-adoption-exit). Its optional `wgpu-renderer` feature also
+compiles the actual WGPU renderer under that source. On macOS it additionally selects Core
+Foundation 0.10.1.
 The library accepts compatible versions; the application and workspace lockfiles retain their own
 resolved versions.
 

@@ -103,6 +103,13 @@ successors below now have executed scope in the
 Those initial units do not exhaust the framework differences. Do not overwrite framework or
 docking files from the upstream tree.
 
+The November 11 [fixed-cycle exit](../verification.md#fixed-cycle-source-adoption-exit)
+reconciles the named source-adoption dispositions at Open GPUI
+`424a3a0f7c2e71f6ce5a933de00138919c50893d`. Read earlier queued findings with their
+implemented successors and explicit exclusions below. This bounded source disposition does not
+grant complete macro/API parity, full platform qualification, Nara R11 or consumer acceptance,
+or a framework-maintenance handoff.
+
 ### Fixed Revisions And Provenance
 
 The repository [upstream-sync skill](../../.agents/skills/open-gpui-upstream-sync/SKILL.md)
@@ -188,8 +195,9 @@ these equivalences instead of reapplying their July candidates.
 ### Source-Confirmed Follow-Ups Beyond The Initial Units
 
 These rows come from the fixed-target source diff. Implemented successors link their executed
-qualification; the remaining rows are queued reconciliation work. This is not an exhaustive
-disposition of the 364 commits.
+qualification; later platform and API owners below resolve the broader source findings. The
+fixed-cycle exit records their bounded disposition without claiming an exhaustive per-commit or
+API-parity audit of the 364 commits.
 
 | Owning area | Target evidence and current fork difference | Required reconciliation |
 | --- | --- | --- |
@@ -210,7 +218,7 @@ disposition of the 364 commits.
 | Implemented: animation controls and clock | Fixed-target `elements/animation.rs` supplies reduced motion, synchronized repeats, per-animation frame limits and executor time through `d06ebb7c03`, `4ed3738c40`, `dd04a229dd` and `99e70ee4a0`. Local `4ed461f2b591d6e44d84abc742094740fbd607af` replaces wall-clock progression and unconditional frame requests with the complete non-Spring controls, App shared epoch and image reduced-motion behavior. | The [qualification](../verification.md#generic-animation-controls-and-clock) records all five official tests, focused 26, final image 3, actual native Submitted/pixels/retirement 1, complete framework/public/Gallery 2,138, components 2,966, disabled Core/public animation 1,310 and independent enabled/disabled 68/52 passing. Seven aggregate skips retain separate scope. Reproduced rejected-first-mount timers and App-borrow notification require bounded fork adaptations. Locked checks, correctness Clippy, actual Windows Rust 1.93, production/shared-memory wasm, formatting and static gates pass. Spring, foreign execution, numerical costs and actual engine integration remain separate. |
 | Implemented: stateful Spring | Official `8b1497dbd22fb06f5838a7c0b84a1e54fafa71bc`, with executor-clock correction, supplies typed targets/playback and Element-ID state through `with_spring` at `ecbbfa361ae4489b2de4121c5f0ca8b2a1d7aebb`. The existing motion crate owns the single pure solver, reexported by GPUI; duplicate fork damping formulas and `MotionSpringPhysics` are removed. | The [qualification](../verification.md#official-spring-and-shared-domain-sampling) preserves all official cases, complete framework/components 2,171/2,974, final motion 94, affected paths 43, actual native 1, disabled Core/public 1,340 and final independent Spring 6/6 in both profiler selections. Earlier broader consumers pass 74/58 at their recorded checkpoint. Executed numeric/candidate failures justify bounded fork adaptations; App reduced motion remains an adapter floor. Locked checks, expanded correctness Clippy, actual Windows Rust 1.93, production/shared-memory wasm, doctests, formatting and static gates pass; all thirteen lanes close. Numeric costs, foreign execution, remaining Core mechanisms and actual engine integration retain separate scope. |
 | Implemented: system notifications | Official `de827bce2ff1cbb40040bea0ef57c8ac56afd726` supplies Core values, App/Platform identity/show/dismiss/response APIs, TestPlatform observation/simulation, native transports and the ordinary example at local `26639a9715aff09ffbc61b92af45014728f02f94`. | The [qualification](../verification.md#system-notifications-and-ordered-app-responses) preserves all four official tests, lazy initialization and platform limits through existing ordered App updates and handler replacement. Windows transport retires with its native owner. Corrected Core/public 12, Windows 11 including actual Submitted pixels/retirement, complete framework/public/Gallery 2,194, independent enabled 77, ordinary disabled notification 3 and disabled Core/public notification 12 pass. Locked checks, expanded correctness Clippy, actual Windows Rust 1.93, production/shared-memory/independent-smoke wasm and formatting pass. Actual OS notification delivery, foreign native execution, numeric costs and complete refresh remain separate scope. |
-| Platform closure | Target macOS shares `gpui_apple` and uses `objc2`; Linux gains switchable headless/windowed modes and rendering; Web adds backend/focus/input changes. The native-font successor now corrects already-matched Windows selections and private fallback, including gaps retained by the fixed target. CoreText source adaptation has separate unexecuted-platform scope. | Map trait and manifest changes across the actual supported backend closure. The [native-font record](../verification.md#native-font-reselection-and-retained-faces) distinguishes actual simulation/face retention, submitted Windows frames and prepared Mac source. Treat iOS as a separate platform decision and retain unexecuted native-platform limits. Existing Windows-only evidence cannot qualify the other backends. |
+| Implemented: named platform mechanisms | The shared Apple, startup/live-windowing and Web text/viewport successors below resolve these source findings through current owners. Native-font work also corrects already-matched Windows selections and private fallback, including gaps retained by the fixed target. | The [shared Apple record](../verification.md#shared-apple-framework-topology) supplies actual foreign compilation; the [native-font record](../verification.md#native-font-reselection-and-retained-faces) retains executed Windows and prepared Mac behavior separately. iOS remains unselected. Native execution and complete platform qualification retain the limits recorded in the fixed-cycle exit. |
 | Public API evolution | The target changes event, headless-renderer, font/text and benchmark APIs. Its generic `View`/`ViewElement` path from `74b5207744ef95505fd75c56bf2c9d4736e931ee` coexists with `Render`/`RenderOnce`; AnyView embeds through ViewElement. View, accessibility and conditional hot reload now have their separate scoped qualifications. | Preserve ordinary public consumption and the independently locked consumer. The November 9 bounded residual pass identifies animation, spring and notification mechanisms above; display, missing-glyph and pointer-capture paths are relocated rather than absent. This pass is not an exhaustive residual inventory or complete API parity. |
 
 The subsequent November 9 [bounded Core residual inventory](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#bounded-core-residual-inventory)
@@ -234,8 +242,8 @@ The [verification](../verification.md#sendable-foreground-submission-and-web-fet
 the original 2,233/2,235 runtime aggregate with two topology-related failures and nine skips,
 the unchanged cases/native Send 4/4 rerun, and actual compiler-floor/wasm/static checks.
 Queue prerequisite `72676731163` and exact dependency selections retain distinct provenance.
-The randomized-tree/platform-tree successor is separately qualified below; other residual mechanisms remain
-queued. This is not complete API parity or engine adoption.
+The randomized-tree/platform-tree and subsequent residual successors below resolve the later
+named source findings. This is not complete API parity or engine adoption.
 
 The [randomized-tree/platform-tree successor](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#randomized-tree-and-platform-workload-successor)
 is implemented and qualified at `b42295d0e535e4105470e80873a6ad7832e81863`, after `f6f3d98d156`.
@@ -289,10 +297,11 @@ termination remain open. This is scoped qualification, not an exhaustive refresh
 ### Remaining Public Platform Mechanisms
 
 A bounded November 10 comparison of the fixed target's Platform trait, App entry points and
-public exports identifies these additional missing mechanisms. It accounts for fork renames
-and split owners; it is not an exhaustive comparison of every backend or framework file.
-The credential successor above does not close this list. Use complete official mechanisms
-as the baseline, adapting fork-owned lifetime and admission contracts around them.
+public exports identified these additional missing mechanisms, now resolved by the successors
+in this table. It accounts for fork renames and split owners; it is not an exhaustive comparison
+of every backend or framework file.
+The credential successor alone did not close this list. The later owners use complete official
+mechanisms as the baseline, adapting fork-owned lifetime and admission contracts around them.
 
 | Mechanism | Fixed-target provenance | Current difference and consumer consequence | Disposition |
 | --- | --- | --- | --- |
@@ -355,7 +364,7 @@ orders implementation and applies targeted upstream-trust verification.
 | Shell command construction | `ce48461eaa`, `c578f4d12b`, `7ca96c2a58`, `18f9d7e731`, `b41a8b60a4`, `4c6c4750d3` | Complete target shell/builder/environment mechanisms are implemented at `8e0517f5650`, with canonical low-level native command/Windows discovery owners and duplicate definitions removed. The [qualification](../verification.md#utility-composition-shells-and-development-assets) records final focused 47/47, existing restart 11/11, affected compilation/Clippy and retained fork test/consumer seams. Unix real-shell/descriptor execution remains unqualified on this Windows host. |
 | JSON merge and development assets | `d61edb0825`, `b47d8ac455`; `ee6badf4b0`, `d3e54c97f4`, `2551721adb` | Implemented at `8e0517f5650`: replacement merge, separate deduplicating union and complete dev_repo_root/fs_embed/debug-embed share the official owners. Final independent dev 4/4, embedded 4/4 and release 1/1 pass. A real 8.13 trait error receives one bounded macro/dependency adaptation; patched compression dependencies pass existing health/audit gates without ignores. Both core-util and complete higher-util wasm compilation pass; the latter uses installed LLVM 22.1.6 after the initial missing-clang failure. |
 | Remaining lightweight helpers | `887149bbdd`, `d7adf3e7e2`, `54f2b5df1d`, `1102219f81`, `1057c2cf3d`, `d12e456be7` | Lenient globs/extension sorting are implemented at `a4e6fd03642`; fragment positions, environment-name validation and explicit Unix soft-FD setup at `8e0517f5650`. Canonical core-util helper moves remove duplicates. Actual public composition is qualified; Unix file-limit execution remains unqualified. LocalExecutor::spawn_with_dispatch was already adopted by the support-primitives unit. |
-| Logging dependency provenance | `ac5af8b9e1` | Source-verified: fixed-target zlog/ztracing/ztracing_macro are now Apache-2.0. ADR 0001 corrects its historical GPL description. The ordinary tracing graph/import selection remains in force pending complete owner comparison, rather than a license rejection of these exact revisions. |
+| Logging dependency provenance | `ac5af8b9e1` | Implemented at `9e7b9c3a36f`: the Apache zlog/ztracing/ztracing_macro owners and SumTree instrumentation supersede the earlier ordinary-tracing adaptation. ADR 0001 corrects its historical GPL description; GPL application settings remain excluded. The [logging qualification](../verification.md#standalone-logging-and-tracing) retains explicit instrumentation choices and host-owned globals. |
 
 | Backend/render unit | Official source | Disposition and existing owner to preserve |
 | --- | --- | --- |
@@ -375,10 +384,10 @@ reconciles the additional method and dependency findings:
 
 | Mechanism | Fixed-target source | Disposition |
 | --- | --- | --- |
-| Logger and instrumentation | `ac5af8b9e1`, `crates/{zlog,ztracing,ztracing_macro}` | Restore the Apache packages and SumTree instrumentation. Explicit Cargo selections and host-owned globals replace Zed's build and installation policy. GPL `zlog_settings` remains outside the framework. See the [logging qualification](../verification.md#standalone-logging-and-tracing). |
-| Window controls and geometry | `e99616cdd4`, `058f01fa93`, `d85eade7ab`, `cf4deb270f`, `25b5569dd2` | Adopt the public creation and prompt facts, outside-click suppression, owned chord pause, visible-area centering and bottom anchors through the current owners. Windows already reports its work area. |
-| Lazy Inspector | `b0f53ad23b` | Adopt per-window lazy identities, renderer factories and frame-map release; retain the existing selection getters and accepted-frame geometry. Zed Inspector UI, LSP and application benchmarks remain product integrations. |
-| Win32 pool and timer | `2c4e44704c`, `72656afa6d`, `d544470d1d` | Adopt the official Win32 background owner and remove the unused WinRT feature. Retain the exact foreground queue, callback generation and profiler. See the [Window and Win32 qualification](../verification.md#window-controls-lazy-inspector-and-win32-dispatch). |
+| Logger and instrumentation | `ac5af8b9e1`, `crates/{zlog,ztracing,ztracing_macro}` | Implemented at `9e7b9c3a36f`: Apache packages and SumTree instrumentation use explicit Cargo selections and host-owned globals. GPL `zlog_settings` remains outside the framework. See the [logging qualification](../verification.md#standalone-logging-and-tracing). |
+| Window controls and geometry | `e99616cdd4`, `058f01fa93`, `d85eade7ab`, `cf4deb270f`, `25b5569dd2` | Implemented at `655e9610c77`: public creation and prompt facts, outside-click suppression, owned chord pause, visible-area centering and bottom anchors use current owners. Windows already reports its work area. See the [Window qualification](../verification.md#window-controls-lazy-inspector-and-win32-dispatch). |
+| Lazy Inspector | `b0f53ad23b` | Implemented at `655e9610c77`: per-window lazy identities, renderer factories and frame-map release retain selection getters and accepted-frame geometry, including factory-panic recovery. Zed Inspector UI, LSP and application benchmarks remain excluded product integrations. The same Window qualification records final Gallery controls. |
+| Win32 pool and timer | `2c4e44704c`, `72656afa6d`, `d544470d1d` | Implemented at `9d9602bb46d`: the official Win32 background owner replaces the WinRT path and unused feature, retaining the exact foreground queue, callback generation and profiler. See the [Window and Win32 qualification](../verification.md#window-controls-lazy-inspector-and-win32-dispatch). |
 | Keystroke input preference | `86c20cc911` | Implemented at `571484691ea`: public interceptors/observers receive the official `InputPreference`, computed before interception and recomputed after replay/interceptor effects before binding dispatch. Existing admitted input-handler custody remains. See the [input/focus record](../verification.md#input-priority-and-focus-lifetime) for final profiler on/off 113/113 and native execution. |
 | Dropped focus-handle queue | `e463c5ab74` | Implemented at `571484691ea`: the private FocusMap module owns the final-strong-reference queue and App returns when it is empty. The old full-map scan is removed; existing Window cleanup still covers pending/provisional/fallback/candidate focus after releasing the map lock. No measured speedup is claimed. |
 | Focus-lost ancestor restoration | `b2d9c2e122` | Implemented at `571484691ea`: the public query uses the callback-scoped old committed path and new accepted dispatch tree, restoring scope across nested callbacks/unwind. Actual public child-removal and callback-failure consumers pass. Zed workspace/agent-panel consumers remain outside this framework unit. |
@@ -515,9 +524,10 @@ records actual owner/public/native and independently locked consumer evidence: c
 1,856, components/docking/Canvas 2,966, disabled Core/public 1,167 and independent enabled/disabled
 53/38 pass within their recorded scope. The bounded final metadata/test correction has separate
 public enabled/disabled/native and compiler checks. Conditional Subsecond/build/runtime selection
-and the target's absent debug accessibility
-view-type map/dump pipeline remain separate complete successors. Do not claim their parity from
-this API migration or introduce an unused substitute map. Source disposition remains separate
+is qualified by the [hot-reload successor](../verification.md#conditional-native-hot-reload);
+the formerly absent debug accessibility view-type map/dump pipeline is qualified by the
+[synthetic/inspection successor](../verification.md#synthetic-accessibility-and-explicit-published-tree-inspection).
+Neither is inferred from the View API migration alone. Source disposition remains separate
 from measured timing, complete framework refresh and engine-default selection.
 
 ### Accessibility Publication Diagnostics And Synthetic Children
@@ -574,9 +584,9 @@ implemented at `d9608b1a3174f17df270d6b92894539ec32654a8`. Their qualification r
 Core/public/WGPU/Windows 1,787, components/docking/Canvas 2,966, disabled affected 182, ordinary
 type-only 6/6 in each mode and Gallery 13 passing, together with locked checks, actual Windows
 Rust 1.92, production wasm, formatting and static gates. Four existing interactive skips and
-the earlier undiagnosed extra native mouse event retain their recorded scope. Continue the
-complete benchmark/report and hot-reload owners; real AT, numerical costs and engine adoption
-remain open. Product-level migration stays outside the imported closure without rejecting its
+the earlier undiagnosed extra native mouse event retain their recorded scope. The later
+benchmark/report and hot-reload successors resolve those source owners; real AT, numerical costs
+and engine adoption remain open. Product-level migration stays outside the imported closure without rejecting its
 surviving official framework mechanisms.
 
 ### Framework Slices In Product-Labeled Commits
@@ -661,13 +671,14 @@ correction. The record retains the 51/52 fixture-generation failure and measured
 failures and corrections. Final focused 54, complete Core/public 1,390, utility 115, WGPU 89,
 components/docking/Canvas 2,966, disabled Core/public 1,181 and independent enabled/disabled
 56/41 pass. Affected native five, locked checks, Clippy, actual Rust 1.92, production wasm,
-formatting and static scans pass within their recorded scope. These entries do not close complete
-benchmark/report, accessibility, hot-reload, foreign-platform/browser or engine owners.
+formatting and static scans pass within their recorded scope. Benchmark/report, accessibility and
+hot reload have their separate later qualifications above; this query/List evidence does not
+extend their scope or qualify foreign-platform/browser execution or engine adoption.
 
 ### Text And Layout Reconciliation Units
 
 The original fixed-target text audit maps the following complete units to fork `229723e620`.
-Implemented successors link their later executed qualification; queued source findings add no
+Implemented successors link their later qualification; original source findings alone add no
 runtime qualification. Preserve `WindowTextSystem::abort_frame`, which returns
 layouts moved by a refused candidate, and the fork's exact clip authority throughout the changes.
 
@@ -681,7 +692,7 @@ layouts moved by a refused candidate, and the fork's exact clip authority throug
 | Implemented: window-local layout ownership | Official `772a8a9100` supplies Rc/RefCell window caches and local font-run scratch while retaining global Arc<TextSystem>; final-target follow-up `dde76a1dca` uses Cell take/set for scratch. Official `2a74c8dff6` removes unused hash APIs/caches. The fork adopts those owners and deletes the parallel hash path. | The [qualification record](../verification.md#window-local-text-ownership-and-source-cache) separates official mechanisms from fork generation coherence, rejected-candidate recovery, backend reentry and a reproduced inherited clamp-key correction. Complete Core/WGPU/Windows plus public text passes 1,292/1,292 with four existing interactive cases skipped; affected components/docking/Canvas pass 2,964/2,964 and independent public tests pass 7/7. Full source, automatic notified frames, reentry/unwind, shared font installation and exact two-window/native lifetimes retain their own scope. Locked compilation, correctness Clippy and actual Windows Rust 1.92.0 framework/consumer checks pass. Rc/method removals are explicit breaking changes; numeric costs remain unmeasured. |
 | Implemented: Taffy and intrinsic measurement | Official `91fdd55889`, `b05f40c554`, `31ceaf7908`, `cdf33ac25e`, `b488c4e814` now map to Taffy 0.15 leaf/alignment APIs, explicit relative position, separate truncation width, actual shaped-overflow checks and MaxContent list probes. Both qualification lockfiles select 0.15.0; the library permits compatible patches. | The [qualification record](../verification.md#taffy-text-measurement-and-rootgrid-sizing) retains the reproduced inherited ordinary-wrap defect and fork exact-width correction, actual kerning/source/paint consumers and initial fixture failures. Corrected Core/WGPU/Windows plus public layout/text passes 1,312/1,312 with four existing interactive cases skipped; affected components pass 2,964/2,964 and independent public tests pass 9/9. Locked compilation, correctness Clippy and actual Windows Rust 1.92.0 checks pass. No general word-based MinContent or measured speedup claim follows. |
 | Implemented: root/grid sizing and stack policy | Official `b0da438545` fills auto window/prompt roots without stretching anchored/tooltip/drag roots. `5ccbbbd88f` adds grid-row min/max-content and renames the shared min-size type. `41d72f6c1d` now makes stack protection opt-in across both Taffy callbacks and Div's three phases. | Auto/explicit/percentage/minmax roots, prompt, notify/resize, shrink-wrap and actual grid geometry pass within the same qualification. The stacker-disabled owner/portal cohort passes 33/33; the all-feature complete runtime enables stacker. Portal root-inset and multi-Sidebar visible-allocation fixture corrections preserve original identity/input/transform assertions. Both feature paths and native reconstruction retain their stated workloads, not arbitrary-depth safety. |
-| CoreText identity and size | `20a93f6195`, `44ec5691b5`: deduplicate PostScript identity within one family load and preserve the exact first nonempty run size. | Duplicate/missing family identity and empty/BOM leading runs on macOS. These local text corrections do not require completing the Apple renderer split first. |
+| Implemented: CoreText identity and size | `20a93f6195`, `44ec5691b5`: shared Apple `text_system.rs` deduplicates PostScript identity within one family load and preserves the exact first nonempty run size, including empty/BOM leading runs. | The [shared Apple successor](../verification.md#shared-apple-framework-topology) supersedes this queued row; fixed-tree source comparison at `424a3a0f7c2` confirms both mechanisms. Production/all-target foreign compilation is recorded separately from unexecuted native CoreText/font tests. |
 
 The target's UAX path adds `icu_segmenter` 2.3.0 with compiled data and promotes
 `unicode-segmentation` to a normal dependency. Cosmic adds direct `unicode-bidi` 0.3.18;

@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-11T10:42:49+08:00
+timestamp: 2026-11-11T11:01:43+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -18,6 +18,21 @@ verified_by:
 
 # Current State
 
+- Bounded source adoption is reconciled at framework checkpoint
+  `424a3a0f7c2e71f6ce5a933de00138919c50893d` against fixed Zed
+  `635026fabc38440fce5e1767d125026a17b12012`, using content anchor
+  `6e9465a4288c332208643892e23b9d35d7be5c79`. The
+  [fixed-cycle exit](../../verification.md#fixed-cycle-source-adoption-exit) resolves the named
+  inventory/plan findings through implemented successors, equivalents and explicit product
+  exclusions. It records Rust 1.93, official Git WGPU/Naga `cddb2f5d80dc0009b2ef6767635140cacf90a007`
+  and crates.io Taffy 0.15.0, with the retained macro/API, native, performance and historical
+  failure limits. No new runtime verification or complete aggregate pass follows from this
+  documentation closure. Full platform/framework qualification, Nara R11 and consumer acceptance,
+  separate framework maintenance and its handoff remain open. The next prerequisite is the actual
+  Nara GPU/Host/View consumer under the existing owner plan. Earlier checkpoint narratives below
+  retain their original evidence; their then-queued source work is superseded by this exit and
+  the later owner records.
+
 - The official input-priority and focus-lifetime successor is implemented at
   `571484691eaf56cbf3e67d2c497274be12d38db0`. Public keystroke preferences, queued final-drop
   cleanup and callback-scoped ancestor restoration preserve current handler/candidate owners.
@@ -27,9 +42,9 @@ verified_by:
   Clippy, actual Rust 1.93, production wasm, formatting and existing static/document gates pass. The
   [qualification](../../verification.md#input-priority-and-focus-lifetime) preserves the
   pre-existing hover failures, corrected retired-slot fixture and actual cache/rollback proof.
-  These close the explicit final input/focus rows; complete the final source dispositions and
-  the real Nara GPU/Host/View consumer before separate maintenance. Numerical costs and foreign
-  execution retain their own scope.
+  These close the explicit final input/focus rows and join the bounded source exit above.
+  The real Nara GPU/Host/View consumer still precedes separate maintenance. Numerical costs
+  and foreign execution retain their own scope.
 
 - Official Apache standalone logging and Win32 background dispatch are implemented at
   `9e7b9c3a36fb0266ef68ec7ee7280b2eb8646554` and
@@ -43,8 +58,9 @@ verified_by:
   confirms the Wayland inactive-window IME gate omission, subsequently implemented at
   `c0a36ddce01d3992134fd2ed4691a1b1a8c42f4a` with 13/13 affected cache/native controls.
   Mac traffic-light geometry resolves to the typed-AppKit implementation. The subsequent
-  input/focus successor above closes its three explicit framework rows. Complete final source
-  dispositions before the actual Nara GPU/Host/View consumer and separate maintenance.
+  input/focus successor above closes its three explicit framework rows. Their bounded source
+  dispositions are reconciled; the actual Nara GPU/Host/View consumer and separate maintenance
+  handoff remain open.
 
 - The official renderer batching and hollow-border successor is implemented at
   `36362708133c300cd7a04f35c7ac36ee1a0f1791`. DirectX reuses instance views, Metal preuploads
@@ -54,8 +70,8 @@ verified_by:
   [qualification](../../verification.md#renderer-batching-and-hollow-borders) records the
   Core/WGPU/Windows 99/99 checkpoint, final affected WGPU 25/25, independent 2/2, actual Edge
   WebGL/WebGPU/Auto and Apple cross-compilation. Native Metal execution and numeric costs remain
-  unqualified. Continue
-  logging and remaining API/dispatch dispositions, then the actual Nara GPU/Host/View consumer.
+  unqualified. The later logging and API/dispatch successors resolve those source dispositions;
+  continue with the actual Nara GPU/Host/View prerequisite.
 
 - The official typed Mac AppKit and ScreenCaptureKit mechanisms are implemented at
   `0c1118e2f1a63f0a91e5e7c2ebf33fb884707953`. The old Cocoa shim and generated Media package
@@ -64,8 +80,9 @@ verified_by:
   records final Apple-target all-target correctness Clippy, ordinary no-capture and independent
   capture-to-surface compilation, Windows selector build, and format/static gates. All six
   lanes close after binding and nullable-window corrections. Native AppKit and screen-recording
-  behavior, weak-linked startup and numeric costs remain unqualified. Renderer batching, logging
-  and final API/dispatch dispositions still precede the real Nara GPU/Host/View consumer.
+  behavior, weak-linked startup and numeric costs remain unqualified. The later renderer,
+  logging and final API/dispatch successors resolve those source dispositions; the real
+  Nara GPU/Host/View consumer remains the next prerequisite.
 
 - Official Wayland IME/background effects, XKB and X11 class metadata are implemented at
   `cf4bd2c6db1fb97ce5d77a201212f988052b17d2`. Existing protocol and window owners retain
@@ -75,8 +92,9 @@ verified_by:
   independent 1/1 and 2/2. Single-backend builds/graphs, the maintained window-shadow example,
   affected correctness Clippy, formatting and static gates pass. All five lanes close without
   outstanding reviewed P1/P2. WSLg has no effect protocol; real compositor blur, KWin/Fcitx feedback and
-  numeric costs remain open. Continue Mac native input/AppKit, renderer batching, logging and
-  final API/dispatch dispositions before the real Nara GPU/Host/View consumer and maintenance.
+  numeric costs remain open. Mac native input/AppKit, renderer batching, logging and final
+  API/dispatch have their later source dispositions above; the real Nara GPU/Host/View
+  consumer still precedes maintenance.
 
 - Official Canvas font fallback and selected-face reporting are implemented at
   `f2526df594ae975bf8e234cc2e8ed0e36a871dfd`. The complete immutable policy, eligibility,
@@ -1226,16 +1244,12 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Close final [fixed-source dispositions](../../imports/zed-gpui-upstream-sync-candidates.md#november-10-residual-source-reconciliation)
-  after the implemented input-priority/focus-lifetime successor and hover-readmission correction.
-  Qualified text/layout, Spring, input/lifecycle, supporting dependencies, platform, renderer and
-  logging units retain their existing evidence. The earlier bounded inventories were not
-  exhaustive. Trust unchanged official coverage and verify actual fork seams rather than
-  repeating those completed units.
 - Follow the [maintained-baseline engine gate](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#maintained-baseline-before-engine-adaptation)
   with a real Nara GPU/Host/View consumer before separate framework-maintenance handoff.
-  Reconcile the two WGPU source identities and preserve the engine's device, target encoding,
-  immutable output leases, exact presentation/input and producer-local retirement. Existing
+  The [bounded source exit](../../verification.md#fixed-cycle-source-adoption-exit) records
+  checkpoint `424a3a0f7c2`; it does not complete this consumer. Reconcile the two WGPU source
+  identities and preserve the engine's device, target encoding, immutable output leases,
+  exact presentation/input and producer-local retirement. Existing
   atlas, embedded-App and independently shared-device controls do not complete this consumer.
 - Preserve the original aggregate failures, default WSLg thread-exit crash and foreign lifecycle
   gates. Actual Mac Keychain, Linux Secret Service and the
@@ -1246,12 +1260,12 @@ historical scope and is not current branch or CI qualification.
   also retain their own gates.
 - Apply the maintenance skill's official-baseline rule through existing owners. Preserve
   qualified fork admission, completed-action observation, source/geometry validity, exact native
-  leases, accepted cache publication and App/post-borrow command authority while reconciling
-  the remaining mechanisms. Keep the recorded notification and publisher/backlog limits visible;
+  leases, accepted cache publication and App/post-borrow command authority in consumer-driven
+  corrections. Keep the recorded notification and publisher/backlog limits visible;
   avoid replacing the fork or reapplying completed units.
-- Full fixed-target refresh, historical native focus variability, numerical budgets and remaining
-  renderer/API/platform differences stay open. Qualify prepared CoreText selection/cascade
-  on macOS, other native/browser environments and touchpad scroll/inertia/pinch/response timing
+- Full platform/framework qualification, historical native focus variability, numerical budgets
+  and the exit record's renderer/API/platform limits stay open. Qualify prepared CoreText
+  selection/cascade on macOS, other native/browser environments and touchpad scroll/inertia/pinch/response timing
   on their actual platforms. Existing getters, HWND/IME regressions and source inspection do not
   supply that execution or performance evidence. DirectWrite existing-family and installed-
   fallback results retain their separate recorded scope.
