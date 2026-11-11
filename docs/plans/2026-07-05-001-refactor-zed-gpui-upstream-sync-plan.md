@@ -3433,7 +3433,46 @@ without capture, non-Mac locks and shared APIs buildable. Trust unchanged offici
 review and verify adapted fork lifetimes and behavior. Native AppKit/menu/input, desktop blur,
 real screen permission/capture and macOS linking/execution require their own Apple evidence.
 
+### Renderer Batching And Border Overdraw Successor
+
+Continue after the typed Mac qualification at `60b7e61d9b52baab0846e31457b05f4898eed485` against
+the same fixed target. Reconcile `be8c6f9fb356dcd40a7ff06149568753e64ee171` (instance resources),
+`b4ecc454225fc1819e37e890b62df5473b2ba95b` (texture grouping and record layout), and
+`0c51c7fd2481859e9da5c490ef8e41ddbcf1a341` (border strips and capture diagnostics).
+
+- Use the official DirectX instance offset constant and reusable whole-buffer views. Keep path
+  raster and copy independent of that offset, and use the existing atlas preflight, clip arena,
+  submission and recovery owners. Check sizes before allocating and ranges against this frame's
+  uploads. Keep the ordinary bulk upload already present in Metal and WGPU. Complete Metal video
+  surface bounds upload without changing plane leases, and skip WGPU path composites when a batch
+  did not rasterize. Use the acquired WGPU texture extent from `e91b82c106` during encoding.
+  The separate `e20d19d32f` configure-once mechanism already uses the actual configuration and
+  has no further import in this unit.
+- Co-locate the tile with the sprite sort key and group by the exact atlas texture identity.
+  Preserve equal-order paint dependencies in explicitly forced layers. Reconcile the shared
+  Rust records, HLSL, WGSL, WebGL word access, and generated Metal layout together.
+- Omit the unpainted interior of a hollow border while keeping the original quad's local bounds,
+  rounded distances and dash phase. Use the existing conservative envelope to restrict raster
+  coverage and share the inherited exact clip range. Preserve projected geometry, order and
+  candidate replay; keep the single-quad path when splitting cannot preserve coverage.
+
+Use focused Scene, Windows WARP and WGPU gates for the affected fork seams. Read back actual
+pixels at nonzero instance offsets, compare split border pixels with the unsplit geometry, and
+retain stale-resource/recovery controls. Qualify WebGL word access in a browser and distinguish
+Apple foreign compile/generated-layout evidence from native Metal execution. Only report a
+numerical rendering gain if it is measured on this fork.
+
 ## Maintained Baseline Before Engine Adaptation
+
+The [renderer batching and hollow-border record](../verification.md#renderer-batching-and-hollow-borders)
+qualifies `36362708133c300cd7a04f35c7ac36ee1a0f1791`. Official whole-buffer DirectX offsets,
+Metal surface bounds, atlas grouping, sprite layout and border strips use the current rendering
+owners. WGPU also adopts the acquired extent and empty-path disposition; configure-once was
+already covered. Precision review and pixel comparisons preserve the original shape, clip range,
+dash phase and necessary sprite order. The record separates the 99/99 Core/WGPU/Windows checkpoint
+from the final 25/25 WGPU rerun, independent native consumers and Apple compile-only evidence.
+Continue logging and the remaining API/dispatch dispositions before the actual Nara GPU/Host/View
+consumer. Native Metal execution and numerical budgets remain separate.
 
 The [Mac AppKit and capture record](../verification.md#macos-native-input-appkit-and-screen-capture)
 qualifies `0c1118e2f1a63f0a91e5e7c2ebf33fb884707953`. Complete official typed input, menu,

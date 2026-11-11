@@ -9070,6 +9070,90 @@ Native AppKit/menu/input delivery, blur pixels, older macOS weak-linked binary s
 permission, actual screen frame delivery/retirement and measured costs remain separate gates.
 This unit does not establish full fixed-target parity or Nara GPU/Host/View acceptance.
 
+## Renderer Batching And Hollow Borders
+
+The [renderer successor](plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#renderer-batching-and-border-overdraw-successor)
+starts from `60b7e61d9b52baab0846e31457b05f4898eed485` and lands at
+`36362708133c300cd7a04f35c7ac36ee1a0f1791` against the same fixed Zed tree.
+It adopts `be8c6f9fb35`, `b4ecc454225` and `0c51c7fd248` through the existing renderer owners.
+DirectX draws ordinary instances from a reusable whole-buffer view with a per-batch shader
+offset. It checks this frame's uploaded range and bounds structured-buffer growth; the separate
+path shaders do not read the offset. Debugger labels are built only for active annotation.
+The D3D11 SDK 10.0.26100.0 FXC compiles all 16 changed or neighboring vertex/fragment entries
+under `vs_4_1` and `ps_4_1`; the existing color-function warnings remain.
+
+The shared mono, subpixel and poly records keep their 120/120/128-byte strides and place the
+tile at byte 8. Ordinary sprite batches group by atlas index, kind and generation after draw
+order. Equal-order groups retain the fork's previous stable tile order when they have an explicit
+layer, imprecise projection or clip edges near a pixel center. An equal CPU order alone does not
+prove disjoint raster coverage in those cases. Exact atlas preflight, live texture leases and
+receipt admission stay authoritative. Metal's header derives the shared records; WebGL's packed
+word loaders follow the same layout as storage WGSL and HLSL.
+
+Hollow borders reuse their original SDF, round corners and dash phase. Non-overlapping raster
+strips restrict the conservative envelope while sharing the inherited exact clip range. Cache
+replay remaps the clip range and retains each strip restriction. DirectX and Metal use their
+existing vertex clip distances; WGPU restricts quad vertices while retaining exact fragment
+clip coverage and corresponding local coordinates. The splitter and WGPU vertex path bound both
+the local magnitudes and the projected magnitudes, including opposing translations. Outside the
+safe domain, the single primitive and original vertices remain.
+
+Metal and WGPU already preupload ordinary instances. The Metal successor preuploads the
+remaining CoreVideo bounds array; each draw still binds its own preflighted planes. WGPU
+does not copy a stale path intermediate when the batch has no rasterized vertices, and uses the
+acquired texture extent for this frame's uniforms and intermediate textures (`e91b82c106`).
+The separate `e20d19d32f` configure-once mechanism was already adopted. The bounded WGPU
+allocation rounding differs from the target and is not a correctness gap in this unit.
+
+The first host compile exposes the scalar requirement of `Corners::all`; the corrected
+fixtures map scalar radii to axis pairs. A second compile detects the imported GPUI test macro
+shadowing Rust's built-in Windows test attribute; the WARP probes use the existing native test
+entry point. The first executed selection, `f04665d9-4aef-458f-be04-7a2a6432fb7a`, passes 96/97.
+All WARP controls pass, including distinct instances after growth and projected rounded/dashed
+border readback. The WGPU full/strip comparison differs at a pixel whose center is exactly on
+the fractional clip edge: the different triangle interpolation crosses the half-open boundary.
+The single-sampled quad pass now tests the canonical pixel center in the existing window-space
+varying, retaining WebGL's coordinate path. WGPU pixel and shader checks pass 9/9 in
+`6be069b7-73b9-41e3-acab-392244ec0611`. The first Apple-target check hits the same scalar-radii
+fixture error; the corrected tests and renderer pass correctness Clippy for `aarch64-apple-darwin`
+with `runtime_shaders,font-kit,test-support` using the installed LLVM 22.1.6 and Darwin headers.
+The existing full Edge smoke also passes at this checkpoint, before the precision-review changes.
+
+Independent review shows that very large local coordinates can round differently after moving a
+strip vertex, even if their projected endpoints fit the window. The shared precise-coordinate
+gate now preserves the original quad in that case. Review also shows a same-order sprite whose
+CPU bound ends at x=17 but whose shader rounds its right edge to x=18. The batch sorter preserves
+legacy order when it cannot exclude shared raster samples. Focused controls cover both the
+reported sprite example and an adjoining half-pixel clip. The resulting Core/WGPU/Windows
+selection passes **99/99**, run `cf800ce3-42eb-4dc2-a4dd-b73636ad7fbc`, and host correctness
+Clippy passes for the three affected packages and their test targets.
+
+The rereview's normal-coordinate square corner case reproduces a second pixel defect. In the
+added GPU case, at pixel (37, 37), split and full drawing choose different side phases and
+produce `[35, 24, 11, 255]` versus `[141, 95, 43, 255]`; run
+`58e19259-05e8-4c59-a52d-41c07df0141c` fails. Within the bounded domain, WGSL evaluates the
+unchanged dashed shape and phase from the same device pixel center relative to the original quad
+origin. Exactly tied side choices are now deterministic rather than dependent on interpolation
+rounding. The final affected WGPU run passes **25/25**, run `428e4da8-c009-4c61-9779-2fad86fa3151`,
+including square and rounded dashed pixel equivalence in both storage and packed modes, the
+empty-path and atlas receipt controls, shader validation, and both public headless trajectories.
+The Core/Windows code is unchanged from the 99-test checkpoint.
+
+Final Apple-target correctness Clippy also passes after the Core precision changes, and the
+generated Metal header keeps the common sprite field order. The multi-surface Metal test
+compiles and exercises different CoreVideo plane contents and a nonzero batch origin when run
+on Apple hardware. It was not executed here. The independently locked Windows consumers pass
+**2/2** in `0f291667-b2fe-44c2-aceb-e3281da83bec`: the application-owned atlas and the actual
+two-HWND Vulkan/WGPU device-sharing, zero-extent recovery and retirement trajectory. The latter
+does not force an acquired texture of a different size than the request.
+
+Final Edge smoke passes forced WebGL, WebGPU, Auto and explicit Auto fallback. Each of the
+rendered configurations passes 22/22 PNG samples at both 800×600 and 960×720 (DPR 1), with
+the existing text, input, capture, docking, activation, clipboard and touch controls. All seven
+scoped implementation/comparison/review lanes close. No numeric timing or native Metal result
+follows. The logging and residual API/dispatch dispositions and the real Nara GPU/Host/View
+consumer remain separate.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

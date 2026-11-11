@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-11T07:15:41+08:00
+timestamp: 2026-11-11T08:15:06+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,17 @@ verified_by:
 ---
 
 # Current State
+
+- The official renderer batching and hollow-border successor is implemented at
+  `36362708133c300cd7a04f35c7ac36ee1a0f1791`. DirectX reuses instance views, Metal preuploads
+  CoreVideo bounds, the shared Scene groups exact textures while preserving uncertain order,
+  and hollow borders share the inherited exact clip range. WGPU uses the acquired extent and
+  does not composite a path batch that did not rasterize. The
+  [qualification](../../verification.md#renderer-batching-and-hollow-borders) records the
+  Core/WGPU/Windows 99/99 checkpoint, final affected WGPU 25/25, independent 2/2, actual Edge
+  WebGL/WebGPU/Auto and Apple cross-compilation. Native Metal execution and numeric costs remain
+  unqualified. Continue
+  logging and remaining API/dispatch dispositions, then the actual Nara GPU/Host/View consumer.
 
 - The official typed Mac AppKit and ScreenCaptureKit mechanisms are implemented at
   `0c1118e2f1a63f0a91e5e7c2ebf33fb884707953`. The old Cocoa shim and generated Media package
@@ -1193,10 +1204,10 @@ historical scope and is not current branch or CI qualification.
   archive support, canonical paths, complete utility composition/native helpers, source-over/
   native child composition, Windows dialog/host/input safety, native restoration/attention and
   native regions/layer-shell/fullscreen/popups, complete Web text/viewport and official Canvas
-  font fallback/selected-face reporting, Linux IME/effects/XKB/X11 metadata and typed Mac
-  input/AppKit/ScreenCaptureKit. The earlier public-Platform audit is not exhaustive. Continue
-  the renderer batching and logging groups, plus the final public-method/dispatch dispositions,
-  in their recorded prerequisite order. Build on qualified
+  font fallback/selected-face reporting, Linux IME/effects/XKB/X11 metadata, typed Mac
+  input/AppKit/ScreenCaptureKit and renderer batching/hollow borders. The earlier public-Platform
+  audit is not exhaustive. Continue the logging group and the final public-method/dispatch
+  dispositions in their recorded prerequisite order. Build on qualified
   [shared Apple topology](../../verification.md#shared-apple-framework-topology) and
   [native quit/session shutdown](../../verification.md#native-quit-completion-and-restart-manager).
   Trust unchanged official coverage and concentrate compilation/regressions on affected fork
