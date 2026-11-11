@@ -43,6 +43,7 @@ members = [
     "examples/docking-native",
     "examples/smoke-native",
     "examples/ui-foundation-gallery",
+    "examples/wgpu-native",
     "xtask",
 ]
 exclude = [

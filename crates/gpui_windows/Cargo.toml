@@ -58,3 +58,4 @@ windows-registry = "0.5"
 
 [target.'cfg(target_os = "windows")'.dev-dependencies]
 open_gpui = { workspace = true, features = ["test-support"] }
+open_gpui_wgpu.workspace = true

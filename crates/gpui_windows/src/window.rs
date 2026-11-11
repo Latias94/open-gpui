@@ -819,7 +819,7 @@ pub struct WindowsWindowState {
     pub(crate) last_client_pointer_position: Cell<Option<WindowsClientPointerPosition>>,
     pub direct_manipulation: DirectManipulationHandler,
 
-    pub renderer: RefCell<DirectXRenderer>,
+    pub(crate) renderer: RefCell<WindowsWindowRenderer>,
 
     pub click_state: ClickState,
     pub current_cursor: Cell<Option<HCURSOR>>,
@@ -972,7 +972,8 @@ pub(crate) struct WindowsWindowInner {
 impl WindowsWindowState {
     fn new(
         hwnd: HWND,
-        directx_devices: &DirectXDevices,
+        handle: AnyWindowHandle,
+        renderer_source: &WindowsRendererSource,
         window_params: &CREATESTRUCTW,
         current_cursor: Option<HCURSOR>,
         cursor_visible: Arc<AtomicBool>,
@@ -1004,8 +1005,6 @@ impl WindowsWindowState {
         };
         let border_offset = WindowBorderOffset::default();
         let restore_from_minimized = None;
-        let renderer = DirectXRenderer::new(hwnd, directx_devices, disable_direct_composition)
-            .context("Creating DirectX renderer")?;
         let callbacks = Callbacks::default();
         let input_handler = PlatformInputHandlerSlot::default();
         let pending_surrogate = None;
@@ -1036,6 +1035,13 @@ impl WindowsWindowState {
 
         let direct_manipulation = DirectManipulationHandler::new(hwnd, scale_factor)
             .context("initializing Direct Manipulation")?;
+        let renderer = renderer_source
+            .create(
+                WindowsRendererWindow::new(handle.window_id(), hwnd)?,
+                hwnd,
+                disable_direct_composition,
+            )
+            .context("Creating Windows window renderer")?;
 
         Ok(Self {
             origin: Cell::new(origin),
@@ -1415,7 +1421,8 @@ impl WindowsWindowInner {
     fn new(context: &mut WindowCreateContext, hwnd: HWND, cs: &CREATESTRUCTW) -> Result<Rc<Self>> {
         let state = WindowsWindowState::new(
             hwnd,
-            &context.directx_devices,
+            context.handle,
+            &context.renderer_source,
             cs,
             context.current_cursor,
             context.cursor_visible.clone(),
@@ -7479,7 +7486,7 @@ struct WindowCreateContext {
     native_retirement_coordinator: std::rc::Weak<WindowsPlatformInner>,
     appearance: WindowAppearance,
     disable_direct_composition: bool,
-    directx_devices: DirectXDevices,
+    renderer_source: WindowsRendererSource,
     invalidate_devices: Arc<AtomicBool>,
     owner_registration: Option<RegisteredWindow>,
     modal_parent_claim: Option<ModalParentClaim>,
@@ -7517,7 +7524,7 @@ impl WindowsWindow {
             native_retirement_coordinator,
             display_topology,
             disable_direct_composition,
-            directx_devices,
+            renderer_source,
             invalidate_devices,
             #[cfg(test)]
             lifecycle_test_probe,
@@ -7607,7 +7614,7 @@ impl WindowsWindow {
             native_retirement_coordinator,
             appearance,
             disable_direct_composition,
-            directx_devices,
+            renderer_source,
             invalidate_devices,
             owner_registration,
             modal_parent_claim,
@@ -8080,6 +8087,24 @@ impl PlatformWindow for WindowsWindow {
         );
 
         self.0.prepare_pending_initial_placement()?;
+        if !self.state.renderer.borrow().uses_directx() {
+            let mut client = RECT::default();
+            unsafe { GetClientRect(self.hwnd, &mut client) }
+                .context("reading the custom renderer's initial client extent")?;
+            let physical_size = size(
+                DevicePixels(client.right - client.left),
+                DevicePixels(client.bottom - client.top),
+            );
+            anyhow::ensure!(
+                physical_size.width.0 > 0 && physical_size.height.0 > 0,
+                "custom renderer requires a nonempty initial client extent"
+            );
+            self.state
+                .renderer
+                .borrow_mut()
+                .resize(physical_size)
+                .context("sizing the custom renderer before its hidden first frame")?;
+        }
         anyhow::ensure!(
             unsafe { !IsWindowVisible(self.hwnd).as_bool() },
             "native window became visible during precommit map"
@@ -8561,7 +8586,10 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn is_subpixel_rendering_supported(&self) -> bool {
-        true
+        self.state
+            .renderer
+            .borrow()
+            .is_subpixel_rendering_supported()
     }
 
     fn set_title(&mut self, title: &str) {
@@ -8741,7 +8769,7 @@ impl PlatformWindow for WindowsWindow {
         {
             Ok(outcome) => outcome,
             Err(error) => {
-                log::error!("failed to submit DirectX frame: {error:#}");
+                log::error!("failed to submit Windows frame: {error:#}");
                 PlatformWindowPresentOutcome::Rejected
             }
         }
@@ -8764,7 +8792,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
-        self.state.renderer.borrow().gpu_specs().log_err()
+        self.state.renderer.borrow().gpu_specs().log_err().flatten()
     }
 
     fn update_ime_position(&self, bounds: Bounds<Pixels>) {

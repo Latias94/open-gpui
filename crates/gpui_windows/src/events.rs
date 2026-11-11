@@ -1329,13 +1329,16 @@ impl WindowsWindowInner {
         let new_logical_size = device_size.to_pixels(scale_factor);
 
         self.state.logical_size.set(new_logical_size);
-        if should_resize_renderer
-            && let Err(e) = self.state.renderer.borrow_mut().resize(device_size)
-        {
-            log::error!("Failed to resize renderer, invalidating devices: {}", e);
-            self.state
-                .invalidate_devices
-                .store(true, std::sync::atomic::Ordering::Release);
+        if should_resize_renderer {
+            let mut renderer = self.state.renderer.borrow_mut();
+            if let Err(e) = renderer.resize(device_size) {
+                log::error!("Failed to resize Windows renderer: {}", e);
+                if renderer.uses_directx() {
+                    self.state
+                        .invalidate_devices
+                        .store(true, std::sync::atomic::Ordering::Release);
+                }
+            }
         }
         let _ = with_windows_shared_callback(&self.state.callbacks.resize, |callback| {
             callback(new_logical_size, scale_factor)

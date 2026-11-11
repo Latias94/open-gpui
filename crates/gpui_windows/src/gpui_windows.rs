@@ -25,6 +25,7 @@ mod native_test_scenario;
 #[cfg(any(test, feature = "test-support"))]
 mod native_test_window;
 mod platform;
+mod renderer;
 mod system_notifications;
 mod system_settings;
 mod util;
@@ -43,6 +44,7 @@ pub(crate) use display::*;
 pub(crate) use events::*;
 pub(crate) use keyboard::*;
 pub(crate) use platform::*;
+pub(crate) use renderer::{WindowsRendererSource, WindowsWindowRenderer};
 pub(crate) use system_notifications::*;
 pub(crate) use system_settings::*;
 pub(crate) use util::*;
@@ -51,6 +53,7 @@ pub(crate) use window::*;
 pub(crate) use wrapper::*;
 
 pub use platform::WindowsPlatform;
+pub use renderer::{WindowsRenderer, WindowsRendererFactory, WindowsRendererWindow};
 
 #[cfg(feature = "test-support")]
 #[doc(hidden)]

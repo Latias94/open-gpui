@@ -5345,6 +5345,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "open-gpui-wgpu-native"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "open-gpui",
+ "open-gpui-wgpu",
+ "open-gpui-windows",
+]
+
+[[package]]
 name = "open-gpui-windows"
 version = "0.2.0"
 dependencies = [
@@ -5361,6 +5371,7 @@ dependencies = [
  "open-gpui-scap",
  "open-gpui-scheduler",
  "open-gpui-util",
+ "open-gpui-wgpu",
  "parking_lot",
  "rand 0.9.4",
  "raw-window-handle",

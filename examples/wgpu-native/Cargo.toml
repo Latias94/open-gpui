@@ -1,0 +1,21 @@
+[package]
+name = "open-gpui-wgpu-native"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+publish = false
+description = "Application-owned WGPU rendering with the ordinary GPUI Win32 host."
+
+[target.'cfg(target_os = "windows")'.dependencies]
+anyhow.workspace = true
+open_gpui = { workspace = true, features = ["windows-manifest"] }
+open_gpui_wgpu.workspace = true
+open_gpui_windows.workspace = true
+
+[lints]
+workspace = true

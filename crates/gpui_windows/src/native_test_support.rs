@@ -86,6 +86,8 @@ mod native_clipboard_tests;
 mod native_composite_focus_tests;
 #[path = "native_credentials_tests.rs"]
 pub(super) mod native_credentials_tests;
+#[path = "native_custom_renderer_tests.rs"]
+mod native_custom_renderer_tests;
 #[path = "native_dialog_tests.rs"]
 mod native_dialog_tests;
 #[path = "native_display_observation_tests.rs"]
