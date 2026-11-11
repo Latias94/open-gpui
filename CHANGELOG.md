@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- `open-gpui-wgpu::WgpuSceneRenderer` records GPUI scenes into an application's existing device, target and command encoder. The application owns submission and presentation; `WgpuSceneRecording` retains exact atlas resources until that submission completes. Multiple scenes can be recorded before one submit with explicit Clear/Load. This renderer does not provide a native external-host driver or external GPU-image import.
+
 - Keystroke observers and interceptors receive the official `InputPreference`, allowing extensions to follow the platform's text-first policy. Breaking: downstream `KeystrokeEvent` constructors must supply `input_preference`.
 - `Window::focus_lost_restore_target` finds the nearest surviving ancestor during focus-lost notification. Focus-handle release uses the official final-drop queue while preserving the existing candidate and committed-focus lifecycle.
 - Wayland ignores inactive-window IME enablement updates, preserving the active window's shared input state.

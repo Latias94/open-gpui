@@ -82,6 +82,37 @@ sequenceDiagram
     Native->>Native: Destroy platform window
 ```
 
+## Host-Owned Device And Scene Recording
+
+The external-host direction separates UI execution, platform services and renderer recording.
+A production application must be able to supply its own window/loop and WGPU objects while
+consuming normal elements and components. Reuse existing foreground execution, text/input and
+Window lifecycle owners; this does not define a second scheduler or presentation state machine.
+Concrete Windows D3D11 construction can be replaced behind that separation. A native WGPU
+consumer must qualify the replacement before a default switch.
+
+A host may use the existing WGPU scene renderer without GPUI owning its native surface.
+The host supplies its adapter, enabled device, queue, texture and command encoder. This
+recording path does not replace device error callbacks, request another device, submit work,
+present a texture or own a native event loop. Ordinary GPUI-owned native renderers retain
+their existing lifecycle and device-recovery policy.
+
+Per-scene uploads belong in encoder order so a host may record multiple scenes before one
+submission. Exact atlas leases remain alive through the original submission completion.
+Clear/Load and the complete single-sample 2D target are explicit; invalid target facts fail
+before commands are emitted. Later recording errors require discarding that encoder.
+Successful recording establishes neither `Submitted` nor a presentation-shutdown receipt;
+the actual host adapter must associate the accepted Scene with its original physical
+submission and retirement before claiming either. This does not select a Nara integration,
+texture-import API or frontend default by itself.
+
+Recording and external hosting have separate implementation gates. The latter needs production
+Scene delivery, frame demand/wakeups, text/input/IME and exact accepted-frame submission
+acknowledgement through the original Window. It must handle pending, refused, lost-device and close
+outcomes without acknowledging a recording as Submitted. Generic imported images must preserve
+painter order, clip/UV/color/alpha and original resource retention through the caller's completion.
+No application-specific asset or View type belongs in this framework contract.
+
 ## Alternatives Considered
 
 ### Keep accepted-frame admission

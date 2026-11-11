@@ -690,7 +690,9 @@ impl WgpuContext {
         ))
     }
 
-    fn select_color_texture_format(adapter: &wgpu::Adapter) -> anyhow::Result<wgpu::TextureFormat> {
+    pub(crate) fn select_color_texture_format(
+        adapter: &wgpu::Adapter,
+    ) -> anyhow::Result<wgpu::TextureFormat> {
         let required_usages = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
         let bgra_features = adapter.get_texture_format_features(wgpu::TextureFormat::Bgra8Unorm);
         #[cfg(target_family = "wasm")]

@@ -387,6 +387,10 @@ jobs:
         if: matrix.name == 'windows'
         run: cargo nextest run --locked -p open-gpui-wgpu --all-features --lib -E 'test(wgpu_atlas::tests::) | test(wgpu_renderer::atlas_tests::) | test(wgpu_renderer::webgl_tests::)' --test-threads=1 --no-fail-fast --no-tests fail
 
+      - name: Test application-owned WGPU scene recording
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked -p open-gpui-wgpu --all-features --test external_scene --test-threads=1 --no-fail-fast --no-tests fail
+
       - name: Test independent application-owned WGPU atlas
         if: matrix.name == 'windows'
         run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features wgpu-renderer --test wgpu_atlas --target-dir target --test-threads=1 --no-fail-fast --no-tests fail

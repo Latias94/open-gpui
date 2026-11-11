@@ -46,6 +46,8 @@ const SUBPIXEL_SHADERS: &str = concat!(
 );
 mod gpu_data;
 use gpu_data::instance_allocation;
+mod scene_renderer;
+pub use scene_renderer::{WgpuSceneRecording, WgpuSceneRenderer};
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -109,10 +111,6 @@ struct GammaParams {
     subpixel_enhanced_contrast: f32,
     is_bgr: u32,
     _pad: u32,
-}
-
-fn adapter_info(context: &WgpuContext) -> wgpu::AdapterInfo {
-    context.adapter.get_info()
 }
 
 #[derive(Clone, Debug)]
@@ -278,6 +276,26 @@ struct InstanceBindings {
     polychrome_sprites: InstanceBinding,
 }
 
+struct PathDrawBindings {
+    vertices: InstanceBinding,
+    vertex_count: u32,
+    sprites: InstanceBinding,
+    sprite_count: u32,
+}
+
+struct EncoderUpload {
+    source: wgpu::Buffer,
+    target: wgpu::Buffer,
+    offset: u64,
+    size: u64,
+}
+
+#[derive(Default)]
+struct EncoderUploads {
+    copies: Vec<EncoderUpload>,
+    bytes: u64,
+}
+
 struct WgpuRendererCore {
     resources: WgpuResources,
     atlas: Arc<WgpuAtlas>,
@@ -295,6 +313,7 @@ struct WgpuRendererCore {
     target_format: wgpu::TextureFormat,
     max_texture_size: u32,
     uses_webgl_instance_data: bool,
+    encoder_uploads: Option<EncoderUploads>,
 }
 
 impl WgpuResources {
@@ -633,12 +652,31 @@ impl WgpuRendererCore {
         alpha_mode: wgpu::CompositeAlphaMode,
         uses_webgl_instance_data: bool,
     ) -> anyhow::Result<Self> {
-        let device = Arc::clone(&context.device);
-        let queue = Arc::clone(&context.queue);
-        let dual_source_blending =
-            context.supports_dual_source_blending() && !uses_webgl_instance_data;
+        Self::from_device(
+            &context.adapter,
+            Arc::clone(&context.device),
+            Arc::clone(&context.queue),
+            atlas,
+            surface_format,
+            alpha_mode,
+            uses_webgl_instance_data,
+        )
+    }
 
-        let rendering_params = RenderingParameters::new(&context.adapter, surface_format);
+    fn from_device(
+        adapter: &wgpu::Adapter,
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+        atlas: Arc<WgpuAtlas>,
+        surface_format: wgpu::TextureFormat,
+        alpha_mode: wgpu::CompositeAlphaMode,
+        uses_webgl_instance_data: bool,
+    ) -> anyhow::Result<Self> {
+        let dual_source_blending = device
+            .features()
+            .contains(wgpu::Features::DUAL_SOURCE_BLENDING)
+            && !uses_webgl_instance_data;
+        let rendering_params = RenderingParameters::new(adapter, surface_format);
         let bind_group_layouts = Self::create_bind_group_layouts(&device, uses_webgl_instance_data);
         let pipelines = Self::create_pipelines(
             &device,
@@ -721,7 +759,7 @@ impl WgpuRendererCore {
             "path_globals_bind_group",
         );
 
-        let adapter_info = adapter_info(context);
+        let adapter_info = adapter.get_info();
         let max_texture_size = device.limits().max_texture_dimension_2d;
 
         let resources = WgpuResources {
@@ -767,6 +805,7 @@ impl WgpuRendererCore {
             target_format: surface_format,
             max_texture_size,
             uses_webgl_instance_data,
+            encoder_uploads: None,
         })
     }
 
@@ -1622,6 +1661,65 @@ impl WgpuRenderer {
 }
 
 impl WgpuRendererCore {
+    fn write_recorded_data(
+        resources: &WgpuResources,
+        uploads: &mut Option<EncoderUploads>,
+        target: &GpuData,
+        offset: u64,
+        data: &[u8],
+    ) -> anyhow::Result<()> {
+        let GpuData::Storage(target) = target else {
+            anyhow::bail!("external scene recording requires storage instance data");
+        };
+        Self::write_buffer(resources, uploads, target, offset, data)
+    }
+
+    fn write_buffer(
+        resources: &WgpuResources,
+        uploads: &mut Option<EncoderUploads>,
+        target: &wgpu::Buffer,
+        offset: u64,
+        data: &[u8],
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            offset
+                .checked_add(data.len() as u64)
+                .is_some_and(|end| end <= target.size()),
+            "scene upload exceeds its GPU buffer"
+        );
+        if data.is_empty() {
+            return Ok(());
+        }
+        if let Some(uploads) = uploads {
+            use wgpu::util::DeviceExt as _;
+            let bytes = uploads
+                .bytes
+                .checked_add(data.len() as u64)
+                .ok_or_else(|| anyhow::anyhow!("scene upload size overflow"))?;
+            anyhow::ensure!(
+                bytes <= MAX_INSTANCE_BUFFER_SIZE,
+                "recorded scene uploads exceed the renderer's byte limit"
+            );
+            let source = resources
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("gpui_scene_upload"),
+                    contents: data,
+                    usage: wgpu::BufferUsages::COPY_SRC,
+                });
+            uploads.copies.push(EncoderUpload {
+                source,
+                target: target.clone(),
+                offset,
+                size: data.len() as u64,
+            });
+            uploads.bytes = bytes;
+        } else {
+            resources.queue.write_buffer(target, offset, data);
+        }
+        Ok(())
+    }
+
     fn prepare_scene(
         &mut self,
         scene: &Scene,
@@ -1675,6 +1773,16 @@ impl WgpuRendererCore {
         atlas_presentation: &WgpuAtlasPresentationReceipt,
         clear_color: wgpu::Color,
     ) -> anyhow::Result<wgpu::SubmissionIndex> {
+        self.prepare_frame_uniforms(size, premultiplied_alpha, clip_shape_count)?;
+        self.record_frame(scene, frame_view, atlas_presentation, clear_color)
+    }
+
+    fn prepare_frame_uniforms(
+        &mut self,
+        size: Size<DevicePixels>,
+        premultiplied_alpha: bool,
+        clip_shape_count: u32,
+    ) -> anyhow::Result<()> {
         anyhow::ensure!(
             size.width.0 > 0
                 && size.height.0 > 0
@@ -1702,26 +1810,21 @@ impl WgpuRendererCore {
             ..globals
         };
 
-        {
-            let resources = self.resources();
-            resources.queue.write_buffer(
+        let resources = &self.resources;
+        for (offset, bytes) in [
+            (0, bytemuck::bytes_of(&globals)),
+            (self.path_globals_offset, bytemuck::bytes_of(&path_globals)),
+            (self.gamma_offset, bytemuck::bytes_of(&gamma_params)),
+        ] {
+            Self::write_buffer(
+                resources,
+                &mut self.encoder_uploads,
                 &resources.globals_buffer,
-                0,
-                bytemuck::bytes_of(&globals),
-            );
-            resources.queue.write_buffer(
-                &resources.globals_buffer,
-                self.path_globals_offset,
-                bytemuck::bytes_of(&path_globals),
-            );
-            resources.queue.write_buffer(
-                &resources.globals_buffer,
-                self.gamma_offset,
-                bytemuck::bytes_of(&gamma_params),
-            );
+                offset,
+                bytes,
+            )?;
         }
-
-        self.record_frame(scene, frame_view, atlas_presentation, clear_color)
+        Ok(())
     }
 
     fn record_frame(
@@ -1731,18 +1834,64 @@ impl WgpuRendererCore {
         atlas_presentation: &WgpuAtlasPresentationReceipt,
         clear_color: wgpu::Color,
     ) -> anyhow::Result<wgpu::SubmissionIndex> {
+        let mut encoder =
+            self.resources
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("main_encoder"),
+                });
+        self.encode_frame(
+            scene,
+            frame_view,
+            atlas_presentation,
+            &mut encoder,
+            wgpu::LoadOp::Clear(clear_color),
+        )?;
+        let submission = self
+            .resources
+            .queue
+            .submit(std::iter::once(encoder.finish()));
+        #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+        {
+            self.resources.submitted_scene_count += 1;
+        }
+        Ok(submission)
+    }
+
+    fn encode_frame(
+        &mut self,
+        scene: &Scene,
+        frame_view: &wgpu::TextureView,
+        atlas_presentation: &WgpuAtlasPresentationReceipt,
+        encoder: &mut wgpu::CommandEncoder,
+        load: wgpu::LoadOp<wgpu::Color>,
+    ) -> anyhow::Result<()> {
         let mut instance_offset = 0;
         let instance_bindings = self
             .write_instances(scene, &mut instance_offset)
             .context("scene instance data exceeds WGPU buffer limits")?;
         self.prepare_texture_bind_groups(atlas_presentation);
-
-        let mut encoder =
-            self.resources()
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("main_encoder"),
-                });
+        let path_bindings = scene
+            .batches()
+            .filter_map(|batch| match batch {
+                PrimitiveBatch::Paths(range) => {
+                    Some(self.prepare_path_draw(&scene.paths[range], &mut instance_offset))
+                }
+                _ => None,
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        if let Some(uploads) = self.encoder_uploads.as_mut() {
+            for upload in uploads.copies.drain(..) {
+                encoder.copy_buffer_to_buffer(
+                    &upload.source,
+                    0,
+                    &upload.target,
+                    upload.offset,
+                    upload.size,
+                );
+            }
+        }
+        let mut path_bindings = path_bindings.iter();
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("main_pass"),
@@ -1750,7 +1899,7 @@ impl WgpuRendererCore {
                     view: frame_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(clear_color),
+                        load,
                         store: wgpu::StoreOp::Store,
                     },
                     depth_slice: None,
@@ -1774,16 +1923,13 @@ impl WgpuRendererCore {
                         &mut pass,
                     ),
                     PrimitiveBatch::Paths(range) => {
-                        let paths = &scene.paths[range];
-                        if paths.is_empty() {
+                        let _ = range;
+                        let prepared = path_bindings.next().expect("prepared path batch");
+                        let Some(prepared) = prepared else {
                             continue;
-                        }
+                        };
                         drop(pass);
-                        let rasterized = self.draw_paths_to_intermediate(
-                            &mut encoder,
-                            paths,
-                            &mut instance_offset,
-                        )?;
+                        self.draw_paths_to_intermediate(encoder, prepared);
                         pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("main_pass_continued"),
                             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1798,13 +1944,7 @@ impl WgpuRendererCore {
                             depth_stencil_attachment: None,
                             ..Default::default()
                         });
-                        if rasterized {
-                            self.draw_paths_from_intermediate(
-                                paths,
-                                &mut instance_offset,
-                                &mut pass,
-                            )?;
-                        }
+                        self.draw_paths_from_intermediate(prepared, &mut pass)?;
                     }
                     PrimitiveBatch::Underlines(range) => self.draw_instances(
                         &instance_bindings.underlines,
@@ -1841,15 +1981,7 @@ impl WgpuRendererCore {
                 }
             }
         }
-        let submission = self
-            .resources
-            .queue
-            .submit(std::iter::once(encoder.finish()));
-        #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
-        {
-            self.resources.submitted_scene_count += 1;
-        }
-        Ok(submission)
+        Ok(())
     }
 
     fn write_instances(
@@ -1993,19 +2125,20 @@ impl WgpuRendererCore {
         }
     }
 
-    fn draw_paths_from_intermediate(
+    fn prepare_path_draw(
         &mut self,
         paths: &[Path<ScaledPixels>],
         instance_offset: &mut u64,
-        pass: &mut wgpu::RenderPass<'_>,
-    ) -> anyhow::Result<()> {
-        let first_path = &paths[0];
+    ) -> anyhow::Result<Option<PathDrawBindings>> {
+        let Some(first_path) = paths.first() else {
+            return Ok(None);
+        };
         let projected_bounds = paths
             .iter()
             .filter_map(projected_path_visible_bounds)
             .collect::<Vec<_>>();
         if projected_bounds.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
 
         let sprites: Vec<PathSprite> = if paths.last().map(|p| &p.order) == Some(&first_path.order)
@@ -2022,60 +2155,76 @@ impl WgpuRendererCore {
             vec![PathSprite { bounds }]
         };
 
-        let Some(path_intermediate_view) = self.resources.path_intermediate_view.clone() else {
-            return Ok(());
-        };
-        let instances =
+        let vertices = paths
+            .iter()
+            .filter(|path| projected_path_visible_bounds(path).is_some())
+            .flat_map(|path| {
+                path.vertices.iter().map(|vertex| PathRasterizationVertex {
+                    xy_position: vertex.xy_position,
+                    st_position: vertex.st_position,
+                    color: path.color,
+                    local_bounds: path.bounds,
+                    clip: path.clip,
+                    transform: path.renderer_transform(),
+                })
+            })
+            .collect::<Vec<_>>();
+        if vertices.is_empty() {
+            return Ok(None);
+        }
+        let vertex_count = u32::try_from(vertices.len())?;
+        let sprite_count = u32::try_from(sprites.len())?;
+        let vertices = self.write_instance_binding(
+            "path_rasterization_bind_group",
+            instance_offset,
+            &vertices,
+        )?;
+        let sprites =
             self.write_instance_binding("path_sprites_bind_group", instance_offset, &sprites)?;
+        Ok(Some(PathDrawBindings {
+            vertices,
+            vertex_count,
+            sprites,
+            sprite_count,
+        }))
+    }
+
+    fn draw_paths_from_intermediate(
+        &self,
+        prepared: &PathDrawBindings,
+        pass: &mut wgpu::RenderPass<'_>,
+    ) -> anyhow::Result<()> {
+        let path_intermediate_view = self
+            .resources
+            .path_intermediate_view
+            .as_ref()
+            .context("prepared path intermediate is missing")?;
         let texture = self.create_texture_bind_group(
             "path_intermediate_texture_bind_group",
-            &path_intermediate_view,
+            path_intermediate_view,
         );
         let resources = self.resources();
         pass.set_pipeline(&resources.pipelines.paths);
         pass.set_bind_group(0, &resources.globals_bind_group, &[]);
-        pass.set_bind_group(1, &instances.bind_group, &[]);
+        pass.set_bind_group(1, &prepared.sprites.bind_group, &[]);
         pass.set_bind_group(2, &texture, &[]);
         pass.draw(
             0..4,
-            instances.first_instance..instances.first_instance + sprites.len() as u32,
+            prepared.sprites.first_instance
+                ..prepared.sprites.first_instance + prepared.sprite_count,
         );
         Ok(())
     }
 
     fn draw_paths_to_intermediate(
-        &mut self,
+        &self,
         encoder: &mut wgpu::CommandEncoder,
-        paths: &[Path<ScaledPixels>],
-        instance_offset: &mut u64,
-    ) -> anyhow::Result<bool> {
-        let mut vertices = Vec::new();
-        for path in paths {
-            if projected_path_visible_bounds(path).is_none() {
-                continue;
-            }
-            vertices.extend(path.vertices.iter().map(|v| PathRasterizationVertex {
-                xy_position: v.xy_position,
-                st_position: v.st_position,
-                color: path.color,
-                local_bounds: path.bounds,
-                clip: path.clip,
-                transform: path.renderer_transform(),
-            }));
-        }
-
-        if vertices.is_empty() {
-            return Ok(false);
-        }
-        let instances = self.write_instance_binding(
-            "path_rasterization_bind_group",
-            instance_offset,
-            &vertices,
-        )?;
+        prepared: &PathDrawBindings,
+    ) {
         let resources = self.resources();
 
         let Some(path_intermediate_view) = resources.path_intermediate_view.as_ref() else {
-            return Ok(false);
+            return;
         };
 
         let (target_view, resolve_target) = if let Some(ref msaa_view) = resources.path_msaa_view {
@@ -2102,14 +2251,13 @@ impl WgpuRendererCore {
 
             pass.set_pipeline(&resources.pipelines.path_rasterization);
             pass.set_bind_group(0, &resources.path_globals_bind_group, &[]);
-            pass.set_bind_group(1, &instances.bind_group, &[]);
+            pass.set_bind_group(1, &prepared.vertices.bind_group, &[]);
             pass.draw(
-                instances.first_instance..instances.first_instance + vertices.len() as u32,
+                prepared.vertices.first_instance
+                    ..prepared.vertices.first_instance + prepared.vertex_count,
                 0..1,
             );
         }
-
-        Ok(true)
     }
 
     fn prepare_clip_buffer(&mut self, clip_shapes: &[GpuClipShape]) -> Option<u32> {
@@ -2147,8 +2295,19 @@ impl WgpuRendererCore {
 
         if !clip_shapes.is_empty() {
             let bytes = unsafe { Self::instance_bytes(clip_shapes) };
-            let resources = self.resources();
-            if let Err(error) = resources.clip_buffer.write(&resources.queue, 0, bytes) {
+            let resources = &self.resources;
+            let result = if self.encoder_uploads.is_some() {
+                Self::write_recorded_data(
+                    resources,
+                    &mut self.encoder_uploads,
+                    &resources.clip_buffer,
+                    0,
+                    bytes,
+                )
+            } else {
+                resources.clip_buffer.write(&resources.queue, 0, bytes)
+            };
+            if let Err(error) = result {
                 log::error!("Failed to upload complete clip arena: {error:#}");
                 return None;
             }
@@ -2276,10 +2435,20 @@ impl WgpuRendererCore {
             offset = fresh.0;
             first_instance = fresh.2;
         }
-        let resources = self.resources();
-        resources
-            .instance_buffer
-            .write(&resources.queue, offset, data)?;
+        let resources = &self.resources;
+        if self.encoder_uploads.is_some() {
+            Self::write_recorded_data(
+                resources,
+                &mut self.encoder_uploads,
+                &resources.instance_buffer,
+                offset,
+                data,
+            )?;
+        } else {
+            resources
+                .instance_buffer
+                .write(&resources.queue, offset, data)?;
+        }
         *instance_offset = offset
             .checked_add(allocation)
             .ok_or_else(|| anyhow::anyhow!("instance allocation offset overflow"))?;
