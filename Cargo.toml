@@ -34,6 +34,9 @@ members = [
     "crates/sum_tree",
     "crates/util",
     "crates/util_macros",
+    "crates/zlog",
+    "crates/ztracing",
+    "crates/ztracing_macro",
     "examples/canvas-notes",
     "examples/docking-minimal",
     "examples/docking-multiviewport",
@@ -77,6 +80,7 @@ open_gpui_ui_core = { package = "open-gpui-ui-core", version = "0.2.0", path = "
 open_gpui_http_client = { package = "open-gpui-http-client", version = "0.2.0", path = "crates/http_client" }
 open_gpui_http_client_tls = { package = "open-gpui-http-client-tls", version = "0.2.0", path = "crates/http_client_tls" }
 open_gpui_linux = { package = "open-gpui-linux", version = "0.2.0", path = "crates/gpui_linux", default-features = false }
+open_gpui_log = { package = "open-gpui-log", version = "0.2.0", path = "crates/zlog" }
 open_gpui_macos = { package = "open-gpui-macos", version = "0.2.0", path = "crates/gpui_macos", default-features = false }
 open_gpui_macros = { package = "open-gpui-macros", version = "0.2.0", path = "crates/gpui_macros" }
 open_gpui_motion = { package = "open-gpui-motion", version = "0.2.0", path = "crates/motion" }
@@ -89,6 +93,8 @@ open_gpui_resource = { package = "open-gpui-resource", version = "0.2.0", path =
 open_gpui_scheduler = { package = "open-gpui-scheduler", version = "0.2.0", path = "crates/scheduler" }
 open_gpui_shared_string = { package = "open-gpui-shared-string", version = "0.2.0", path = "crates/gpui_shared_string" }
 open_gpui_sum_tree = { package = "open-gpui-sum-tree", version = "0.2.0", path = "crates/sum_tree" }
+open_gpui_tracing = { package = "open-gpui-tracing", version = "0.2.0", path = "crates/ztracing" }
+open_gpui_tracing_macro = { package = "open-gpui-tracing-macro", version = "0.2.0", path = "crates/ztracing_macro" }
 open_gpui_util = { package = "open-gpui-util", version = "0.2.0", path = "crates/util" }
 open_gpui_util_macros = { package = "open-gpui-util-macros", version = "0.2.0", path = "crates/util_macros" }
 open_gpui_web = { package = "open-gpui-web", version = "0.2.0", path = "crates/gpui_web" }
@@ -220,6 +226,7 @@ thiserror = "2.0.12"
 tokio = "1"
 tokio-util = { version = "0.7.18", features = ["compat"] }
 tracing = "0.1.40"
+tracing-subscriber = "0.3"
 trybuild = "1.0"
 unicase = "2.6"
 unicode-bidi = "0.3.18"

@@ -5,11 +5,11 @@ mod tree_map;
 
 pub use cursor::{Cursor, FilterCursor, Iter};
 use heapless::Vec as ArrayVec;
+use open_gpui_tracing::instrument;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator as _};
 use std::marker::PhantomData;
 use std::mem;
 use std::{cmp::Ordering, fmt, iter::FromIterator, sync::Arc};
-use tracing::instrument;
 pub use tree_map::{MapSeekTarget, TreeMap, TreeSet};
 
 #[cfg(test)]
@@ -1397,7 +1397,9 @@ mod tests {
     use std::cmp;
 
     #[ctor::ctor(unsafe)]
-    fn init_logger() {}
+    fn init_logger() {
+        open_gpui_log::init_test();
+    }
 
     #[test]
     fn test_extend_and_push_tree() {

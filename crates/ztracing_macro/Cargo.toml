@@ -1,0 +1,17 @@
+[package]
+name = "open-gpui-tracing-macro"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
+description = "Disabled instrumentation attribute used by Open GPUI Tracing."
+
+[lib]
+proc-macro = true
+test = false
+doctest = false

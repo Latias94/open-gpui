@@ -21,6 +21,8 @@ vulkan-surface = ["wgpu/vulkan", "wgpu/wgsl"]
 wgpu-renderer = ["dep:open_gpui_wgpu"]
 bench-support = ["open_gpui/bench-support", "open_gpui_platform/bench-support", "dep:criterion", "dep:rand"]
 mac-screen-capture = ["dep:open_gpui_macos", "open_gpui_macos/screen-capture"]
+logging = ["dep:open_gpui_log", "dep:open_gpui_tracing"]
+logging-tracy = ["logging", "open_gpui_tracing/tracy", "dep:tracing", "dep:tracing-subscriber", "dep:tracy-client"]
 
 [dependencies]
 image = { version = "0.25.4", default-features = false, features = ["avif"], optional = true }
@@ -30,7 +32,9 @@ open_gpui_web = { package = "open-gpui-web", path = "../../../crates/gpui_web", 
 open_gpui_ui_components = { package = "open-gpui-ui-components", path = "../../../crates/ui_components" }
 open_gpui_docking = { package = "open-gpui-docking", path = "../../../crates/gpui_docking" }
 open_gpui_http_client = { package = "open-gpui-http-client", path = "../../../crates/http_client" }
+open_gpui_log = { package = "open-gpui-log", path = "../../../crates/zlog", optional = true }
 open_gpui_path = { package = "open-gpui-path", path = "../../../crates/path", features = ["serde"] }
+open_gpui_tracing = { package = "open-gpui-tracing", path = "../../../crates/ztracing", optional = true }
 open_gpui_util = { package = "open-gpui-util", path = "../../../crates/util" }
 open_gpui_wgpu = { package = "open-gpui-wgpu", path = "../../../crates/gpui_wgpu", default-features = false, optional = true }
 criterion = { version = "0.8.2", optional = true }
@@ -44,6 +48,11 @@ wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "cddb2f5d80dc0009b2ef6767
 anyhow = "1.0"
 serde_json = "1.0"
 tempfile = "3.20.0"
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+tracing = { version = "0.1.40", optional = true }
+tracing-subscriber = { version = "0.3", optional = true }
+tracy-client = { version = "0.18", optional = true, default-features = false }
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 async-process = "2.5.0"
@@ -85,3 +94,7 @@ required-features = ["bench-support"]
 name = "randomized_tree"
 harness = false
 required-features = ["bench-support"]
+
+[[test]]
+name = "logging"
+required-features = ["logging"]

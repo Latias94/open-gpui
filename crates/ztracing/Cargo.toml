@@ -1,0 +1,38 @@
+[package]
+name = "open-gpui-tracing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme = "README.md"
+description = "Opt-in Tracy and browser performance instrumentation for Open GPUI consumers."
+
+[lints]
+workspace = true
+
+[lib]
+doctest = false
+
+[features]
+tracy = ["dep:open_gpui_log", "dep:tracing-subscriber", "dep:tracing-tracy", "dep:tracy-client"]
+web = ["dep:async-channel", "dep:js-sys", "dep:open_gpui_log", "dep:tracing-subscriber", "dep:wasm-bindgen", "dep:web-sys"]
+
+[dependencies]
+open_gpui_log = { workspace = true, optional = true }
+open_gpui_tracing_macro.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, optional = true }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+tracing-tracy = { version = "0.11", optional = true, features = ["ondemand"] }
+tracy-client = { version = "0.18", optional = true, features = ["ondemand", "manual-lifetime"] }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+async-channel = { workspace = true, features = ["std"], optional = true }
+js-sys = { version = "0.3.103", optional = true }
+wasm-bindgen = { workspace = true, optional = true }
+web-sys = { version = "0.3.103", features = ["console", "Performance"], optional = true }

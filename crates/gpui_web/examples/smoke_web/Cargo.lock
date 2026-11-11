@@ -3428,10 +3428,22 @@ name = "open-gpui-sum-tree"
 version = "0.2.0"
 dependencies = [
  "heapless",
- "log",
+ "open-gpui-tracing",
  "rayon",
  "tracing",
 ]
+
+[[package]]
+name = "open-gpui-tracing"
+version = "0.2.0"
+dependencies = [
+ "open-gpui-tracing-macro",
+ "tracing",
+]
+
+[[package]]
+name = "open-gpui-tracing-macro"
+version = "0.2.0"
 
 [[package]]
 name = "open-gpui-ui-core"

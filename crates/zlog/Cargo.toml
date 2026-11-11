@@ -1,0 +1,28 @@
+[package]
+name = "open-gpui-log"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme = "README.md"
+description = "Scoped application logging and output sinks from Zed's Apache GPUI closure."
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/zlog.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+log = { workspace = true, features = ["kv_unstable_std"] }
+open_gpui_collections.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -21,12 +21,14 @@ doctest = false
 [dependencies]
 heapless.workspace = true
 rayon.workspace = true
-log.workspace = true
+open_gpui_tracing.workspace = true
 tracing.workspace = true
 proptest = { workspace = true, optional = true }
 
 [dev-dependencies]
 ctor.workspace = true
+log.workspace = true
+open_gpui_log.workspace = true
 rand.workspace = true
 proptest.workspace = true
 
