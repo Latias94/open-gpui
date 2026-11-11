@@ -1524,6 +1524,18 @@ impl WindowsWindowInner {
             && self.registration.generation() == generation
     }
 
+    fn invalidate_frame_submission_for_native_message(self: &Rc<Self>, message: u32) {
+        if matches!(message, WM_SIZE | WM_DPICHANGED | WM_WINDOWPOSCHANGED)
+            && self.accepts_generation_bound_message(self.registration.generation())
+            && RegisteredWindowAuthority::capture(self).is_ok()
+        {
+            self.state
+                .renderer
+                .borrow_mut()
+                .invalidate_current_submission(PlatformWindowPresentOutcome::RepaintRequired);
+        }
+    }
+
     pub(crate) fn retirement_owner_window_id(&self) -> Option<WindowId> {
         self.native_transient_owner
             .owner_registration()
@@ -1597,6 +1609,10 @@ impl WindowsWindowInner {
         if self.native_window_lifecycle.get() != NativeWindowLifecycle::Live {
             return;
         }
+        self.state
+            .renderer
+            .borrow_mut()
+            .invalidate_current_submission(PlatformWindowPresentOutcome::Rejected);
         self.native_window_lifecycle
             .set(NativeWindowLifecycle::Destroying);
         self.dialog_owner.close();
@@ -1866,6 +1882,10 @@ impl WindowsWindowInner {
             return current.same_authority(shutdown);
         }
         current.replace(shutdown.clone());
+        self.state
+            .renderer
+            .borrow_mut()
+            .invalidate_current_submission(PlatformWindowPresentOutcome::Rejected);
         self.stop_frame_signal();
         true
     }
@@ -1882,6 +1902,10 @@ impl WindowsWindowInner {
             return Some(current.clone());
         }
         current.replace(candidate.clone());
+        self.state
+            .renderer
+            .borrow_mut()
+            .invalidate_current_submission(PlatformWindowPresentOutcome::Rejected);
         self.stop_frame_signal();
         Some(candidate)
     }
@@ -9198,6 +9222,46 @@ impl PlatformWindow for WindowsWindow {
         }
     }
 
+    fn frame_delivery_mode(&self) -> PlatformFrameDeliveryMode {
+        self.state.renderer.borrow().frame_delivery_mode()
+    }
+
+    fn draw_with_submission(
+        &self,
+        scene: &Scene,
+        submission: &PlatformFrameSubmission,
+    ) -> PlatformWindowPresentOutcome {
+        if submission.window_id() != self.handle.window_id()
+            || !submission.is_pending()
+            || self.state.interaction_is_quiesced()
+            || self.0.presentation_shutdown_claimed()
+            || !self
+                .0
+                .accepts_generation_bound_message(self.registration.generation())
+            || RegisteredWindowAuthority::capture(&self.0).is_err()
+        {
+            return PlatformWindowPresentOutcome::Rejected;
+        }
+        if unsafe { IsIconic(self.hwnd).as_bool() }
+            || (self.state.initial_placement_phase.get() == InitialPlacementPhase::Presented
+                && unsafe { !IsWindowVisible(self.hwnd).as_bool() })
+        {
+            submission.complete(PlatformWindowPresentOutcome::RepaintRequired);
+            return PlatformWindowPresentOutcome::Deferred;
+        }
+        match self.state.renderer.borrow_mut().draw_with_submission(
+            scene,
+            self.state.background_appearance.get(),
+            submission,
+        ) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                log::error!("failed to submit Windows frame: {error:#}");
+                PlatformWindowPresentOutcome::Rejected
+            }
+        }
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     fn render_to_image(&self, scene: &Scene) -> Result<image::RgbaImage> {
         self.state
@@ -9954,6 +10018,7 @@ unsafe fn window_procedure_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: L
         return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
     }
     let inner = unsafe { &*ptr };
+    inner.invalidate_frame_submission_for_native_message(msg);
     if msg == WM_NCDESTROY {
         inner.mark_native_window_destroyed();
     }
@@ -10029,6 +10094,7 @@ unsafe extern "system" fn attached_window_procedure(
         return unsafe { DefSubclassProc(hwnd, message, wparam, lparam) };
     }
     let dispatch = catch_unwind(AssertUnwindSafe(|| {
+        window.invalidate_frame_submission_for_native_message(message);
         if message == WM_NCDESTROY {
             window.mark_native_window_destroyed();
         }

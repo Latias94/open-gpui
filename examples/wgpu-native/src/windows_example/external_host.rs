@@ -9,13 +9,14 @@
 //! After GPUI detaches and another private message arrives, only the host destroys the HWND
 //! and posts its final WM_QUIT. Failed acceptance exits nonzero without dropping an attached owner.
 
+mod deferred_smoke;
 mod input;
 mod smoke;
 
 use super::*;
 use anyhow::Context as _;
 use input::HostInput;
-use open_gpui::{ApplicationHandle, Entity, WindowHandle};
+use open_gpui::{ApplicationHandle, Entity, WindowHandle, WindowInitialPresentationStatus};
 use raw_window_handle::{HandleError, HasWindowHandle, Win32WindowHandle};
 use std::{num::NonZeroIsize, time::Instant};
 use windows::{
@@ -28,6 +29,7 @@ use windows::{
 };
 
 const HOST_MESSAGE: u32 = WM_APP + 0x217;
+const HOST_INPUT_FENCE: u32 = WM_APP + 0x218;
 const HOST_TIMER: usize = 0x4e47;
 const HOST_SENTINEL: u64 = 0x4e41_5241_484f_5354;
 const HOST_QUIT_PROBE: usize = 0x4e47_5055;
@@ -39,6 +41,7 @@ struct HostWindow {
     sentinel: u64,
     private_messages: Cell<u32>,
     last_private: Cell<usize>,
+    last_input_fence: Cell<usize>,
     timer_ticks: Cell<u32>,
     close_requested: Cell<bool>,
     ending_loop: Cell<bool>,
@@ -67,6 +70,7 @@ impl HostWindow {
             sentinel: HOST_SENTINEL,
             private_messages: Cell::new(0),
             last_private: Cell::new(0),
+            last_input_fence: Cell::new(0),
             timer_ticks: Cell::new(0),
             close_requested: Cell::new(false),
             ending_loop: Cell::new(false),
@@ -151,6 +155,19 @@ impl HostWindow {
         Ok(())
     }
 
+    fn post_input_fence(&self, cookie: usize) -> Result<()> {
+        // SAFETY: A host-owned integer receipt follows the scripted input in the same queue.
+        unsafe {
+            PostMessageW(
+                Some(self.hwnd.get()),
+                HOST_INPUT_FENCE,
+                WPARAM(cookie),
+                LPARAM(0),
+            )
+        }?;
+        Ok(())
+    }
+
     fn client_extent(&self) -> Result<(i32, i32)> {
         let mut rect = RECT::default();
         // SAFETY: rect is valid writable storage and this is the host's live HWND.
@@ -228,6 +245,10 @@ unsafe extern "system" fn host_window_proc(
                 host.last_private.set(wparam.0);
                 return LRESULT(0);
             }
+            HOST_INPUT_FENCE => {
+                host.last_input_fence.set(wparam.0);
+                return LRESULT(0);
+            }
             WM_TIMER if wparam.0 == HOST_TIMER => {
                 host.timer_ticks.set(host.timer_ticks.get().wrapping_add(1));
                 return LRESULT(0);
@@ -257,6 +278,57 @@ struct LoopObservation {
     messages: u64,
     blocked: Duration,
     quit_probe_seen: bool,
+}
+
+enum HostSmoke {
+    Synchronous(smoke::Smoke),
+    Deferred(deferred_smoke::Smoke),
+}
+
+impl HostSmoke {
+    fn auto_drain(&self) -> bool {
+        matches!(self, Self::Deferred(smoke) if smoke.auto_drain())
+    }
+
+    fn advance(
+        &mut self,
+        host: &HostWindow,
+        application: &ApplicationHandle,
+        factory: &Factory,
+        window: Option<&WindowHandle<Root>>,
+        input: &RefCell<Option<Entity<HostInput>>>,
+        observation: &LoopObservation,
+    ) -> Result<()> {
+        match self {
+            Self::Synchronous(smoke) => {
+                smoke.advance(host, application, factory, window, input, observation)
+            }
+            Self::Deferred(smoke) => {
+                smoke.advance(host, application, factory, window, input, observation)
+            }
+        }
+    }
+
+    fn ready_to_shutdown(&self) -> bool {
+        match self {
+            Self::Synchronous(smoke) => smoke.ready_to_shutdown(),
+            Self::Deferred(smoke) => smoke.ready_to_shutdown(),
+        }
+    }
+
+    fn verify_detached(&self, factory: &Factory) -> Result<()> {
+        match self {
+            Self::Synchronous(smoke) => smoke.verify_detached(factory),
+            Self::Deferred(smoke) => smoke.verify_detached(factory),
+        }
+    }
+
+    fn report(&self, factory: &Factory, observation: &LoopObservation) {
+        match self {
+            Self::Synchronous(smoke) => smoke.report(factory, observation),
+            Self::Deferred(smoke) => smoke.report(factory, observation),
+        }
+    }
 }
 
 pub(super) fn run(factory: Rc<Factory>, smoke: bool) -> Result<()> {
@@ -290,6 +362,7 @@ pub(super) fn run(factory: Rc<Factory>, smoke: bool) -> Result<()> {
                             count: factory.count.clone(),
                             host_input: Some(receiver.into()),
                             observation: factory.observation.clone(),
+                            button_shift: px(0.),
                         })
                     },
                 )
@@ -323,33 +396,57 @@ fn run_loop(
     smoke: bool,
 ) -> Result<()> {
     let mut observation = LoopObservation::default();
-    let mut smoke = smoke.then(smoke::Smoke::new);
+    let deferred = factory.delivery_mode == PlatformFrameDeliveryMode::Deferred;
+    let mut smoke = smoke.then(|| {
+        if deferred {
+            HostSmoke::Deferred(deferred_smoke::Smoke::new())
+        } else {
+            HostSmoke::Synchronous(smoke::Smoke::new())
+        }
+    });
     let mut window = None;
     let mut shutdown_started = None;
     let mut post_shutdown = false;
+    let mut initial_completed = false;
     let launched_at = Instant::now();
     host.post_private(1)?;
     host.start_timer()?;
     loop {
         if let Some(result) = opened.borrow_mut().take() {
             window = Some(result.context("attaching GPUI to the application HWND")?);
-            // SAFETY: The native attachment has completed and no App borrow remains active.
-            unsafe {
-                let _ = ShowWindow(host.hwnd.get(), SW_SHOW);
-            }
-            if smoke.is_none() {
-                unsafe { KillTimer(Some(host.hwnd.get()), HOST_TIMER) }?;
-            }
         }
         ensure!(
             window.is_some() || launched_at.elapsed() < Duration::from_secs(15),
             "GPUI launch timed out"
         );
+        if !initial_completed && let Some(window) = window.as_ref() {
+            let facts = application
+                .update(|cx| window.update(cx, |_, window, _| window.presentation_facts()))?;
+            ensure!(
+                facts.initial_presentation != WindowInitialPresentationStatus::Rejected,
+                "the native initial presentation was rejected"
+            );
+            initial_completed =
+                facts.initial_presentation == WindowInitialPresentationStatus::Completed;
+            ensure!(
+                initial_completed || launched_at.elapsed() < Duration::from_secs(15),
+                "initial presentation timed out"
+            );
+            if initial_completed && smoke.is_none() {
+                unsafe { KillTimer(Some(host.hwnd.get()), HOST_TIMER) }?;
+            }
+        }
         ensure!(
             factory.gpu.errors.load(Ordering::Relaxed) == 0
                 && factory.observation.failures.get() == 0,
             "the shared GPU/UI renderer reported an error"
         );
+        if deferred {
+            let allow_submit = shutdown_started.is_none()
+                && !host.close_requested.get()
+                && smoke.as_ref().is_none_or(HostSmoke::auto_drain);
+            factory.drain_pending(allow_submit)?;
+        }
         if let Some(smoke) = smoke.as_mut() {
             smoke.advance(
                 host,

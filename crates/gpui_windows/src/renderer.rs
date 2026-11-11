@@ -7,8 +7,9 @@ use std::{
 
 use anyhow::{Context as _, Result};
 use open_gpui::{
-    DevicePixels, GpuSpecs, PlatformAtlas, PlatformWindowPresentOutcome, Scene, Size,
-    WindowBackgroundAppearance, WindowId, WindowPresentationShutdownTicket,
+    DevicePixels, GpuSpecs, PlatformAtlas, PlatformFrameDeliveryMode, PlatformFrameSubmission,
+    PlatformWindowPresentOutcome, Scene, Size, WindowBackgroundAppearance, WindowId,
+    WindowPresentationShutdownTicket,
 };
 use raw_window_handle::{
     RawDisplayHandle, RawWindowHandle, Win32WindowHandle, WindowsDisplayHandle,
@@ -74,7 +75,7 @@ pub trait WindowsRendererFactory: 'static {
     fn create(&self, window: WindowsRendererWindow) -> Result<Box<dyn WindowsRenderer>>;
 }
 
-/// A synchronous renderer for GPUI's existing Win32 window and retirement owner.
+/// A renderer for GPUI's existing Win32 window and retirement owner.
 ///
 /// Calls run on the UI thread and must not reenter GPUI or pump native messages. The renderer
 /// owns its surface and retains exact scene resources through the corresponding GPU work.
@@ -83,6 +84,14 @@ pub trait WindowsRendererFactory: 'static {
 pub trait WindowsRenderer: 'static {
     /// Returns the original atlas used by the Window to prepare every scene.
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+
+    /// Returns how this renderer settles exact frame submissions.
+    ///
+    /// Implementations that retain scenes or recordings for later submission must opt into
+    /// deferred delivery and implement [`Self::draw_with_submission`].
+    fn frame_delivery_mode(&self) -> PlatformFrameDeliveryMode {
+        PlatformFrameDeliveryMode::Synchronous
+    }
 
     /// Resizes the native presentation target to the current physical client extent.
     ///
@@ -103,6 +112,26 @@ pub trait WindowsRenderer: 'static {
         scene: &Scene,
         background: WindowBackgroundAppearance,
     ) -> Result<PlatformWindowPresentOutcome>;
+
+    /// Hands this exact scene and its original submission authority to the renderer.
+    ///
+    /// The default preserves synchronous drawing. A deferred implementation may retain this
+    /// token and the scene or recording, returning `Deferred` until actual queue submission and
+    /// presentation handoff. Only then may it call `submission.complete(Submitted)`. Completion
+    /// uses the original callback and must not reenter GPUI or dispatch native messages.
+    ///
+    /// Before later submission, the provider must verify that this original token is still
+    /// pending. Native target changes and shutdown revoke it before resize or quiescence; a
+    /// terminal token cannot authorize later submission or be replaced with a newer token for
+    /// the retained scene.
+    fn draw_with_submission(
+        &mut self,
+        scene: &Scene,
+        background: WindowBackgroundAppearance,
+        _submission: &PlatformFrameSubmission,
+    ) -> Result<PlatformWindowPresentOutcome> {
+        self.draw(scene, background)
+    }
 
     /// Settles all in-flight work and releases native surface references before HWND retirement.
     ///
@@ -159,6 +188,7 @@ impl WindowsRendererSource {
         Ok(WindowsWindowRenderer {
             backend,
             pending_resize: None,
+            pending_submission: None,
             quiesced_for: None,
         })
     }
@@ -172,6 +202,7 @@ enum WindowsRendererBackend {
 pub(crate) struct WindowsWindowRenderer {
     backend: WindowsRendererBackend,
     pending_resize: Option<Size<DevicePixels>>,
+    pending_submission: Option<PlatformFrameSubmission>,
     quiesced_for: Option<WindowPresentationShutdownTicket>,
 }
 
@@ -198,7 +229,29 @@ impl WindowsWindowRenderer {
         self.renderer().sprite_atlas()
     }
 
+    pub(crate) fn frame_delivery_mode(&self) -> PlatformFrameDeliveryMode {
+        self.renderer().frame_delivery_mode()
+    }
+
+    fn clear_completed_submission(&mut self) {
+        if self
+            .pending_submission
+            .as_ref()
+            .is_some_and(|submission| !submission.is_pending())
+        {
+            self.pending_submission = None;
+        }
+    }
+
+    pub(crate) fn invalidate_current_submission(&mut self, outcome: PlatformWindowPresentOutcome) {
+        if let Some(submission) = self.pending_submission.as_ref() {
+            submission.complete(outcome);
+        }
+        self.clear_completed_submission();
+    }
+
     pub(crate) fn resize(&mut self, size: Size<DevicePixels>) -> Result<()> {
+        self.invalidate_current_submission(PlatformWindowPresentOutcome::RepaintRequired);
         if self.quiesced_for.is_some() {
             return Ok(());
         }
@@ -218,7 +271,8 @@ impl WindowsWindowRenderer {
         scene: &Scene,
         background: WindowBackgroundAppearance,
     ) -> Result<PlatformWindowPresentOutcome> {
-        if self.quiesced_for.is_some() {
+        self.clear_completed_submission();
+        if self.quiesced_for.is_some() || self.pending_submission.is_some() {
             return Ok(PlatformWindowPresentOutcome::Rejected);
         }
         if let Some(size) = self.pending_resize {
@@ -227,7 +281,36 @@ impl WindowsWindowRenderer {
         self.renderer_mut().draw(scene, background)
     }
 
+    pub(crate) fn draw_with_submission(
+        &mut self,
+        scene: &Scene,
+        background: WindowBackgroundAppearance,
+        submission: &PlatformFrameSubmission,
+    ) -> Result<PlatformWindowPresentOutcome> {
+        self.clear_completed_submission();
+        if self.quiesced_for.is_some() || !submission.is_pending() {
+            return Ok(PlatformWindowPresentOutcome::Rejected);
+        }
+        if self.pending_submission.as_ref().is_some_and(|current| {
+            current.window_id() != submission.window_id()
+                || current.frame_generation() != submission.frame_generation()
+                || current.attempt_id() != submission.attempt_id()
+        }) {
+            return Ok(PlatformWindowPresentOutcome::Rejected);
+        }
+        if let Some(size) = self.pending_resize {
+            self.resize(size)?;
+        }
+        self.pending_submission = Some(submission.clone());
+        let result = self
+            .renderer_mut()
+            .draw_with_submission(scene, background, submission);
+        self.clear_completed_submission();
+        result
+    }
+
     pub(crate) fn handle_device_lost(&mut self, devices: &DirectXDevices) -> Result<()> {
+        self.invalidate_current_submission(PlatformWindowPresentOutcome::RepaintRequired);
         if let WindowsRendererBackend::DirectX(renderer) = &mut self.backend {
             renderer.handle_device_lost(devices)?;
         }
@@ -238,6 +321,7 @@ impl WindowsWindowRenderer {
         &mut self,
         shutdown: &WindowPresentationShutdownTicket,
     ) -> Result<()> {
+        self.invalidate_current_submission(PlatformWindowPresentOutcome::Rejected);
         if let Some(current) = &self.quiesced_for {
             anyhow::ensure!(
                 current.same_authority(shutdown),

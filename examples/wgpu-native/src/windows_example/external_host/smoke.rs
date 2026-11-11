@@ -302,13 +302,13 @@ impl Smoke {
     }
 }
 
-fn post(host: &HostWindow, message: u32, wparam: WPARAM, lparam: LPARAM) -> Result<()> {
+pub(super) fn post(host: &HostWindow, message: u32, wparam: WPARAM, lparam: LPARAM) -> Result<()> {
     // SAFETY: These native input packets carry no pointers and target this host's live HWND.
     unsafe { PostMessageW(Some(host.hwnd.get()), message, wparam, lparam) }?;
     Ok(())
 }
 
-fn click_button(
+pub(super) fn click_button(
     host: &HostWindow,
     application: &ApplicationHandle,
     window: &WindowHandle<Root>,
@@ -319,6 +319,15 @@ fn click_button(
         .button_bounds
         .get()
         .context("the real button was not laid out")?;
+    click_at(host, application, window, bounds)
+}
+
+pub(super) fn click_at(
+    host: &HostWindow,
+    application: &ApplicationHandle,
+    window: &WindowHandle<Root>,
+    bounds: Bounds<Pixels>,
+) -> Result<()> {
     let scale = application.update(|cx| window.update(cx, |_, window, _| window.scale_factor()))?;
     let point = bounds.to_device_pixels(scale).center();
     let x = point.x.0;
@@ -339,7 +348,7 @@ fn click_button(
     Ok(())
 }
 
-fn geometry_matches(
+pub(super) fn geometry_matches(
     host: &HostWindow,
     application: &ApplicationHandle,
     window: &WindowHandle<Root>,
