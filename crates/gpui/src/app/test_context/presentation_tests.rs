@@ -2573,7 +2573,7 @@ fn released_focus_handles_do_not_accumulate_window_authority_state(cx: &mut Test
     let view = typed_window.root(cx).unwrap();
     let window = typed_window.into();
     cx.run_until_parked();
-    let baseline_focus_handles = cx.read(|cx| cx.focus_handles.read().len());
+    let baseline_focus_handles = cx.read(|cx| cx.focus_handles.read().handles.len());
 
     for _ in 0..32 {
         let focus = cx.read(|cx| cx.focus_handle());
@@ -2602,7 +2602,7 @@ fn released_focus_handles_do_not_accumulate_window_authority_state(cx: &mut Test
     }
 
     assert_eq!(
-        cx.read(|cx| cx.focus_handles.read().len()),
+        cx.read(|cx| cx.focus_handles.read().handles.len()),
         baseline_focus_handles,
         "released FocusIds must not remain retained by window authority bookkeeping"
     );

@@ -15,10 +15,10 @@ use crate::{
     Background, BorderStyle, Bounds, BoxShadow, Capslock, Context, Corners, CursorHideMode,
     CursorStyle, Decorations, DevicePixels, DispatchActionListener, DispatchNodeId, DispatchTree,
     DisplayId, Edges, ElementGeometry, Entity, EntityId, EventEmitter, FontId, FrameRequestSource,
-    Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext,
-    KeyDownEvent, KeyEvent, KeyUpEvent, Keystroke, KeystrokeEvent, LayoutId, Modifiers,
-    ModifiersChangedEvent, MonochromeSprite, MouseEvent, MouseMoveEvent, MouseUpEvent, Path,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformFrameSignal, PlatformInput,
+    Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, InputPreference, IsZero,
+    KeyBinding, KeyContext, KeyDownEvent, KeyEvent, KeyUpEvent, Keystroke, KeystrokeEvent,
+    LayoutId, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseEvent, MouseMoveEvent,
+    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformFrameSignal, PlatformInput,
     PlatformInputHandler, PlatformWindow, PlatformWindowCapabilities, PlatformWindowCommand,
     PlatformWindowDispatch, PlatformWindowInteractionQuiescence, PlatformWindowMutationObservation,
     PlatformWindowMutationTerminal, PlatformWindowMutationUnobservedTerminal,
@@ -61,9 +61,7 @@ use open_gpui_core_util::post_inc;
 use open_gpui_core_util::{ResultExt, measure};
 use open_gpui_refineable::Refineable;
 use open_gpui_scheduler::Instant;
-use parking_lot::RwLock;
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
-use slotmap::SlotMap;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
@@ -78,8 +76,8 @@ use std::{
     ops::{Deref as StdDeref, DerefMut as StdDerefMut, Range},
     rc::{Rc, Weak as RcWeak},
     sync::{
-        Arc, Weak,
-        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::SeqCst},
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering::SeqCst},
     },
     time::Duration,
 };
@@ -103,6 +101,7 @@ mod draw_unwind_tests;
 #[cfg(test)]
 mod element_arena_tests;
 mod external_drag;
+mod focus;
 #[cfg(test)]
 mod focus_generation_tests;
 #[cfg(test)]
@@ -114,6 +113,8 @@ mod frame_scheduling_tests;
 #[cfg(all(test, feature = "profiler"))]
 mod frame_signal_tests;
 mod input_dispatch;
+#[cfg(test)]
+mod input_preference_tests;
 #[cfg(all(test, any(feature = "inspector", debug_assertions)))]
 mod inspector_unwind_tests;
 mod invalidator;
@@ -179,7 +180,7 @@ pub use self::pointer_session::{
 use self::portal_anchor::{PortalAnchorCapture, PortalAnchorId};
 pub use self::portal_anchor::{PortalAnchorError, PortalAnchorHandle, PortalAnchorSnapshot};
 use crate::util::{
-    atomic_incr_if_not_zero, ceil_to_device_pixel, floor_to_device_pixel, round_half_toward_zero,
+    ceil_to_device_pixel, floor_to_device_pixel, round_half_toward_zero,
     round_half_toward_zero_f64, round_stroke_to_device_pixel, round_to_device_pixel,
 };
 use crate::window_platform_mutation::{
@@ -298,58 +299,11 @@ impl<'a> WindowMouseEvent<'a> {
     }
 }
 
-pub(crate) type AnyWindowFocusListener =
-    Box<dyn FnMut(&WindowFocusEvent, &mut Window, &mut App) -> bool + 'static>;
-
-pub(crate) struct WindowFocusEvent {
-    pub(crate) previous_focus_path: SmallVec<[FocusId; 8]>,
-    pub(crate) current_focus_path: SmallVec<[FocusId; 8]>,
-    pub(crate) previous_committed_focus_path: SmallVec<[FocusId; 8]>,
-    pub(crate) current_committed_focus_path: SmallVec<[FocusId; 8]>,
-}
-
-impl WindowFocusEvent {
-    pub fn is_focus_in(&self, focus_id: FocusId) -> bool {
-        !self.previous_focus_path.contains(&focus_id) && self.current_focus_path.contains(&focus_id)
-    }
-
-    pub fn is_focus_out(&self, focus_id: FocusId) -> bool {
-        self.previous_focus_path.contains(&focus_id) && !self.current_focus_path.contains(&focus_id)
-    }
-
-    pub fn is_focus_committed(&self, focus_id: FocusId) -> bool {
-        self.previous_committed_focus_path.last() != Some(&focus_id)
-            && self.current_committed_focus_path.last() == Some(&focus_id)
-    }
-
-    pub fn is_focus_committed_in(&self, focus_id: FocusId) -> bool {
-        !self.previous_committed_focus_path.contains(&focus_id)
-            && self.current_committed_focus_path.contains(&focus_id)
-    }
-}
-
-/// This is provided when subscribing for `Context::on_focus_out` events.
-pub struct FocusOutEvent {
-    /// A weak focus handle representing what was blurred.
-    pub blurred: WeakFocusHandle,
-}
-
-/// The terminal result of a focus authority request observed through
-/// [`Window::focus_with_completion`] or [`Window::blur_with_completion`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FocusClaimOutcome {
-    /// The requested exact or empty focus authority committed.
-    Committed,
-    /// The requested focus authority did not qualify in its candidate render generation.
-    Rejected,
-    /// A later focus mutation replaced the request before it committed.
-    Superseded,
-}
-
-slotmap::new_key_type! {
-    /// A globally unique identifier for a focusable element.
-    pub struct FocusId;
-}
+pub(crate) use self::focus::{AnyWindowFocusListener, FocusMap, WindowFocusEvent};
+pub use self::focus::{
+    DismissEvent, FocusClaimOutcome, FocusHandle, FocusId, FocusOutEvent, Focusable, ManagedView,
+    WeakFocusHandle,
+};
 
 thread_local! {
     /// Fallback arena used when no app-specific arena is active.
@@ -447,238 +401,6 @@ impl ArenaClearNeeded {
         cx.element_arena.borrow_mut().clear();
     }
 }
-
-pub(crate) type FocusMap = RwLock<SlotMap<FocusId, FocusRef>>;
-pub(crate) struct FocusRef {
-    pub(crate) ref_count: AtomicUsize,
-    pub(crate) tab_index: isize,
-    pub(crate) tab_stop: bool,
-}
-
-impl FocusId {
-    /// Obtains whether the element associated with this handle is currently focused.
-    pub fn is_focused(&self, window: &Window) -> bool {
-        window.focus == Some(*self)
-    }
-
-    /// Obtains whether the element associated with this handle contains the focused
-    /// element or is itself focused.
-    pub fn contains_focused(&self, window: &Window, cx: &App) -> bool {
-        window
-            .focused(cx)
-            .is_some_and(|focused| self.contains(focused.id, window))
-    }
-
-    /// Obtains whether the element associated with this handle is contained within the
-    /// focused element or is itself focused.
-    pub fn within_focused(&self, window: &Window, cx: &App) -> bool {
-        let focused = window.focused(cx);
-        focused.is_some_and(|focused| focused.id.contains(*self, window))
-    }
-
-    /// Obtains whether this handle contains the given handle in the most recently rendered frame.
-    pub(crate) fn contains(&self, other: Self, window: &Window) -> bool {
-        window
-            .rendered_frame
-            .dispatch_tree
-            .focus_contains(*self, other)
-    }
-}
-
-/// A handle which can be used to track and manipulate the focused element in a window.
-pub struct FocusHandle {
-    pub(crate) id: FocusId,
-    handles: Arc<FocusMap>,
-    /// The index of this element in the tab order.
-    pub tab_index: isize,
-    /// Whether this element can be focused by tab navigation.
-    pub tab_stop: bool,
-}
-
-impl std::fmt::Debug for FocusHandle {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("FocusHandle({:?})", self.id))
-    }
-}
-
-impl FocusHandle {
-    pub(crate) fn new(handles: &Arc<FocusMap>) -> Self {
-        let id = handles.write().insert(FocusRef {
-            ref_count: AtomicUsize::new(1),
-            tab_index: 0,
-            tab_stop: false,
-        });
-
-        Self {
-            id,
-            tab_index: 0,
-            tab_stop: false,
-            handles: handles.clone(),
-        }
-    }
-
-    pub(crate) fn for_id(id: FocusId, handles: &Arc<FocusMap>) -> Option<Self> {
-        let lock = handles.read();
-        let focus = lock.get(id)?;
-        if atomic_incr_if_not_zero(&focus.ref_count) == 0 {
-            return None;
-        }
-        Some(Self {
-            id,
-            tab_index: focus.tab_index,
-            tab_stop: focus.tab_stop,
-            handles: handles.clone(),
-        })
-    }
-
-    /// Sets the tab index of the element associated with this handle.
-    pub fn tab_index(mut self, index: isize) -> Self {
-        self.tab_index = index;
-        if let Some(focus) = self.handles.write().get_mut(self.id) {
-            focus.tab_index = index;
-        }
-        self
-    }
-
-    /// Sets whether the element associated with this handle is a tab stop.
-    ///
-    /// When `false`, the element will not be included in the tab order.
-    pub fn tab_stop(mut self, tab_stop: bool) -> Self {
-        self.tab_stop = tab_stop;
-        if let Some(focus) = self.handles.write().get_mut(self.id) {
-            focus.tab_stop = tab_stop;
-        }
-        self
-    }
-
-    /// Converts this focus handle into a weak variant, which does not prevent it from being released.
-    pub fn downgrade(&self) -> WeakFocusHandle {
-        WeakFocusHandle {
-            id: self.id,
-            handles: Arc::downgrade(&self.handles),
-        }
-    }
-
-    /// Moves the focus to the element associated with this handle.
-    pub fn focus(&self, window: &mut Window, cx: &mut App) {
-        window.focus(self, cx)
-    }
-
-    /// Obtains whether the element associated with this handle is currently focused.
-    pub fn is_focused(&self, window: &Window) -> bool {
-        self.id.is_focused(window)
-    }
-
-    /// Obtains whether the element associated with this handle contains the focused
-    /// element or is itself focused.
-    pub fn contains_focused(&self, window: &Window, cx: &App) -> bool {
-        self.id.contains_focused(window, cx)
-    }
-
-    /// Obtains whether the element associated with this handle is contained within the
-    /// focused element or is itself focused.
-    pub fn within_focused(&self, window: &Window, cx: &mut App) -> bool {
-        self.id.within_focused(window, cx)
-    }
-
-    /// Obtains whether this handle contains the given handle in the most recently rendered frame.
-    pub fn contains(&self, other: &Self, window: &Window) -> bool {
-        self.id.contains(other.id, window)
-    }
-
-    /// Dispatch an action on the element that rendered this focus handle
-    pub fn dispatch_action(&self, action: &dyn Action, window: &mut Window, cx: &mut App) {
-        if let Some(node_id) = window
-            .rendered_frame
-            .dispatch_tree
-            .focusable_node_id(self.id)
-        {
-            window.dispatch_action_on_node(node_id, action, cx)
-        }
-    }
-}
-
-impl Clone for FocusHandle {
-    fn clone(&self) -> Self {
-        Self::for_id(self.id, &self.handles).unwrap()
-    }
-}
-
-impl PartialEq for FocusHandle {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-    }
-}
-
-impl Eq for FocusHandle {}
-
-impl Drop for FocusHandle {
-    fn drop(&mut self) {
-        self.handles
-            .read()
-            .get(self.id)
-            .unwrap()
-            .ref_count
-            .fetch_sub(1, SeqCst);
-    }
-}
-
-/// A weak reference to a focus handle.
-#[derive(Clone, Debug)]
-pub struct WeakFocusHandle {
-    pub(crate) id: FocusId,
-    pub(crate) handles: Weak<FocusMap>,
-}
-
-impl WeakFocusHandle {
-    /// Attempts to upgrade the [WeakFocusHandle] to a [FocusHandle].
-    pub fn upgrade(&self) -> Option<FocusHandle> {
-        let handles = self.handles.upgrade()?;
-        FocusHandle::for_id(self.id, &handles)
-    }
-}
-
-impl PartialEq for WeakFocusHandle {
-    fn eq(&self, other: &WeakFocusHandle) -> bool {
-        self.id == other.id
-    }
-}
-
-impl Eq for WeakFocusHandle {}
-
-impl PartialEq<FocusHandle> for WeakFocusHandle {
-    fn eq(&self, other: &FocusHandle) -> bool {
-        self.id == other.id
-    }
-}
-
-impl PartialEq<WeakFocusHandle> for FocusHandle {
-    fn eq(&self, other: &WeakFocusHandle) -> bool {
-        self.id == other.id
-    }
-}
-
-/// Focusable allows users of your view to easily
-/// focus it (using window.focus_view(cx, view))
-pub trait Focusable: 'static {
-    /// Returns the focus handle associated with this view.
-    fn focus_handle(&self, cx: &App) -> FocusHandle;
-}
-
-impl<V: Focusable> Focusable for Entity<V> {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.read(cx).focus_handle(cx)
-    }
-}
-
-/// ManagedView is a view (like a Modal, Popover, Menu, etc.)
-/// where the lifecycle of the view is handled by another view.
-pub trait ManagedView: Focusable + EventEmitter<DismissEvent> + Render {}
-
-impl<M: Focusable + EventEmitter<DismissEvent> + Render> ManagedView for M {}
-
-/// Emitted by implementers of [`ManagedView`] to indicate the view should be dismissed, such as when a view is presented as a modal.
-pub struct DismissEvent;
 
 type FrameCallback = Box<dyn FnOnce(&mut Window, &mut App)>;
 type FrameSubmissionPresentCallback =
@@ -1931,6 +1653,7 @@ pub struct Window {
     input_transaction_depth: Rc<Cell<usize>>,
     mouse_event_target: Rc<Cell<Option<HitboxId>>>,
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
+    focus_lost_path: SmallVec<[FocusId; 8]>,
     default_prevented: bool,
     last_dispatch_event_result: Option<DispatchEventResult>,
     mouse_position: Point<Pixels>,
@@ -3084,6 +2807,7 @@ impl Window {
             input_transaction_depth: Rc::new(Cell::new(0)),
             mouse_event_target: Rc::new(Cell::new(None)),
             focus_lost_listeners: SubscriberSet::new(),
+            focus_lost_path: SmallVec::new(),
             default_prevented: true,
             last_dispatch_event_result: None,
             mouse_position,
@@ -4938,6 +4662,17 @@ impl Window {
             .and_then(|id| FocusHandle::for_id(id, &cx.focus_handles))
     }
 
+    /// While focus-lost listeners are being dispatched, returns the closest ancestor of the
+    /// previously focused element that can still receive focus, making it a suitable target
+    /// for focus restoration. Returns `None` at all other times, or when no such ancestor exists.
+    pub fn focus_lost_restore_target(&self, cx: &App) -> Option<FocusHandle> {
+        let (_leaf, ancestors) = self.focus_lost_path.split_last()?;
+        ancestors.iter().rev().find_map(|id| {
+            self.rendered_frame.dispatch_tree.focusable_node_id(*id)?;
+            FocusHandle::for_id(*id, &cx.focus_handles)
+        })
+    }
+
     /// Returns an opaque revision that changes whenever element focus is explicitly claimed.
     ///
     /// Reasserting the currently focused handle and explicitly clearing an already-empty focus
@@ -5975,6 +5710,7 @@ impl Window {
     pub(crate) fn dispatch_keystroke_observers(
         &mut self,
         keystroke: &Keystroke,
+        input_preference: InputPreference,
         action: Option<&dyn Action>,
         context_stack: Vec<KeyContext>,
         cx: &mut App,
@@ -5987,6 +5723,7 @@ impl Window {
             let retain = (callback)(
                 &KeystrokeEvent {
                     keystroke: keystroke.clone(),
+                    input_preference,
                     action: action.map(|action| action.boxed_clone()),
                     context_stack: context_stack.clone(),
                 },
@@ -6001,6 +5738,7 @@ impl Window {
     pub(crate) fn dispatch_keystroke_interceptors(
         &mut self,
         keystroke: &Keystroke,
+        input_preference: InputPreference,
         context_stack: Vec<KeyContext>,
         cx: &mut App,
     ) {
@@ -6014,6 +5752,7 @@ impl Window {
                 let retain = (callback)(
                     &KeystrokeEvent {
                         keystroke: keystroke.clone(),
+                        input_preference,
                         action: None,
                         context_stack: context_stack.clone(),
                     },
@@ -8437,9 +8176,19 @@ impl Window {
                 if !previous_committed_focus_path.is_empty()
                     && current_committed_focus_path.is_empty()
                 {
-                    self.focus_lost_listeners
-                        .clone()
-                        .retain(&(), |listener| listener(self, cx));
+                    let previous_scope = std::mem::replace(
+                        &mut self.focus_lost_path,
+                        previous_committed_focus_path.clone(),
+                    );
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        self.focus_lost_listeners
+                            .clone()
+                            .retain(&(), |listener| listener(self, cx));
+                    }));
+                    self.focus_lost_path = previous_scope;
+                    if let Err(payload) = result {
+                        std::panic::resume_unwind(payload);
+                    }
                 }
 
                 let event = WindowFocusEvent {
@@ -13646,6 +13395,25 @@ impl Window {
         }
     }
 
+    fn input_preference(&mut self, event: &dyn Any, cx: &mut App) -> InputPreference {
+        let prefers_character_input = event
+            .downcast_ref::<KeyDownEvent>()
+            .is_some_and(|event| event.prefer_character_input);
+        if !prefers_character_input {
+            return InputPreference::KeyBindings;
+        }
+        let Some(mut input_handler) = self.platform_window.take_input_handler() else {
+            return InputPreference::KeyBindings;
+        };
+        let accepts_text_input = input_handler.accepts_text_input(self, cx);
+        self.restore_input_handler_if_admitted(input_handler, cx);
+        if accepts_text_input && self.user_interaction_is_admitted() {
+            InputPreference::CharacterInput
+        } else {
+            InputPreference::KeyBindings
+        }
+    }
+
     fn dispatch_key_event(&mut self, event: &dyn Any, cx: &mut App) {
         if event.is::<KeyDownEvent>() || event.is::<KeyUpEvent>() {
             self.key_event_revision = self.key_event_revision.wrapping_add(1);
@@ -13708,7 +13476,14 @@ impl Window {
         }
 
         let Some(keystroke) = keystroke else {
-            self.finish_dispatch_key_event(event, None, dispatch_path, self.context_stack(), cx);
+            self.finish_dispatch_key_event(
+                event,
+                None,
+                InputPreference::KeyBindings,
+                dispatch_path,
+                self.context_stack(),
+                cx,
+            );
             return;
         };
 
@@ -13749,7 +13524,17 @@ impl Window {
             cx.stop_propagation();
             return;
         }
-        self.dispatch_keystroke_interceptors(&keystroke, self.context_stack(), cx);
+        let input_preference = self.input_preference(event, cx);
+        if !self.user_interaction_is_admitted() {
+            cx.stop_propagation();
+            return;
+        }
+        self.dispatch_keystroke_interceptors(
+            &keystroke,
+            input_preference,
+            self.context_stack(),
+            cx,
+        );
         if !self.user_interaction_is_admitted() {
             cx.stop_propagation();
             return;
@@ -13758,6 +13543,7 @@ impl Window {
             self.finish_dispatch_key_event(
                 event,
                 Some(&keystroke),
+                input_preference,
                 dispatch_path,
                 self.context_stack(),
                 cx,
@@ -13837,23 +13623,12 @@ impl Window {
             return;
         }
 
-        let skip_bindings = event
-            .downcast_ref::<KeyDownEvent>()
-            .filter(|key_down_event| key_down_event.prefer_character_input)
-            .map(|_| {
-                self.platform_window
-                    .take_input_handler()
-                    .map_or(false, |mut input_handler| {
-                        let accepts = input_handler.accepts_text_input(self, cx);
-                        self.restore_input_handler_if_admitted(input_handler, cx);
-                        // If modifiers are not excessive (e.g. AltGr), and the input handler is accepting text input,
-                        // we prefer the text input over bindings.
-                        accepts && self.user_interaction_is_admitted()
-                    })
-            })
-            .unwrap_or(false);
-
-        if !skip_bindings {
+        let input_preference = self.input_preference(event, cx);
+        if !self.user_interaction_is_admitted() {
+            cx.stop_propagation();
+            return;
+        }
+        if input_preference == InputPreference::KeyBindings {
             for binding in match_result.bindings {
                 self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
                 if !self.user_interaction_is_admitted() {
@@ -13863,6 +13638,7 @@ impl Window {
                 if !cx.propagate_event {
                     self.dispatch_keystroke_observers(
                         &keystroke,
+                        input_preference,
                         Some(binding.action.as_ref()),
                         match_result.context_stack,
                         cx,
@@ -13876,6 +13652,7 @@ impl Window {
         self.finish_dispatch_key_event(
             event,
             Some(&keystroke),
+            input_preference,
             dispatch_path,
             match_result.context_stack,
             cx,
@@ -13887,6 +13664,7 @@ impl Window {
         &mut self,
         event: &dyn Any,
         recognized_keystroke: Option<&Keystroke>,
+        input_preference: InputPreference,
         dispatch_path: SmallVec<[DispatchNodeId; 32]>,
         context_stack: Vec<KeyContext>,
         cx: &mut App,
@@ -13906,7 +13684,7 @@ impl Window {
         }
 
         if let Some(keystroke) = recognized_keystroke {
-            self.dispatch_keystroke_observers(keystroke, None, context_stack, cx);
+            self.dispatch_keystroke_observers(keystroke, input_preference, None, context_stack, cx);
         }
     }
 
@@ -14047,6 +13825,7 @@ impl Window {
                 if !cx.propagate_event {
                     self.dispatch_keystroke_observers(
                         &replay.keystroke,
+                        InputPreference::KeyBindings,
                         Some(binding.action.as_ref()),
                         Vec::default(),
                         cx,

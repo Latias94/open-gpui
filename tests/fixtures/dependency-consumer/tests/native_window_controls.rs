@@ -3,8 +3,8 @@
 //! bench-support executes an ordinary embedded App without test-support or a renderer.
 
 use open_gpui::{
-    AnyWindowHandle, App, Bounds, Corners, Entity, PendingInputStatus, Pixels, PlatformWindow,
-    Window, WindowKind, WindowOptions, point,
+    AnyWindowHandle, App, Bounds, Corners, Entity, FocusHandle, InputPreference, KeystrokeEvent,
+    PendingInputStatus, Pixels, PlatformWindow, Window, WindowKind, WindowOptions, point,
     popup::{
         PopupAnchor, PopupConstraintAdjustment, PopupGravity, PopupNotSupportedError, PopupOptions,
     },
@@ -39,6 +39,8 @@ fn downstream_native_window_controls_and_complete_popup_schema_are_type_only() {
     let _: fn(&Window) -> bool = Window::is_minimizable;
     let _: fn(&Window) -> bool = Window::has_active_prompt;
     let _: fn(&Window) -> Option<PendingInputStatus<'_>> = Window::pending_input;
+    let _: fn(&Window, &App) -> Option<FocusHandle> = Window::focus_lost_restore_target;
+    let _input_preference = |event: &KeystrokeEvent| -> InputPreference { event.input_preference };
     let _: fn(&mut Window, &Entity<()>, bool, &mut App) -> bool =
         Window::set_pending_input_timeout_paused;
     let _window_type_only = |window: &Window, region: Vec<Bounds<Pixels>>| -> bool {
@@ -106,13 +108,14 @@ fn downstream_ordinary_app_executes_noop_controls_and_refuses_native_popups() {
         .expect("the ordinary embedded App must open an actual headless parent");
     let original = app
         .update(|app| {
-            app.update_window(parent.into(), |_, window, _| {
+            app.update_window(parent.into(), |_, window, app| {
                 let original = (window.bounds(), window.is_fullscreen());
                 assert!(!window.is_simple_fullscreen());
                 assert!(!window.is_resizable());
                 assert!(window.is_minimizable());
                 assert!(!window.has_active_prompt());
                 assert!(window.pending_input().is_none());
+                assert!(window.focus_lost_restore_target(app).is_none());
                 let mut region = vec![
                     Bounds::new(point(px(-2.5), px(3.0)), size(px(40.0), px(30.0))),
                     Bounds::new(point(px(50.0), px(60.0)), size(px(20.0), px(15.0))),

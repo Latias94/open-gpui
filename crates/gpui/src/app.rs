@@ -9,7 +9,7 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
-    sync::{Arc, atomic::Ordering::SeqCst},
+    sync::Arc,
     time::Duration,
 };
 
@@ -829,7 +829,7 @@ pub struct App {
     pub(crate) windows: SlotMap<WindowId, Option<Box<Window>>>,
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
     pub(crate) window_profiles: FxHashMap<WindowId, PlatformWindowProfile>,
-    pub(crate) focus_handles: Arc<FocusMap>,
+    pub(crate) focus_handles: Arc<RwLock<FocusMap>>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
     pub(crate) keyboard_layout: Box<dyn PlatformKeyboardLayout>,
     pub(crate) keyboard_mapper: Rc<dyn PlatformKeyboardMapper>,
@@ -1027,7 +1027,7 @@ impl App {
                 window_update_provenance: WindowUpdateProvenance::Ordinary,
                 window_handles: FxHashMap::default(),
                 window_profiles: FxHashMap::default(),
-                focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
+                focus_handles: Arc::new(RwLock::new(FocusMap::default())),
                 keymap: Rc::new(RefCell::new(Keymap::default())),
                 keyboard_layout,
                 keyboard_mapper,
@@ -2561,23 +2561,29 @@ impl App {
 
     /// Repeatedly called during `flush_effects` to handle a focused handle being dropped.
     fn release_dropped_focus_handles(&mut self) {
-        self.focus_handles
-            .clone()
-            .write()
-            .retain(|handle_id, focus| {
-                if focus.ref_count.load(SeqCst) == 0 {
-                    for window_handle in self.windows() {
-                        window_handle
-                            .update(self, |_, window, cx| {
-                                window.clear_dropped_focus(handle_id, cx);
-                            })
-                            .unwrap();
+        let dropped = {
+            let mut focus_map = self.focus_handles.write();
+            if focus_map.dropped_handles.is_empty() {
+                return;
+            }
+            let dropped = focus_map
+                .dropped_handles
+                .drain(..)
+                .collect::<SmallVec<[_; 1]>>();
+            for id in &dropped {
+                focus_map.handles.remove(*id);
+            }
+            dropped
+        };
+        for window_handle in self.windows() {
+            window_handle
+                .update(self, |_, window, cx| {
+                    for id in &dropped {
+                        window.clear_dropped_focus(*id, cx);
                     }
-                    false
-                } else {
-                    true
-                }
-            });
+                })
+                .ok();
+        }
     }
 
     fn apply_notify_effect(&mut self, emitter: EntityId) {
@@ -4063,11 +4069,29 @@ pub struct AnyTooltip {
     pub check_visible_and_update: Rc<dyn Fn(Bounds<Pixels>, &mut Window, &mut App) -> bool>,
 }
 
+/// Whether a keystroke should prefer character input or key bindings.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InputPreference {
+    /// Prefer typing text over triggering key bindings.
+    CharacterInput,
+    /// Dispatch key bindings normally, if any match.
+    KeyBindings,
+}
+
 /// A keystroke event, and potentially the associated action
 #[derive(Debug)]
 pub struct KeystrokeEvent {
     /// The keystroke that occurred
     pub keystroke: Keystroke,
+
+    /// Whether this keystroke should prefer character input or key bindings.
+    /// This is [`InputPreference::CharacterInput`] when the platform prefers text for the key
+    /// (e.g. AltGr on Windows) and the focused input accepts text. Interceptors still receive
+    /// these keystrokes and can consume them.
+    ///
+    /// If the keystroke is part of a multi-stroke binding, it still waits as pending input
+    /// even when this is [`InputPreference::CharacterInput`].
+    pub input_preference: InputPreference,
 
     /// The action that was resolved for the keystroke, if any
     pub action: Option<Box<dyn Action>>,
