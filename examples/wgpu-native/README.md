@@ -132,3 +132,39 @@ target changes/shutdown, and `RepaintRequired` completion for iconic/hidden Pres
 that never reach the provider. The consumer revalidates `is_pending()` immediately before actual
 submission. Core/CPU and native-adapter unit qualification remain separate from this executable
 GPU acceptance; run all three smoke commands above to qualify the combined implementation.
+
+## Host-Driven Logical Root
+
+Add `--logical-root` to open a second ordinary GPUI root on the same App, text system and original
+GPU device/queue without creating an additional HWND or native renderer/surface. The logical root
+uses `App::open_surface` and its own `HostedSurfaceRenderer`, atlas and host-owned offscreen output.
+Its normal Render implementation contains text, an interactive button, an imported GPU image and
+an independent text receiver. Native and logical roots retain separate focus and live state.
+
+```text
+cargo run --locked -p open-gpui-wgpu-native --no-default-features -- --logical-root --smoke
+cargo run --locked -p open-gpui-wgpu-native --no-default-features -- --external-host --logical-root --smoke
+cargo run --locked -p open-gpui-wgpu-native --no-default-features -- --external-host --deferred --logical-root --smoke
+cargo run --locked -p open-gpui-wgpu-native --no-default-features -- --logical-root --smoke --native-close
+```
+
+The first three trajectories preserve the existing native smoke and add actual offscreen GPUI
+output readbacks, including isolated glyph coverage and a text-field change. Original commands,
+output allocations, recording leases and exact tokens survive host delay. The workflow exercises
+frozen A/B output, submitted interaction while a successor waits, target/scale ABA, zero extent,
+visibility, refusal and exact quiescence. Closing the logical root leaves the native sibling able
+to receive input and redraw. UI HWND identities and renderer/surface creation counts must stay
+unchanged; HWND enumeration excludes the exact Windows `IME` and `MSCTFIME UI` helper classes,
+which native text services may create lazily.
+
+The separate `--native-close` trajectory uses normal wake-driven automatic submission. A timer
+only observes one isolated request passing through asynchronous draw and a later packet wake;
+it does not periodically call `process_pending`. It then posts `WM_CLOSE` to the original native
+window while the logical root remains alive. Native termination requests normal App quit, and
+the logical root must quiesce and detach through its original shutdown authority. Ordinary
+interactive owned mode uses this same close policy.
+
+These are available acceptance commands; actual results, failures and corrections belong in
+the [qualification record](../../docs/verification.md#host-driven-logical-surfaces-without-native-windows).
+They do not establish physical IME/DPI, foreign platforms, Nara integration, game-time/player
+focus, world-space depth/materials or numerical performance budgets.

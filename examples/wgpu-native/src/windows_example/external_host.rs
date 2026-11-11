@@ -10,12 +10,11 @@
 //! and posts its final WM_QUIT. Failed acceptance exits nonzero without dropping an attached owner.
 
 mod deferred_smoke;
-mod input;
 mod smoke;
 
+use super::input::HostInput;
 use super::*;
 use anyhow::Context as _;
-use input::HostInput;
 use open_gpui::{ApplicationHandle, Entity, WindowHandle, WindowInitialPresentationStatus};
 use raw_window_handle::{HandleError, HasWindowHandle, Win32WindowHandle};
 use std::{num::NonZeroIsize, time::Instant};
@@ -30,6 +29,7 @@ use windows::{
 
 const HOST_MESSAGE: u32 = WM_APP + 0x217;
 const HOST_INPUT_FENCE: u32 = WM_APP + 0x218;
+const HOST_LOGICAL_WAKE: u32 = WM_APP + 0x219;
 const HOST_TIMER: usize = 0x4e47;
 const HOST_SENTINEL: u64 = 0x4e41_5241_484f_5354;
 const HOST_QUIT_PROBE: usize = 0x4e47_5055;
@@ -249,6 +249,7 @@ unsafe extern "system" fn host_window_proc(
                 host.last_input_fence.set(wparam.0);
                 return LRESULT(0);
             }
+            HOST_LOGICAL_WAKE => return LRESULT(0),
             WM_TIMER if wparam.0 == HOST_TIMER => {
                 host.timer_ticks.set(host.timer_ticks.get().wrapping_add(1));
                 return LRESULT(0);
@@ -331,7 +332,7 @@ impl HostSmoke {
     }
 }
 
-pub(super) fn run(factory: Rc<Factory>, smoke: bool) -> Result<()> {
+pub(super) fn run(factory: Rc<Factory>, smoke: bool, logical_root: bool) -> Result<()> {
     let platform = Rc::new(WindowsPlatform::new_external_host(
         Arc::new(CosmicTextSystem::new("Segoe UI")),
         factory.clone(),
@@ -339,18 +340,21 @@ pub(super) fn run(factory: Rc<Factory>, smoke: bool) -> Result<()> {
     let host = HostWindow::new()?;
     let opened = Rc::new(RefCell::new(None));
     let input = Rc::new(RefCell::new(None));
+    let logical = Rc::new(RefCell::new(None));
     let application = Application::with_platform(platform.clone()).run_embedded({
         let platform = platform.clone();
         let host = host.clone();
         let factory = factory.clone();
         let opened = opened.clone();
         let input = input.clone();
+        let logical = logical.clone();
         move |cx| {
+            let attached_host = host.clone();
             let result = cx
                 .open_window_with_platform_window(
                     WindowOptions::default(),
                     move |handle, params, displays| {
-                        platform.attach_window(handle, params, displays, host)
+                        platform.attach_window(handle, params, displays, attached_host)
                     },
                     |window, cx| {
                         let receiver = cx.new(|cx| HostInput::new(factory.count.clone(), cx));
@@ -363,10 +367,32 @@ pub(super) fn run(factory: Rc<Factory>, smoke: bool) -> Result<()> {
                             host_input: Some(receiver.into()),
                             observation: factory.observation.clone(),
                             button_shift: px(0.),
+                            external_host: true,
                         })
                     },
                 )
                 .map_err(anyhow::Error::from);
+            if result.is_ok() && logical_root {
+                let host = host.clone();
+                let root = logical_root::LogicalRoot::open(cx, factory.clone(), smoke, move || {
+                    // SAFETY: The host retains its HWND until the logical binding retires.
+                    let _ = unsafe {
+                        PostMessageW(
+                            Some(host.hwnd.get()),
+                            HOST_LOGICAL_WAKE,
+                            WPARAM(0),
+                            LPARAM(0),
+                        )
+                    };
+                });
+                match root {
+                    Ok(root) => *logical.borrow_mut() = Some(root),
+                    Err(error) => {
+                        *opened.borrow_mut() = Some(Err(error));
+                        return;
+                    }
+                }
+            }
             *opened.borrow_mut() = Some(result);
         }
     });
@@ -377,6 +403,7 @@ pub(super) fn run(factory: Rc<Factory>, smoke: bool) -> Result<()> {
         &factory,
         &opened,
         &input,
+        &logical,
         smoke,
     );
     if let Err(error) = outcome {
@@ -393,22 +420,19 @@ fn run_loop(
     factory: &Factory,
     opened: &RefCell<Option<Result<WindowHandle<Root>>>>,
     input: &RefCell<Option<Entity<HostInput>>>,
+    logical: &RefCell<Option<logical_root::LogicalRoot>>,
     smoke: bool,
 ) -> Result<()> {
     let mut observation = LoopObservation::default();
     let deferred = factory.delivery_mode == PlatformFrameDeliveryMode::Deferred;
-    let mut smoke = smoke.then(|| {
-        if deferred {
-            HostSmoke::Deferred(deferred_smoke::Smoke::new())
-        } else {
-            HostSmoke::Synchronous(smoke::Smoke::new())
-        }
-    });
+    let smoke_enabled = smoke;
+    let mut smoke = None;
     let mut window = None;
     let mut shutdown_started = None;
     let mut post_shutdown = false;
     let mut initial_completed = false;
     let launched_at = Instant::now();
+    let mut initial_started = launched_at;
     host.post_private(1)?;
     host.start_timer()?;
     loop {
@@ -420,6 +444,13 @@ fn run_loop(
             "GPUI launch timed out"
         );
         if !initial_completed && let Some(window) = window.as_ref() {
+            if logical
+                .borrow()
+                .as_ref()
+                .is_some_and(|root| !root.allows_native_smoke())
+            {
+                initial_started = Instant::now();
+            }
             let facts = application
                 .update(|cx| window.update(cx, |_, window, _| window.presentation_facts()))?;
             ensure!(
@@ -429,10 +460,10 @@ fn run_loop(
             initial_completed =
                 facts.initial_presentation == WindowInitialPresentationStatus::Completed;
             ensure!(
-                initial_completed || launched_at.elapsed() < Duration::from_secs(15),
+                initial_completed || initial_started.elapsed() < Duration::from_secs(15),
                 "initial presentation timed out"
             );
-            if initial_completed && smoke.is_none() {
+            if initial_completed && !smoke_enabled {
                 unsafe { KillTimer(Some(host.hwnd.get()), HOST_TIMER) }?;
             }
         }
@@ -444,18 +475,36 @@ fn run_loop(
         if deferred {
             let allow_submit = shutdown_started.is_none()
                 && !host.close_requested.get()
-                && smoke.as_ref().is_none_or(HostSmoke::auto_drain);
+                && (!smoke_enabled || smoke.as_ref().is_some_and(HostSmoke::auto_drain));
             factory.drain_pending(allow_submit)?;
         }
+        let logical_complete = if let Some(logical) = logical.borrow_mut().as_mut() {
+            logical.process_pending()?;
+            if let (Some(window), Some(input)) = (window.as_ref(), input.borrow().as_ref()) {
+                logical.advance_external(application, factory, window, input)?;
+            }
+            logical.allows_native_smoke()
+        } else {
+            true
+        };
+        if smoke_enabled && smoke.is_none() && logical_complete {
+            smoke = Some(if deferred {
+                HostSmoke::Deferred(deferred_smoke::Smoke::new())
+            } else {
+                HostSmoke::Synchronous(smoke::Smoke::new())
+            });
+        }
         if let Some(smoke) = smoke.as_mut() {
-            smoke.advance(
-                host,
-                application,
-                factory,
-                window.as_ref(),
-                input,
-                &observation,
-            )?;
+            if logical_complete {
+                smoke.advance(
+                    host,
+                    application,
+                    factory,
+                    window.as_ref(),
+                    input,
+                    &observation,
+                )?;
+            }
         }
         let binding_closed = window.is_some() && application.update(|cx| cx.windows().is_empty());
         let should_shutdown = host.close_requested.get()
@@ -485,6 +534,9 @@ fn run_loop(
             );
             if platform.is_shutdown_complete() && !post_shutdown {
                 host.verify()?;
+                if let Some(logical) = logical.borrow().as_ref() {
+                    logical.verify_shutdown(smoke_enabled)?;
+                }
                 if let Some(smoke) = smoke.as_ref() {
                     smoke.verify_detached(factory)?;
                 }

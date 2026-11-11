@@ -3,7 +3,7 @@
 //! Native text services use a field-level anchor; this receiver does not implement editor
 //! caret layout or pointer hit testing.
 
-use super::super::*;
+use super::*;
 use open_gpui::{
     ElementInputHandler, EntityInputHandler, FocusHandle, Pixels, Point, UTF16Selection,
 };

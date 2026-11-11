@@ -13,6 +13,9 @@ fn main() -> anyhow::Result<()> {
 #[cfg(target_os = "windows")]
 mod windows_example {
     mod external_host;
+    #[path = "external_host/input.rs"]
+    mod input;
+    mod logical_root;
 
     use anyhow::{Context as _, Result, ensure};
     use open_gpui::{
@@ -45,6 +48,7 @@ mod windows_example {
         device: Arc<wgpu::Device>,
         queue: Arc<wgpu::Queue>,
         errors: Arc<AtomicU64>,
+        surfaces_created: AtomicU64,
     }
 
     impl Gpu {
@@ -80,20 +84,23 @@ mod windows_example {
                 device: Arc::new(device),
                 queue: Arc::new(queue),
                 errors,
+                surfaces_created: AtomicU64::new(0),
             })
         }
 
         fn surface(&self, window: WindowsRendererWindow) -> Result<wgpu::Surface<'static>> {
             // SAFETY: GPUI retains this HWND until renderer quiescence, which releases the
             // surface after its original GPU submissions complete. The handle is only borrowed.
-            unsafe {
+            let surface = unsafe {
                 self.instance
                     .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
                         raw_display_handle: Some(window.raw_display_handle()),
                         raw_window_handle: window.raw_window_handle(),
                     })
             }
-            .context("creating the application's Win32 WGPU surface")
+            .context("creating the application's Win32 WGPU surface")?;
+            self.surfaces_created.fetch_add(1, Ordering::Relaxed);
+            Ok(surface)
         }
     }
 
@@ -105,6 +112,7 @@ mod windows_example {
         observation: Rc<RenderObservation>,
         delivery_mode: PlatformFrameDeliveryMode,
         delivery: Rc<RefCell<FrameDelivery>>,
+        renderers_created: Cell<u64>,
     }
 
     #[derive(Default)]
@@ -440,6 +448,7 @@ mod windows_example {
 
     impl WindowsRendererFactory for Factory {
         fn create(&self, window: WindowsRendererWindow) -> Result<Box<dyn WindowsRenderer>> {
+            self.renderers_created.set(self.renderers_created.get() + 1);
             let surface = self.gpu.surface(window)?;
             let capabilities = surface.get_capabilities(&self.gpu.adapter);
             let format = [
@@ -850,6 +859,7 @@ mod windows_example {
         host_input: Option<AnyView>,
         observation: Rc<RenderObservation>,
         button_shift: Pixels,
+        external_host: bool,
     }
 
     impl Render for Root {
@@ -865,7 +875,7 @@ mod windows_example {
                 .text_color(rgb(0xf2f4f8))
                 .font_family("Segoe UI")
                 .child("Application-owned WGPU + GPUI")
-                .child(if self.host_input.is_some() {
+                .child(if self.external_host {
                     "The application owns the HWND, message loop and GPU."
                 } else {
                     "GPUI owns the window and event loop. The application owns the GPU."
@@ -960,9 +970,15 @@ mod windows_example {
         let smoke = std::env::args().any(|argument| argument == "--smoke");
         let deferred = std::env::args().any(|argument| argument == "--deferred");
         let external_host = std::env::args().any(|argument| argument == "--external-host");
+        let logical_root = std::env::args().any(|argument| argument == "--logical-root");
+        let native_close = std::env::args().any(|argument| argument == "--native-close");
         ensure!(
             !deferred || external_host,
             "--deferred requires --external-host, which owns the submission drain"
+        );
+        ensure!(
+            !native_close || (smoke && logical_root && !external_host),
+            "--native-close requires --smoke --logical-root with the owned native host"
         );
         let factory = Rc::new(Factory {
             gpu: Arc::new(Gpu::new()?),
@@ -976,28 +992,43 @@ mod windows_example {
                 PlatformFrameDeliveryMode::Synchronous
             },
             delivery: Rc::new(RefCell::new(FrameDelivery::default())),
+            renderers_created: Cell::new(0),
         });
         if external_host {
-            return external_host::run(factory, smoke);
+            return external_host::run(factory, smoke, logical_root);
         }
         let platform = Rc::new(WindowsPlatform::new_with_renderer(
             Arc::new(CosmicTextSystem::new("Segoe UI")),
             factory.clone(),
         )?);
+        let logical_owner = Rc::new(RefCell::new(None));
+        let retained_logical = logical_owner.clone();
         Application::with_platform(platform).run(move |cx: &mut App| {
-            let bounds = Bounds::centered(None, size(px(660.), px(400.)), cx);
+            let bounds = Bounds::centered(
+                None,
+                size(px(660.), px(if logical_root { 540. } else { 400. })),
+                cx,
+            );
+            let mut native_input = None;
             let handle = match cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |_, cx| {
+                |window, cx| {
+                    if logical_root {
+                        let receiver =
+                            cx.new(|cx| input::HostInput::new(factory.count.clone(), cx));
+                        receiver.read(cx).focus.clone().focus(window, cx);
+                        native_input = Some(receiver);
+                    }
                     cx.new(|_| Root {
                         image: factory.image.clone(),
                         count: factory.count.clone(),
-                        host_input: None,
+                        host_input: native_input.clone().map(Into::into),
                         observation: factory.observation.clone(),
                         button_shift: px(0.),
+                        external_host: false,
                     })
                 },
             ) {
@@ -1007,8 +1038,51 @@ mod windows_example {
                     std::process::exit(1);
                 }
             };
+            let native_terminal = Rc::new(Cell::new(false));
+            if logical_root {
+                let native_id = handle.window_id();
+                let native_terminal = native_terminal.clone();
+                let quitting = Rc::new(Cell::new(false));
+                cx.on_app_quit({
+                    let quitting = quitting.clone();
+                    move |_| {
+                        quitting.set(true);
+                        async {}
+                    }
+                })
+                .detach();
+                cx.on_window_native_terminal(move |cx, terminal_id| {
+                    if terminal_id == native_id {
+                        native_terminal.set(true);
+                        if !quitting.get() {
+                            cx.quit();
+                        }
+                    }
+                })
+                .detach();
+            }
             cx.activate(true);
-            if smoke {
+            let logical = if logical_root {
+                match logical_root::install_owned(cx, factory.clone(), smoke && !native_close) {
+                    Ok(root) => Some(root),
+                    Err(error) => {
+                        eprintln!("Opening the logical root failed: {error:#}");
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                None
+            };
+            *retained_logical.borrow_mut() = logical.clone();
+            if native_close {
+                logical_root::start_native_close_smoke(
+                    cx,
+                    logical.as_ref().unwrap().clone(),
+                    factory.clone(),
+                    handle,
+                    native_terminal,
+                );
+            } else if smoke {
                 let submitted = factory.submitted.clone();
                 let errors = factory.gpu.errors.clone();
                 let observation = factory.observation.clone();
@@ -1018,6 +1092,19 @@ mod windows_example {
                         cx.background_executor()
                             .timer(Duration::from_millis(16))
                             .await;
+                        if let Some(logical) = logical.as_ref() {
+                            if let Err(error) =
+                                logical.borrow_mut().as_mut().unwrap().advance_owned(
+                                    cx,
+                                    &factory,
+                                    &handle,
+                                    native_input.as_ref().unwrap(),
+                                )
+                            {
+                                eprintln!("Logical-root smoke failed: {error:#}");
+                                std::process::exit(1);
+                            }
+                        }
                         if submitted.get() == 0 {
                             continue;
                         }
@@ -1029,12 +1116,19 @@ mod windows_example {
                                     eprintln!("The WGPU example reported a GPU error");
                                     std::process::exit(1);
                                 }
-                                println!(
-                                    "Submitted changed GPU image at prefix {}",
-                                    submitted.get()
-                                );
-                                cx.update(|cx| cx.quit());
-                                return;
+                                if logical.as_ref().is_none_or(|logical| {
+                                    logical
+                                        .borrow()
+                                        .as_ref()
+                                        .is_some_and(|root| root.smoke_complete())
+                                }) {
+                                    println!(
+                                        "Submitted changed GPU image at prefix {}",
+                                        submitted.get()
+                                    );
+                                    cx.update(|cx| cx.quit());
+                                    return;
+                                }
                             }
                         } else {
                             changed_after = Some(submitted.get());
@@ -1053,6 +1147,11 @@ mod windows_example {
                 .detach();
             }
         });
+        if let Some(logical) = logical_owner.borrow().as_ref() {
+            if let Some(root) = logical.borrow().as_ref() {
+                root.verify_shutdown(smoke)?;
+            }
+        }
         Ok(())
     }
 }
