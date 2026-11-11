@@ -31,6 +31,30 @@ impl WgpuSceneRenderer {
         queue: Arc<wgpu::Queue>,
         format: wgpu::TextureFormat,
     ) -> anyhow::Result<Self> {
+        Self::new_with_color_space(
+            adapter,
+            device,
+            queue,
+            format,
+            WgpuSceneColorSpace::SrgbEncoded,
+        )
+    }
+
+    /// Uses the supplied device and selects the scene's RGB composition working domain.
+    ///
+    /// `SrgbEncoded` preserves [`Self::new`]. `LinearSrgb` decodes authored sRGB colors before
+    /// premultiplication and blending; an sRGB target then encodes once, while unorm and float
+    /// targets store linear RGB. Gradient interpolation still follows each background's existing
+    /// color-space selection. Imported-image alpha remains defined in its sampled value domain.
+    /// This does not select a gamut, HDR policy, native surface or a second GPU resource owner.
+    /// The same enabled-device requirements as [`Self::new`] apply.
+    pub fn new_with_color_space(
+        adapter: &wgpu::Adapter,
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+        format: wgpu::TextureFormat,
+        color_space: WgpuSceneColorSpace,
+    ) -> anyhow::Result<Self> {
         anyhow::ensure!(
             matches!(
                 format,
@@ -113,7 +137,7 @@ impl WgpuSceneRenderer {
         );
         let color_format = WgpuContext::select_color_texture_format(adapter)?;
         let atlas = Arc::new(WgpuAtlas::new(device.clone(), queue.clone(), color_format));
-        let core = WgpuRendererCore::from_device(
+        let core = WgpuRendererCore::from_device_with_color_space(
             adapter,
             device,
             queue,
@@ -121,6 +145,7 @@ impl WgpuSceneRenderer {
             format,
             wgpu::CompositeAlphaMode::PreMultiplied,
             false,
+            color_space,
         )?;
         Ok(Self { core })
     }

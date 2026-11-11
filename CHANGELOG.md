@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- `WgpuSceneRenderer::new_with_color_space` explicitly selects `LinearSrgb` recording for application-owned linear-light composition. The existing constructor and native renderer preserve their sRGB-numeric default. Imported transfer/alpha meaning and host submission ownership are unchanged; this does not select HDR or display mapping.
+
 - `Scene::retain_atlas_textures` lets an external renderer retain delivered Scene resources while waiting for its own target and encoder. It preserves renderer-local atlas residency; exact candidate admission and GPU recording completion retain their existing contracts.
 - `HostedSurfaceGeometry::from_physical_size` preserves an application's exact attachment extent across fractional-scale conversion, refusing invalid or unrepresentable combinations.
 

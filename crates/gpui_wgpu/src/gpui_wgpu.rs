@@ -18,5 +18,6 @@ pub use wgpu_context::{PreparedWebGraphics, WebBackendPreference, WebGpuContextO
 ))]
 pub use wgpu_renderer::WgpuHeadlessRenderer;
 pub use wgpu_renderer::{
-    GpuContext, WgpuRenderer, WgpuSceneRecording, WgpuSceneRenderer, WgpuSurfaceConfig,
+    GpuContext, WgpuRenderer, WgpuSceneColorSpace, WgpuSceneRecording, WgpuSceneRenderer,
+    WgpuSurfaceConfig,
 };

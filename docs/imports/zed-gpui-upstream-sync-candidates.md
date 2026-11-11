@@ -149,6 +149,13 @@ both through an independently assembled application. This is fork-owned adapter 
 the fixed audit and does not add official-source adoption credit. Engine/platform scope and
 final integration results remain in their owning records.
 
+The following fork-owned color successor adds explicit linear-sRGB Scene recording for that
+engine consumer while preserving the official numeric-sRGB default. Target storage encoding,
+composition domain and imported sampled-alpha meaning remain distinct. Public host-device GPU
+and complete Nara source/cooked Image consumers qualify the adaptation; this is not another
+official-source adoption or an HDR/display-policy selection. The existing hosting plan and
+verification record own implementation results and remaining scope.
+
 ### Fixed Revisions And Provenance
 
 The repository [upstream-sync skill](../../.agents/skills/open-gpui-upstream-sync/SKILL.md)

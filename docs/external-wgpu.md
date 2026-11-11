@@ -85,6 +85,37 @@ When a host starts from an acquired attachment's physical size, use
 physical integer by a fractional scale in f32 and then rounding upward can add a physical pixel.
 The conversion preserves the exact attachment extent or refuses an unrepresentable combination.
 
+## Select The Composition Domain
+
+`WgpuSceneRenderer::new` preserves GPUI's existing sRGB-numeric composition. It does not infer a
+linear-light working domain from an sRGB attachment format. An engine that composes in linear
+sRGB selects the explicit recording mode:
+
+```rust,ignore
+let mut renderer = WgpuSceneRenderer::new_with_color_space(
+    &adapter,
+    device.clone(),
+    queue.clone(),
+    wgpu::TextureFormat::Bgra8UnormSrgb,
+    WgpuSceneColorSpace::LinearSrgb,
+)?;
+```
+
+In this mode, authored sRGB UI colors decode before premultiplication and blending. Imported
+images keep their exact transfer/alpha declaration. An sRGB attachment encodes the composed
+linear RGB once; a linear unorm/float attachment stores linear RGB. Path intermediates use a
+matching target format. On sRGB targets, hardware storage encoding and sampling decode preserve
+SDR dark-color precision; the final path shader forwards the decoded associated RGB without
+another conversion. Linear/float targets retain their corresponding intermediate precision.
+The existing gradient interpolation choices remain separate from the composition domain, and
+glyph contrast/gamma remains a coverage/appearance policy.
+
+The caller supplies Clear values in the selected composition domain, subject to its target's
+alpha representation. `Load` requires existing attachment values with that same meaning. This
+mode selects neither GPU ownership nor HDR, gamut conversion, tone mapping, display profiles or
+UI placement relative to scene postprocessing. A float target by itself does not establish HDR
+display output. Existing native/default constructors retain their original behavior.
+
 ## Import An Application Texture
 
 Import a subresource through the renderer's original atlas:
@@ -121,7 +152,8 @@ refused. Known descriptor errors do not publish an atlas registration.
 and must declare sRGB storage. `alpha` describes the values after any such decoding. In particular,
 premultiplied RGB must be premultiplied in that sampled domain: an sRGB view requires stored sRGB
 encodings of linear premultiplied RGB. The renderer unpremultiplies before transfer conversion and
-preserves GPUI's existing working values. This is not a promise of linear-light UI composition,
+uses the selected composition domain. The default preserves GPUI's existing working values; the
+explicit `LinearSrgb` recorder keeps sampled linear RGB in linear light. Neither mode supplies
 HDR tone mapping or wide-gamut color management; those remain application/render-policy decisions.
 
 The optional `owner` can retain a pooled allocation or producer-specific resource. Frame leases

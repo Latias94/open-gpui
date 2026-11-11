@@ -54,7 +54,7 @@ fn fs_subpixel_sprite(input: SubpixelSpriteOutput) -> SubpixelSpriteFragmentOutp
     }
 
     var out = SubpixelSpriteFragmentOutput();
-    out.foreground = vec4<f32>(input.color.rgb, 1.0);
+    out.foreground = vec4<f32>(srgb_to_scene(input.color).rgb, 1.0);
     out.alpha = vec4<f32>(input.color.a * alpha_corrected, 1.0);
     return out;
 }

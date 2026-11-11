@@ -96,6 +96,71 @@ atlas and independent shared-device controls do not complete it. Full platform/f
 qualification, Nara R11 and Editor acceptance, separate framework maintenance and its handoff
 remain open; this exit grants none of those gates.
 
+## Explicit Linear-Srgb Scene Composition
+
+This fork-owned successor starts from `7bfe8022f68169879464296e0d6d8ad09d89c7e3` and responds
+to Nara's real linear-sRGB composition target. It adds `WgpuSceneColorSpace` and
+`WgpuSceneRenderer::new_with_color_space`, preserving the original constructor/native default
+as `SrgbEncoded`. The explicit `LinearSrgb` recorder decodes authored colors before alpha
+association and blending. Imported images retain their sampled transfer/alpha meaning. The
+original host still owns device/encoder/target, submission and recording retirement; no Nara
+types or second render graph enter the framework.
+
+The public `linear_scene` test obtains ordinary Scenes from `HeadlessAppContext` solely as a
+fixture, then uses one actual host device/encoder/submission and GPU readback. It compares default
+and explicit legacy constructors, opaque/translucent quads and borders, real mono glyphs, ordinary
+atlas images, three imported premultiplied transfer/format combinations, a declared sRGB gradient,
+and translucent/opaque paths across unorm, sRGB and float targets. This is not native presentation
+or an unchanged-official-implementation retest. Existing `external_scene` controls retain their
+original host callback, clip/import, multi-scene submission and exact allocation-lifetime oracles.
+
+The first DX12 public selection passes **3/3**
+(`4a3d9fb8-d48b-489a-82f8-80aa6f8b9256`) but misses a reviewed dark-path precision defect.
+Forcing an 8-bit linear Path intermediate maps authored `#060606` to black before final sRGB
+encoding. The added Quad/Path side-by-side control actually fails on DX12
+(`8795673a-d83b-4bd3-b223-1bfd09d84145`): path byte zero versus expected six. The correction
+removes that unnecessary format policy and restores the original target-matched intermediate,
+MSAA query, pipeline and allocation. Hardware sRGB storage encoding/sampling decode preserves
+SDR dark precision; the final path shader forwards the sampled associated RGB without another
+shader decode. The same immutable red assertions then pass.
+
+The final public selection passes **3/3 with `WGPU_BACKEND=dx12`**
+(`ff0831c1-f443-4463-9ce8-e6379f110ad1`) and **3/3 with `WGPU_BACKEND=vulkan`**
+(`63796982-3e8f-45bd-a1cd-99a49a0ad7af`). The new color fixture explicitly selects and reports
+the requested DX12/Vulkan RTX 4090 adapter. The two existing external-Scene controls retain
+automatic adapter selection; repeating them under that environment does not establish their
+per-backend identity. The existing callback-ownership test
+deliberately creates invalid-usage buffers to exercise the caller's original error handler;
+those expected callback messages are distinct from unexpected validation, which fails the new
+color test. Device-supported dual-source pipeline creation is exercised, while the fixture
+explicitly paints grayscale glyphs. Actual subpixel glyph output, shadow/underline/Oklab breadth,
+foreign native/browser execution, HDR/display profiles and numerical performance budgets are
+not established by these runs. Final integration and affected build/static results follow below.
+
+The affected all-feature WGPU library passes **123/123**
+(`a53f99e6-7cd9-44a6-9f97-a8571ccb8b0e`), including storage/packed shader validation, existing
+path/atlas pixels and dual-source shader parsing. All-target/all-feature correctness Clippy
+passes. Production Core/WGPU/Web wasm compilation passes with defaults disabled; this is source
+qualification, not browser execution. Workspace formatting succeeds. No manifests, dependency
+versions or lockfiles change in the framework.
+
+The actual independently locked Nara child passes on DX12
+(`1f803269-dba8-4abc-b268-51fb8427f285`) and Vulkan
+(`c591aaef-55b2-4adb-b043-8c91b22c2eef`). It replays real Source/Cooked PNG captures after their
+managed Runtime and temporary backing retirement, imports the exact engine output descriptors,
+and runs its unchanged Editor/text/selection/edit/Undo/failure/resize/close trajectory. Both
+backends observe the same four midtone/alpha bands and translucent overlay at original and
+fractional root scales. The prior default-mode run actually observes 137 instead of expected
+64 before explicit selection. Engine-specific alpha correction, result scope and remaining
+intermediate-precision/HDR/device-loss/cost gates stay in Nara's owning ADR/plan/study.
+
+Independent review closes the dark-path finding after the actual red/fix and bounded rereview;
+no P1/P2 remains in the reviewed adaptation. Added local links/fragments and workflow YAML
+syntax validate. CI only gains the new public target in its existing recording step; remote
+CI is unexecuted. The prior built xtask executable is absent after disk cleanup. This unit
+does not rebuild the unrelated component/DevTools closure solely for unchanged aggregate static
+scans, nor claim a new whole-framework, compiler-floor, native-default or foreign-platform gate.
+
 ## External Scene Custody And Physical Attachment Extents
 
 This fork-owned integration successor starts from `5925a34f920563592cd6115e6f97867699f8dae6`.

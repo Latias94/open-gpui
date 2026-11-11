@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-11T23:02:00+08:00
+timestamp: 2026-11-12T00:20:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,18 @@ verified_by:
 ---
 
 # Current State
+
+- The explicit [linear-sRGB recorder](../../verification.md#explicit-linear-srgb-scene-composition)
+  preserves GPUI's numeric-sRGB default and adds an application-selected working domain. Actual
+  host-device color/import/path/text readback passes under explicitly selected DX12 and Vulkan;
+  each three-test public selection also retains two existing automatic-adapter controls. Review's
+  dark-Path defect is reproduced before restoring target-matched storage/MSAA, then its unchanged
+  assertions pass. Nara's complete native child additionally imports real Source/Cooked PNG
+  captures after both Runtime/backing owners retire, maps exact output transfer/alpha and passes
+  the original Editor/input/failure/geometry/close workflow on both backends. The old mode actually
+  reads 137 instead of 64 before explicit selection. The affected WGPU library passes 123/123.
+  Final build/static evidence stays in the verification record. This is fork-owned SDR support,
+  not HDR/display mapping, physical input, full Nara adoption or maintenance handoff.
 
 - The no-native-window hosted-surface successor is implemented at `2910b52424e` (Core) and
   `8809f12929e` (ordinary GPU consumers).
@@ -1348,14 +1360,15 @@ historical scope and is not current branch or CI qualification.
   assertions; affected engine workspace, renderer/integration correctness Clippy and framework
   Core no-default-feature correctness Clippy pass. Final revisions and remaining consumer
   qualification belong to the two repositories' existing records.
-  Complete processed-content/color-alpha, failure/device-loss and
-  numerical-cost gates remain separate from this scoped consumer.
+  The explicit color successor above closes the selected processed-Image/midtone-alpha gate.
+  Forced second-content admission failure, device-loss/reconstruction, busy-producer retirement,
+  wider color/HDR/display breadth and numerical-cost gates remain separate.
 
 - Continue the
   [external WGPU application workflow](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#external-wgpu-application-hosting-successor)
   beyond its qualified recorder, imported-image, supplied-renderer, external HWND/loop,
   deferred original-candidate, hosted logical-root and scoped actual Nara Host/Scene consumers.
-  Complete processed-content/color-alpha, device-loss/reconstruction, busy-producer retirement
+  Continue device-loss/reconstruction, busy-producer retirement, wider color/display breadth
   and numerical-cost acceptance; qualify complete public component behavior/skin reuse. Preserve
   ordinary standalone applications; no Nara dependency enters the framework.
 - Follow the [maintained-baseline engine gate](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#maintained-baseline-before-engine-adaptation)

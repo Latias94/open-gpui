@@ -99,6 +99,8 @@ struct GammaParams {
 const M_PI_F: f32 = 3.1415926;
 const GRAYSCALE_FACTORS: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
 
+override LINEAR_SRGB: bool = false;
+
 struct Bounds {
     origin: vec2<f32>,
     size: vec2<f32>,
@@ -495,6 +497,17 @@ fn quad_sdf_impl(corner_center_to_point: vec2<f32>, corner_radius: f32) -> f32 {
 // Abstract away the final color transformation based on the
 // target alpha compositing mode.
 fn blend_color(color: vec4<f32>, alpha_factor: f32) -> vec4<f32> {
+    return blend_scene_color(srgb_to_scene(color), alpha_factor);
+}
+
+fn srgb_to_scene(color: vec4<f32>) -> vec4<f32> {
+    if (LINEAR_SRGB) {
+        return srgba_to_linear(color);
+    }
+    return color;
+}
+
+fn blend_scene_color(color: vec4<f32>, alpha_factor: f32) -> vec4<f32> {
     let alpha = color.a * alpha_factor;
     let multiplier = select(1.0, alpha, globals.premultiplied_alpha != 0u);
     return vec4<f32>(color.rgb * multiplier, alpha);
@@ -707,8 +720,8 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
         return vec4<f32>(0.0);
     }
 
-    let background_color = gradient_color(quad.background, input.local_position, quad.bounds,
-        input.background_solid, input.background_color0, input.background_color1);
+    let background_color = srgb_to_scene(gradient_color(quad.background, input.local_position, quad.bounds,
+        input.background_solid, input.background_color0, input.background_color1));
 
     let unrounded = quad.corner_radii.top_left == 0.0 &&
         quad.corner_radii.bottom_left == 0.0 &&
@@ -721,7 +734,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
             quad.border_widths.right == 0.0 &&
             quad.border_widths.bottom == 0.0 &&
             unrounded) {
-        return blend_color(background_color, 1.0);
+        return blend_scene_color(background_color, 1.0);
     }
 
     let size = quad.bounds.size;
@@ -795,7 +808,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     // However, that might negatively impact performance in the case of
     // reasonable sizes for rounded corners.
     if (is_within_inner_straight_border && !is_near_rounded_corner) {
-        return blend_color(background_color, 1.0);
+        return blend_scene_color(background_color, 1.0);
     }
 
     // Signed distance of the point to the outside edge of the quad's border. It
@@ -831,7 +844,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
 
     var color = background_color;
     if (border_sdf < antialias_threshold) {
-        var border_color = input.border_color;
+        var border_color = srgb_to_scene(input.border_color);
 
         // Dashed border logic when border_style == 1
         if (dashed) {
@@ -1034,7 +1047,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                     saturate(antialias_threshold - inner_sdf));
     }
 
-    return blend_color(color, saturate(antialias_threshold - outer_sdf));
+    return blend_scene_color(color, saturate(antialias_threshold - outer_sdf));
 }
 
 // Returns the dash velocity of a corner given the dash velocity of the two
@@ -1255,8 +1268,8 @@ fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) vec4<f
         background.solid,
         background.colors,
     );
-    let color = gradient_color(background, input.local_position, bounds,
-        prepared_gradient.solid, prepared_gradient.color0, prepared_gradient.color1);
+    let color = srgb_to_scene(gradient_color(background, input.local_position, bounds,
+        prepared_gradient.solid, prepared_gradient.color0, prepared_gradient.color1));
     return vec4<f32>(color.rgb * color.a * alpha, color.a * alpha);
 }
 
@@ -1479,7 +1492,11 @@ fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
         }
     }
     if ((sprite.pad & 1u) != 0u) {
-        sample = linear_to_srgba(sample);
+        if (!LINEAR_SRGB) {
+            sample = linear_to_srgba(sample);
+        }
+    } else {
+        sample = srgb_to_scene(sample);
     }
     let distance = quad_sdf(input.local_position, sprite.bounds, sprite.corner_radii);
 
@@ -1488,7 +1505,7 @@ fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
         let grayscale = dot(color.rgb, GRAYSCALE_FACTORS);
         color = vec4<f32>(vec3<f32>(grayscale), sample.a);
     }
-    return blend_color(color, sprite.opacity * saturate(0.5 - distance));
+    return blend_scene_color(color, sprite.opacity * saturate(0.5 - distance));
 }
 
 // --- surfaces --- //

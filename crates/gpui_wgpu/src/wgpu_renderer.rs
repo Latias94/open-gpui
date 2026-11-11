@@ -49,6 +49,21 @@ use gpu_data::instance_allocation;
 mod scene_renderer;
 pub use scene_renderer::{WgpuSceneRecording, WgpuSceneRenderer};
 
+/// The RGB working domain used to compose GPUI scene primitives.
+///
+/// This selects UI composition, independently of target storage encoding, GPU ownership,
+/// display gamut or HDR policy. Imported images retain their declared sampled transfer and alpha.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum WgpuSceneColorSpace {
+    /// Preserves GPUI's authored sRGB-numeric composition and existing renderer behavior.
+    #[default]
+    SrgbEncoded,
+    /// Composes in linear light with sRGB primaries, decoding authored sRGB before premultiplication.
+    ///
+    /// An sRGB attachment encodes these values once. Unorm and float attachments store linear RGB.
+    LinearSrgb,
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GlobalParams {
@@ -311,6 +326,7 @@ struct WgpuRendererCore {
     dual_source_blending: bool,
     adapter_info: wgpu::AdapterInfo,
     target_format: wgpu::TextureFormat,
+    color_space: WgpuSceneColorSpace,
     max_texture_size: u32,
     uses_webgl_instance_data: bool,
     encoder_uploads: Option<EncoderUploads>,
@@ -672,6 +688,28 @@ impl WgpuRendererCore {
         alpha_mode: wgpu::CompositeAlphaMode,
         uses_webgl_instance_data: bool,
     ) -> anyhow::Result<Self> {
+        Self::from_device_with_color_space(
+            adapter,
+            device,
+            queue,
+            atlas,
+            surface_format,
+            alpha_mode,
+            uses_webgl_instance_data,
+            WgpuSceneColorSpace::SrgbEncoded,
+        )
+    }
+
+    fn from_device_with_color_space(
+        adapter: &wgpu::Adapter,
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+        atlas: Arc<WgpuAtlas>,
+        surface_format: wgpu::TextureFormat,
+        alpha_mode: wgpu::CompositeAlphaMode,
+        uses_webgl_instance_data: bool,
+        color_space: WgpuSceneColorSpace,
+    ) -> anyhow::Result<Self> {
         let dual_source_blending = device
             .features()
             .contains(wgpu::Features::DUAL_SOURCE_BLENDING)
@@ -686,6 +724,7 @@ impl WgpuRendererCore {
             rendering_params.path_sample_count,
             dual_source_blending,
             uses_webgl_instance_data,
+            color_space,
         );
 
         let atlas_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -803,6 +842,7 @@ impl WgpuRendererCore {
             dual_source_blending,
             adapter_info,
             target_format: surface_format,
+            color_space,
             max_texture_size,
             uses_webgl_instance_data,
             encoder_uploads: None,
@@ -999,6 +1039,7 @@ impl WgpuRendererCore {
         path_sample_count: u32,
         dual_source_blending: bool,
         uses_webgl_instance_data: bool,
+        color_space: WgpuSceneColorSpace,
     ) -> WgpuPipelines {
         // Diagnostic guard: verify the device actually has
         // DUAL_SOURCE_BLENDING. We have a crash report (ZED-5G1) where a
@@ -1054,6 +1095,13 @@ impl WgpuRendererCore {
             blend: Some(blend_mode),
             write_mask: wgpu::ColorWrites::ALL,
         };
+        let constants = [(
+            "LINEAR_SRGB",
+            match color_space {
+                WgpuSceneColorSpace::SrgbEncoded => 0.0,
+                WgpuSceneColorSpace::LinearSrgb => 1.0,
+            },
+        )];
 
         let create_pipeline = |name: &str,
                                vs_entry: &str,
@@ -1080,13 +1128,19 @@ impl WgpuRendererCore {
                     module,
                     entry_point: Some(vs_entry),
                     buffers: &[],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: &constants,
+                        ..Default::default()
+                    },
                 },
                 fragment: Some(wgpu::FragmentState {
                     module,
                     entry_point: Some(fs_entry),
                     targets: color_targets,
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: &constants,
+                        ..Default::default()
+                    },
                 }),
                 primitive: wgpu::PrimitiveState {
                     topology,
@@ -1404,6 +1458,7 @@ impl WgpuRenderer {
             let path_sample_count = self.core().rendering_params.path_sample_count;
             let dual_source_blending = self.core().dual_source_blending;
             let uses_webgl_instance_data = self.core().uses_webgl_instance_data;
+            let color_space = self.core().color_space;
             self.surface_lifecycle.request_reconfigure();
             let resources = self.resources_mut();
             resources.pipelines = WgpuRendererCore::create_pipelines(
@@ -1414,6 +1469,7 @@ impl WgpuRenderer {
                 path_sample_count,
                 dual_source_blending,
                 uses_webgl_instance_data,
+                color_space,
             );
         }
     }
@@ -3461,6 +3517,7 @@ mod tests {
             rendering_params.path_sample_count,
             dual_source_blending,
             false,
+            WgpuSceneColorSpace::SrgbEncoded,
         );
 
         assert_eq!(pipelines.subpixel_sprites.is_some(), dual_source_blending);

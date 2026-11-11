@@ -3790,6 +3790,25 @@ and submission/retirement owners in Nara. These are generic framework correction
 Scene executor or extra official-source adoption. Owning regressions and the engine consumer
 qualify their actual scope before maintenance handoff.
 
+The next fork-owned color successor responds to the real Nara consumer's linear-sRGB target
+contract. Preserve the official numeric-sRGB default and add an explicit `WgpuSceneColorSpace`
+selection to application-owned Scene recording. Decode authored UI sRGB before premultiplication
+in `LinearSrgb`; imported textures retain their exact stored transfer and sampled-alpha meaning.
+Retain target-matched path storage with compatible MSAA and avoid decoding the final path
+composite again. Hardware sRGB storage preserves dark-color precision while the sampled result
+remains linear. Preserve gradient interpolation choices and glyph coverage/contrast policy. Apply the
+selection consistently to ordinary primitives, images, paths and dual-source subpixel shaders.
+No second renderer graph, device or submission owner is introduced.
+
+Qualify the fork adaptation through a public host-device GPU consumer: default versus explicit
+legacy equality, non-endpoint opaque/translucent colors, imports, clip/path/text, linear/sRGB/float
+targets and actual readback. Then run the complete Nara source/cooked Image and original Editor
+trajectory on DX12 and Vulkan, deriving import meaning from the original output descriptor.
+Record the expected midtone mismatch before selecting the mode, actual corrections and limits.
+This is SDR composition support; HDR/gamut/display mapping, physical input, engine device-loss
+and numerical costs retain separate gates. Exact results belong in the existing verification
+record, not in new registry snapshots or an upstream-parity claim.
+
 The [standalone logger](../verification.md#standalone-logging-and-tracing) at
 `9e7b9c3a36fb0266ef68ec7ee7280b2eb8646554` and the
 [Window/Win32 successor](../verification.md#window-controls-lazy-inspector-and-win32-dispatch)

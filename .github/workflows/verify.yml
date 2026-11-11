@@ -389,7 +389,7 @@ jobs:
 
       - name: Test application-owned WGPU scene recording
         if: matrix.name == 'windows'
-        run: cargo nextest run --locked -p open-gpui-wgpu --all-features --test external_scene --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui-wgpu --all-features --test external_scene --test linear_scene --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test retained image paint authority
         if: matrix.name == 'windows'
