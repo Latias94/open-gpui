@@ -18,9 +18,10 @@ use crate::{
     Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, InputPreference, IsZero,
     KeyBinding, KeyContext, KeyDownEvent, KeyEvent, KeyUpEvent, Keystroke, KeystrokeEvent,
     LayoutId, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseEvent, MouseMoveEvent,
-    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformFrameSignal, PlatformInput,
-    PlatformInputHandler, PlatformWindow, PlatformWindowCapabilities, PlatformWindowCommand,
-    PlatformWindowDispatch, PlatformWindowInteractionQuiescence, PlatformWindowMutationObservation,
+    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformFrameDeliveryMode,
+    PlatformFrameSignal, PlatformInput, PlatformInputHandler, PlatformWindow,
+    PlatformWindowCapabilities, PlatformWindowCommand, PlatformWindowDispatch,
+    PlatformWindowInteractionQuiescence, PlatformWindowMutationObservation,
     PlatformWindowMutationTerminal, PlatformWindowMutationUnobservedTerminal,
     PlatformWindowPresentOutcome, PlatformWindowProfile, Point, PointerCancelEvent,
     PointerCancelReason, PolychromeSprite, PreparedPlatformPresentationShutdown, Primitive,
@@ -95,6 +96,8 @@ mod asset_cache_tests;
 mod bring_into_view;
 #[cfg(test)]
 mod cache_dependency_tests;
+mod candidate_transfers;
+mod deferred_frame;
 mod displays;
 #[cfg(test)]
 mod draw_unwind_tests;
@@ -166,6 +169,8 @@ pub use self::bring_into_view::{
     BringIntoViewRequestId, DeferredBringIntoViewGuard, RevealTargetError, RevealTargetHandle,
     ScrollChainFence,
 };
+use self::candidate_transfers::CandidateFrameTransfers;
+use self::deferred_frame::DeferredCandidateFrame;
 pub(crate) use self::frame_journal::{
     DeferredDraw, Frame, FrameOutput, PaintIndex, PrepaintCommit, PrepaintCommitCallback,
     PrepaintCommitPhase, PrepaintStateIndex, TooltipRequest, VisualPaintIndex, VisualPrepaintIndex,
@@ -1618,6 +1623,7 @@ pub struct Window {
     candidate_frame_transfers: CandidateFrameTransfers,
     next_candidate_frame_attempt_id: u64,
     candidate_frame_transaction: Option<CandidateFrameTransaction>,
+    deferred_candidate: Option<DeferredCandidateFrame>,
     candidate_atlas_lease_failure: Option<AtlasTextureLeaseError>,
     last_atlas_frame_rejection: Option<AtlasFrameRejection>,
     candidate_pending_input_clear: bool,
@@ -1761,13 +1767,6 @@ struct ProvisionalFocusClaim {
     fallback: Option<FocusId>,
 }
 
-#[derive(Default)]
-struct CandidateFrameTransfers {
-    element_states: Vec<(GlobalElementId, TypeId)>,
-    mouse_listeners: Vec<(usize, usize)>,
-    input_handlers: Vec<(usize, usize)>,
-}
-
 struct CandidateTextInputEffects {
     accepted_generation: u64,
     notifications: (Option<FocusId>, u8),
@@ -1781,6 +1780,7 @@ struct CandidateFrameAttemptId(u64);
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CandidateFrameTransactionPhase {
     Building,
+    Prepared,
     Accepted,
 }
 
@@ -1838,7 +1838,7 @@ impl CandidateFrameTransaction {
         current_commits: Vec<FrameOutput<PrepaintCommit>>,
         previous_commits: Vec<FrameOutput<PrepaintCommit>>,
     ) -> Rc<CandidatePrepaintCommitPlan> {
-        assert_eq!(self.phase, CandidateFrameTransactionPhase::Building);
+        assert_eq!(self.phase, CandidateFrameTransactionPhase::Prepared);
         assert!(
             self.prepaint_commit_plan.is_none(),
             "one candidate frame must prepare its prepaint commit plan exactly once"
@@ -1853,7 +1853,7 @@ impl CandidateFrameTransaction {
     }
 
     fn mark_accepted(&mut self) {
-        assert_eq!(self.phase, CandidateFrameTransactionPhase::Building);
+        assert_eq!(self.phase, CandidateFrameTransactionPhase::Prepared);
         assert!(
             self.prepaint_commit_plan.is_some(),
             "a candidate frame must prepare publications before acceptance"
@@ -1861,11 +1861,17 @@ impl CandidateFrameTransaction {
         self.phase = CandidateFrameTransactionPhase::Accepted;
     }
 
+    fn mark_prepared(&mut self) {
+        assert_eq!(self.phase, CandidateFrameTransactionPhase::Building);
+        self.phase = CandidateFrameTransactionPhase::Prepared;
+    }
+
     fn is_accepted(&self) -> bool {
         self.phase == CandidateFrameTransactionPhase::Accepted
     }
 }
 
+#[derive(Clone)]
 struct CandidateFrameAuthorityCheckpoint {
     interaction_quiesced: bool,
     focus: Option<FocusId>,
@@ -1889,6 +1895,17 @@ struct CandidateDrawContextCheckpoint {
     rem_sizes: SmallVec<[Pixels; 8]>,
     image_caches: Vec<AnyImageCache>,
     opacity: f32,
+}
+
+struct PreparedCandidateFrame {
+    transaction: CandidateFrameTransaction,
+    authority_checkpoint: CandidateFrameAuthorityCheckpoint,
+    restored_input_handler_index: Option<usize>,
+    rendered_input_handlers_len: usize,
+    preserve_dirty_views: bool,
+    accessibility: Option<(accesskit::TreeUpdate, u64)>,
+    stale_pointer_owner: Option<(PointerCaptureHandle, bool)>,
+    draw_context: CandidateDrawContextCheckpoint,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2777,6 +2794,7 @@ impl Window {
             candidate_frame_transfers: CandidateFrameTransfers::default(),
             next_candidate_frame_attempt_id: 0,
             candidate_frame_transaction: None,
+            deferred_candidate: None,
             candidate_atlas_lease_failure: None,
             last_atlas_frame_rejection: None,
             candidate_pending_input_clear: false,
@@ -2921,6 +2939,7 @@ impl Window {
     }
 
     pub(crate) fn claim_presentation_shutdown(&mut self) -> PreparedPlatformPresentationShutdown {
+        self.cancel_deferred_submission();
         if self.presentation_shutdown.is_none() {
             self.retire_retained_visuals();
         }
@@ -3627,7 +3646,9 @@ impl Window {
     }
 
     pub(crate) fn user_interaction_is_admitted(&self) -> bool {
-        self.interaction_authority.is_admitted() && self.provisional_session_accepts_interaction()
+        self.interaction_authority.is_admitted()
+            && self.provisional_session_accepts_interaction()
+            && (self.deferred_candidate.is_none() || self.rendered_frame.generation != 0)
     }
 
     fn provisional_session_projects_destination_semantics(&self) -> bool {
@@ -3655,6 +3676,32 @@ impl Window {
             != WindowInitialPresentationOrder::BeforeVisibility
         {
             return Ok(());
+        }
+        if let Some(generation) = self.deferred_candidate_generation() {
+            anyhow::ensure!(
+                !self.platform_window.is_visible(),
+                "platform window became visible before its first presentation"
+            );
+            let outcome = self.present(cx);
+            anyhow::ensure!(
+                !self.platform_window.is_visible(),
+                "platform window became visible during its hidden first presentation"
+            );
+            match outcome {
+                PlatformWindowPresentOutcome::Submitted => return Ok(()),
+                PlatformWindowPresentOutcome::Deferred => {
+                    self.initial_presentation_retry.minimum_generation = Some(generation);
+                    return Ok(());
+                }
+                PlatformWindowPresentOutcome::RepaintRequired => {
+                    self.initial_presentation_retry.minimum_generation = Some(generation);
+                    self.request_fresh_initial_presentation_frame();
+                    return Ok(());
+                }
+                PlatformWindowPresentOutcome::Rejected => {
+                    anyhow::bail!("platform rejected the initial deferred frame submission");
+                }
+            }
         }
         if self.presentation_state.frame_accepted_generation != Some(self.rendered_frame.generation)
         {
@@ -4348,6 +4395,7 @@ impl Window {
     }
 
     fn finish_interaction_quiescence(&mut self, cleanup_pointer: bool, cx: &mut App) -> bool {
+        self.cancel_deferred_candidate(cx);
         let mut first_panic = None;
         cx.end_platform_drag(self.handle.window_id());
         let revoked_now = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -4534,6 +4582,7 @@ impl Window {
     }
 
     fn finish_remove_window(&mut self, cx: &mut App) {
+        self.cancel_deferred_candidate(cx);
         self.removal_state = WindowRemovalState::Removing;
         cx.end_platform_drag(self.handle.window_id());
         self.should_close_handler.terminate();
@@ -4864,6 +4913,7 @@ impl Window {
         reveal_fence: Option<ScrollChainFence>,
         cx: &mut App,
     ) -> bool {
+        self.cancel_deferred_candidate(cx);
         if !self.focus_mutations_enabled() {
             if let Some(completion) = completion {
                 self.queue_focus_claim_resolution(completion, FocusClaimOutcome::Rejected);
@@ -4928,8 +4978,7 @@ impl Window {
             return true;
         }
 
-        let candidate_frame_in_progress =
-            self.next_frame.generation == self.rendered_frame.generation.saturating_add(1);
+        let candidate_frame_in_progress = self.candidate_frame_is_active();
         if !candidate_frame_in_progress
             && self.focus == Some(handle.id)
             && self.rendered_frame.focus_path().last() == Some(&handle.id)
@@ -5082,7 +5131,7 @@ impl Window {
     }
 
     fn candidate_frame_contains_focus(&self, focus: FocusId) -> bool {
-        self.next_frame.generation == self.rendered_frame.generation.saturating_add(1)
+        self.candidate_frame_is_active()
             && self
                 .next_frame
                 .dispatch_tree
@@ -5188,7 +5237,7 @@ impl Window {
         };
         if self.focus == Some(claim.target) {
             self.set_focus_leaf(claim.fallback);
-            if self.next_frame.generation == self.rendered_frame.generation.saturating_add(1) {
+            if self.candidate_frame_is_active() {
                 self.next_frame.focus = claim.fallback;
             }
         }
@@ -5364,6 +5413,7 @@ impl Window {
     }
 
     fn blur_impl(&mut self, completion: Option<PendingFocusCompletion>, cx: &mut App) -> bool {
+        self.cancel_deferred_candidate(cx);
         if !self.user_interaction_is_admitted()
             || !self.subtree_presentation().is_interactive()
             || self.prepaint_commit_phase.get() == Some(PrepaintCommitPhase::FocusStable)
@@ -5417,8 +5467,7 @@ impl Window {
             return true;
         }
 
-        let candidate_frame_in_progress =
-            self.next_frame.generation == self.rendered_frame.generation.saturating_add(1);
+        let candidate_frame_in_progress = self.candidate_frame_is_active();
         self.clear_pending_keystrokes(cx);
         if !candidate_frame_in_progress
             && self.focus.is_none()
@@ -6002,6 +6051,7 @@ impl Window {
     /// the platform window, then notifies observers. Normally called automatically
     /// by the platform's resize callback, but exposed publicly for test infrastructure.
     pub fn bounds_changed(&mut self, cx: &mut App) {
+        self.cancel_deferred_candidate(cx);
         self.refresh_platform_facts();
         self.refresh();
         self.notify_bounds_observers(cx);
@@ -6773,6 +6823,7 @@ impl Window {
     }
 
     pub(crate) fn native_active_status_changed(&mut self, active: bool, cx: &mut App) {
+        self.cancel_deferred_candidate(cx);
         if !self.native_active_status_change_is_admissible(active) {
             self.active.set(false);
             return;
@@ -7380,7 +7431,8 @@ impl Window {
     }
 
     fn schedule_pending_frame(&self) {
-        if self.presentation_is_allowed()
+        if !self.deferred_frame_delivery_is_parked()
+            && self.presentation_is_allowed()
             && (self.invalidator.is_dirty()
                 || self.needs_present.get()
                 || !self.next_frame_callbacks.borrow().is_empty()
@@ -7391,11 +7443,24 @@ impl Window {
         }
     }
 
+    pub(crate) fn deferred_frame_delivery_is_parked(&self) -> bool {
+        self.deferred_candidate
+            .as_ref()
+            .is_some_and(|candidate| candidate.delivered)
+    }
+
     fn native_frame_requested_inner(
         &mut self,
         request_frame_options: RequestFrameOptions,
         cx: &mut App,
     ) {
+        self.cancel_deferred_candidate_if_stale(cx);
+        if self.deferred_candidate.is_some() {
+            if self.needs_present.get() {
+                self.present(cx);
+            }
+            return;
+        }
         let renderer_repaint_pending = self.renderer_repaint_is_pending();
         let initial_presentation_pending = self.fresh_initial_presentation_is_pending();
         let provisional_presentation_pending = request_frame_options.require_presentation
@@ -7512,6 +7577,19 @@ impl Window {
         if !self.presentation_is_allowed() {
             return;
         }
+        self.advance_initial_presentation(cx);
+        self.schedule_pending_frame();
+        #[cfg(feature = "profiler")]
+        if !should_draw {
+            profiler::journal::record_frame_skipped(
+                self.handle.window_id(),
+                Instant::now(),
+                profiler::journal::FrameSkipReason::NoRenderNeeded,
+            );
+        }
+    }
+
+    fn advance_initial_presentation(&mut self, cx: &mut App) {
         self.finish_fresh_initial_presentation_if_ready(cx);
         if self.fresh_initial_presentation_is_pending() {
             if self.fresh_initial_presentation_frame_is_required() {
@@ -7527,16 +7605,6 @@ impl Window {
             }
         } else if self.renderer_repaint_is_pending() && self.presentation_is_allowed() {
             self.request_renderer_repaint_frame();
-        }
-
-        self.schedule_pending_frame();
-        #[cfg(feature = "profiler")]
-        if !should_draw {
-            profiler::journal::record_frame_skipped(
-                self.handle.window_id(),
-                Instant::now(),
-                profiler::journal::FrameSkipReason::NoRenderNeeded,
-            );
         }
     }
 
@@ -7629,60 +7697,6 @@ impl Window {
         }
     }
 
-    fn rollback_candidate_frame_transfers(&mut self, unwound: bool) {
-        for key in self.candidate_frame_transfers.element_states.drain(..) {
-            let Some(state) = self.next_frame.element_states.remove(&key) else {
-                assert!(
-                    unwound,
-                    "candidate element state transfer must remain available for rollback"
-                );
-                continue;
-            };
-            assert!(
-                self.rendered_frame
-                    .element_states
-                    .insert(key, state)
-                    .is_none(),
-                "candidate element state rollback must restore one vacant committed slot"
-            );
-        }
-
-        for (rendered_index, candidate_index) in
-            self.candidate_frame_transfers.mouse_listeners.drain(..)
-        {
-            let listener = self.next_frame.mouse_listeners[candidate_index]
-                .value
-                .take();
-            assert!(
-                self.rendered_frame.mouse_listeners[rendered_index]
-                    .value
-                    .is_none(),
-                "candidate mouse-listener rollback must restore one vacant committed slot"
-            );
-            self.rendered_frame.mouse_listeners[rendered_index].value = listener;
-        }
-
-        for (rendered_index, candidate_index) in
-            self.candidate_frame_transfers.input_handlers.drain(..)
-        {
-            let mut handler = self.next_frame.input_handlers[candidate_index].value.take();
-            if let Some(handler) = handler.as_mut() {
-                handler.set_validity(
-                    self.rendered_frame.input_handlers[rendered_index]
-                        .validity
-                        .clone(),
-                );
-            }
-            assert!(
-                self.rendered_frame.input_handlers[rendered_index]
-                    .value
-                    .is_none(),
-                "candidate input-handler rollback must restore one vacant committed slot"
-            );
-            self.rendered_frame.input_handlers[rendered_index].value = handler;
-        }
-    }
-
     fn reject_candidate_frame(
         &mut self,
         authority_checkpoint: CandidateFrameAuthorityCheckpoint,
@@ -7764,6 +7778,20 @@ impl Window {
             let update_count_at_draw_start = self.invalidator.update_count();
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.draw_inner(cx))) {
                 Ok(clear) => {
+                    if let Some(candidate) = self.deferred_candidate.as_mut() {
+                        if let Some(timing) = self.window_profiler.prepare_draw_checkpoint(
+                            checkpoint,
+                            frame_dirty.dirty_at,
+                            frame_dirty.invalidations,
+                            update_count_at_draw_start,
+                        ) {
+                            candidate.draw_timing =
+                                Some((timing, update_count_at_draw_start, frame_dirty));
+                        } else {
+                            self.invalidator.restore_frame_dirty(frame_dirty);
+                        }
+                        return clear;
+                    }
                     let accepted = self.rendered_frame.generation != previous_generation;
                     let draw_duration = self.window_profiler.finish_draw_checkpoint(
                         checkpoint,
@@ -7801,6 +7829,10 @@ impl Window {
         // Set up the per-App arena for element allocation during this draw.
         // This ensures that multiple test Apps have isolated arenas.
         let arena_scope = ElementArenaScope::enter(&cx.element_arena);
+
+        if self.deferred_candidate.is_some() {
+            return arena_scope.exit();
+        }
 
         if !self.begin_fresh_initial_presentation_attempt(cx) {
             return arena_scope.exit();
@@ -7971,11 +8003,56 @@ impl Window {
             }
             return arena_scope.exit();
         }
+        let mut transaction = self
+            .candidate_frame_transaction
+            .take()
+            .expect("a prepared frame must retain its original candidate transaction");
+        transaction.mark_prepared();
+        let prepared = PreparedCandidateFrame {
+            transaction,
+            authority_checkpoint,
+            restored_input_handler_index,
+            rendered_input_handlers_len,
+            preserve_dirty_views: false,
+            accessibility: candidate_a11y_update,
+            stale_pointer_owner: candidate_stale_pointer_owner,
+            draw_context,
+        };
+        if self.platform_window.frame_delivery_mode() == PlatformFrameDeliveryMode::Deferred {
+            self.defer_candidate_frame(prepared, cx);
+        } else {
+            self.commit_candidate_frame(prepared, cx);
+        }
+        arena_scope.exit()
+    }
+
+    fn commit_candidate_frame(&mut self, candidate: PreparedCandidateFrame, cx: &mut App) {
+        let PreparedCandidateFrame {
+            transaction,
+            authority_checkpoint: _,
+            restored_input_handler_index: _,
+            rendered_input_handlers_len: _,
+            preserve_dirty_views,
+            accessibility: candidate_a11y_update,
+            stale_pointer_owner: candidate_stale_pointer_owner,
+            draw_context,
+        } = candidate;
+        assert!(
+            self.candidate_frame_transaction.is_none(),
+            "a prepared frame cannot replace an active candidate transaction"
+        );
+        assert_eq!(
+            transaction.frame_generation, self.next_frame.generation,
+            "a prepared frame must commit its original candidate generation"
+        );
+        self.candidate_frame_transaction = Some(transaction);
         self.frame_focus_authority_sealed = true;
         debug_assert!(self.subtree_presentation_stack.borrow().is_empty());
         debug_assert!(self.subtree_transform_stack.borrow().is_empty());
         debug_assert!(self.scroll_ancestry_stack.borrow().is_empty());
-        self.dirty_views.clear();
+        if !preserve_dirty_views {
+            self.dirty_views.clear();
+        }
         self.next_frame.window_active = self.active.get();
         if mem::take(&mut self.candidate_pending_input_clear) {
             self.pending_input.take();
@@ -8055,10 +8132,17 @@ impl Window {
 
         // Ordinary normal-phase commits may prepare accepted-frame publications and follow-up
         // focus work, but cross-frame publications remain private until the candidate is swapped.
-        self.commit_prepaint_non_publications(
-            &prepaint_commit_plan,
-            PrepaintCommitPhase::Normal,
-            cx,
+        let mut completion_panic = None;
+        retain_first_window_cleanup_panic(
+            &mut completion_panic,
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.commit_prepaint_non_publications(
+                    &prepaint_commit_plan,
+                    PrepaintCommitPhase::Normal,
+                    cx,
+                );
+            })),
+            "accepted frame normal commits",
         );
 
         self.invalidator.set_phase(DrawPhase::Focus);
@@ -8097,7 +8181,6 @@ impl Window {
 
         // Cross-frame publications now observe the frame that is actually visible. Focus-stable
         // commits remain ordered after every normal commit, including accepted publications.
-        let mut completion_panic = None;
         retain_first_window_cleanup_panic(
             &mut completion_panic,
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -8275,7 +8358,6 @@ impl Window {
             self.restore_candidate_draw_context(draw_context);
             std::panic::resume_unwind(panic);
         }
-        arena_scope.exit()
     }
 
     fn select_frame_input_handler_after_composition_cleanup(
@@ -8392,6 +8474,9 @@ impl Window {
 
     #[profiling::function]
     pub(crate) fn present(&mut self, cx: &mut App) -> PlatformWindowPresentOutcome {
+        if self.deferred_candidate.is_some() {
+            return self.present_deferred_candidate(cx);
+        }
         #[cfg(feature = "profiler")]
         let _foreground_turn = profiler::journal::foreground_turn();
         let generation = self.rendered_frame.generation;
@@ -8418,7 +8503,6 @@ impl Window {
             profiling::finish_frame!();
             return PlatformWindowPresentOutcome::RepaintRequired;
         }
-        let non_empty = self.rendered_frame.scene.has_primitives();
         #[cfg(feature = "profiler")]
         let present_start = Instant::now();
         let outcome = if self.presentation_is_allowed() {
@@ -8434,6 +8518,16 @@ impl Window {
             self.active.get(),
             !self.next_frame_callbacks.borrow().is_empty(),
         );
+        self.record_deferred_present_outcome(outcome, cx)
+    }
+
+    fn record_deferred_present_outcome(
+        &mut self,
+        outcome: PlatformWindowPresentOutcome,
+        cx: &mut App,
+    ) -> PlatformWindowPresentOutcome {
+        let generation = self.rendered_frame.generation;
+        let non_empty = self.rendered_frame.scene.has_primitives();
         self.presentation_state.latest_present_attempt = Some(WindowPresentAttemptFacts {
             generation,
             outcome,
@@ -8884,17 +8978,13 @@ impl Window {
             if output.value.publication.is_some() || output.value.phase != phase {
                 continue;
             }
-            if phase == PrepaintCommitPhase::FocusStable {
-                retain_first_window_cleanup_panic(
-                    &mut first_panic,
-                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        self.commit_prepaint_output(output, plan.target_revision, None, phase, cx);
-                    })),
-                    "accepted focus-stable output",
-                );
-            } else {
-                self.commit_prepaint_output(output, plan.target_revision, None, phase, cx);
-            }
+            retain_first_window_cleanup_panic(
+                &mut first_panic,
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    self.commit_prepaint_output(output, plan.target_revision, None, phase, cx);
+                })),
+                "accepted prepaint output",
+            );
         }
         if let Some(panic) = first_panic {
             std::panic::resume_unwind(panic);
@@ -12481,11 +12571,20 @@ impl Window {
     }
 
     pub(super) fn current_interaction_frame(&self) -> &Frame {
-        if self.next_frame.generation > self.rendered_frame.generation {
+        if self.candidate_frame_is_active() {
             &self.next_frame
         } else {
             &self.rendered_frame
         }
+    }
+
+    fn candidate_frame_is_active(&self) -> bool {
+        self.next_frame.generation == self.rendered_frame.generation.saturating_add(1)
+            && (self.invalidator.is_building_frame()
+                || self
+                    .candidate_frame_transaction
+                    .as_ref()
+                    .is_some_and(|candidate| !candidate.is_accepted()))
     }
 
     pub(crate) fn prepared_hitbox(&self, id: HitboxId) -> Option<Hitbox> {
@@ -13144,6 +13243,7 @@ impl Window {
     /// bypassing persistent interceptors or overwriting the outer event's shared dispatch state.
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
+        self.cancel_deferred_candidate(cx);
         let incoming_pointer_cancel = matches!(&event, PlatformInput::PointerCanceled(_));
         if self.flush_pending_pointer_cancellations(cx) && incoming_pointer_cancel {
             return self
@@ -14471,6 +14571,7 @@ impl Window {
         if !self.user_interaction_is_admitted() {
             return false;
         }
+        self.cancel_deferred_candidate(cx);
         if !self.a11y.accepts_action(
             request_activation_generation,
             request.target_tree,

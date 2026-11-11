@@ -2,7 +2,8 @@ use super::display::TestDisplayChangeCallback;
 use crate::{
     A11yCallbacks, AnyWindowHandle, AtlasTextureLeaseError, Bounds, CursorStyle, DevicePixels,
     DispatchEventResult, DisplayId, GpuSpecs, HeadlessAtlas, Pixels, Platform, PlatformAtlas,
-    PlatformDisplay, PlatformHeadlessRenderer, PlatformInput, PlatformInputCallback,
+    PlatformDisplay, PlatformFrameDeliveryMode, PlatformFrameSubmission,
+    PlatformFrameSubmissionStatus, PlatformHeadlessRenderer, PlatformInput, PlatformInputCallback,
     PlatformInputCallbackSlot, PlatformInputHandler, PlatformInputHandlerSlot,
     PlatformNativePointerPhysicalFrame, PlatformNativeWindowRetirementOutcome,
     PlatformPhysicalDisplayObservation, PlatformPointerCaptureReleaseOutcome,
@@ -247,6 +248,8 @@ pub(crate) struct TestWindowState {
     mapped: bool,
     initial_presentation_completed: bool,
     present_outcome: PlatformWindowPresentOutcome,
+    frame_delivery_mode: PlatformFrameDeliveryMode,
+    pending_frame: Option<(Scene, PlatformFrameSubmission)>,
     reveal_on_next_present: bool,
     close_on_next_present: bool,
     activation_count: usize,
@@ -532,6 +535,8 @@ impl TestWindow {
                 mapped: false,
                 initial_presentation_completed: false,
                 present_outcome: PlatformWindowPresentOutcome::Submitted,
+                frame_delivery_mode: PlatformFrameDeliveryMode::Synchronous,
+                pending_frame: None,
                 reveal_on_next_present: false,
                 close_on_next_present,
                 activation_count: 0,
@@ -644,6 +649,26 @@ impl TestWindow {
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn set_present_outcome(&self, outcome: PlatformWindowPresentOutcome) {
         self.0.lock().present_outcome = outcome;
+    }
+
+    /// Selects immediate outcomes or manually completed CPU frame delivery.
+    ///
+    /// Deferred delivery retains the original submission token without completing it or
+    /// invoking a renderer. Completing that token simulates a platform outcome; it does not
+    /// establish GPU execution or native presentation.
+    pub fn set_frame_delivery_mode(&self, mode: PlatformFrameDeliveryMode) {
+        self.0.lock().frame_delivery_mode = mode;
+    }
+
+    /// Clones the original token received for the still-pending candidate Scene.
+    pub fn pending_frame_submission(&self) -> Option<PlatformFrameSubmission> {
+        let submission = self
+            .0
+            .lock()
+            .pending_frame
+            .as_ref()
+            .map(|(_, submission)| submission.clone())?;
+        submission.is_pending().then_some(submission)
     }
 
     #[cfg(test)]
@@ -937,7 +962,8 @@ impl TestWindow {
         std::mem::replace(&mut callbacks.activation, Box::new(|| None))
     }
 
-    pub(crate) fn activate_accessibility(&self) -> bool {
+    /// Simulates assistive technology activating the installed native adapter.
+    pub fn activate_accessibility(&self) -> bool {
         let callbacks = {
             let mut state = self.0.lock();
             let Some(callbacks) = state.accessibility.callbacks.clone() else {
@@ -2476,7 +2502,10 @@ impl PlatformWindow for TestWindow {
             state.mapped = true;
         }
         let close_on_next_present = std::mem::take(&mut state.close_on_next_present);
-        let mut outcome = state.present_outcome;
+        let mut outcome = match state.frame_delivery_mode {
+            PlatformFrameDeliveryMode::Synchronous => state.present_outcome,
+            PlatformFrameDeliveryMode::Deferred => PlatformWindowPresentOutcome::Deferred,
+        };
         if outcome == PlatformWindowPresentOutcome::Submitted {
             let device_size = state.bounds.size.to_device_pixels(state.scale_factor);
             if let Some(renderer) = state.renderer.as_mut() {
@@ -2499,6 +2528,34 @@ impl PlatformWindow for TestWindow {
             self.close();
         }
         outcome
+    }
+
+    fn frame_delivery_mode(&self) -> PlatformFrameDeliveryMode {
+        self.0.lock().frame_delivery_mode
+    }
+
+    fn draw_with_submission(
+        &self,
+        scene: &Scene,
+        submission: &PlatformFrameSubmission,
+    ) -> PlatformWindowPresentOutcome {
+        {
+            let mut state = self.0.lock();
+            if state.closed || state.presentation_shutdown_ticket.is_some() {
+                return PlatformWindowPresentOutcome::Rejected;
+            }
+            if let Some((_, pending)) = state.pending_frame.as_ref()
+                && pending.status() == PlatformFrameSubmissionStatus::Pending
+            {
+                return if pending.same_authority(submission) {
+                    PlatformWindowPresentOutcome::Deferred
+                } else {
+                    PlatformWindowPresentOutcome::Rejected
+                };
+            }
+            state.pending_frame = Some((scene.clone(), submission.clone()));
+        }
+        self.draw(scene)
     }
 
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {

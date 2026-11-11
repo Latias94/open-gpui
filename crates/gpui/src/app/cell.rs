@@ -41,10 +41,11 @@ use super::{
 };
 use crate::{
     Action, BackgroundExecutor, CommittedWindowHitTestSnapshot, DispatchEventResult, HitboxId,
-    NativeInputInvariantViolation, Pixels, Platform, PlatformFocusedWindow, PlatformInput,
-    PlatformPointerCaptureReleaseOutcome, PlatformPresentationShutdownOutcome, PlatformWindow,
-    PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, Point,
-    PointerCancelReason, PreparedPlatformPresentationShutdown, SystemNotificationResponse,
+    NativeInputInvariantViolation, Pixels, Platform, PlatformFocusedWindow,
+    PlatformFrameSubmission, PlatformInput, PlatformPointerCaptureReleaseOutcome,
+    PlatformPresentationShutdownOutcome, PlatformWindow, PlatformWindowCommand,
+    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, PlatformWindowPresentOutcome,
+    Point, PointerCancelReason, PreparedPlatformPresentationShutdown, SystemNotificationResponse,
     WindowActivationCancellationOutcome, WindowActivationTerminal, WindowActivationTicket,
     WindowControlArea, WindowId, window::WindowInteractionAuthority,
 };
@@ -2455,6 +2456,15 @@ impl AppCell {
         event: NativeWindowEvent,
     ) {
         self.native_events.enqueue(window_id, event);
+    }
+
+    pub(super) fn enqueue_frame_submission_completed(
+        &self,
+        submission: PlatformFrameSubmission,
+        outcome: PlatformWindowPresentOutcome,
+    ) -> bool {
+        self.native_events
+            .enqueue_frame_submission_completed(submission, outcome)
     }
 
     pub(super) fn enqueue_native_app_event(&self, event: NativeAppEvent) {

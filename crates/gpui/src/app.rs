@@ -2524,7 +2524,8 @@ impl App {
                         .values()
                         .filter_map(|window| {
                             let window = window.as_deref()?;
-                            (window.invalidator.is_dirty()
+                            (!window.deferred_frame_delivery_is_parked()
+                                && window.invalidator.is_dirty()
                                 && !window.invalidator.is_focus_only_dirty())
                             .then_some(window.handle)
                         })
@@ -2537,9 +2538,10 @@ impl App {
 
                 if self.pending_effects.is_empty() {
                     for window in self.windows.values().filter_map(|window| window.as_deref()) {
-                        if window.invalidator.is_dirty()
-                            || window.needs_present.get()
-                            || !window.next_frame_callbacks.borrow().is_empty()
+                        if !window.deferred_frame_delivery_is_parked()
+                            && (window.invalidator.is_dirty()
+                                || window.needs_present.get()
+                                || !window.next_frame_callbacks.borrow().is_empty())
                         {
                             window.platform_window.schedule_frame();
                         }

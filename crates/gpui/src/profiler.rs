@@ -8,7 +8,10 @@ use open_gpui_scheduler::{Instant, SpawnTime};
 #[cfg(feature = "profiler")]
 use smallvec::SmallVec;
 #[cfg(feature = "profiler")]
-use std::cell::LazyCell;
+use std::{
+    cell::{Cell, LazyCell},
+    rc::Rc,
+};
 use std::{
     collections::{HashMap, VecDeque},
     hash::{DefaultHasher, Hash, Hasher},
@@ -1352,7 +1355,7 @@ enum WindowActivity {
     Input {
         started_at: Instant,
         kind: &'static str,
-        covering_draw: Option<(Instant, usize)>,
+        covering_draw: Option<InputDrawCoverage>,
         measurement_generation: u64,
         _input_activity: journal::InputActivityGuard,
         _turn: journal::ForegroundTurnGuard,
@@ -1365,6 +1368,13 @@ enum WindowActivity {
         view_depth: usize,
         _turn: journal::ForegroundTurnGuard,
     },
+}
+
+#[cfg(feature = "profiler")]
+#[derive(Default)]
+struct InputDrawCoverage {
+    accepted: Option<(Instant, usize)>,
+    prepared: Option<Rc<Cell<PreparedDrawInputBoundary>>>,
 }
 
 #[cfg(feature = "profiler")]
@@ -1391,6 +1401,27 @@ pub(crate) struct DrawCheckpoint {
     input_measurement_generation: u64,
 }
 
+/// Finished CPU draw timing retained until the candidate is submitted or dropped.
+///
+/// This owns no active profiling scopes and publishes nothing when dropped.
+#[cfg(feature = "profiler")]
+#[must_use]
+pub(crate) struct PreparedDrawTiming {
+    frame: PendingFrame,
+    input_measurement_generation: u64,
+    input_boundary: Rc<Cell<PreparedDrawInputBoundary>>,
+}
+
+#[cfg(feature = "profiler")]
+#[derive(Clone, Copy)]
+struct PreparedDrawInputBoundary {
+    draw_start: Instant,
+    update_count_at_draw_start: usize,
+    first_input_at: Option<Instant>,
+    input_count: u64,
+    first_later_input_at: Option<Instant>,
+}
+
 /// Collects profiling information for one window.
 ///
 /// Aggregate histograms and diagnostics are collected whenever the `profiler`
@@ -1415,6 +1446,7 @@ pub struct WindowProfiler {
     last_present_at: Option<Instant>,
     animating_at_last_present: bool,
     pending_frame: Option<PendingFrame>,
+    prepared_draw_input_boundary: Option<Rc<Cell<PreparedDrawInputBoundary>>>,
     refresh_interval: Option<Duration>,
     frame_signal_at: Option<Instant>,
     by_refresh_interval: Vec<RefreshIntervalFrames>,
@@ -1464,6 +1496,7 @@ impl WindowProfiler {
             last_present_at: None,
             animating_at_last_present: false,
             pending_frame: None,
+            prepared_draw_input_boundary: None,
             refresh_interval: None,
             frame_signal_at: None,
             by_refresh_interval: Vec::new(),
@@ -1530,7 +1563,10 @@ impl WindowProfiler {
         };
         for activity in &mut self.active_activities {
             if let WindowActivity::Input { covering_draw, .. } = activity {
-                *covering_draw = Some((frame.timing.draw_start, invalidations));
+                *covering_draw = Some(InputDrawCoverage {
+                    accepted: Some((frame.timing.draw_start, invalidations)),
+                    prepared: None,
+                });
             }
         }
     }
@@ -1582,8 +1618,39 @@ impl WindowProfiler {
                 self.first_input_at
                     .map_or(started_at, |first| first.min(started_at)),
             );
+            if let Some(boundary) = self.prepared_draw_input_boundary.as_ref() {
+                let mut input = boundary.get();
+                let covered = covering_draw
+                    .as_ref()
+                    .and_then(|coverage| coverage.prepared.as_ref())
+                    .is_some_and(|prepared| Rc::ptr_eq(prepared, boundary))
+                    && dispatch.is_some_and(|(before, after)| {
+                        input.update_count_at_draw_start > before
+                            && after == input.update_count_at_draw_start
+                    });
+                if covered {
+                    input.first_input_at = Some(
+                        input
+                            .first_input_at
+                            .map_or(started_at, |first| first.min(started_at)),
+                    );
+                    input.input_count += 1;
+                } else {
+                    input.first_later_input_at = Some(
+                        input
+                            .first_later_input_at
+                            .map_or(started_at, |first| first.min(started_at)),
+                    );
+                }
+                boundary.set(input);
+            }
             if let Some(frame) = self.pending_frame.as_mut() {
-                let covered = match (covering_draw, dispatch) {
+                let covered = match (
+                    covering_draw
+                        .as_ref()
+                        .and_then(|coverage| coverage.accepted),
+                    dispatch,
+                ) {
                     (Some((draw_start, covered_at)), Some((before, after))) => {
                         draw_start == frame.timing.draw_start
                             && covered_at > before
@@ -1755,6 +1822,141 @@ impl WindowProfiler {
         duration
     }
 
+    /// Finishes a prepared candidate's CPU draw without accepting or publishing it.
+    ///
+    /// The window retains at most one prepared candidate. Dropping its timing leaves
+    /// the previous accepted frame and all input measurements pending. Nested input
+    /// and view scopes must have finished before preparing the candidate. Enclosing
+    /// inputs retain exact candidate coverage even when they finish before submission.
+    pub(crate) fn prepare_draw_checkpoint(
+        &mut self,
+        checkpoint: DrawCheckpoint,
+        dirty_at: Option<Instant>,
+        invalidations: u64,
+        update_count_at_draw_start: usize,
+    ) -> Option<PreparedDrawTiming> {
+        if self.active_activities.len() <= checkpoint.activity_depth {
+            self.abort_draw_checkpoint(checkpoint);
+            return None;
+        }
+        if self.active_activities.len() != checkpoint.activity_depth + 1
+            || self.active_views.len() != checkpoint.view_depth
+            || !matches!(
+                self.active_activities.last(),
+                Some(WindowActivity::Draw { .. })
+            )
+        {
+            self.abort_draw_checkpoint(checkpoint);
+            debug_assert!(false, "prepared draw must finish its nested activities");
+            return None;
+        }
+        let (timing, _turn) = self.finish_draw_timing(dirty_at, invalidations)?;
+        self.truncate_activities(checkpoint.activity_depth);
+        self.discard_stale_input_samples();
+        let input_boundary = Rc::new(Cell::new(PreparedDrawInputBoundary {
+            draw_start: timing.draw_start,
+            update_count_at_draw_start,
+            first_input_at: self.first_input_at,
+            input_count: self.pending_input_count,
+            first_later_input_at: None,
+        }));
+        for activity in &mut self.active_activities {
+            if let WindowActivity::Input {
+                covering_draw,
+                measurement_generation,
+                ..
+            } = activity
+                && *measurement_generation == self.input_measurement_generation
+            {
+                covering_draw.get_or_insert_default().prepared = Some(input_boundary.clone());
+            }
+        }
+        self.prepared_draw_input_boundary = Some(input_boundary.clone());
+        Some(PreparedDrawTiming {
+            frame: PendingFrame {
+                timing,
+                first_input_at: self.first_input_at,
+                input_count: self.pending_input_count,
+            },
+            input_measurement_generation: self.input_measurement_generation,
+            input_boundary,
+        })
+    }
+
+    /// Publishes a retained draw only after its candidate was actually submitted.
+    ///
+    /// Returns the original CPU draw duration, excluding the time spent waiting for
+    /// submission. Input resets invalidate retained input coverage, while power or
+    /// visibility interruptions invalidate the retained frame. Call this before
+    /// recording the successful presentation using its actual submission timestamps.
+    /// The update count must match the original count supplied when preparing the draw.
+    pub(crate) fn accept_prepared_draw(
+        &mut self,
+        prepared: PreparedDrawTiming,
+        update_count_at_draw_start: usize,
+    ) -> Duration {
+        let PreparedDrawTiming {
+            mut frame,
+            input_measurement_generation,
+            input_boundary,
+        } = prepared;
+        let duration = frame.timing.draw_duration();
+        let boundary = input_boundary.get();
+        debug_assert_eq!(
+            boundary.update_count_at_draw_start,
+            update_count_at_draw_start
+        );
+        if self
+            .prepared_draw_input_boundary
+            .as_ref()
+            .is_some_and(|current| Rc::ptr_eq(current, &input_boundary))
+        {
+            self.prepared_draw_input_boundary = None;
+        }
+        self.discard_stale_input_samples();
+        if frame.timing.window_id != self.window_id
+            || !journal::frame_sample_is_valid(self.window_id, frame.timing.draw_start)
+        {
+            return duration;
+        }
+        frame.first_input_at = boundary.first_input_at;
+        frame.input_count = boundary.input_count;
+        let input_is_valid = input_measurement_generation == self.input_measurement_generation
+            && frame
+                .first_input_at
+                .is_none_or(|at| journal::frame_sample_is_valid(self.window_id, at));
+        let first_later_input_at = if input_is_valid {
+            boundary.first_later_input_at
+        } else {
+            frame.first_input_at = None;
+            frame.input_count = 0;
+            self.first_input_at
+        };
+        self.publish_draw_timing(frame);
+        self.input_after_draw_at = first_later_input_at;
+        if input_is_valid {
+            for activity in &mut self.active_activities {
+                if let WindowActivity::Input {
+                    covering_draw,
+                    measurement_generation,
+                    ..
+                } = activity
+                    && *measurement_generation == input_measurement_generation
+                    && let Some(coverage) = covering_draw.as_mut()
+                    && coverage
+                        .prepared
+                        .as_ref()
+                        .is_some_and(|original| Rc::ptr_eq(original, &input_boundary))
+                {
+                    coverage.accepted =
+                        Some((boundary.draw_start, boundary.update_count_at_draw_start));
+                    coverage.prepared = None;
+                }
+            }
+        }
+        duration
+    }
+
     /// Restores the accepted pending frame and enclosing activity depth after refusal or unwind.
     /// Input measurements reset during the attempt remain cleared after rollback.
     pub(crate) fn abort_draw_checkpoint(&mut self, checkpoint: DrawCheckpoint) {
@@ -1783,12 +1985,30 @@ impl WindowProfiler {
     /// or unwinding candidate must instead call [`Self::abort_draw`]. An unmatched
     /// end asserts in debug builds and leaves activities unchanged otherwise.
     pub fn end_draw(&mut self, dirty_at: Option<Instant>, invalidations: u64) -> Duration {
+        let Some((timing, _turn)) = self.finish_draw_timing(dirty_at, invalidations) else {
+            return Duration::ZERO;
+        };
+        let duration = timing.draw_duration();
+        if !journal::power_interrupted_since(timing.draw_start) {
+            self.record_draw_timing(timing);
+        } else {
+            self.discard_pending_frame();
+            self.discard_stale_input_samples();
+        }
+        duration
+    }
+
+    fn finish_draw_timing(
+        &mut self,
+        dirty_at: Option<Instant>,
+        invalidations: u64,
+    ) -> Option<(FrameTiming, journal::ForegroundTurnGuard)> {
         if !matches!(
             self.active_activities.last(),
             Some(WindowActivity::Draw { .. })
         ) {
             debug_assert!(false, "draw activity must be the current window activity");
-            return Duration::ZERO;
+            return None;
         }
         let Some(WindowActivity::Draw {
             started_at: draw_start,
@@ -1812,14 +2032,7 @@ impl WindowProfiler {
             phases,
         };
         self.truncate_views(view_depth);
-        let duration = timing.draw_duration();
-        if !journal::power_interrupted_since(draw_start) {
-            self.record_draw_timing(timing);
-        } else {
-            self.discard_pending_frame();
-            self.discard_stale_input_samples();
-        }
-        duration
+        Some((timing, _turn))
     }
 
     /// Cancels the innermost draw and any unfinished activities nested inside it.
@@ -1940,6 +2153,9 @@ impl WindowProfiler {
     /// paths, from the same monotonic clock used by the profiler. This method
     /// returns no error and never changes the platform's outcome; failures to
     /// record histogram samples are logged. Submission is not proof of scanout.
+    /// Deferred hosts without an observed submission interval may pass equal timestamps at the
+    /// original completion point. That records submission and input/frame latency, not a measured
+    /// renderer duration; later processing of the completion must not replace that timestamp.
     pub fn record_present_outcome(
         &mut self,
         outcome: PlatformWindowPresentOutcome,
@@ -2064,17 +2280,23 @@ impl WindowProfiler {
         timing.signal_at = timing
             .signal_at
             .filter(|at| journal::frame_sample_is_valid(self.window_id, *at));
-        record_duration(&mut self.draw_duration_histogram, timing.draw_duration());
-        let frames = self.frames_for(timing.refresh_interval);
-        frames.frames_drawn += 1;
-        record_duration(&mut frames.draw_duration, timing.draw_duration());
-        self.drawn_frame_count += 1;
-        self.pending_frame = Some(PendingFrame {
+        self.prepared_draw_input_boundary = None;
+        self.publish_draw_timing(PendingFrame {
             timing,
             first_input_at: self.first_input_at,
             input_count: self.pending_input_count,
         });
         self.input_after_draw_at = None;
+    }
+
+    fn publish_draw_timing(&mut self, frame: PendingFrame) {
+        let timing = frame.timing;
+        record_duration(&mut self.draw_duration_histogram, timing.draw_duration());
+        let frames = self.frames_for(timing.refresh_interval);
+        frames.frames_drawn += 1;
+        record_duration(&mut frames.draw_duration, timing.draw_duration());
+        self.drawn_frame_count += 1;
+        self.pending_frame = Some(frame);
         record_frame_event(FrameEvent::Draw(timing));
         journal::record_draw(timing);
     }
@@ -2236,3 +2458,6 @@ mod foreground_tests;
 
 #[cfg(all(test, feature = "profiler"))]
 mod refresh_tests;
+
+#[cfg(all(test, feature = "profiler"))]
+mod deferred_draw_tests;

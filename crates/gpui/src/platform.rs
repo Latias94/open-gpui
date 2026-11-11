@@ -1,8 +1,13 @@
 mod app_menu;
 mod atlas;
+mod frame_delivery;
 mod keyboard;
 mod keystroke;
 mod platform_info;
+
+pub use frame_delivery::{
+    PlatformFrameDeliveryMode, PlatformFrameSubmission, PlatformFrameSubmissionStatus,
+};
 
 /// Types for configuring parent-anchored popup windows such as menus, dropdowns and tooltips.
 pub mod popup;
@@ -6168,6 +6173,27 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// Any non-[`PlatformWindowPresentOutcome::Submitted`] outcome must not be reported as
     /// presented by GPUI.
     fn draw(&self, scene: &Scene) -> PlatformWindowPresentOutcome;
+    /// Selects synchronous delivery or exact deferred candidate submission.
+    ///
+    /// Deferred delivery preserves the original Window's last-submitted publications while one
+    /// candidate is pending. The platform must retain and complete that candidate's original
+    /// submission token, including refusal and invalidation, without reentering the App.
+    fn frame_delivery_mode(&self) -> PlatformFrameDeliveryMode {
+        PlatformFrameDeliveryMode::Synchronous
+    }
+    /// Delivers a candidate with its original frame and attempt identity.
+    ///
+    /// Returning `Submitted` requires actual submission before return. A deferred backend may
+    /// retain the candidate and token, return `Deferred`, and complete the token after actual
+    /// submission. Recording alone does not permit a submitted result. Validate the original
+    /// native target and renderer resources before recording or submitting retained work.
+    fn draw_with_submission(
+        &self,
+        scene: &Scene,
+        _submission: &PlatformFrameSubmission,
+    ) -> PlatformWindowPresentOutcome {
+        self.draw(scene)
+    }
     /// Requests a future frame callback when work is pending, including on a parked source.
     fn schedule_frame(&self) {}
     /// Returns native frame maintenance to execute after releasing the application borrow.
@@ -7503,6 +7529,16 @@ impl PlatformInputHandler {
     ) -> std::result::Result<Option<R>, NativeInputInvariantViolation> {
         let Self { cx, handler, .. } = self;
         cx.update_native_input_handler(operation, |window, app| {
+            if matches!(
+                operation,
+                NativeInputHandlerOperation::SetSelectedTextRange
+                    | NativeInputHandlerOperation::ReplaceTextInRange
+                    | NativeInputHandlerOperation::ReplaceAndMarkTextInRange
+                    | NativeInputHandlerOperation::UnmarkText
+                    | NativeInputHandlerOperation::Paste
+            ) {
+                window.cancel_deferred_candidate(app);
+            }
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 window.with_input_transaction(app, |window, app| {
                     callback(handler.as_mut(), window, app)

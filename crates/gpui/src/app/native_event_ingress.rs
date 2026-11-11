@@ -27,11 +27,11 @@ use super::{
     },
 };
 use crate::{
-    Action, App, ForegroundExecutor, ModifiersChangedEvent, PlatformInput,
+    Action, App, ForegroundExecutor, ModifiersChangedEvent, PlatformFrameSubmission, PlatformInput,
     PlatformWindowActiveStatusObservation, PlatformWindowCommand, PlatformWindowCommandDispatcher,
-    PlatformWindowMutationObservation, PointerCancelEvent, PointerCancelReason,
-    RequestFrameOptions, SystemNotificationResponse, SystemWindowTabController, Task, Window,
-    WindowId,
+    PlatformWindowMutationObservation, PlatformWindowPresentOutcome, PointerCancelEvent,
+    PointerCancelReason, RequestFrameOptions, SystemNotificationResponse,
+    SystemWindowTabController, Task, Window, WindowId,
 };
 
 pub(super) const MAX_NATIVE_WORK_PER_DRAIN: u8 = 64;
@@ -418,6 +418,21 @@ impl NativeEventIngress {
         if permits_pointer_capture_release_retry && let Some(app) = self.app.upgrade() {
             app.retry_native_pointer_capture_release_for_native_window_progress(window_id);
         }
+    }
+
+    pub(super) fn enqueue_frame_submission_completed(
+        &self,
+        submission: PlatformFrameSubmission,
+        outcome: PlatformWindowPresentOutcome,
+    ) -> bool {
+        let envelope = self.prepare(
+            submission.window_id(),
+            NativeWindowEvent::FrameSubmissionCompleted {
+                submission,
+                outcome,
+            },
+        );
+        self.enqueue_work(NativeWorkEnvelope::Event(envelope))
     }
 
     pub(super) fn enqueue_app(&self, event: NativeAppEvent) {
@@ -1775,6 +1790,12 @@ impl NativeEventEnvelope {
                 ingress_sequence,
                 Window::initial_presentation_failed,
             ),
+            NativeWindowEvent::FrameSubmissionCompleted {
+                submission,
+                outcome,
+            } => deliver_window_event_if(app, window_id, ingress_sequence, |window, cx| {
+                window.complete_deferred_frame_submission(&submission, outcome, cx)
+            }),
             NativeWindowEvent::Resized
             | NativeWindowEvent::Moved
             | NativeWindowEvent::WindowStateChanged => {
@@ -2207,6 +2228,10 @@ pub(super) enum NativeWindowEvent {
     AppearanceChanged,
     InitialPresentationCompleted,
     InitialPresentationFailed,
+    FrameSubmissionCompleted {
+        submission: PlatformFrameSubmission,
+        outcome: PlatformWindowPresentOutcome,
+    },
     Resized,
     Moved,
     WindowStateChanged,
@@ -2255,6 +2280,7 @@ impl NativeWindowEvent {
             | Self::ModifiersChanged(_)
             | Self::InitialPresentationCompleted
             | Self::InitialPresentationFailed
+            | Self::FrameSubmissionCompleted { .. }
             | Self::CloseRequested
             | Self::CloseRequired
             | Self::Closed
@@ -2312,6 +2338,12 @@ impl NativeWindowEvent {
             Self::InitialPresentationFailed => {
                 (NativeCallbackKind::InitialPresentationFailed, None)
             }
+            Self::FrameSubmissionCompleted { submission, .. } => (
+                NativeCallbackKind::FrameSubmissionCompleted,
+                Some(NativeBoundaryGeneration::FrameSubmissionAttempt(
+                    submission.attempt_id(),
+                )),
+            ),
             Self::Resized => (NativeCallbackKind::Resized, None),
             Self::Moved => (NativeCallbackKind::Moved, None),
             Self::WindowStateChanged => (NativeCallbackKind::WindowStateChanged, None),
@@ -2458,6 +2490,19 @@ mod tests {
         NativeEventIngress::new(ForegroundExecutor::new(dispatcher), Weak::new())
     }
 
+    fn frame_submission(
+        window_id: WindowId,
+        frame_generation: u64,
+        attempt_id: u64,
+    ) -> PlatformFrameSubmission {
+        PlatformFrameSubmission::new(
+            window_id,
+            frame_generation,
+            attempt_id,
+            Rc::new(|_, _| panic!("native ingress must not invoke a submission's callback")),
+        )
+    }
+
     #[test]
     fn nested_frame_coalescing_retains_the_first_sequence_signal_and_diagnostics() {
         let ingress = event_ingress();
@@ -2583,6 +2628,123 @@ mod tests {
             diagnostics.terminal[0].disposition,
             NativeBoundaryDisposition::Coalesced { into_sequence: 1 }
         );
+    }
+
+    #[test]
+    fn frame_submission_completions_preserve_original_authority_without_coalescing() {
+        let ingress = event_ingress();
+        let barrier = ingress
+            .begin_input_barrier()
+            .expect("an idle ingress admits a native input transaction");
+        let phase = ingress.phase.get();
+        let mut windows = slotmap::SlotMap::<WindowId, ()>::with_key();
+        let original_window = windows.insert(());
+        windows.remove(original_window);
+        let replacement_window = windows.insert(());
+        assert_ne!(original_window, replacement_window);
+
+        let original = frame_submission(original_window, 17, 31);
+        let retry = frame_submission(original_window, 17, 32);
+        let replacement = frame_submission(replacement_window, 17, 31);
+        let completions = [
+            (original.clone(), PlatformWindowPresentOutcome::Submitted),
+            (retry, PlatformWindowPresentOutcome::Rejected),
+            (original, PlatformWindowPresentOutcome::RepaintRequired),
+            (replacement, PlatformWindowPresentOutcome::Submitted),
+        ];
+        for (submission, outcome) in &completions {
+            assert!(ingress.enqueue_frame_submission_completed(submission.clone(), *outcome));
+        }
+
+        assert_eq!(ingress.phase.get(), phase);
+        let cutoff = ingress.reserve_input_sequence();
+        let diagnostics =
+            ingress.diagnostics_snapshot_since(NativeBoundaryDiagnosticCursor::default());
+        assert_eq!(diagnostics.pending.len(), completions.len());
+        assert!(diagnostics.terminal.is_empty());
+
+        for (sequence, (expected, expected_outcome)) in completions.iter().enumerate() {
+            let NativeEventPrefixPop::Event(checkout) = barrier.pop_event_before(cutoff.value())
+            else {
+                panic!("each original completion must remain before the later input reservation");
+            };
+            let diagnostic = checkout.pending_diagnostic();
+            assert_eq!(diagnostic.sequence, sequence as u64);
+            assert_eq!(
+                diagnostic.target,
+                NativeBoundaryTarget::Window(expected.window_id())
+            );
+            assert_eq!(
+                diagnostic.kind,
+                NativeBoundaryKind::Callback(NativeCallbackKind::FrameSubmissionCompleted)
+            );
+            assert_eq!(
+                diagnostic.domain_generation,
+                Some(NativeBoundaryGeneration::FrameSubmissionAttempt(
+                    expected.attempt_id()
+                ))
+            );
+            let NativeEventTarget::Window {
+                window_id,
+                event:
+                    NativeWindowEvent::FrameSubmissionCompleted {
+                        submission,
+                        outcome,
+                    },
+            } = checkout.event.target
+            else {
+                panic!("the original submission completion must retain its payload");
+            };
+            assert_eq!(window_id, expected.window_id());
+            assert!(submission.same_authority(expected));
+            assert_eq!(outcome, *expected_outcome);
+        }
+        assert!(ingress.pending.borrow().is_empty());
+    }
+
+    #[test]
+    fn frame_submission_completion_admission_closes_at_shutdown_and_quit_barriers() {
+        let ingress = event_ingress();
+        let submission = frame_submission(WindowId::from((7_u64 << 32) | 1), 17, 31);
+        assert!(ingress.enqueue_frame_submission_completed(
+            submission.clone(),
+            PlatformWindowPresentOutcome::Submitted,
+        ));
+
+        ingress.begin_shutdown(19);
+        assert!(ingress.pending.borrow().is_empty());
+        assert!(!ingress.enqueue_frame_submission_completed(
+            submission.clone(),
+            PlatformWindowPresentOutcome::Rejected,
+        ));
+        ingress.terminate();
+        assert!(!ingress.enqueue_frame_submission_completed(
+            submission.clone(),
+            PlatformWindowPresentOutcome::RepaintRequired,
+        ));
+
+        let diagnostics =
+            ingress.diagnostics_snapshot_since(NativeBoundaryDiagnosticCursor::default());
+        assert!(diagnostics.pending.is_empty());
+        assert_eq!(diagnostics.terminal.len(), 3);
+        for (sequence, diagnostic) in diagnostics.terminal.iter().enumerate() {
+            assert_eq!(diagnostic.sequence, sequence as u64);
+            assert_eq!(
+                diagnostic.target,
+                NativeBoundaryTarget::Window(submission.window_id())
+            );
+            assert_eq!(
+                diagnostic.kind,
+                NativeBoundaryKind::Callback(NativeCallbackKind::FrameSubmissionCompleted)
+            );
+            assert_eq!(
+                diagnostic.domain_generation,
+                Some(NativeBoundaryGeneration::FrameSubmissionAttempt(
+                    submission.attempt_id()
+                ))
+            );
+            assert_eq!(diagnostic.disposition, NativeBoundaryDisposition::Closed);
+        }
     }
 
     #[test]

@@ -93,6 +93,7 @@ pub enum NativeCallbackKind {
     AccessibilityAction,
     InitialPresentationCompleted,
     InitialPresentationFailed,
+    FrameSubmissionCompleted,
     RequestFrame,
     ActiveChanged,
     VisibilityChanged,
@@ -189,6 +190,7 @@ pub enum NativeBoundaryGeneration {
         presentation_generation: u64,
     },
     PresentationShutdown(u64),
+    FrameSubmissionAttempt(u64),
     InputSlot {
         boundary: NativeInputBoundary,
         generation: u64,

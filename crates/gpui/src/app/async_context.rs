@@ -1,10 +1,10 @@
 use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, BorrowAppContext,
     DispatchEventResult, Entity, EntityId, EventEmitter, Focusable, ForegroundExecutor, Global,
-    GpuiBorrow, ModifiersChangedEvent, NativeInputInvariantViolation, PlatformInput,
-    PlatformWindowMutationObservation, PromptButton, PromptLevel, Render, RequestFrameOptions,
-    Reservation, Result, Subscription, Task, VisualContext, Window, WindowControlArea,
-    WindowHandle, WindowId,
+    GpuiBorrow, ModifiersChangedEvent, NativeInputInvariantViolation, PlatformFrameSubmission,
+    PlatformInput, PlatformWindowMutationObservation, PlatformWindowPresentOutcome, PromptButton,
+    PromptLevel, Render, RequestFrameOptions, Reservation, Result, Subscription, Task,
+    VisualContext, Window, WindowControlArea, WindowHandle, WindowId,
 };
 use anyhow::{Context as _, bail};
 use derive_more::{Deref, DerefMut};
@@ -111,6 +111,22 @@ impl AsyncApp {
             window_id,
             super::native_event_ingress::NativeWindowEvent::WindowMutationObserved(observation),
         );
+    }
+
+    /// Enqueues completion of an exact frame submission through its original application.
+    ///
+    /// Returns whether the native ingress admitted the event, rather than whether the Window
+    /// accepted the submission. Returns `false` after the application is released or its native
+    /// ingress crosses the quit barrier.
+    pub(crate) fn enqueue_frame_submission_completed(
+        &self,
+        submission: PlatformFrameSubmission,
+        outcome: PlatformWindowPresentOutcome,
+    ) -> bool {
+        let Some(app) = self.app.upgrade() else {
+            return false;
+        };
+        app.enqueue_frame_submission_completed(submission, outcome)
     }
 
     fn enqueue_native_window_event(
