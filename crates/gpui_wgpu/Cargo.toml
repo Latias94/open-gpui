@@ -55,6 +55,7 @@ wgpu = { workspace = true, default-features = true }
 pollster.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
+futures.workspace = true
 wgpu = { workspace = true, features = ["webgl"] }
 wasm-bindgen.workspace = true
 wasm-bindgen-futures = "0.4.76"

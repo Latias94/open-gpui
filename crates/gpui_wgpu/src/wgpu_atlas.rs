@@ -59,7 +59,19 @@ impl WgpuAtlasPresentationReceipt {
             return;
         }
         let resources = self.imported_resources.clone();
+        #[cfg(not(target_family = "wasm"))]
         queue.on_submitted_work_done(move || drop(resources));
+        #[cfg(target_family = "wasm")]
+        {
+            let (completed, completion) = futures::channel::oneshot::channel();
+            queue.on_submitted_work_done(move || {
+                let _ = completed.send(());
+            });
+            wasm_bindgen_futures::spawn_local(async move {
+                let _ = completion.await;
+                drop(resources);
+            });
+        }
     }
 
     pub(crate) fn texture_view(
