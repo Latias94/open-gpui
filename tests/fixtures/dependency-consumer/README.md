@@ -80,6 +80,10 @@ optional backend method. Its ordinary `bench-support` App checks the public resi
 creation facts and the prompt query, then exercises the unsupported corner-radius no-op alongside
 the existing native-control and close workflow. It does not qualify compositor blur; the affected
 Linux native tests retain that separate platform scope.
+The same target consumes `KeystrokeEvent::input_preference` and the public
+`Window::focus_lost_restore_target` signature; the ordinary App checks that the latter returns
+`None` outside notification. Actual interceptor/replay and removed-child ancestor recovery are
+qualified by the framework's public/focused tests, not by these uninvoked signature controls.
 
 The optional `logging` target checks application-owned logger initialization and disabled span
 evaluation. With `logging-tracy`, the same target gives the host its own allocator and subscriber,

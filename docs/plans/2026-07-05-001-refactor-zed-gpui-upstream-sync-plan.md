@@ -3515,6 +3515,11 @@ Compile the affected Linux backend and run its existing cursor-cache and surface
 the configured WSLg/Lavapipe environment. This proves native-window/cache behavior separately
 from real text-input protocol delivery or a physical IME session.
 
+Implementation `c0a36ddce01d3992134fd2ed4691a1b1a8c42f4a` passes the affected Linux
+13/13, including the actual surface lifecycle and client enablement control. The
+[record](../verification.md#wayland-inactive-window-ime) preserves the first missing-cache
+metadata attempt, locked retry and physical IME/protocol limits.
+
 ### Input Priority And Focus Lifetime Successor
 
 The final bounded source check confirms three remaining mechanisms after the Window successor:
@@ -3538,6 +3543,36 @@ the public interceptor/observer event and a real focused-child removal with ance
 plus exact retirement/refusal seams affected by these additions. Keep structural avoidance of
 full-map scans distinct from measured performance. Zed product integrations remain excluded.
 
+Implementation `571484691eaf56cbf3e67d2c497274be12d38db0` carries all three official
+mechanisms. Its [qualification](../verification.md#input-priority-and-focus-lifetime) records
+final affected 113/113 both with and without profiler, native input/retirement 3/3 and explicit
+native profiler reconstruction 1/1. Earlier aggregate failures identify the separate hover
+adaptation below and a corrected retired-slot fixture expectation. Independent review finds
+no P1/P2 in the handler, drop-queue or callback-scope seams. Numeric costs and real engine
+adoption remain separate.
+
+### Presentation Hover Readmission
+
+The input/focus qualification exposes two pre-existing failures, also reproduced in the
+retained pre-change test binary: Hidden/Inert restoration re-enters hover without new pointer
+input. Official stationary-layout hover reconciliation remains the baseline for continuously
+participating elements; Accepted ADR 0022 separately requires withdrawn interaction to wait
+for fresh input. No architecture decision changes.
+
+Keep a readmission bit beside the existing shared Div listener state. Only accepted withdrawal
+arms it, geometry reconciliation cannot clear it, and the existing admitted MouseMove handler
+allows the next pointer event to recompute hover. Default and modality-independent listeners
+share this lifecycle rule. User callbacks run after the shared state is updated and unlocked.
+Preserve the original failing assertions, actual cached replay and non-replayed scroll checks;
+extend them through repeated refresh and same-position pointer input. An actual failed
+suppression draw must retain the old admitted hover. Existing ordinary stationary geometry,
+keyboard modality, mouse press, drag and MouseExit controls remain authoritative.
+
+Implementation `8ff031e95f299a284738c722aa43e6b918fc5835` passes the complete affected
+113/113 with and without profiler, including actual restored cache reuse. The
+[qualification](../verification.md#presentation-hover-readmission) retains both baseline
+failures and their pre-input/focus reproduction; no suppression assertion is removed.
+
 ## Maintained Baseline Before Engine Adaptation
 
 The [standalone logger](../verification.md#standalone-logging-and-tracing) at
@@ -3549,9 +3584,11 @@ globals, exact foreground/native custody and admitted Inspector geometry remain 
 existing owners. Logger/SumTree 27/27, final Core/public/Windows 53/53, final Inspector
 Gallery 2/2 and ordinary consumer selections pass. Actual native Rust 1.93, Web instrumentation,
 Inspector-disabled release compilation and correctness Clippy retain their recorded scopes.
-The confirmed Wayland inactive-window IME gate, input-priority/focus-lifetime successor and
-final source dispositions remain before
-the real Nara GPU/Host/View consumer; this is not whole-refresh or engine acceptance.
+Subsequent `c0a36ddce01` closes the Wayland gate, `571484691ea` closes input priority and
+focus lifetime, and `8ff031e95f2` corrects fork hover readmission. Their scoped records above
+own the actual tests and platform limits. Complete final source dispositions before the real
+Nara GPU/Host/View consumer; those implementation rows alone do not prove whole-refresh or
+engine acceptance.
 
 The [renderer batching and hollow-border record](../verification.md#renderer-batching-and-hollow-borders)
 qualifies `36362708133c300cd7a04f35c7ac36ee1a0f1791`. Official whole-buffer DirectX offsets,

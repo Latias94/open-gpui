@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- Keystroke observers and interceptors receive the official `InputPreference`, allowing extensions to follow the platform's text-first policy. Breaking: downstream `KeystrokeEvent` constructors must supply `input_preference`.
+- `Window::focus_lost_restore_target` finds the nearest surviving ancestor during focus-lost notification. Focus-handle release uses the official final-drop queue while preserving the existing candidate and committed-focus lifecycle.
+- Wayland ignores inactive-window IME enablement updates, preserving the active window's shared input state.
+
 - Standalone applications can opt into `open-gpui-log` and `open-gpui-tracing`. Applications install their own logger, tracing subscriber and allocator; native `tracy` and browser `web` instrumentation are explicit Cargo features. SumTree uses the tracing facade without requiring a subscriber.
 - Windows background execution uses Win32 thread-pool workers and one-shot timers. The existing foreground queue and dispatch admission API are unchanged.
 - `Window::is_resizable`, `Window::is_minimizable` and `Window::has_active_prompt` expose creation options and active window-rendered prompts. A non-resizable window refuses native resize requests. Pending chord timeouts can be paused for a live entity and resume with the remaining duration when it releases the pause or is dropped.

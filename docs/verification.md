@@ -9237,6 +9237,96 @@ the existing import, document and release-document checks also pass. CI receives
 ordinary logging, public Window and Win32 controls and explicit Web instrumentation compile
 step; no remote workflow is executed here.
 
+## Wayland Inactive Window IME
+
+The fixed target and `137e677a05` skip `update_ime_enabled` when the native window is inactive.
+The fork's leased-handler adaptation had omitted that gate. Implementation
+`c0a36ddce01d3992134fd2ed4691a1b1a8c42f4a` restores it before querying the handler or touching
+the shared client. Existing post-callback quiescence and exact retirement remain authoritative.
+
+The first WSL offline attempt stops in dependency metadata because the new tracing packages
+are not cached. A normal locked retry fetches those public packages and passes **13/13**,
+run `f9daded5-424c-4209-9957-b085a15b05ff`. Existing IME cursor/cache cases and the actual
+Wayland window lifecycle execute on WSLg/Lavapipe. The latter retains its effect downgrade,
+resize, late-callback and retirement checks, and verifies that an actual inactive native window
+preserves shared client enablement. The host advertises neither ext nor KDE blur. This is not
+proof of a physical IME session, text-input protocol delivery or native blur visuals.
+
+## Input Priority And Focus Lifetime
+
+The [successor](plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#input-priority-and-focus-lifetime-successor)
+at `571484691eaf56cbf3e67d2c497274be12d38db0` adopts official `86c20cc911`, `e463c5ab74`
+and `b2d9c2e122`. `KeystrokeEvent` exposes the
+same input preference used by binding dispatch, before interception and after interceptor or
+replayed-action changes. The leased handler and exact native interaction authority remain
+authoritative. The focus types move to one private module with the official final-drop queue;
+App removes only queued IDs and releases the map lock before the existing Window cleanup of
+current, pending, provisional, fallback and candidate references. The public ancestor query
+uses the old committed focus path only during the focus-lost callback and the new accepted
+dispatch tree; nested/unwinding callbacks restore their previous scope.
+
+The first affected Core/public selection passes **97/99**, run
+`b8bd74d6-69b5-443b-9a94-3962106792ce`. Both new public consumers pass: actual focused-child
+removal restores parent and then grandparent, and a failing callback clears the temporary query
+scope before ordinary recovery. The two failures concern Hidden/Inert hover restoration,
+observing `[true, false, true]` rather than `[true, false]`. Directly executing those same two
+cases in the retained pre-change 09:15 binary `open_gpui-34d87369237afd89.exe` reproduces both
+failures. The input/focus changes do not close that existing SubtreePresentation seam; keep the
+original assertions and a separate owning correction rather than report the aggregate as green.
+The production Core library check passes. A bounded independent review finds no P1/P2 in the
+input-preference checkout, queue cleanup or callback-scope adaptations; it does not execute tests
+or qualify the unchanged official algorithms or foreign platforms.
+
+The first preference/focus selection passes **61/62**, run
+`10345cfd-7753-43ad-85cb-3971c4e998fd`. The close-during-interception fixture incorrectly
+expects a retired native slot to return `None`; the existing must-immediate contract instead
+raises `NativeInputInvariantViolation::RetiredSlot`. The corrected test checks the empty
+terminal slot and that exact typed refusal, keeping all later-callback/action/text and retirement
+assertions. A subsequent complete affected selection passes **113/113**, run
+`4f02f29e-9452-4c90-9afd-2e4bba2be157`, including the hover correction below. A final added
+cache-replay assertion and feature/native/ordinary consumer gates retain their later results.
+With the final actual post-restoration cache-hit assertion, profiler-enabled tests pass
+**113/113**, `10389b62-830d-4dde-ac9c-a38ffd5ddd51`; profiler-disabled tests also pass
+**113/113**, `95bb99bd-70cf-487b-aaae-df23744b5d07`. The complete affected presentation
+selection is green after the separate hover correction; earlier red results remain above.
+The existing native Send input/submission, MouseLeave ordering and returning-quit retirement
+trajectories pass **3/3**, `3ff64526-90f7-4ea1-8280-b1f1cbbafd96`. That feature selection
+does not include the Windows-local profiler module. Explicitly enabling it executes the
+original native profiler input/submission/redraw/reconstructed-window workflow, **1/1** in
+`44494f82-01f5-48b4-9b9c-02119219516f`. These are actual Windows trajectories; they do not
+qualify physical AltGr layout input or foreign focus behavior.
+The independently locked ordinary signature consumer passes **1/1** without optional features,
+`04768fcd-1ff4-494b-9493-508fafec1290`; its actual embedded App with `bench-support,profiler`
+passes **2/2**, `651aa98c-54c3-4deb-bbfd-9611f178b6be`. The public event field and ancestor
+query type-check without test support, and the ordinary App checks the query's out-of-callback
+absence. The actual text-priority/replay and child-removal behavior belongs to the executed
+Core/public workflows above. Final affected Core/Windows all-target correctness Clippy passes.
+The final affected Core/Windows libraries compile with the declared Rust 1.93 floor, and the
+Web production closure compiles for wasm without default features. Root and independently
+locked consumer formatting, import/document/API/release checks pass. No lockfile or dependency
+source changes are needed by this unit; foreign execution and numerical budgets stay separate.
+
+## Presentation Hover Readmission
+
+Implementation `8ff031e95f299a284738c722aa43e6b918fc5835` owns this fork adaptation.
+The official stationary-layout hover reconciliation remains active for continuously participating
+elements. Accepted ADR 0022 separately requires fresh input after Hidden/Inert interaction
+withdrawal. The shared Div listener state now distinguishes ordinary non-hover from withdrawal
+awaiting a pointer. Only accepted discard sets that barrier; geometry updates and cached replay
+cannot clear it. The existing admitted MouseMove handler clears it before recomputing the
+official mode, drag and mouse-down conditions. State borrows end before user callbacks run.
+
+The two original failures retain their terminal/non-replay assertions and now exercise repeated
+refresh and same-position input. Inert covers both listener modes. The new rollback workflow
+fails a real suppression candidate in a sibling's paint, verifies the exact panic and unchanged
+accepted generation, then checks rejection, accepted withdrawal, restoration and readmission
+for both modes under Hidden and Inert. Existing stationary-layout, keyboard-mode, press and
+MouseExit cases pass in the same 113-test selection. Independent bounded review finds no P1/P2
+in the accepted/refused, shared-cache or callback-borrow seams; it does not execute tests.
+The final no-refresh redraw also proves restored child cache reuse without hover or scroll
+revival, alongside the repeated forced-refresh controls. Both final 113-test configurations
+retain that assertion.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

@@ -201,7 +201,7 @@ jobs:
           cargo nextest run --locked -p open-gpui --no-default-features --features test-support --lib --test window_appearance -E 'test(app::window_appearance_tests::) | binary(window_appearance)' --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test native state ownership and public services
-        run: cargo nextest run --locked -p open-gpui --all-features --lib --test native_window_services --test native_window_controls --test native_close_requests --test window_public_api -E 'test(platform_command_tests::) | test(native_window_control_tests::) | test(native_close_request_tests::) | binary(native_window_services) | binary(native_window_controls) | binary(native_close_requests) | binary(window_public_api)' --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui --all-features --lib --test native_window_services --test native_window_controls --test native_close_requests --test window_public_api --test focus_lifetime -E 'test(platform_command_tests::) | test(native_window_control_tests::) | test(native_close_request_tests::) | test(input_preference_tests::) | test(hover_readmission_requires_accepted_revocation_and_fresh_pointer) | test(inert_transition_emits_terminal_hover_without_replaying_on_restore) | test(hidden_cached_child_reconciles_hover_and_scroll_without_replaying_on_restore) | test(elements::div::gesture_tests::) | binary(native_window_services) | binary(native_window_controls) | binary(native_close_requests) | binary(window_public_api) | binary(focus_lifetime)' --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test windowing custody and public consumers
         run: |

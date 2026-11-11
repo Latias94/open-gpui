@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-11T09:56:33+08:00
+timestamp: 2026-11-11T10:42:49+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -18,6 +18,19 @@ verified_by:
 
 # Current State
 
+- The official input-priority and focus-lifetime successor is implemented at
+  `571484691eaf56cbf3e67d2c497274be12d38db0`. Public keystroke preferences, queued final-drop
+  cleanup and callback-scoped ancestor restoration preserve current handler/candidate owners.
+  The separate fork hover readmission correction is `8ff031e95f299a284738c722aa43e6b918fc5835`.
+  Final affected tests pass 113/113 with and without profiler, native input/retirement 3/3,
+  native profiler reconstruction 1/1 and ordinary consumers 1/1 and 2/2. Affected correctness
+  Clippy, actual Rust 1.93, production wasm, formatting and existing static/document gates pass. The
+  [qualification](../../verification.md#input-priority-and-focus-lifetime) preserves the
+  pre-existing hover failures, corrected retired-slot fixture and actual cache/rollback proof.
+  These close the explicit final input/focus rows; complete the final source dispositions and
+  the real Nara GPU/Host/View consumer before separate maintenance. Numerical costs and foreign
+  execution retain their own scope.
+
 - Official Apache standalone logging and Win32 background dispatch are implemented at
   `9e7b9c3a36fb0266ef68ec7ee7280b2eb8646554` and
   `9d9602bb46d5a66fc70ef1108073433fc7ce0e12`. Applications retain logger, subscriber and
@@ -27,10 +40,10 @@ verified_by:
   is implemented at `655e9610c77299e7704b0513f1bd77bf815b662c`. It
   preserves focus/context and accepted geometry, with a two-window factory-panic recovery
   correction; final focused Core/public/Windows passes 53/53. The deferred-candidate check
-  confirms the missing Wayland inactive-window IME gate while resolving Mac traffic-light
-  geometry to the typed-AppKit implementation. The bounded final check also confirms the
-  remaining InputPreference event, FocusMap release queue and focus-lost ancestor query.
-  Finish those explicit units and final source
+  confirms the Wayland inactive-window IME gate omission, subsequently implemented at
+  `c0a36ddce01d3992134fd2ed4691a1b1a8c42f4a` with 13/13 affected cache/native controls.
+  Mac traffic-light geometry resolves to the typed-AppKit implementation. The subsequent
+  input/focus successor above closes its three explicit framework rows. Complete final source
   dispositions before the actual Nara GPU/Host/View consumer and separate maintenance.
 
 - The official renderer batching and hollow-border successor is implemented at
@@ -1213,9 +1226,8 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Finish the confirmed Wayland inactive-window IME gate and the
-  [input-priority/focus-lifetime successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#input-priority-and-focus-lifetime-successor),
-  then close the remaining [fixed-source dispositions](../../imports/zed-gpui-upstream-sync-candidates.md#november-10-residual-source-reconciliation).
+- Close final [fixed-source dispositions](../../imports/zed-gpui-upstream-sync-candidates.md#november-10-residual-source-reconciliation)
+  after the implemented input-priority/focus-lifetime successor and hover-readmission correction.
   Qualified text/layout, Spring, input/lifecycle, supporting dependencies, platform, renderer and
   logging units retain their existing evidence. The earlier bounded inventories were not
   exhaustive. Trust unchanged official coverage and verify actual fork seams rather than
