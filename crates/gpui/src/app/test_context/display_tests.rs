@@ -1,6 +1,6 @@
 use crate::{
     AppContext as _, Bounds, DevicePixels, DisplayId, Empty, Platform, PlatformWindow,
-    TestAppContext, WindowOptions, point, px, size,
+    TestAppContext, WindowBounds, WindowOptions, point, px, size,
 };
 use std::time::Duration;
 
@@ -88,6 +88,36 @@ fn window_creation_and_moves_use_the_selected_displays_actual_properties(cx: &mu
     assert_eq!(moved.uuid().unwrap(), display.uuid().unwrap());
     assert_eq!(moved.bounds(), bounds);
     assert_eq!(moved.refresh_interval(), Some(interval));
+}
+
+#[crate::test]
+fn centered_window_uses_selected_display_and_clamps_each_axis(cx: &mut TestAppContext) {
+    let primary = DisplayId::new(1);
+    let selected = DisplayId::new(2);
+    let selected_bounds = Bounds::new(point(px(-1200.), px(50.)), size(px(1200.), px(800.)));
+    let requested = size(px(1600.), px(400.));
+    cx.simulate_display_added(selected, None);
+    cx.simulate_display_bounds_change(selected, selected_bounds);
+
+    cx.update(|app| {
+        assert_eq!(
+            Bounds::centered(Some(selected), requested, app),
+            Bounds::new(point(px(-1200.), px(250.)), size(px(1200.), px(400.))),
+        );
+        assert_eq!(
+            Bounds::centered(Some(DisplayId::new(999)), requested, app),
+            Bounds::new(point(px(160.), px(340.)), requested),
+        );
+    });
+
+    cx.simulate_display_removed(primary);
+    cx.simulate_display_removed(selected);
+    cx.update(|app| {
+        assert_eq!(
+            WindowBounds::centered(requested, app),
+            WindowBounds::Windowed(Bounds::new(point(px(0.), px(0.)), requested)),
+        );
+    });
 }
 
 #[crate::test]

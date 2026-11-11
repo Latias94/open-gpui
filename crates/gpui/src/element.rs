@@ -425,13 +425,13 @@ impl<E: Element> Drawable<E> {
                 let inspector_id;
                 #[cfg(any(feature = "inspector", debug_assertions))]
                 {
-                    inspector_id = self.element.source_location().map(|source| {
-                        let path = crate::InspectorElementPath {
-                            global_id: GlobalElementId::from_stack(&window.element_id_stack),
-                            source_location: source,
-                        };
-                        window.build_inspector_element_id(path)
-                    });
+                    inspector_id = if window.inspector_enabled() {
+                        self.element
+                            .source_location()
+                            .map(|source| prepare_inspector_id(source, window))
+                    } else {
+                        None
+                    };
                 }
                 #[cfg(not(any(feature = "inspector", debug_assertions)))]
                 {
@@ -920,4 +920,17 @@ impl Element for Empty {
         _cx: &mut App,
     ) {
     }
+}
+
+#[cfg(any(feature = "inspector", debug_assertions))]
+#[inline(never)]
+fn prepare_inspector_id(
+    source: &'static panic::Location<'static>,
+    window: &mut Window,
+) -> InspectorElementId {
+    let path = crate::InspectorElementPath {
+        global_id: GlobalElementId::from_stack(&window.element_id_stack),
+        source_location: source,
+    };
+    window.build_inspector_element_id(path)
 }

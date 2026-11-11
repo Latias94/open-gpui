@@ -3,8 +3,8 @@
 //! bench-support executes an ordinary embedded App without test-support or a renderer.
 
 use open_gpui::{
-    AnyWindowHandle, Bounds, Corners, Pixels, PlatformWindow, Window, WindowKind, WindowOptions,
-    point,
+    AnyWindowHandle, App, Bounds, Corners, Entity, PendingInputStatus, Pixels, PlatformWindow,
+    Window, WindowKind, WindowOptions, point,
     popup::{
         PopupAnchor, PopupConstraintAdjustment, PopupGravity, PopupNotSupportedError, PopupOptions,
     },
@@ -35,6 +35,12 @@ fn downstream_native_window_controls_and_complete_popup_schema_are_type_only() {
     let _: fn(&Window) = Window::toggle_simple_fullscreen;
     let _: fn(&Window) -> bool = Window::is_simple_fullscreen;
     let _: fn(&mut Window, Corners<Pixels>) = Window::set_client_corner_radii;
+    let _: fn(&Window) -> bool = Window::is_resizable;
+    let _: fn(&Window) -> bool = Window::is_minimizable;
+    let _: fn(&Window) -> bool = Window::has_active_prompt;
+    let _: fn(&Window) -> Option<PendingInputStatus<'_>> = Window::pending_input;
+    let _: fn(&mut Window, &Entity<()>, bool, &mut App) -> bool =
+        Window::set_pending_input_timeout_paused;
     let _window_type_only = |window: &Window, region: Vec<Bounds<Pixels>>| -> bool {
         window.set_input_region(Some(&region));
         drop(region);
@@ -90,6 +96,8 @@ fn downstream_ordinary_app_executes_noop_controls_and_refuses_native_popups() {
                 WindowOptions {
                     show: false,
                     focus_on_appearing: false,
+                    is_resizable: false,
+                    is_minimizable: true,
                     ..Default::default()
                 },
                 |_, app| app.new(|_| Empty),
@@ -101,6 +109,10 @@ fn downstream_ordinary_app_executes_noop_controls_and_refuses_native_popups() {
             app.update_window(parent.into(), |_, window, _| {
                 let original = (window.bounds(), window.is_fullscreen());
                 assert!(!window.is_simple_fullscreen());
+                assert!(!window.is_resizable());
+                assert!(window.is_minimizable());
+                assert!(!window.has_active_prompt());
+                assert!(window.pending_input().is_none());
                 let mut region = vec![
                     Bounds::new(point(px(-2.5), px(3.0)), size(px(40.0), px(30.0))),
                     Bounds::new(point(px(50.0), px(60.0)), size(px(20.0), px(15.0))),

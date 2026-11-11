@@ -114,11 +114,14 @@ mod frame_scheduling_tests;
 #[cfg(all(test, feature = "profiler"))]
 mod frame_signal_tests;
 mod input_dispatch;
+#[cfg(all(test, any(feature = "inspector", debug_assertions)))]
+mod inspector_unwind_tests;
 mod invalidator;
 #[cfg(all(test, feature = "profiler"))]
 mod journal_tests;
 #[cfg(test)]
 mod keyboard_activation_admission_tests;
+mod pending_input;
 #[cfg(test)]
 mod pending_input_tests;
 mod pointer_session;
@@ -167,6 +170,8 @@ pub(crate) use self::frame_journal::{
 };
 use self::frame_pump::{FramePacer, FrameThrottleFacts, PresentFacts};
 pub(crate) use self::invalidator::WindowInvalidator;
+use self::pending_input::PendingInput;
+pub use self::pending_input::{PendingInputStatus, PendingInputTimeoutStatus};
 use self::pointer_session::{InputDispatchGuard, MouseEventTargetGuard, PressedMouseButtons};
 pub use self::pointer_session::{
     PointerCapture, PointerCaptureError, PointerCaptureHandle, PointerCaptureId,
@@ -1854,6 +1859,8 @@ pub struct Window {
     presentation_state: WindowPresentationState,
     platform_facts: WindowPlatformFacts,
     window_kind: WindowKind,
+    is_resizable: bool,
+    is_minimizable: bool,
     window_capabilities: PlatformWindowCapabilities,
     window_mutation_authority: Arc<WindowPlatformMutationAuthority>,
     window_mutations: WindowMutationState,
@@ -2429,15 +2436,6 @@ pub(crate) enum DrawPhase {
     Prepaint,
     Paint,
     Focus,
-}
-
-#[derive(Default, Debug)]
-struct PendingInput {
-    keystrokes: SmallVec<[Keystroke; 1]>,
-    focus: Option<FocusId>,
-    context_stack: Option<Vec<KeyContext>>,
-    timer: Option<Task<()>>,
-    needs_timeout: bool,
 }
 
 pub(crate) struct ElementStateBox {
@@ -3019,6 +3017,8 @@ impl Window {
             presentation_state: WindowPresentationState::default(),
             platform_facts,
             window_kind,
+            is_resizable,
+            is_minimizable,
             window_capabilities,
             window_mutation_authority: Arc::default(),
             window_mutations: WindowMutationState::default(),
@@ -5892,10 +5892,12 @@ impl Window {
         self.platform_window.request_decorations(decorations);
     }
 
-    /// Start a window resize operation (Wayland)
+    /// Start an interactive window resize operation if this window is resizable.
     pub fn start_window_resize(&self, edge: ResizeEdge) {
-        self.platform_command_sink
-            .enqueue(PlatformWindowCommand::StartWindowResize(edge));
+        if self.is_resizable {
+            self.platform_command_sink
+                .enqueue(PlatformWindowCommand::StartWindowResize(edge));
+        }
     }
 
     /// Set the exclusive zone for a layer-shell surface: how much screen space it
@@ -7283,7 +7285,17 @@ impl Window {
         self.platform_window.window_decorations()
     }
 
-    /// Returns which window controls are currently visible (Wayland)
+    /// Returns whether this window is resizable.
+    pub fn is_resizable(&self) -> bool {
+        self.is_resizable
+    }
+
+    /// Returns whether this window is minimizable.
+    pub fn is_minimizable(&self) -> bool {
+        self.is_minimizable
+    }
+
+    /// Returns the controls supported by the platform.
     pub fn window_controls(&self) -> WindowControls {
         self.platform_window.window_controls()
     }
@@ -8315,6 +8327,9 @@ impl Window {
             self.next_frame.generation
         );
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
+        if self.pending_input.is_some() && self.active_pending_input().is_none() {
+            self.clear_pending_keystrokes(cx);
+        }
         if self.interaction_authority.is_admitted() {
             self.update_focus_generation();
         }
@@ -8951,7 +8966,7 @@ impl Window {
         self.prepaint_deferred_draws(cx);
 
         let mut prompt_element = None;
-        if let Some(prompt) = self.prompt.take() {
+        if let Some(prompt) = &self.prompt {
             let mut element = prompt.view.any_view().into_any_element();
             let prompt_layout_id = element.request_layout(self, cx);
             self.layout_engine
@@ -8960,7 +8975,6 @@ impl Window {
                 .stretch_auto_size_to_fill(prompt_layout_id, root_size, scale_factor);
             element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
             prompt_element = Some(element);
-            self.prompt = Some(prompt);
         }
 
         let stale_pointer_owner = self.stale_pointer_session_owner_in_candidate_frame(cx);
@@ -13787,7 +13801,6 @@ impl Window {
         }
 
         if !match_result.pending.is_empty() {
-            currently_pending.timer.take();
             currently_pending.keystrokes = match_result.pending;
             currently_pending.focus = self.focus;
             currently_pending.context_stack = Some(current_context_stack);
@@ -13811,55 +13824,13 @@ impl Window {
                 currently_pending.keystrokes.as_slice(),
                 [keystroke] if keystroke.is_modifier_key()
             );
-            currently_pending.needs_timeout |= match_result.pending_has_binding
-                || text_input_requires_timeout
-                || standalone_modifier;
-
-            if currently_pending.needs_timeout {
-                currently_pending.timer = Some(self.spawn(cx, async move |cx| {
-                    cx.background_executor.timer(Duration::from_secs(1)).await;
-                    cx.update_when_available(move |window, cx| {
-                        let current_context_stack = window.context_stack();
-                        let Some(currently_pending) = window.pending_input.take() else {
-                            return;
-                        };
-                        if currently_pending.focus != window.focus
-                            || currently_pending.context_stack.as_ref()
-                                != Some(&current_context_stack)
-                        {
-                            window.pending_input_changed(cx);
-                            return;
-                        }
-
-                        let node_id = window.focus_node_id_in_rendered_frame(window.focus);
-                        let dispatch_path =
-                            window.rendered_frame.dispatch_tree.dispatch_path(node_id);
-
-                        let to_replay = window
-                            .rendered_frame
-                            .dispatch_tree
-                            .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
-
-                        window.pending_input_changed(cx);
-                        window.replay_pending_input(
-                            to_replay,
-                            currently_pending.focus,
-                            &current_context_stack,
-                            cx,
-                        )
-                    })
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "handling pending input timeout for window {:?}",
-                            cx.window_handle().window_id()
-                        )
-                    })
-                    .log_err();
-                }));
-            } else {
-                currently_pending.timer = None;
-            }
+            currently_pending.update_timeout(
+                match_result.pending_has_binding
+                    || text_input_requires_timeout
+                    || standalone_modifier,
+                self,
+                cx,
+            );
             self.pending_input = Some(currently_pending);
             self.pending_input_changed(cx);
             cx.propagate_event = false;
@@ -14417,6 +14388,14 @@ impl Window {
         receiver
     }
 
+    /// Returns whether a prompt rendered by GPUI is currently active in this window.
+    ///
+    /// This is only true for prompts rendered in the window (see
+    /// [`App::set_prompt_builder`]), not for platform-native prompt dialogs.
+    pub fn has_active_prompt(&self) -> bool {
+        self.prompt.is_some()
+    }
+
     /// Returns the current context stack.
     pub fn context_stack(&self) -> Vec<KeyContext> {
         self.context_stack_iter().cloned().collect()
@@ -14831,7 +14810,13 @@ impl Window {
     pub fn toggle_inspector(&mut self, cx: &mut App) {
         self.inspector = match self.inspector {
             None => Some(cx.new(|_| Inspector::new())),
-            Some(_) => None,
+            Some(_) => {
+                self.rendered_frame.next_inspector_instance_ids = Default::default();
+                self.rendered_frame.inspector_hitboxes = Default::default();
+                self.next_frame.next_inspector_instance_ids = Default::default();
+                self.next_frame.inspector_hitboxes = Default::default();
+                None
+            }
         };
         self.refresh();
     }
@@ -14868,26 +14853,29 @@ impl Window {
         }
     }
 
-    /// Executes the provided function with mutable access to an inspector state.
+    /// Executes the provided function with mutable access to the selected element's inspector state.
+    /// Returns `None` without invoking the function when the element is absent or not selected.
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub fn with_inspector_state<T: 'static, R>(
         &mut self,
-        _inspector_id: Option<&crate::InspectorElementId>,
+        inspector_id: Option<&crate::InspectorElementId>,
         cx: &mut App,
         f: impl FnOnce(&mut Option<T>, &mut Self) -> R,
-    ) -> R {
-        if let Some(inspector_id) = _inspector_id
-            && let Some(inspector) = &self.inspector
-        {
-            let inspector = inspector.clone();
-            let active_element_id = inspector.read(cx).active_element_id();
-            if Some(inspector_id) == active_element_id {
-                return inspector.update(cx, |inspector, _cx| {
-                    inspector.with_active_element_state(self, f)
-                });
-            }
+    ) -> Option<R> {
+        let inspector_id = inspector_id?;
+        let inspector = self.inspector.as_ref()?;
+        if inspector.read(cx).active_element_id() != Some(inspector_id) {
+            return None;
         }
-        f(&mut None, self)
+        let inspector = inspector.clone();
+        Some(inspector.update(cx, |inspector, _cx| {
+            inspector.with_active_element_state(self, f)
+        }))
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub(crate) fn inspector_enabled(&self) -> bool {
+        self.inspector.is_some()
     }
 
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -14909,7 +14897,8 @@ impl Window {
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     fn prepaint_inspector(&mut self, inspector_width: Pixels, cx: &mut App) -> Option<AnyElement> {
-        if let Some(inspector) = self.inspector.take() {
+        let inspector = self.inspector.take()?;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut inspector_element = AnyView::from(inspector.clone()).into_any_element();
             inspector_element.prepaint_as_root(
                 point(self.viewport_size.width - inspector_width, px(0.0)),
@@ -14917,10 +14906,17 @@ impl Window {
                 self,
                 cx,
             );
-            self.inspector = Some(inspector);
-            Some(inspector_element)
-        } else {
-            None
+            inspector_element
+        }));
+        match result {
+            Ok(element) => {
+                self.inspector = Some(inspector);
+                Some(element)
+            }
+            Err(payload) => {
+                self.inspector.get_or_insert(inspector);
+                std::panic::resume_unwind(payload)
+            }
         }
     }
 
@@ -17462,6 +17458,226 @@ pub(crate) mod cached_paint_atlas_tests {
                 "renderer reset must invalidate cached paint even if the slot id is unchanged"
             );
         });
+    }
+}
+
+#[cfg(all(test, any(feature = "inspector", debug_assertions)))]
+mod inspector_tests {
+    use super::*;
+    use crate::{
+        DivInspectorState, Empty, InspectorElementId, MouseButton, MouseDownEvent, StyleRefinement,
+        TestAppContext, div,
+    };
+
+    #[crate::test]
+    fn inspector_only_tracks_its_open_window(cx: &mut TestAppContext) {
+        let renderer_instances = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            cx.register_inspector_element::<DivInspectorState, _, _>({
+                let renderer_instances = renderer_instances.clone();
+                move |_, _| {
+                    let rendered = Rc::new(Cell::new(0));
+                    renderer_instances
+                        .borrow_mut()
+                        .push(Rc::downgrade(&rendered));
+                    let mut render_count = 0;
+                    move |_, _: &DivInspectorState, _, _| {
+                        render_count += 1;
+                        rendered.set(render_count);
+                        Empty
+                    }
+                }
+            });
+            cx.set_inspector_renderer(Box::new(|inspector, window, cx| {
+                div()
+                    .children(inspector.render_inspector_states(window, cx))
+                    .into_any_element()
+            }));
+        });
+        let windows = [
+            cx.add_window(|_, cx| InspectorTestRoot {
+                child: cx.new(|_| InspectorTestView::default()),
+            }),
+            cx.add_window(|_, cx| InspectorTestRoot {
+                child: cx.new(|_| InspectorTestView::default()),
+            }),
+        ];
+        for window in windows {
+            assert_closed_inspector(window.into(), cx);
+        }
+        assert!(renderer_instances.borrow().is_empty());
+        for session in 0..2 {
+            cx.update_window(windows[0].into(), |root, window, cx| {
+                let root = root.downcast::<InspectorTestRoot>().expect("test root");
+                let child_widths = root.read(cx).child.read(cx).child_widths.clone();
+                window.toggle_inspector(cx);
+                window.draw(cx).clear(cx);
+                assert_eq!(renderer_instances.borrow().len(), session);
+                assert_eq!(child_widths.borrow().as_slice(), &[px(10.); 3]);
+                let path = window
+                    .rendered_frame
+                    .next_inspector_instance_ids
+                    .iter()
+                    .find_map(|(path, count)| (*count == 3).then(|| path.clone()))
+                    .expect("anonymous siblings share an inspector path");
+                let selected_id = InspectorElementId {
+                    path,
+                    instance_id: 1,
+                };
+                assert_eq!(
+                    window.with_inspector_state::<DivInspectorState, _>(
+                        Some(&selected_id),
+                        cx,
+                        |_, _| panic!("an unselected element must not access inspector state"),
+                    ),
+                    None::<()>
+                );
+                let position = window
+                    .rendered_frame
+                    .hitboxes
+                    .iter()
+                    .find(|hitbox| {
+                        window.rendered_frame.inspector_hitboxes.get(&hitbox.id)
+                            == Some(&selected_id)
+                    })
+                    .expect("middle sibling is pickable")
+                    .displayed_bounds()
+                    .center();
+                window.simulate_mouse_move(position, cx);
+                window.dispatch_event(
+                    PlatformInput::MouseDown(MouseDownEvent {
+                        position,
+                        button: MouseButton::Left,
+                        modifiers: Modifiers::default(),
+                        click_count: 1,
+                        first_mouse: false,
+                    }),
+                    cx,
+                );
+                window.dispatch_event(
+                    PlatformInput::MouseUp(MouseUpEvent {
+                        position,
+                        button: MouseButton::Left,
+                        modifiers: Modifiers::default(),
+                        click_count: 1,
+                    }),
+                    cx,
+                );
+                assert!(!window.is_inspector_picking(cx));
+                assert_eq!(
+                    window
+                        .inspector
+                        .as_ref()
+                        .expect("open inspector")
+                        .read(cx)
+                        .active_element_id(),
+                    Some(&selected_id)
+                );
+                window.draw(cx).clear(cx);
+                assert_eq!(
+                    window.with_inspector_state::<DivInspectorState, _>(
+                        Some(&InspectorElementId {
+                            path: selected_id.path.clone(),
+                            instance_id: 0,
+                        }),
+                        cx,
+                        |_, _| panic!("a different sibling must not access inspector state"),
+                    ),
+                    None::<()>
+                );
+                assert_eq!(
+                    window.with_inspector_state::<DivInspectorState, _>(
+                        Some(&selected_id),
+                        cx,
+                        |state, _| {
+                            let state = state.as_mut().expect("selected div has style state");
+                            assert_eq!(
+                                state.base_style.size.width,
+                                Some(crate::Length::from(px(10.)))
+                            );
+                            state.base_style.size.width = Some(crate::Length::from(px(25.)));
+                        },
+                    ),
+                    Some(())
+                );
+                window.refresh();
+                window.draw(cx).clear(cx);
+                assert_eq!(
+                    child_widths.borrow().as_slice(),
+                    &[px(10.), px(25.), px(10.)]
+                );
+                let instances = renderer_instances.borrow();
+                assert_eq!(instances.len(), session + 1);
+                assert!(instances[session].upgrade().expect("live renderer").get() >= 2);
+            })
+            .expect("pick and edit a cached child");
+            assert_closed_inspector(windows[1].into(), cx);
+            windows[0]
+                .update(cx, |_, window, cx| window.toggle_inspector(cx))
+                .expect("close inspector");
+            assert_closed_inspector(windows[0].into(), cx);
+            assert!(renderer_instances.borrow()[session].upgrade().is_none());
+        }
+    }
+
+    struct InspectorTestRoot {
+        child: Entity<InspectorTestView>,
+    }
+
+    impl Render for InspectorTestRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.child
+                .clone()
+                .cached(StyleRefinement::default().size(px(100.)))
+        }
+    }
+
+    #[derive(Default)]
+    struct InspectorTestView {
+        child_widths: Rc<RefCell<Vec<Pixels>>>,
+    }
+
+    impl Render for InspectorTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let child_widths = self.child_widths.clone();
+            div()
+                .on_children_prepainted(move |bounds, _, _| {
+                    *child_widths.borrow_mut() =
+                        bounds.iter().map(|bounds| bounds.size.width).collect();
+                })
+                .with_dynamic_prepaint_order(|_, _| SmallVec::from_iter([2, 0, 1]))
+                .id("inspector-root")
+                .flex()
+                .children((0..3).map(|_| div().size(px(10.)).flex_shrink_0()))
+        }
+    }
+
+    fn assert_closed_inspector(window: AnyWindowHandle, cx: &mut TestAppContext) {
+        cx.update_window(window, |root, window, cx| {
+            window.draw(cx).clear(cx);
+            window.draw(cx).clear(cx);
+            let root = root.downcast::<InspectorTestRoot>().expect("test root");
+            assert_eq!(
+                root.read(cx)
+                    .child
+                    .read(cx)
+                    .child_widths
+                    .borrow()
+                    .as_slice(),
+                &[px(10.); 3]
+            );
+            assert_eq!(
+                window.with_inspector_state::<DivInspectorState, _>(None, cx, |_, _| {
+                    panic!("a closed inspector must not access element state")
+                }),
+                None::<()>
+            );
+            for frame in [&window.rendered_frame, &window.next_frame] {
+                assert_eq!(frame.next_inspector_instance_ids.capacity(), 0);
+                assert_eq!(frame.inspector_hitboxes.capacity(), 0);
+            }
+        })
+        .expect("closed inspector has no bookkeeping and no style overrides");
     }
 }
 

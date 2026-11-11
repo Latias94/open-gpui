@@ -760,9 +760,9 @@ fn test_consumed_modifier_preserves_pending_input(cx: &mut TestAppContext) {
 
         simulate_modifier_tap(cx, Modifiers::shift());
         cx.update(|window, _| {
-            let pending = window.pending_input.as_ref().expect("pending input");
-            assert_eq!(pending.keystrokes.as_slice(), pending_keystrokes.as_slice());
-            assert!(pending.timer.is_some());
+            let pending = window.pending_input().expect("pending input");
+            assert_eq!(pending.keystrokes(), pending_keystrokes.as_slice());
+            assert!(pending.timeout().is_some());
         });
         test.update(cx, |test, _| {
             assert_eq!(test.action_count.get(), 0);
@@ -936,12 +936,12 @@ fn test_modifier_inside_a_long_chord_does_not_add_a_timeout(cx: &mut TestAppCont
     cx.simulate_keystrokes("ctrl-x");
     cx.update(|window, _| {
         assert!(window.has_pending_keystrokes());
-        assert!(window.pending_input.as_ref().unwrap().timer.is_none());
+        assert!(window.pending_input().unwrap().timeout().is_none());
     });
     simulate_modifier_tap(cx, Modifiers::shift());
     cx.update(|window, _| {
         assert_eq!(window.pending_input.as_ref().unwrap().keystrokes.len(), 2);
-        assert!(window.pending_input.as_ref().unwrap().timer.is_none());
+        assert!(window.pending_input().unwrap().timeout().is_none());
     });
     cx.executor().advance_clock(PENDING_INPUT_TIMEOUT * 2);
     cx.run_until_parked();
@@ -1261,7 +1261,15 @@ fn assert_rejected_transition_preserves_pending_input(
         );
         assert_eq!(window.focused(cx), focus);
         assert_eq!(window.pending_input_keystrokes(), Some(pending.as_slice()));
-        assert!(window.pending_input.as_ref().unwrap().timer.is_some());
+        assert_eq!(
+            window
+                .pending_input()
+                .unwrap()
+                .timeout()
+                .unwrap()
+                .remaining(cx),
+            PENDING_INPUT_TIMEOUT / 2
+        );
         assert_eq!(changed.get(), before_rejection);
     });
     assert_eq!(changed.get(), before_rejection);
@@ -1347,7 +1355,15 @@ fn test_suppressed_focus_and_forbidden_blur_preserve_pending_input(cx: &mut Test
             window.draw(cx).clear(cx);
             assert_eq!(window.focused(cx), focus);
             assert_eq!(window.pending_input_keystrokes(), Some(pending.as_slice()));
-            assert!(window.pending_input.as_ref().unwrap().timer.is_some());
+            assert_eq!(
+                window
+                    .pending_input()
+                    .unwrap()
+                    .timeout()
+                    .unwrap()
+                    .remaining(cx),
+                PENDING_INPUT_TIMEOUT / 2
+            );
             assert_eq!(changed.get(), before);
         });
         assert_eq!(changed.get(), before);
@@ -1515,7 +1531,7 @@ fn test_closed_window_timeout_cannot_replay_into_replacement(cx: &mut TestAppCon
     cx.simulate_keystrokes("j");
     cx.update(|window, _| {
         assert!(window.has_pending_keystrokes());
-        assert!(window.pending_input.as_ref().unwrap().timer.is_some());
+        assert!(window.pending_input().unwrap().timeout().is_some());
     });
     cx.executor().advance_clock(PENDING_INPUT_TIMEOUT / 2);
     cx.run_until_parked();

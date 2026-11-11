@@ -461,6 +461,7 @@ impl Interactivity {
             .push(Box::new(move |event, phase, hitbox, window, cx| {
                 if phase == DispatchPhase::Capture
                     && !window.has_pointer_capture()
+                    && !window.has_active_prompt()
                     && !hitbox.contains_window_point(window.mouse_position())
                 {
                     (listener)(&TargetedEvent::new(event, hitbox), window, cx)
@@ -3129,34 +3130,44 @@ impl Interactivity {
             .append(&mut self.retained_resources);
 
         #[cfg(any(feature = "inspector", debug_assertions))]
-        if let Some(inspector_id) = _inspector_id.cloned()
-            && let Ok(geometry) = window.try_element_geometry(bounds)
-        {
-            window.record_prepaint_window_commit(move |_, window, cx| {
-                let changed = window.with_inspector_state(
-                    Some(&inspector_id),
-                    cx,
-                    |inspector_state: &mut Option<DivInspectorState>, _window| {
-                        if let Some(inspector_state) = inspector_state {
-                            let changed = inspector_state.layout_bounds != geometry.layout_bounds()
-                                || inspector_state.displayed_bounds != geometry.displayed_bounds()
-                                || inspector_state.content_size != content_size;
-                            if changed {
-                                inspector_state.layout_bounds = geometry.layout_bounds();
-                                inspector_state.displayed_bounds = geometry.displayed_bounds();
-                                inspector_state.content_size = content_size;
-                            }
-                            changed
-                        } else {
-                            false
+        window.with_inspector_state(
+            _inspector_id,
+            cx,
+            |inspector_state: &mut Option<DivInspectorState>, window| {
+                if inspector_state.is_some()
+                    && let Some(inspector_id) = _inspector_id.cloned()
+                    && let Ok(geometry) = window.try_element_geometry(bounds)
+                {
+                    window.record_prepaint_window_commit(move |_, window, cx| {
+                        let changed = window.with_inspector_state(
+                            Some(&inspector_id),
+                            cx,
+                            |inspector_state: &mut Option<DivInspectorState>, _window| {
+                                if let Some(inspector_state) = inspector_state {
+                                    let changed = inspector_state.layout_bounds
+                                        != geometry.layout_bounds()
+                                        || inspector_state.displayed_bounds
+                                            != geometry.displayed_bounds()
+                                        || inspector_state.content_size != content_size;
+                                    if changed {
+                                        inspector_state.layout_bounds = geometry.layout_bounds();
+                                        inspector_state.displayed_bounds =
+                                            geometry.displayed_bounds();
+                                        inspector_state.content_size = content_size;
+                                    }
+                                    changed
+                                } else {
+                                    false
+                                }
+                            },
+                        );
+                        if changed == Some(true) {
+                            window.refresh();
                         }
-                    },
-                );
-                if changed {
-                    window.refresh();
+                    });
                 }
-            });
-        }
+            },
+        );
 
         let mut tracked_focus_id = None;
         if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
