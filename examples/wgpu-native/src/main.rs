@@ -1,4 +1,4 @@
-//! Application-owned WGPU rendering with GPUI-owned Win32 windows and event loop.
+//! Application-owned WGPU rendering with GPUI or application-owned Win32 hosts.
 
 #[cfg(not(target_os = "windows"))]
 fn main() {
@@ -12,13 +12,15 @@ fn main() -> anyhow::Result<()> {
 
 #[cfg(target_os = "windows")]
 mod windows_example {
+    mod external_host;
+
     use anyhow::{Context as _, Result, ensure};
     use open_gpui::{
-        App, Application, Bounds, Corners, DevicePixels, ImageTexture, ImageTextureAlpha,
-        ImageTextureSampling, ImageTextureTransfer, PlatformAtlas, PlatformWindowPresentOutcome,
-        Scene, Size, Window, WindowBackgroundAppearance, WindowBounds, WindowOptions,
-        WindowPresentationShutdownTicket, block_on, canvas, div, fill, point, prelude::*, px, rgb,
-        size,
+        AnyView, App, Application, Bounds, Corners, DevicePixels, ImageTexture, ImageTextureAlpha,
+        ImageTextureSampling, ImageTextureTransfer, Pixels, PlatformAtlas,
+        PlatformWindowPresentOutcome, Scene, Size, Window, WindowBackgroundAppearance,
+        WindowBounds, WindowOptions, WindowPresentationShutdownTicket, block_on, canvas, div, fill,
+        point, prelude::*, px, rgb, size,
     };
     use open_gpui_wgpu::{
         CosmicTextSystem, WgpuImportedImageDescriptor, WgpuSceneRecording, WgpuSceneRenderer, wgpu,
@@ -99,6 +101,29 @@ mod windows_example {
         image: Rc<RefCell<Option<ImageTexture>>>,
         count: Rc<Cell<u32>>,
         submitted: Rc<Cell<u64>>,
+        observation: Rc<RenderObservation>,
+    }
+
+    #[derive(Default)]
+    struct RenderObservation {
+        extent: Cell<(i32, i32)>,
+        drawn_extent: Cell<(i32, i32)>,
+        drawn_count: Cell<u32>,
+        retained_recordings: Cell<usize>,
+        completed: RefCell<Option<Arc<AtomicU64>>>,
+        quiesced_prefix: Cell<Option<u64>>,
+        button_bounds: Cell<Option<Bounds<Pixels>>>,
+        failures: Cell<u64>,
+        shutdown_ticket: RefCell<Option<WindowPresentationShutdownTicket>>,
+    }
+
+    impl RenderObservation {
+        fn completed_prefix(&self) -> u64 {
+            self.completed
+                .borrow()
+                .as_ref()
+                .map_or(0, |completed| completed.load(Ordering::Acquire))
+        }
     }
 
     impl WindowsRendererFactory for Factory {
@@ -154,6 +179,8 @@ mod windows_example {
                     owner: None,
                 },
             )?);
+            let completed_prefix = Arc::new(AtomicU64::new(0));
+            *self.observation.completed.borrow_mut() = Some(completed_prefix.clone());
             Ok(Box::new(Renderer {
                 gpu: self.gpu.clone(),
                 window,
@@ -162,10 +189,11 @@ mod windows_example {
                 texture,
                 count: self.count.clone(),
                 submitted: self.submitted.clone(),
+                observation: self.observation.clone(),
                 last_submission: None,
                 in_flight: Vec::new(),
                 submitted_prefix: 0,
-                completed_prefix: Arc::new(AtomicU64::new(0)),
+                completed_prefix,
                 config: wgpu::SurfaceConfiguration {
                     usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                     format,
@@ -189,6 +217,7 @@ mod windows_example {
         texture: wgpu::Texture,
         count: Rc<Cell<u32>>,
         submitted: Rc<Cell<u64>>,
+        observation: Rc<RenderObservation>,
         config: wgpu::SurfaceConfiguration,
         last_submission: Option<wgpu::SubmissionIndex>,
         in_flight: Vec<(u64, WgpuSceneRecording)>,
@@ -291,6 +320,13 @@ mod windows_example {
             });
             self.gpu.queue.present(frame);
             self.submitted.set(prefix);
+            self.observation.drawn_count.set(self.count.get());
+            self.observation
+                .drawn_extent
+                .set((self.config.width as i32, self.config.height as i32));
+            self.observation
+                .retained_recordings
+                .set(self.in_flight.len());
             Ok(PlatformWindowPresentOutcome::Submitted)
         }
     }
@@ -312,6 +348,9 @@ mod windows_example {
             if self.config.width > 0 && self.config.height > 0 {
                 surface.configure(&self.gpu.device, &self.config);
             }
+            self.observation
+                .extent
+                .set((extent.width.0, extent.height.0));
             Ok(())
         }
 
@@ -320,8 +359,12 @@ mod windows_example {
             scene: &Scene,
             _: WindowBackgroundAppearance,
         ) -> Result<PlatformWindowPresentOutcome> {
-            self.draw_scene(scene)
-                .inspect_err(|error| eprintln!("Drawing failed: {error:#}"))
+            self.draw_scene(scene).inspect_err(|error| {
+                self.observation
+                    .failures
+                    .set(self.observation.failures.get() + 1);
+                eprintln!("Drawing failed: {error:#}");
+            })
         }
 
         fn quiesce(&mut self, shutdown: &WindowPresentationShutdownTicket) -> Result<()> {
@@ -336,6 +379,11 @@ mod windows_example {
             );
             self.in_flight.clear();
             self.surface.take();
+            self.observation.retained_recordings.set(0);
+            self.observation
+                .quiesced_prefix
+                .set(Some(self.submitted_prefix));
+            *self.observation.shutdown_ticket.borrow_mut() = Some(shutdown.clone());
             if std::env::args().any(|argument| argument == "--smoke") {
                 println!("Quiesced original GPU prefix {}", self.submitted_prefix);
             }
@@ -346,6 +394,8 @@ mod windows_example {
     struct Root {
         image: Rc<RefCell<Option<ImageTexture>>>,
         count: Rc<Cell<u32>>,
+        host_input: Option<AnyView>,
+        observation: Rc<RenderObservation>,
     }
 
     impl Render for Root {
@@ -361,10 +411,15 @@ mod windows_example {
                 .text_color(rgb(0xf2f4f8))
                 .font_family("Segoe UI")
                 .child("Application-owned WGPU + GPUI")
-                .child("GPUI owns the window and event loop. The application owns the GPU.")
+                .child(if self.host_input.is_some() {
+                    "The application owns the HWND, message loop and GPU."
+                } else {
+                    "GPUI owns the window and event loop. The application owns the GPU."
+                })
                 .child(
                     div()
                         .id("change-image")
+                        .relative()
                         .px_4()
                         .py_2()
                         .bg(rgb(0x276650))
@@ -374,6 +429,19 @@ mod windows_example {
                             this.count.set(this.count.get().wrapping_add(1));
                             cx.notify();
                         }))
+                        .child(
+                            canvas(
+                                {
+                                    let observation = self.observation.clone();
+                                    move |bounds, _, _| observation.button_bounds.set(Some(bounds))
+                                },
+                                |_, (), _, _| {},
+                            )
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .size_full(),
+                        )
                         .child(format!("Change GPU image · count {}", self.count.get())),
                 )
                 .child(
@@ -383,8 +451,8 @@ mod windows_example {
                         .h(px(160.))
                         .overflow_hidden()
                         .child(
-                            canvas(
-                                |_, _, _| (),
+                            canvas(|_, _, _| (), {
+                                let observation = self.observation.clone();
                                 move |bounds, (), window, _| {
                                     window.paint_quad(fill(bounds, rgb(0x344358)));
                                     if let Some(image) = image {
@@ -397,11 +465,14 @@ mod windows_example {
                                             Corners::all(px(16.)),
                                             &image,
                                         ) {
+                                            observation
+                                                .failures
+                                                .set(observation.failures.get() + 1);
                                             eprintln!("Image painting failed: {error:#}");
                                         }
                                     }
-                                },
-                            )
+                                }
+                            })
                             .size_full(),
                         )
                         .child(
@@ -415,6 +486,7 @@ mod windows_example {
                                 .child("Ordinary UI above the clipped GPU image"),
                         ),
                 )
+                .children(self.host_input.clone())
         }
     }
 
@@ -425,7 +497,11 @@ mod windows_example {
             image: Rc::new(RefCell::new(None)),
             count: Rc::new(Cell::new(0)),
             submitted: Rc::new(Cell::new(0)),
+            observation: Rc::new(RenderObservation::default()),
         });
+        if std::env::args().any(|argument| argument == "--external-host") {
+            return external_host::run(factory, smoke);
+        }
         let platform = Rc::new(WindowsPlatform::new_with_renderer(
             Arc::new(CosmicTextSystem::new("Segoe UI")),
             factory.clone(),
@@ -441,6 +517,8 @@ mod windows_example {
                     cx.new(|_| Root {
                         image: factory.image.clone(),
                         count: factory.count.clone(),
+                        host_input: None,
+                        observation: factory.observation.clone(),
                     })
                 },
             ) {
@@ -454,6 +532,7 @@ mod windows_example {
             if smoke {
                 let submitted = factory.submitted.clone();
                 let errors = factory.gpu.errors.clone();
+                let observation = factory.observation.clone();
                 cx.spawn(async move |cx| {
                     let mut changed_after = None;
                     for _ in 0..600 {
@@ -465,7 +544,9 @@ mod windows_example {
                         }
                         if let Some(previous) = changed_after {
                             if submitted.get() > previous {
-                                if errors.load(Ordering::Relaxed) != 0 {
+                                if errors.load(Ordering::Relaxed) != 0
+                                    || observation.failures.get() != 0
+                                {
                                     eprintln!("The WGPU example reported a GPU error");
                                     std::process::exit(1);
                                 }

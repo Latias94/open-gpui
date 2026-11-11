@@ -1045,6 +1045,47 @@ impl WindowsWindowInner {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
+        if self.is_attached() {
+            if matches!(msg, WM_IME_STARTCOMPOSITION | WM_IME_ENDCOMPOSITION) {
+                self.observe_ime_composition(msg == WM_IME_STARTCOMPOSITION);
+            }
+            if matches!(
+                msg,
+                WM_NCCALCSIZE
+                    | WM_NCHITTEST
+                    | WM_GETMINMAXINFO
+                    | WM_CREATE
+                    | WM_NCMOUSEMOVE
+                    | WM_NCLBUTTONDBLCLK
+                    | WM_NCLBUTTONDOWN
+                    | WM_NCRBUTTONDOWN
+                    | WM_NCMBUTTONDOWN
+                    | WM_NCLBUTTONUP
+                    | WM_NCRBUTTONUP
+                    | WM_NCMBUTTONUP
+                    | WM_MOUSEACTIVATE
+                    | WM_ENTERSIZEMOVE
+                    | WM_EXITSIZEMOVE
+                    | WM_ENTERMENULOOP
+                    | WM_EXITMENULOOP
+                    | WM_TIMER
+                    | WM_QUERYENDSESSION
+                    | WM_ENDSESSION
+            ) {
+                return self.default_window_proc(handle, msg, wparam, lparam);
+            }
+            if matches!(msg, WM_DPICHANGED | WM_PAINT) {
+                let result = self.default_window_proc(handle, msg, wparam, lparam);
+                if self.accepts_generation_bound_message(self.registration.generation()) {
+                    if msg == WM_DPICHANGED {
+                        self.handle_dpi_changed_msg(handle, wparam, lparam);
+                    } else {
+                        self.handle_paint_msg(handle);
+                    }
+                }
+                return result;
+            }
+        }
         if self.state.interaction_is_quiesced() {
             let blocked = match msg {
                 WM_NCHITTEST => Some(HTCLIENT as isize),
@@ -1208,10 +1249,25 @@ impl WindowsWindowInner {
             WM_GETOBJECT => self.handle_wm_getobject(wparam, lparam),
             _ => None,
         };
-        if let Some(n) = handled {
+        if self.is_attached()
+            && matches!(
+                msg,
+                WM_SIZE
+                    | WM_MOVE
+                    | WM_WINDOWPOSCHANGED
+                    | WM_ACTIVATE
+                    | WM_DESTROY
+                    | WM_SHOWWINDOW
+                    | WM_SETTINGCHANGE
+                    | WM_DISPLAYCHANGE
+                    | WM_INPUTLANGCHANGE
+            )
+        {
+            self.default_window_proc(handle, msg, wparam, lparam)
+        } else if let Some(n) = handled {
             LRESULT(n)
         } else {
-            unsafe { DefWindowProcW(handle, msg, wparam, lparam) }
+            self.default_window_proc(handle, msg, wparam, lparam)
         }
     }
 
@@ -1299,8 +1355,13 @@ impl WindowsWindowInner {
             return Some(0);
         }
 
-        let width = lparam.loword().max(1) as i32;
-        let height = lparam.hiword().max(1) as i32;
+        let (width, height) = if self.is_attached() {
+            let mut client = RECT::default();
+            unsafe { GetClientRect(self.hwnd, &mut client) }.log_err()?;
+            (client.right - client.left, client.bottom - client.top)
+        } else {
+            (lparam.loword().max(1) as i32, lparam.hiword().max(1) as i32)
+        };
         let new_size = size(DevicePixels(width), DevicePixels(height));
 
         let scale_factor = self.state.scale_factor.get();
@@ -1874,7 +1935,7 @@ impl WindowsWindowInner {
             WindowsNonClientPolicy::CustomTitlebar => unsafe {
                 let params = lparam.0 as *mut NCCALCSIZE_PARAMS;
                 let saved_top = (*params).rgrc[0].top;
-                let result = DefWindowProcW(handle, WM_NCCALCSIZE, wparam, lparam);
+                let result = self.default_window_proc(handle, WM_NCCALCSIZE, wparam, lparam);
                 (*params).rgrc[0].top = saved_top;
                 if self.state.is_maximized() {
                     let dpi = GetDpiForWindow(handle);
@@ -2041,6 +2102,16 @@ impl WindowsWindowInner {
         self.state
             .direct_manipulation
             .set_scale_factor(new_scale_factor);
+
+        if self.is_attached() {
+            let bounds = native_physical_client_bounds(handle).log_err()?;
+            self.state
+                .origin
+                .set(bounds.to_pixels(new_scale_factor).origin);
+            self.handle_size_change(bounds.size, new_scale_factor, true);
+            self.state.border_offset.update_restored(handle).log_err();
+            return Some(0);
+        }
 
         if is_maximized {
             // Get the monitor and its work area at the new DPI

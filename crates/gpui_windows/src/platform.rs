@@ -45,6 +45,10 @@ mod restart;
 #[path = "activity.rs"]
 mod activity;
 
+#[cfg(test)]
+#[path = "native_attachment_tests.rs"]
+mod native_attachment_tests;
+
 #[derive(Default)]
 pub(crate) struct RegisteredWindows {
     windows: RwLock<SmallVec<[RegisteredWindow; 4]>>,
@@ -238,6 +242,7 @@ fn next_native_window_generation() -> usize {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum WindowsPlatformRunExit {
     TerminateProcess,
+    ExternalHost,
     #[cfg(any(test, feature = "test-support"))]
     ReturnToCaller,
 }
@@ -260,6 +265,7 @@ impl WindowsPlatformRunExit {
             }
             #[cfg(any(test, feature = "test-support"))]
             Self::ReturnToCaller => {}
+            Self::ExternalHost => {}
         }
     }
 }
@@ -916,6 +922,88 @@ impl WindowsPlatform {
             WindowsPlatformRunExit::TerminateProcess,
             Some((text_system, renderer_factory)),
         )
+    }
+
+    /// Creates a Win32 platform driven by the application's existing UI-thread message loop.
+    ///
+    /// Launch returns through `Application::run_embedded`. The host must call
+    /// [`Self::pretranslate_message`] before translating and dispatching messages, retain the
+    /// application and platform, and keep pumping until [`Self::is_shutdown_complete`].
+    /// GPUI never consumes or posts `WM_QUIT` or terminates the process in this mode.
+    pub fn new_external_host(
+        text_system: Arc<dyn PlatformTextSystem>,
+        renderer_factory: Rc<dyn WindowsRendererFactory>,
+    ) -> Result<Self> {
+        Self::construct(
+            false,
+            WindowsPlatformRunExit::ExternalHost,
+            Some((text_system, renderer_factory)),
+        )
+    }
+
+    /// Attaches native UI services to an application-owned top-level window.
+    ///
+    /// Use this from `App::open_window_with_platform_window`. The supplied owner is retained
+    /// through presentation quiescence and native binding retirement. Detachment and failed
+    /// construction leave the host HWND intact. Its non-client area remains host-owned.
+    pub fn attach_window<W>(
+        &self,
+        handle: AnyWindowHandle,
+        params: WindowParams,
+        displays: PlatformDisplaySnapshot,
+        owner: W,
+    ) -> Result<Box<dyn PlatformWindow>>
+    where
+        W: raw_window_handle::HasWindowHandle + 'static,
+    {
+        anyhow::ensure!(
+            self.inner.run_exit == WindowsPlatformRunExit::ExternalHost,
+            "attaching an application window requires the external-host platform"
+        );
+        anyhow::ensure!(
+            self.inner.dispatcher.is_main_thread(),
+            "native window attachment requires the platform UI thread"
+        );
+        anyhow::ensure!(
+            !self.inner.native_finalization_started.get() && !self.terminal_shutdown_complete.get(),
+            "cannot attach windows after terminal shutdown has started"
+        );
+        anyhow::ensure!(
+            !self.windowing_transition.get() && self.is_windowed(),
+            "native window attachment requires connected, stable windowing services"
+        );
+        let expected = displays
+            .generation()
+            .context("attachment requires an atomic display snapshot")?;
+        let topology = self
+            .inner
+            .exact_display_topology_snapshot()
+            .map_err(|error| anyhow!("attachment display topology is unavailable: {error:?}"))?;
+        anyhow::ensure!(
+            expected == topology.generation(),
+            "display topology changed before native window attachment"
+        );
+        Ok(Box::new(WindowsWindow::attach(
+            handle,
+            params,
+            Box::new(owner),
+            self.generate_creation_info(topology)?,
+        )?))
+    }
+
+    /// Handles GPUI keyboard accelerators before the host translates a native message.
+    ///
+    /// A `true` result consumes the message. Other messages remain entirely host-owned.
+    pub fn pretranslate_message(&self, message: &MSG) -> bool {
+        self.inner.translate_accelerator(message)
+    }
+
+    /// Reports completion of App shutdown, native binding retirement and platform cleanup.
+    pub fn is_shutdown_complete(&self) -> bool {
+        self.terminal_shutdown_complete.get()
+            && self.inner.native_finalization_started.get()
+            && self.inner.native_retirement_is_settled()
+            && unsafe { !IsWindow(Some(self.handle)).as_bool() }
     }
 
     /// Creates a Windows platform whose event loop returns to its test host after `WM_QUIT`.
@@ -2556,6 +2644,10 @@ impl Platform for WindowsPlatform {
         self.inner.refresh_display_topology_now();
         on_finish_launching();
 
+        if self.inner.run_exit == WindowsPlatformRunExit::ExternalHost {
+            return;
+        }
+
         let mut quit_notified = false;
         let mut msg = MSG::default();
         loop {
@@ -2605,10 +2697,24 @@ impl Platform for WindowsPlatform {
             WindowsPlatformRunExit::TerminateProcess => {
                 self.inner.run_exit.terminate_process();
             }
+            WindowsPlatformRunExit::ExternalHost => {}
         }
     }
 
     fn quit(&self) {
+        if self.inner.run_exit == WindowsPlatformRunExit::ExternalHost {
+            let inner = Rc::downgrade(&self.inner);
+            self.foreground_executor
+                .spawn(async move {
+                    if let Some(inner) = inner.upgrade() {
+                        let _ = with_windows_callback(&inner.state.callbacks.quit, |callback| {
+                            callback()
+                        });
+                    }
+                })
+                .detach();
+            return;
+        }
         self.foreground_executor()
             .spawn(async { unsafe { PostQuitMessage(0) } })
             .detach();
@@ -2618,6 +2724,10 @@ impl Platform for WindowsPlatform {
         self.terminal_shutdown_complete.set(true);
         self.stop_vsync_thread();
         self.recovered_directx_devices.write().take();
+        if self.inner.run_exit == WindowsPlatformRunExit::ExternalHost {
+            self.begin_native_finalization();
+            return;
+        }
         unsafe { PostQuitMessage(0) };
     }
 
@@ -2642,6 +2752,10 @@ impl Platform for WindowsPlatform {
     }
 
     fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<OsString>) {
+        if self.inner.run_exit == WindowsPlatformRunExit::ExternalHost {
+            log::error!("restarting the process belongs to the external application host");
+            return;
+        }
         let pid = std::process::id();
         let Some(app_path) = binary_path.or(self.app_path().log_err()) else {
             return;
@@ -3975,6 +4089,9 @@ impl WindowsPlatformInner {
             with_windows_callback(&self.state.callbacks.quit, |callback| callback())
                 .unwrap_or(false);
         log::logger().flush();
+        if self.run_exit == WindowsPlatformRunExit::ExternalHost {
+            return Some(0);
+        }
         if shutdown_completed {
             self.run_exit.terminate_process();
         }
@@ -4014,11 +4131,13 @@ impl WindowsPlatformInner {
                     };
                     // We need to process a paint message here as otherwise we will re-enter `run_foreground_task` before painting if we have work remaining.
                     // The reason for this is that windows prefers custom application message processing over system messages.
-                    if peek_msg(&mut msg, PM_QS_PAINT) {
-                        process_message(&msg);
-                    }
-                    while peek_msg(&mut msg, PM_QS_INPUT) {
-                        process_message(&msg);
+                    if self.run_exit != WindowsPlatformRunExit::ExternalHost {
+                        if peek_msg(&mut msg, PM_QS_PAINT) {
+                            process_message(&msg);
+                        }
+                        while peek_msg(&mut msg, PM_QS_INPUT) {
+                            process_message(&msg);
+                        }
                     }
                     // Allow the main loop to process other gpui events before going back into `run_foreground_task`
                     unsafe {

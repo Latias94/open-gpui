@@ -9,13 +9,15 @@ repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
 publish = false
-description = "Application-owned WGPU rendering with the ordinary GPUI Win32 host."
+description = "Application-owned WGPU rendering with GPUI or application-owned Win32 hosts."
 
 [target.'cfg(target_os = "windows")'.dependencies]
 anyhow.workspace = true
 open_gpui = { workspace = true, features = ["windows-manifest"] }
 open_gpui_wgpu.workspace = true
 open_gpui_windows.workspace = true
+raw-window-handle = "0.6"
+windows.workspace = true
 
 [lints]
 workspace = true

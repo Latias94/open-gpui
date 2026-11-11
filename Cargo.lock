@@ -5353,6 +5353,8 @@ dependencies = [
  "open-gpui",
  "open-gpui-wgpu",
  "open-gpui-windows",
+ "raw-window-handle",
+ "windows 0.62.2",
 ]
 
 [[package]]

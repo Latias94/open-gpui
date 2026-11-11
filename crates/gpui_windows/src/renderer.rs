@@ -19,9 +19,10 @@ use crate::{DirectXDevices, DirectXRenderer, get_window_long};
 
 /// The native target supplied while GPUI creates a window's renderer on its UI thread.
 ///
-/// GPUI owns the HWND, message loop, input services and native retirement. The HWND remains
-/// valid until this renderer successfully quiesces, unless the operating system destroys it
-/// externally. A renderer must release every surface reference before quiescence succeeds.
+/// GPUI owns the native UI binding and retirement. Ordinary windows also use GPUI's HWND and
+/// message loop; external hosts retain their original window owner and loop. The HWND remains
+/// valid until this renderer successfully quiesces, unless the host or operating system destroys
+/// it early. A renderer must release every surface reference before quiescence succeeds.
 /// This value is not an independent ownership lease for the HWND.
 #[derive(Clone, Copy, Debug)]
 pub struct WindowsRendererWindow {

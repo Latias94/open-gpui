@@ -26,9 +26,20 @@ use windows::{
         Graphics::Dwm::*,
         Graphics::Gdi::*,
         System::{
-            Com::*, Diagnostics::Debug::MessageBeep, LibraryLoader::*, Ole::*, SystemServices::*,
+            Com::*,
+            Diagnostics::Debug::MessageBeep,
+            LibraryLoader::*,
+            Ole::*,
+            SystemServices::*,
+            Threading::{GetCurrentProcessId, GetCurrentThreadId},
         },
-        UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
+        UI::{
+            Controls::*,
+            HiDpi::*,
+            Input::{Ime::*, KeyboardAndMouse::*},
+            Shell::*,
+            WindowsAndMessaging::*,
+        },
     },
     core::*,
 };
@@ -78,7 +89,23 @@ enum NativeWindowLifecycle {
     Live,
     Destroying,
     Destroyed,
+    Detached,
 }
+
+struct AttachedWindowState {
+    owner: RefCell<Option<Box<dyn rwh::HasWindowHandle>>>,
+    original_ime: HIMC,
+    subclass_installed: Cell<bool>,
+    ime_restored: Cell<bool>,
+    ime_composition_active: Cell<bool>,
+}
+
+struct AttachedWindowSubclass {
+    window: Rc<WindowsWindowInner>,
+    registration: RegisteredWindow,
+}
+
+const ATTACHED_WINDOW_SUBCLASS_ID: usize = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum InitialPlacementPhase {
@@ -943,6 +970,7 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) hwnd: HWND,
     pub(crate) dialog_owner: Rc<crate::dialog::DialogOwner>,
     native_window_lifecycle: Cell<NativeWindowLifecycle>,
+    attachment: Option<AttachedWindowState>,
     drag_drop_registered: Cell<bool>,
     show_on_initial_presentation: Cell<bool>,
     provisional_session: Option<WindowProvisionalSession>,
@@ -974,7 +1002,7 @@ impl WindowsWindowState {
         hwnd: HWND,
         handle: AnyWindowHandle,
         renderer_source: &WindowsRendererSource,
-        window_params: &CREATESTRUCTW,
+        initial_bounds: Bounds<DevicePixels>,
         current_cursor: Option<HCURSOR>,
         cursor_visible: Arc<AtomicBool>,
         display: WindowsDisplay,
@@ -991,14 +1019,9 @@ impl WindowsWindowState {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
             monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32
         };
-        let origin = logical_point(window_params.x as f32, window_params.y as f32, scale_factor);
-        let logical_size = {
-            let physical_size = size(
-                DevicePixels(window_params.cx),
-                DevicePixels(window_params.cy),
-            );
-            physical_size.to_pixels(scale_factor)
-        };
+        let logical_bounds = initial_bounds.to_pixels(scale_factor);
+        let origin = logical_bounds.origin;
+        let logical_size = logical_bounds.size;
         let fullscreen_restore_bounds = Bounds {
             origin,
             size: logical_size,
@@ -1418,12 +1441,16 @@ impl WindowsWindowInner {
             .context("native pointer point is outside its sampled target display")
     }
 
-    fn new(context: &mut WindowCreateContext, hwnd: HWND, cs: &CREATESTRUCTW) -> Result<Rc<Self>> {
+    fn new(
+        context: &mut WindowCreateContext,
+        hwnd: HWND,
+        initial_bounds: Bounds<DevicePixels>,
+    ) -> Result<Rc<Self>> {
         let state = WindowsWindowState::new(
             hwnd,
             context.handle,
             &context.renderer_source,
-            cs,
+            initial_bounds,
             context.current_cursor,
             context.cursor_visible.clone(),
             context.display,
@@ -1436,11 +1463,15 @@ impl WindowsWindowInner {
             context.activation_policy,
             context.taskbar_visible,
         )?;
+        if let Some(attachment) = context.attachment.as_ref() {
+            state.ime_enabled.set(!attachment.original_ime.is_invalid());
+        }
 
         Ok(Rc::new(Self {
             hwnd,
             dialog_owner: crate::dialog::DialogOwner::new(hwnd),
             native_window_lifecycle: Cell::new(NativeWindowLifecycle::Live),
+            attachment: context.attachment.take(),
             drag_drop_registered: Cell::new(false),
             show_on_initial_presentation: Cell::new(context.show_on_initial_presentation),
             provisional_session: context.provisional_session.clone(),
@@ -1504,14 +1535,16 @@ impl WindowsWindowInner {
     }
 
     fn revoke_drag_drop(&self) {
-        if !self.drag_drop_registered.replace(false) {
-            return;
+        self.try_revoke_drag_drop().log_err();
+    }
+
+    fn try_revoke_drag_drop(&self) -> Result<()> {
+        if self.drag_drop_registered.get() {
+            unsafe { RevokeDragDrop(self.hwnd) }
+                .context("revoking native window drag-drop registration")?;
+            self.drag_drop_registered.set(false);
         }
-        unsafe {
-            RevokeDragDrop(self.hwnd)
-                .context("revoking native window drag-drop registration")
-                .log_err();
-        }
+        Ok(())
     }
 
     fn unregister_from_platform(&self) {
@@ -1575,6 +1608,9 @@ impl WindowsWindowInner {
     }
 
     pub(crate) fn revoke_native_focus_and_activation(&self) -> Result<()> {
+        if self.is_attached() {
+            return Ok(());
+        }
         let owns_focus = |focus: HWND| {
             focus == self.hwnd
                 || (!focus.is_invalid() && unsafe { IsChild(self.hwnd, focus).as_bool() })
@@ -1623,6 +1659,10 @@ impl WindowsWindowInner {
         self.state.pressed_caption_button.set(None);
         if self.is_native_window_terminal() {
             return Ok(());
+        }
+        if self.is_attached() {
+            self.settle_pointer_capture_before_native_teardown();
+            return self.deactivate_accessibility();
         }
 
         let mut policy = self.state.activation_policy();
@@ -1966,6 +2006,24 @@ impl WindowsWindowInner {
             return false;
         }
         drop(renderer);
+        if self.is_attached() {
+            return match self.detach_native_binding(shutdown) {
+                Ok(()) => true,
+                Err(error) => {
+                    log::error!("failed to detach native window binding: {error:#}");
+                    false
+                }
+            };
+        }
+        if let Err(error) = self
+            .quiesce_interaction()
+            .and_then(|()| self.state.direct_manipulation.retire())
+        {
+            log::error!(
+                "failed to retire native window input services before destruction: {error:#}"
+            );
+            return false;
+        }
         if self.native_window_lifecycle.get() != NativeWindowLifecycle::Live {
             if unsafe { !IsWindow(Some(self.hwnd)).as_bool() } {
                 self.mark_native_window_destroyed();
@@ -2024,7 +2082,10 @@ impl WindowsWindowInner {
     }
 
     pub(crate) fn is_native_window_terminal(&self) -> bool {
-        if self.native_window_lifecycle.get() == NativeWindowLifecycle::Destroyed {
+        if matches!(
+            self.native_window_lifecycle.get(),
+            NativeWindowLifecycle::Destroyed | NativeWindowLifecycle::Detached
+        ) {
             return true;
         }
         if unsafe { !IsWindow(Some(self.hwnd)).as_bool() } {
@@ -2032,6 +2093,149 @@ impl WindowsWindowInner {
             return true;
         }
         false
+    }
+
+    pub(crate) fn is_attached(&self) -> bool {
+        self.attachment.is_some()
+    }
+
+    pub(crate) fn observe_ime_composition(&self, active: bool) {
+        if let Some(attachment) = self.attachment.as_ref() {
+            attachment.ime_composition_active.set(active);
+        }
+    }
+
+    pub(crate) fn default_window_proc(
+        &self,
+        hwnd: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        if self.is_attached() {
+            unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
+        } else {
+            unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+        }
+    }
+
+    fn detach_native_binding(&self, shutdown: &WindowPresentationShutdownTicket) -> Result<()> {
+        let attachment = self.attachment.as_ref().context("window is not attached")?;
+        if self.native_window_lifecycle.get() == NativeWindowLifecycle::Detached {
+            anyhow::ensure!(
+                shutdown.snapshot().detached(),
+                "detachment used a different shutdown authority"
+            );
+            return Ok(());
+        }
+        anyhow::ensure!(
+            self.native_window_lifecycle.get() == NativeWindowLifecycle::Live,
+            "host window was destroyed before native binding detachment"
+        );
+        self.dialog_owner.close();
+        let _dialog_idle = self
+            .dialog_owner
+            .try_lock_idle()
+            .context("native dialogs are still using the host window")?;
+        if self.raw_window_handles.upgrade().is_some_and(|registry| {
+            registry
+                .read()
+                .iter()
+                .any(|entry| entry.matches(self.registration))
+        }) {
+            anyhow::ensure!(
+                matches!(
+                    self.prepare_native_owner_retirement()?,
+                    NativeOwnerRetirementPreparation::Ready
+                ),
+                "registered transient windows are still using the host window"
+            );
+        }
+        self.quiesce_interaction()?;
+        self.state.direct_manipulation.retire()?;
+        self.try_revoke_drag_drop()?;
+        if !attachment.ime_restored.get() {
+            if attachment.ime_composition_active.get() {
+                let context = unsafe { ImmGetContext(self.hwnd) };
+                if !context.is_invalid() {
+                    let canceled =
+                        unsafe { ImmNotifyIME(context, NI_COMPOSITIONSTR, CPS_CANCEL, 0) }.ok();
+                    unsafe { ImmReleaseContext(self.hwnd, context) }.ok()?;
+                    canceled?;
+                }
+                attachment.ime_composition_active.set(false);
+            }
+            unsafe { ImmAssociateContext(self.hwnd, attachment.original_ime) };
+            let observed = unsafe { ImmGetContext(self.hwnd) };
+            let matches = observed == attachment.original_ime;
+            if !observed.is_invalid() {
+                unsafe { ImmReleaseContext(self.hwnd, observed) }.ok()?;
+            }
+            anyhow::ensure!(matches, "host IME association was not restored");
+            attachment.ime_restored.set(true);
+        }
+        let a11y = self
+            .state
+            .a11y
+            .try_borrow_mut()
+            .map_err(|_| anyhow::anyhow!("accessibility adapter is still in use"))?
+            .take();
+        drop(a11y);
+        if attachment.subclass_installed.get() {
+            let mut data = 0;
+            anyhow::ensure!(
+                unsafe {
+                    GetWindowSubclass(
+                        self.hwnd,
+                        Some(attached_window_procedure),
+                        ATTACHED_WINDOW_SUBCLASS_ID,
+                        Some(&mut data),
+                    )
+                }
+                .as_bool(),
+                "native attachment subclass is missing"
+            );
+            // SAFETY: Only our subclass callback/id stores this live allocation on the UI thread.
+            let owner = unsafe { &*(data as *const AttachedWindowSubclass) };
+            anyhow::ensure!(
+                owner.registration.matches(self.registration)
+                    && std::ptr::eq(owner.window.as_ref(), self),
+                "native attachment subclass was replaced"
+            );
+            anyhow::ensure!(
+                unsafe {
+                    RemoveWindowSubclass(
+                        self.hwnd,
+                        Some(attached_window_procedure),
+                        ATTACHED_WINDOW_SUBCLASS_ID,
+                    )
+                }
+                .as_bool(),
+                "failed to remove native attachment subclass"
+            );
+            attachment.subclass_installed.set(false);
+            // SAFETY: Removal transferred the unique subclass allocation back to this thread.
+            unsafe { drop(Box::from_raw(data as *mut AttachedWindowSubclass)) };
+        }
+        anyhow::ensure!(
+            shutdown.acknowledge_detached(),
+            "native binding detached under an invalid shutdown ticket"
+        );
+        self.native_window_lifecycle
+            .set(NativeWindowLifecycle::Detached);
+        self.retire_native_callbacks();
+        self.unregister_from_platform();
+        self.release_modal_parent();
+        let callback = self.state.callbacks.close.take();
+        if let Some(coordinator) = self.native_retirement_coordinator.upgrade() {
+            coordinator.notify_native_window_terminal(self.registration);
+        }
+        if let Some(callback) = callback {
+            callback();
+        }
+        let owner = attachment.owner.borrow_mut().take();
+        drop(owner);
+        Ok(())
     }
 
     fn prepare_pending_initial_placement(&self) -> Result<()> {
@@ -2731,6 +2935,53 @@ impl WindowsWindowInner {
         }
         if activate && self.state.interaction_is_quiesced() {
             return PlatformWindowCommandOutcome::Rejected;
+        }
+        if self.is_attached() {
+            if self.presentation_shutdown_claimed() {
+                return PlatformWindowCommandOutcome::Rejected;
+            }
+            if !self.show_on_initial_presentation.get() {
+                self.state
+                    .initial_placement_phase
+                    .set(InitialPlacementPhase::Presented);
+                return PlatformWindowCommandOutcome::Accepted;
+            }
+            let Ok(mut visibility) = InitialPresentationVisibilityGuard::new(self) else {
+                return PlatformWindowCommandOutcome::WindowClosed;
+            };
+            self.state
+                .initial_placement_phase
+                .set(InitialPlacementPhase::Presenting);
+            let _phase = InitialPresentationPhaseGuard::new(&self.state.initial_placement_phase);
+            let result = (|| -> Result<()> {
+                self.reveal_windowed_initial_presentation(
+                    activate && self.state.activation_policy.get().accepts_activation,
+                    visibility.authority(),
+                )?;
+                anyhow::ensure!(
+                    !self.presentation_shutdown_claimed()
+                        && unsafe { IsWindowVisible(self.hwnd).as_bool() },
+                    "host window refused its initial presentation"
+                );
+                let facts = self.observed_platform_facts_from_native()?;
+                visibility
+                    .ensure_current("committing the attached window's initial presentation")?;
+                self.state
+                    .last_validated_platform_facts
+                    .replace(Some(facts));
+                Ok(())
+            })();
+            if let Err(error) = result {
+                log::error!("failed to reveal attached window after submission: {error:#}");
+                return PlatformWindowCommandOutcome::Rejected;
+            }
+            visibility.disarm();
+            self.show_on_initial_presentation.set(false);
+            self.state
+                .initial_placement_phase
+                .set(InitialPlacementPhase::Presented);
+            self.report_visibility();
+            return PlatformWindowCommandOutcome::Accepted;
         }
         let result = self.present_pending_initial_placement_with_deferred_mutation(activate, false);
         match result {
@@ -6545,10 +6796,11 @@ impl WindowsWindowInner {
     }
 
     fn initial_placement_accepts_deferred_mutation(&self) -> bool {
-        !matches!(
-            self.state.initial_placement_phase.get(),
-            InitialPlacementPhase::Presented
-        )
+        !self.is_attached()
+            && !matches!(
+                self.state.initial_placement_phase.get(),
+                InitialPlacementPhase::Presented
+            )
     }
 
     fn pending_initial_placement(&self) -> Option<WindowOpenStatus> {
@@ -7467,6 +7719,7 @@ impl Callbacks {
 
 struct WindowCreateContext {
     inner: Option<Result<Rc<WindowsWindowInner>>>,
+    attachment: Option<AttachedWindowState>,
     handle: AnyWindowHandle,
     non_client_policy: WindowsNonClientPolicy,
     display: WindowsDisplay,
@@ -7503,6 +7756,148 @@ struct WindowCreateContext {
 }
 
 impl WindowsWindow {
+    pub(crate) fn attach(
+        handle: AnyWindowHandle,
+        params: WindowParams,
+        owner: Box<dyn rwh::HasWindowHandle>,
+        creation_info: WindowCreationInfo,
+    ) -> Result<Self> {
+        let rwh::RawWindowHandle::Win32(native) = owner.window_handle()?.as_raw() else {
+            anyhow::bail!("Win32 native attachment requires a Win32 window handle");
+        };
+        let hwnd = HWND(native.hwnd.get() as *mut std::ffi::c_void);
+        let mut process_id = 0;
+        let thread_id = unsafe { GetWindowThreadProcessId(hwnd, Some(&mut process_id)) };
+        anyhow::ensure!(
+            thread_id == unsafe { GetCurrentThreadId() }
+                && process_id == unsafe { GetCurrentProcessId() },
+            "native attachment requires a live HWND owned by the platform thread and process"
+        );
+        anyhow::ensure!(
+            unsafe { !IsWindowVisible(hwnd).as_bool() },
+            "native attachment requires a hidden HWND before the first synchronous presentation"
+        );
+        let style = unsafe { get_window_long(hwnd, GWL_STYLE) } as u32;
+        let ex_style = unsafe { get_window_long(hwnd, GWL_EXSTYLE) } as u32;
+        anyhow::ensure!(
+            style & WS_CHILD.0 == 0,
+            "native attachment requires a top-level HWND"
+        );
+        anyhow::ensure!(
+            matches!(params.kind, WindowKind::Normal | WindowKind::Floating)
+                && params.transient_for.is_none()
+                && params.provisional_session.is_none(),
+            "native attachment does not create transient, dialog or provisional host windows"
+        );
+        anyhow::ensure!(
+            params.accepts_pointer_input == (ex_style & WS_EX_TRANSPARENT.0 == 0)
+                && params.activation_policy.focus_on_click == (ex_style & WS_EX_NOACTIVATE.0 == 0),
+            "native attachment input policy must match the host's existing window styles"
+        );
+        let registry = creation_info
+            .raw_window_handles
+            .upgrade()
+            .context("native window registry is no longer available")?;
+        anyhow::ensure!(
+            !registry.read().iter().any(|entry| entry.as_raw() == hwnd)
+                && window_from_hwnd(hwnd).is_none(),
+            "native HWND already has a GPUI binding"
+        );
+        let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+        let display = creation_info
+            .display_topology
+            .display_for_native_monitor(monitor)
+            .context("host window has no display in the current topology")?;
+        let topology_generation = creation_info.display_topology.generation();
+        let initial_bounds = native_physical_client_bounds(hwnd)?;
+        let original_ime = unsafe { ImmGetContext(hwnd) };
+        if !original_ime.is_invalid() {
+            unsafe { ImmReleaseContext(hwnd, original_ime) }.ok()?;
+        }
+        let mut context = WindowCreateContext {
+            inner: None,
+            attachment: Some(AttachedWindowState {
+                owner: RefCell::new(Some(owner)),
+                original_ime,
+                subclass_installed: Cell::new(false),
+                ime_restored: Cell::new(false),
+                ime_composition_active: Cell::new(false),
+            }),
+            handle,
+            non_client_policy: WindowsNonClientPolicy::NativeCaption,
+            display,
+            display_topology_generation: topology_generation,
+            is_movable: params.is_movable,
+            min_size: params.window_min_size,
+            executor: creation_info.executor,
+            current_cursor: creation_info.current_cursor,
+            cursor_visible: creation_info.cursor_visible,
+            drop_target_helper: creation_info.drop_target_helper,
+            validation_number: creation_info.validation_number,
+            native_window_generation: creation_info.native_window_generation,
+            recovered_directx_devices: creation_info.recovered_directx_devices,
+            main_receiver: creation_info.main_receiver,
+            platform_window_handle: creation_info.platform_window_handle,
+            raw_window_handles: creation_info.raw_window_handles,
+            native_retirement_coordinator: creation_info.native_retirement_coordinator,
+            appearance: system_appearance().unwrap_or_default(),
+            disable_direct_composition: creation_info.disable_direct_composition,
+            renderer_source: creation_info.renderer_source,
+            invalidate_devices: creation_info.invalidate_devices,
+            owner_registration: None,
+            modal_parent_claim: None,
+            creation_show: params.show,
+            show_on_initial_presentation: params.show,
+            provisional_session: None,
+            accepts_pointer_input: params.accepts_pointer_input,
+            focus_on_appearing: params.focus_on_appearing,
+            activation_policy: params.activation_policy,
+            transient_for: None,
+            taskbar_visible: ex_style & WS_EX_APPWINDOW.0 != 0
+                && ex_style & WS_EX_TOOLWINDOW.0 == 0,
+            #[cfg(test)]
+            lifecycle_test_probe: creation_info.lifecycle_test_probe,
+        };
+        let inner = WindowsWindowInner::new(&mut context, hwnd, initial_bounds)?;
+        let construction = ConstructionRetirementGuard::new(inner);
+        let inner = construction.inner();
+        let subclass = Box::new(AttachedWindowSubclass {
+            window: inner.clone(),
+            registration: inner.registration,
+        });
+        let data = Box::into_raw(subclass);
+        if !unsafe {
+            SetWindowSubclass(
+                hwnd,
+                Some(attached_window_procedure),
+                ATTACHED_WINDOW_SUBCLASS_ID,
+                data as usize,
+            )
+        }
+        .as_bool()
+        {
+            // SAFETY: Failed registration did not transfer the allocation to the subclass.
+            unsafe { drop(Box::from_raw(data)) };
+            anyhow::bail!("failed to install native window attachment subclass");
+        }
+        inner
+            .attachment
+            .as_ref()
+            .expect("attachment was initialized")
+            .subclass_installed
+            .set(true);
+        inner.register_with_platform()?;
+        register_drag_drop(inner)?;
+        inner.drag_drop_registered.set(true);
+        inner.state.border_offset.update_restored(hwnd)?;
+        let facts = inner.observed_platform_facts_from_native()?;
+        inner
+            .state
+            .last_validated_platform_facts
+            .replace(Some(facts));
+        Ok(construction.commit())
+    }
+
     pub(crate) fn new(
         handle: AnyWindowHandle,
         params: WindowParams,
@@ -7595,6 +7990,7 @@ impl WindowsWindow {
         let modal_parent_claim = modal_parent_guard.commit();
         let mut context = WindowCreateContext {
             inner: None,
+            attachment: None,
             handle,
             non_client_policy,
             display,
@@ -7736,11 +8132,14 @@ impl WindowsWindow {
 
 impl rwh::HasWindowHandle for WindowsWindow {
     fn window_handle(&self) -> std::result::Result<rwh::WindowHandle<'_>, rwh::HandleError> {
-        let raw = rwh::Win32WindowHandle::new(unsafe {
+        if self.0.is_native_window_terminal() {
+            return Err(rwh::HandleError::Unavailable);
+        }
+        let mut raw = rwh::Win32WindowHandle::new(unsafe {
             NonZeroIsize::new_unchecked(self.0.hwnd.0 as isize)
-        })
-        .into();
-        Ok(unsafe { rwh::WindowHandle::borrow_raw(raw) })
+        });
+        raw.hinstance = NonZeroIsize::new(unsafe { get_window_long(self.0.hwnd, GWLP_HINSTANCE) });
+        Ok(unsafe { rwh::WindowHandle::borrow_raw(raw.into()) })
     }
 }
 
@@ -8086,7 +8485,9 @@ impl PlatformWindow for WindowsWindow {
             "native window became visible before PlatformWindow::map_window"
         );
 
-        self.0.prepare_pending_initial_placement()?;
+        if !self.0.is_attached() {
+            self.0.prepare_pending_initial_placement()?;
+        }
         if !self.state.renderer.borrow().uses_directx() {
             let mut client = RECT::default();
             unsafe { GetClientRect(self.hwnd, &mut client) }
@@ -8211,6 +8612,25 @@ impl PlatformWindow for WindowsWindow {
         &self,
         shutdown: &WindowPresentationShutdownTicket,
     ) -> PlatformNativeWindowRetirementOutcome {
+        if self.0.is_attached() {
+            let current = self.0.presentation_shutdown_ticket.borrow().clone();
+            let Some(current) = current.filter(|current| current.same_authority(shutdown)) else {
+                return PlatformNativeWindowRetirementOutcome::Rejected;
+            };
+            let retired = self.0.destroy_native_window_with_ticket(shutdown);
+            return if retired
+                && self.0.native_window_lifecycle.get() == NativeWindowLifecycle::Detached
+                && current.snapshot().detached()
+            {
+                PlatformNativeWindowRetirementOutcome::BindingDetached
+            } else if self.0.native_window_lifecycle.get() == NativeWindowLifecycle::Destroyed
+                && current.snapshot().native_terminal()
+            {
+                PlatformNativeWindowRetirementOutcome::NativeWindowTerminal
+            } else {
+                PlatformNativeWindowRetirementOutcome::Rejected
+            };
+        }
         if !self.0.destroy_native_window_with_ticket(shutdown) {
             return if self.0.is_native_window_terminal() {
                 if shutdown.snapshot().quiesced() {
@@ -8600,6 +9020,9 @@ impl PlatformWindow for WindowsWindow {
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         self.state.background_appearance.set(background_appearance);
+        if self.0.is_attached() {
+            return;
+        }
         let hwnd = self.0.hwnd;
 
         // using Dwm APIs for Mica and MicaAlt backdrops.
@@ -9496,7 +9919,14 @@ unsafe fn window_procedure_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: L
         let window_params = unsafe { &*(lparam.0 as *const CREATESTRUCTW) };
         let window_creation_context = window_params.lpCreateParams as *mut WindowCreateContext;
         let window_creation_context = unsafe { &mut *window_creation_context };
-        return match WindowsWindowInner::new(window_creation_context, hwnd, window_params) {
+        let initial_bounds = Bounds::new(
+            point(DevicePixels(window_params.x), DevicePixels(window_params.y)),
+            size(
+                DevicePixels(window_params.cx),
+                DevicePixels(window_params.cy),
+            ),
+        );
+        return match WindowsWindowInner::new(window_creation_context, hwnd, initial_bounds) {
             Ok(window_state) => {
                 // The native HWND owns one strong reference until WM_NCDESTROY. If a teardown
                 // attempt fails after GPUI drops its PlatformWindow, callbacks and exact-generation
@@ -9547,6 +9977,30 @@ pub(crate) fn window_from_hwnd(hwnd: HWND) -> Option<Rc<WindowsWindowInner>> {
         return None;
     }
 
+    if unsafe { GetWindowThreadProcessId(hwnd, None) } != unsafe { GetCurrentThreadId() } {
+        return None;
+    }
+    let mut data = 0;
+    if unsafe {
+        GetWindowSubclass(
+            hwnd,
+            Some(attached_window_procedure),
+            ATTACHED_WINDOW_SUBCLASS_ID,
+            Some(&mut data),
+        )
+    }
+    .as_bool()
+    {
+        // SAFETY: This callback/id pair stores only our live subclass allocation on this thread.
+        let owner = unsafe { &*(data as *const AttachedWindowSubclass) };
+        return (owner.registration.as_raw() == hwnd
+            && owner.registration.matches(owner.window.registration))
+        .then(|| owner.window.clone());
+    }
+    if unsafe { GetClassLongPtrW(hwnd, GCLP_WNDPROC) } != window_procedure as *const () as usize {
+        return None;
+    }
+
     let ptr = unsafe { get_window_long(hwnd, GWLP_USERDATA) } as *mut Rc<WindowsWindowInner>;
     if !ptr.is_null() {
         let inner = unsafe { &*ptr };
@@ -9554,6 +10008,68 @@ pub(crate) fn window_from_hwnd(hwnd: HWND) -> Option<Rc<WindowsWindowInner>> {
     } else {
         None
     }
+}
+
+unsafe extern "system" fn attached_window_procedure(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    subclass_id: usize,
+    data: usize,
+) -> LRESULT {
+    if subclass_id != ATTACHED_WINDOW_SUBCLASS_ID || data == 0 {
+        return unsafe { DefSubclassProc(hwnd, message, wparam, lparam) };
+    }
+    // SAFETY: SetWindowSubclass owns this allocation until detach or this WM_NCDESTROY.
+    let owner = unsafe { &*(data as *const AttachedWindowSubclass) };
+    let registration = owner.registration;
+    let window = owner.window.clone();
+    if registration.as_raw() != hwnd || !registration.matches(window.registration) {
+        return unsafe { DefSubclassProc(hwnd, message, wparam, lparam) };
+    }
+    let dispatch = catch_unwind(AssertUnwindSafe(|| {
+        if message == WM_NCDESTROY {
+            window.mark_native_window_destroyed();
+        }
+        window.handle_msg(hwnd, message, wparam, lparam)
+    }));
+    let result = match dispatch {
+        Ok(result) => result,
+        Err(payload) => {
+            log::error!("caught a panic at the Win32 attachment boundary for message {message}");
+            if let Err(recovery) = catch_unwind(AssertUnwindSafe(|| {
+                window.settle_pointer_input_after_callback_panic(message, wparam);
+            })) {
+                std::mem::forget(recovery);
+            }
+            std::mem::forget(payload);
+            LRESULT(0)
+        }
+    };
+    if message == WM_NCDESTROY {
+        let finalization = catch_unwind(AssertUnwindSafe(|| {
+            window.mark_native_window_destroyed();
+            if let Some(attachment) = window.attachment.as_ref()
+                && attachment.subclass_installed.replace(false)
+            {
+                let _ = unsafe {
+                    RemoveWindowSubclass(
+                        hwnd,
+                        Some(attached_window_procedure),
+                        ATTACHED_WINDOW_SUBCLASS_ID,
+                    )
+                };
+                // SAFETY: WM_NCDESTROY is the unique final callback while the slot is installed.
+                unsafe { drop(Box::from_raw(data as *mut AttachedWindowSubclass)) };
+            }
+        }));
+        if let Err(payload) = finalization {
+            log::error!("native attachment finalization panicked");
+            std::mem::forget(payload);
+        }
+    }
+    result
 }
 
 fn get_module_handle() -> HMODULE {

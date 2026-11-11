@@ -19,13 +19,21 @@ use crate::*;
 const DEFAULT_VIEWPORT_SIZE: i32 = 1000;
 
 pub(crate) struct DirectManipulationHandler {
+    resources: RefCell<Option<DirectManipulationResources>>,
+    scale_factor: Rc<Cell<f32>>,
+    pending_events: Rc<RefCell<Vec<PlatformInput>>>,
+}
+
+struct DirectManipulationResources {
     manager: IDirectManipulationManager,
     update_manager: IDirectManipulationUpdateManager,
     viewport: IDirectManipulationViewport,
-    _handler_cookie: u32,
+    handler_cookie: u32,
+    stopped: Cell<bool>,
+    handler_removed: Cell<bool>,
+    abandoned: Cell<bool>,
+    deactivated: Cell<bool>,
     window: HWND,
-    scale_factor: Rc<Cell<f32>>,
-    pending_events: Rc<RefCell<Vec<PlatformInput>>>,
 }
 
 impl DirectManipulationHandler {
@@ -79,11 +87,17 @@ impl DirectManipulationHandler {
             update_manager.Update(None)?;
 
             Ok(Self {
-                manager,
-                update_manager,
-                viewport,
-                _handler_cookie: handler_cookie,
-                window,
+                resources: RefCell::new(Some(DirectManipulationResources {
+                    manager,
+                    update_manager,
+                    viewport,
+                    handler_cookie,
+                    stopped: Cell::new(false),
+                    handler_removed: Cell::new(false),
+                    abandoned: Cell::new(false),
+                    deactivated: Cell::new(false),
+                    window,
+                })),
                 scale_factor,
                 pending_events,
             })
@@ -95,34 +109,84 @@ impl DirectManipulationHandler {
     }
 
     pub fn on_pointer_hit_test(&self, wparam: WPARAM) {
+        let resources = self.resources.borrow();
+        let Some(resources) = resources
+            .as_ref()
+            .filter(|resources| !resources.stopped.get())
+        else {
+            return;
+        };
         unsafe {
             let pointer_id = wparam.loword() as u32;
             let mut pointer_type = POINTER_INPUT_TYPE::default();
             if GetPointerType(pointer_id, &mut pointer_type).is_ok() && pointer_type == PT_TOUCHPAD
             {
-                self.viewport.SetContact(pointer_id).log_err();
+                resources.viewport.SetContact(pointer_id).log_err();
             }
         }
     }
 
     pub fn update(&self) {
+        let resources = self.resources.borrow();
+        let Some(resources) = resources
+            .as_ref()
+            .filter(|resources| !resources.stopped.get())
+        else {
+            return;
+        };
         unsafe {
-            self.update_manager.Update(None).log_err();
+            resources.update_manager.Update(None).log_err();
         }
     }
 
     pub fn drain_events(&self) -> Vec<PlatformInput> {
         std::mem::take(&mut *self.pending_events.borrow_mut())
     }
+
+    #[cfg(test)]
+    pub(crate) fn is_retired(&self) -> bool {
+        self.resources.borrow().is_none()
+    }
+
+    pub(crate) fn retire(&self) -> Result<()> {
+        let mut resources = self
+            .resources
+            .try_borrow_mut()
+            .map_err(|_| anyhow::anyhow!("Direct Manipulation resources are still in use"))?;
+        let Some(current) = resources.as_ref() else {
+            return Ok(());
+        };
+        unsafe {
+            if !current.stopped.get() {
+                current.viewport.Stop()?;
+                current.stopped.set(true);
+            }
+            if !current.handler_removed.get() {
+                current
+                    .viewport
+                    .RemoveEventHandler(current.handler_cookie)?;
+                current.handler_removed.set(true);
+            }
+            if !current.abandoned.get() {
+                current.viewport.Abandon()?;
+                current.abandoned.set(true);
+            }
+            if !current.deactivated.get() {
+                current.manager.Deactivate(current.window)?;
+                current.deactivated.set(true);
+            }
+        }
+        let retired = resources.take();
+        drop(resources);
+        drop(retired);
+        self.pending_events.borrow_mut().clear();
+        Ok(())
+    }
 }
 
 impl Drop for DirectManipulationHandler {
     fn drop(&mut self) {
-        unsafe {
-            self.viewport.Stop().log_err();
-            self.viewport.Abandon().log_err();
-            self.manager.Deactivate(self.window).log_err();
-        }
+        self.retire().log_err();
     }
 }
 
