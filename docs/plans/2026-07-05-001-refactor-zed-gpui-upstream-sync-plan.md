@@ -3809,6 +3809,46 @@ This is SDR composition support; HDR/gamut/display mapping, physical input, engi
 and numerical costs retain separate gates. Exact results belong in the existing verification
 record, not in new registry snapshots or an upstream-parity claim.
 
+#### State Locality And Compositor Research Direction
+
+The November 12 review of the supplied compositor proposal and
+[A Critique of GPUI](https://blog.zortax.de/posts/a-critique-of-gpui) adds a research direction,
+not another official-source adoption or an implemented optimization. The article's unpublished
+harness excludes compositor/input costs and supplies no Windows execution evidence; its timings
+are not the current fork's baseline. Its distinction between reactive scope and downstream traversal/
+layout cost is useful independently of its preference for run-once Signal components.
+
+At `909f510d18bd0d1e537faf73eb57947cee47f927`, Entity/read tracking and cached View islands already
+avoid some render/layout work. CPU Scene replay still performs record/resource work, and retained
+buffer capacity does not avoid all repeated serialization/uploads or GPU rasterization. Drawing
+layers and Path intermediates are not general subtree raster caches. Keep these scopes separate
+when measuring; a Taffy arena clear does not imply rebuilding every cached control.
+
+First use one ordinary public application with independently changing panels, shared and local
+state, a non-View dependency and a virtualized variable-height collection. Compare idiomatic
+Entity/cached-View composition with a narrow equality-aware projection if invalidation dominates.
+Include equal writes, insertion/reorder, changed constraints, async completion and close/recreate.
+Observe dependency work, View rebuilds, layout/text/prepaint/paint, subscriptions and retained
+payload separately. Application code and public extension ergonomics are part of the comparison.
+A Signal whose only sink is the same broad `notify` does not establish element-level updates.
+Retain original candidate refusal, submitted interaction and resource-lifetime contracts.
+
+Choose any optimization from measured pressure: unchanged-content upload reuse inside the current
+WGPU recorder; persistent nodes inside the current layout owner if layout dominates; or one
+explicit raster boundary if raster savings exceed rebuild, sampling and memory costs. Preserve
+opacity/effect semantics in both baseline and optimized paths. Cache eviction ends reuse while
+submitted/in-flight leases still own resource retirement. A thread needs a real immutable
+transport and original-owner completion protocol; current `Rc`/`Cell` Scene/submission custody
+cannot be sent by assertion. Scroll tiles and threading follow evidence rather than defining
+the first compositor implementation.
+
+Nara's domain projections and graph/resource integration remain engine-owned. Its native-work
+counter excludes GPUI callback recording, so it is not the framework's upload counter. UI semantic
+cache validity and engine physical execution are distinct responsibilities. No Signal runtime,
+public cache-key authority, component crate split, raster cache or compositor thread is selected
+by this research amendment. Numerical gates need a current-source workload before implementation;
+this direction does not expand the earlier official sync gate into unrelated requalification.
+
 The [standalone logger](../verification.md#standalone-logging-and-tracing) at
 `9e7b9c3a36fb0266ef68ec7ee7280b2eb8646554` and the
 [Window/Win32 successor](../verification.md#window-controls-lazy-inspector-and-win32-dispatch)

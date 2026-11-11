@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-12T00:20:00+08:00
+timestamp: 2026-11-12T00:44:56+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,13 @@ verified_by:
 ---
 
 # Current State
+
+- The [state-locality/compositor research direction](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#state-locality-and-compositor-research-direction)
+  distinguishes Entity invalidation and cached View reuse from layout traversal, upload reuse,
+  raster caching and thread transport. Source comparison against `909f510d18b` refines future
+  ordinary-consumer measurements; article benchmarks are not current-fork evidence. No new Signal
+  runtime, persistent layout, cache interface or compositor is implemented/selected by this
+  research-only amendment. Engine domain policy stays in Nara; general corrections stay here.
 
 - The explicit [linear-sRGB recorder](../../verification.md#explicit-linear-srgb-scene-composition)
   preserves GPUI's numeric-sRGB default and adds an application-selected working domain. Actual
