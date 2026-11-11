@@ -193,6 +193,14 @@ async fn roundtrip(cx: &mut AsyncApp, environment: GraphicalEnvironment) -> anyh
             })
         })?;
         if allow_ext && allow_kde && !close_in_resize {
+            assert!(!native.state.borrow().active);
+            let client = native.state.borrow().client.clone();
+            client.enable_ime();
+            assert_eq!(client.ime_enabled(), Some(true));
+            native.update_ime_enabled();
+            assert_eq!(client.ime_enabled(), Some(true));
+            client.disable_ime();
+            println!("NATIVE_WAYLAND_INACTIVE_IME_CACHE_PRESERVED");
             for (requested, observed) in [
                 (
                     WindowBackgroundAppearance::Opaque,
