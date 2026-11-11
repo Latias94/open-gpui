@@ -137,7 +137,7 @@ fn native_cached_deferred_canvas_keeps_model_subscription_after_replay() {
     );
     let platform_hwnd = platform.handle;
     let lifecycle_probe = platform.lifecycle_test_probe.clone();
-    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let mut app = Application::new_inaccessible(platform.clone()).with_quit_mode(QuitMode::Explicit);
     platform
         .begin_vsync_thread()
         .expect("native vsync provider should start");
@@ -261,6 +261,11 @@ fn native_cached_deferred_canvas_keeps_model_subscription_after_replay() {
             assert!(counters.canvas_paints.get() > 0, "{case}");
             assert_eq!(counters.painted_value.get(), 1, "{case}");
             let initial_cached_state = counters.cached_state();
+            assert!(
+                app.update_for_test(|cx| window.update(cx, |_, window, _| !window.is_a11y_enabled()))
+                    .expect("the cache fixture must retain its exact native window"),
+                "{case}: the cache fixture must not select GPUI's accessibility cache bypass"
+            );
 
             for replay in 1..=2 {
                 let root_renders_before = counters.root_renders.get();
@@ -279,7 +284,10 @@ fn native_cached_deferred_canvas_keeps_model_subscription_after_replay() {
                 assert_eq!(
                     counters.cached_state(),
                     initial_cached_state,
-                    "{case}: replay {replay} must reuse child render and canvas paint"
+                    "{case}: replay {replay} must reuse child render and canvas paint; accessibility active: {}, native hovered: {}",
+                    app.update_for_test(|cx| window.update(cx, |_, window, _| window.is_a11y_active()))
+                        .expect("the failed cache frame must retain its native window"),
+                    native_window.state.hovered.get(),
                 );
             }
 
