@@ -90,7 +90,7 @@ impl GpuClipShape {
 #[derive(Default, Debug, Copy, Clone, PartialEq)]
 #[repr(C)]
 pub struct ClipEnvelope {
-    /// Conservative intersection AABB used only for culling and early rejection.
+    /// Device-space raster bounds from the exact clip stack and any primitive raster restriction.
     pub conservative_bounds: Bounds<ScaledPixels>,
     /// First [`GpuClipShape`] element in the Scene clip arena.
     pub first_clip: u32,
@@ -109,6 +109,7 @@ pub struct Scene {
     pub(crate) paint_operations: Vec<PaintOperation>,
     primitive_bounds: BoundsTree<ScaledPixels>,
     layer_stack: Vec<DrawOrder>,
+    legacy_sprite_order: Vec<LegacySpriteOrder>,
     pub shadows: Vec<Shadow>,
     pub quads: Vec<Quad>,
     pub paths: Vec<Path<ScaledPixels>>,
@@ -135,20 +136,18 @@ struct SceneJournalCheckpoint {
     clip_stack_ranges_len: usize,
 }
 
+#[derive(Clone, Copy, Default)]
+struct LegacySpriteOrder {
+    monochrome: bool,
+    subpixel: bool,
+    polychrome: bool,
+}
+
 #[expect(missing_docs)]
 impl Scene {
     pub fn clear(&mut self) {
         self.paint_operations.clear();
-        self.primitive_bounds.clear();
-        self.layer_stack.clear();
-        self.paths.clear();
-        self.shadows.clear();
-        self.quads.clear();
-        self.underlines.clear();
-        self.monochrome_sprites.clear();
-        self.subpixel_sprites.clear();
-        self.polychrome_sprites.clear();
-        self.surfaces.clear();
+        self.clear_render_state();
         self.clip_shapes.clear();
         self.clip_stack_ranges.clear();
     }
@@ -287,13 +286,55 @@ impl Scene {
         self.record_primitive(primitive, validity)
     }
 
+    pub(crate) fn insert_quad_strips_scoped(
+        &mut self,
+        quad: Quad,
+        strips: [Bounds<ScaledPixels>; 4],
+        clip_stack: &ClipStackSnapshot,
+        scale_factor: f32,
+        validity: Option<SubtreeGeometryValidity>,
+    ) -> Result<(), SubtreeGeometryError> {
+        let clip = self.intern_clip_stack(clip_stack, scale_factor)?;
+        let inherited = clip.conservative_bounds;
+        let raster_bounds = strips.map(|strip| inherited.intersect(&strip));
+        let safe_end = |raster: ScaledPixels, cut: ScaledPixels, inherited: ScaledPixels| {
+            if inherited <= cut {
+                raster == inherited
+            } else {
+                raster <= inherited && (raster.0 - cut.0).abs() <= 0.125
+            }
+        };
+        if strips.iter().zip(&raster_bounds).any(|(strip, raster)| {
+            !raster.is_empty()
+                && (!safe_end(raster.right(), strip.right(), inherited.right())
+                    || !safe_end(raster.bottom(), strip.bottom(), inherited.bottom()))
+        }) {
+            return self.record_primitive(Quad { clip, ..quad }.into(), validity);
+        }
+
+        for conservative_bounds in raster_bounds {
+            if !conservative_bounds.is_empty() {
+                let clip = ClipEnvelope {
+                    conservative_bounds,
+                    ..clip
+                };
+                self.record_primitive(Quad { clip, ..quad }.into(), validity.clone())?;
+            }
+        }
+        Ok(())
+    }
+
     fn insert_primitive_with_gpu_clips(
         &mut self,
         mut primitive: Primitive,
         clip_shapes: &[GpuClipShape],
         validity: Option<SubtreeGeometryValidity>,
     ) -> Result<(), SubtreeGeometryError> {
-        let clip = self.intern_gpu_clip_stack(clip_shapes)?;
+        let mut clip = self.intern_gpu_clip_stack(clip_shapes)?;
+        let recorded_bounds = primitive.clip_envelope().conservative_bounds;
+        if clip.conservative_bounds != recorded_bounds {
+            clip.conservative_bounds = clip.conservative_bounds.intersect(&recorded_bounds);
+        }
         primitive.set_clip_envelope(clip);
         self.record_primitive(primitive, validity)
     }
@@ -325,11 +366,20 @@ impl Scene {
             return Ok(false);
         }
 
-        let order = self
-            .layer_stack
-            .last()
-            .copied()
-            .unwrap_or_else(|| self.primitive_bounds.insert(clipped_bounds));
+        let layer_order = self.layer_stack.last().copied();
+        let order = layer_order.unwrap_or_else(|| self.primitive_bounds.insert(clipped_bounds));
+        let keep_sprite_order = |transform: PrimitiveTransform, bounds| {
+            layer_order.is_some()
+                || !transform.has_precise_raster_coordinates(bounds)
+                || [
+                    clipped_bounds.left(),
+                    clipped_bounds.top(),
+                    clipped_bounds.right(),
+                    clipped_bounds.bottom(),
+                ]
+                .into_iter()
+                .any(|edge| (edge.0.fract().abs() - 0.5).abs() <= 0.125)
+        };
         match primitive {
             Primitive::Shadow(shadow) => {
                 shadow.order = order;
@@ -349,14 +399,23 @@ impl Scene {
                 self.underlines.push(*underline);
             }
             Primitive::MonochromeSprite(sprite) => {
+                if keep_sprite_order(sprite.transform, sprite.bounds) {
+                    self.legacy_sprite_order_mut(order).monochrome = true;
+                }
                 sprite.order = order;
                 self.monochrome_sprites.push(*sprite);
             }
             Primitive::SubpixelSprite(sprite) => {
+                if keep_sprite_order(sprite.transform, sprite.bounds) {
+                    self.legacy_sprite_order_mut(order).subpixel = true;
+                }
                 sprite.order = order;
                 self.subpixel_sprites.push(*sprite);
             }
             Primitive::PolychromeSprite(sprite) => {
+                if keep_sprite_order(sprite.transform, sprite.bounds) {
+                    self.legacy_sprite_order_mut(order).polychrome = true;
+                }
                 sprite.order = order;
                 self.polychrome_sprites.push(*sprite);
             }
@@ -366,6 +425,15 @@ impl Scene {
             }
         }
         Ok(true)
+    }
+
+    fn legacy_sprite_order_mut(&mut self, order: DrawOrder) -> &mut LegacySpriteOrder {
+        let index = order as usize;
+        if index >= self.legacy_sprite_order.len() {
+            self.legacy_sprite_order
+                .resize(index + 1, LegacySpriteOrder::default());
+        }
+        &mut self.legacy_sprite_order[index]
     }
 
     fn intern_clip_stack(
@@ -488,12 +556,24 @@ impl Scene {
         self.quads.sort_by_key(|quad| quad.order);
         self.paths.sort_by_key(|path| path.order);
         self.underlines.sort_by_key(|underline| underline.order);
-        self.monochrome_sprites
-            .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
-        self.subpixel_sprites
-            .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
-        self.polychrome_sprites
-            .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
+        sort_sprites(
+            &mut self.monochrome_sprites,
+            &self.legacy_sprite_order,
+            |kinds| kinds.monochrome,
+            |sprite| (sprite.order, &sprite.tile),
+        );
+        sort_sprites(
+            &mut self.subpixel_sprites,
+            &self.legacy_sprite_order,
+            |kinds| kinds.subpixel,
+            |sprite| (sprite.order, &sprite.tile),
+        );
+        sort_sprites(
+            &mut self.polychrome_sprites,
+            &self.legacy_sprite_order,
+            |kinds| kinds.polychrome,
+            |sprite| (sprite.order, &sprite.tile),
+        );
         self.surfaces.sort_by_key(|surface| surface.order);
     }
 
@@ -541,6 +621,7 @@ impl Scene {
     fn clear_render_state(&mut self) {
         self.primitive_bounds.clear();
         self.layer_stack.clear();
+        self.legacy_sprite_order.clear();
         self.paths.clear();
         self.shadows.clear();
         self.quads.clear();
@@ -578,6 +659,35 @@ impl Scene {
             surfaces_iter: self.surfaces.iter().peekable(),
         }
     }
+}
+
+fn sort_sprites<S>(
+    sprites: &mut [S],
+    legacy_sprite_order: &[LegacySpriteOrder],
+    needs_legacy_order: impl Fn(&LegacySpriteOrder) -> bool,
+    order_and_tile: impl Fn(&S) -> (DrawOrder, &AtlasTile),
+) {
+    let texture_key = |tile: &AtlasTile| {
+        let AtlasTextureInstanceId {
+            texture_id,
+            generation,
+        } = tile.texture_instance();
+        (texture_id.index, texture_id.kind as u32, generation)
+    };
+    sprites.sort_by(|left, right| {
+        let (left_order, left_tile) = order_and_tile(left);
+        let (right_order, right_tile) = order_and_tile(right);
+        left_order.cmp(&right_order).then_with(|| {
+            if legacy_sprite_order
+                .get(left_order as usize)
+                .is_some_and(&needs_legacy_order)
+            {
+                left_tile.tile_id.cmp(&right_tile.tile_id)
+            } else {
+                texture_key(left_tile).cmp(&texture_key(right_tile))
+            }
+        })
+    });
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Default)]
@@ -958,6 +1068,35 @@ pub enum PrimitiveBatch {
     Surfaces(Range<usize>),
 }
 
+impl PrimitiveBatch {
+    /// Returns a diagnostic label with the primitive count and the atlas instance for sprites.
+    pub fn label(&self) -> String {
+        fn sprite_label(kind: &str, count: usize, texture: AtlasTextureInstanceId) -> String {
+            format!(
+                "{kind} sprites ({count}) on atlas {} ({:?}, generation {})",
+                texture.texture_id.index, texture.texture_id.kind, texture.generation,
+            )
+        }
+
+        match self {
+            Self::Shadows(range) => format!("shadows ({})", range.len()),
+            Self::Quads(range) => format!("quads ({})", range.len()),
+            Self::Paths(range) => format!("paths ({})", range.len()),
+            Self::Underlines(range) => format!("underlines ({})", range.len()),
+            Self::MonochromeSprites { texture, range } => {
+                sprite_label("monochrome", range.len(), *texture)
+            }
+            Self::SubpixelSprites { texture, range } => {
+                sprite_label("subpixel", range.len(), *texture)
+            }
+            Self::PolychromeSprites { texture, range } => {
+                sprite_label("polychrome", range.len(), *texture)
+            }
+            Self::Surfaces(range) => format!("surfaces ({})", range.len()),
+        }
+    }
+}
+
 /// Renderer-facing raster projection derived from GPUI's checked subtree transform authority.
 ///
 /// This type is an internal cross-crate ABI. Application code constructs [`crate::SubtreeTransform`]
@@ -981,6 +1120,8 @@ impl Default for PrimitiveTransform {
 }
 
 impl PrimitiveTransform {
+    pub(crate) const RASTER_COORDINATE_LIMIT: f32 = 32_768.0;
+
     pub const IDENTITY: Self = Self {
         scale_x: 1.0,
         scale_y: 1.0,
@@ -1037,6 +1178,31 @@ impl PrimitiveTransform {
 
     pub(crate) fn scale(self) -> Size<f32> {
         Size::new(self.scale_x, self.scale_y)
+    }
+
+    /// Bounds the f32 error of projection, including large opposing translations, and local
+    /// interpolation. Keep this domain in sync with quad vertex clipping in the WGPU shader.
+    pub(crate) fn has_precise_raster_coordinates(self, bounds: Bounds<ScaledPixels>) -> bool {
+        [
+            (
+                bounds.origin.x.0,
+                bounds.size.width.0,
+                self.scale_x,
+                self.translation_x,
+            ),
+            (
+                bounds.origin.y.0,
+                bounds.size.height.0,
+                self.scale_y,
+                self.translation_y,
+            ),
+        ]
+        .into_iter()
+        .all(|(origin, extent, scale, translation)| {
+            let local_magnitude = origin.abs() + extent;
+            local_magnitude <= Self::RASTER_COORDINATE_LIMIT
+                && local_magnitude * scale + translation.abs() <= Self::RASTER_COORDINATE_LIMIT
+        })
     }
 
     fn try_from_components(components: [f32; 4]) -> Result<Self, SubtreeTransformError> {
@@ -1249,10 +1415,10 @@ pub enum BorderStyle {
 pub struct MonochromeSprite {
     pub order: DrawOrder,
     pub pad: u32,
+    pub tile: AtlasTile,
     pub bounds: Bounds<ScaledPixels>,
     pub clip: ClipEnvelope,
     pub color: Hsla,
-    pub tile: AtlasTile,
     pub(crate) transform: PrimitiveTransform,
 }
 
@@ -1268,10 +1434,10 @@ impl From<MonochromeSprite> for Primitive {
 pub struct SubpixelSprite {
     pub order: DrawOrder,
     pub pad: u32, // align to 8 bytes
+    pub tile: AtlasTile,
     pub bounds: Bounds<ScaledPixels>,
     pub clip: ClipEnvelope,
     pub color: Hsla,
-    pub tile: AtlasTile,
     pub(crate) transform: PrimitiveTransform,
 }
 
@@ -1287,12 +1453,12 @@ impl From<SubpixelSprite> for Primitive {
 pub struct PolychromeSprite {
     pub order: DrawOrder,
     pub pad: u32,
+    pub tile: AtlasTile,
     pub grayscale: PaddedBool32,
     pub opacity: f32,
     pub bounds: Bounds<ScaledPixels>,
     pub clip: ClipEnvelope,
     pub corner_radii: Corners<ScaledPixels>,
-    pub tile: AtlasTile,
     pub(crate) transform: PrimitiveTransform,
 }
 
@@ -1499,7 +1665,10 @@ impl PathVertex<Pixels> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{SubtreeClip, SubtreeClipError, px, size};
+    use crate::{
+        AtlasTextureId, AtlasTextureKind, SubtreeClip, SubtreeClipError, TileId, px, size,
+    };
+    use std::mem::{align_of, offset_of, size_of};
 
     #[test]
     fn gpu_boolean_fields_occupy_initialized_four_byte_slots() {
@@ -1516,22 +1685,22 @@ mod tests {
         let sprite = PolychromeSprite {
             order: 0,
             pad: 0,
-            grayscale: false.into(),
-            opacity: 1.0,
-            bounds: scaled_bounds(0.0, 0.0, 16.0, 16.0),
-            clip: ClipEnvelope::default(),
-            corner_radii: Corners::default(),
-            tile: crate::AtlasTile {
-                tile_id: crate::TileId(0),
-                texture_id: crate::AtlasTextureId {
+            tile: AtlasTile {
+                texture_id: AtlasTextureId {
                     index: 0,
-                    kind: crate::AtlasTextureKind::Polychrome,
+                    kind: AtlasTextureKind::Polychrome,
                 },
+                tile_id: TileId(0),
                 padding: 0,
                 bounds: Bounds::new(Point::default(), Size::default()),
                 texture_generation: 1,
                 texture_generation_padding: 0,
             },
+            grayscale: false.into(),
+            opacity: 1.0,
+            bounds: scaled_bounds(0.0, 0.0, 16.0, 16.0),
+            clip: ClipEnvelope::default(),
+            corner_radii: Corners::default(),
             transform: PrimitiveTransform::IDENTITY,
         };
         let underline = Underline {
@@ -1546,17 +1715,57 @@ mod tests {
         };
         assert_eq!(std::mem::size_of_val(&sprite.grayscale), 4);
         assert_eq!(std::mem::size_of_val(&underline.wavy), 4);
-        assert_eq!(std::mem::size_of::<PolychromeSprite>(), 128);
-        assert_eq!(std::mem::offset_of!(PolychromeSprite, grayscale), 8);
-        assert_eq!(std::mem::offset_of!(PolychromeSprite, opacity), 12);
-        assert_eq!(std::mem::offset_of!(PolychromeSprite, bounds), 16);
-        assert_eq!(std::mem::offset_of!(PolychromeSprite, clip), 32);
-        assert_eq!(std::mem::offset_of!(PolychromeSprite, corner_radii), 56);
-        assert_eq!(std::mem::offset_of!(PolychromeSprite, tile), 72);
-        assert_eq!(std::mem::offset_of!(PolychromeSprite, transform), 112);
         assert_eq!(std::mem::size_of::<Underline>(), 88);
         assert_eq!(std::mem::offset_of!(Underline, wavy), 68);
         assert_eq!(std::mem::offset_of!(Underline, transform), 72);
+    }
+
+    #[test]
+    fn sprite_gpu_layouts_colocate_order_and_tile() {
+        assert_eq!(
+            [
+                size_of::<MonochromeSprite>(),
+                align_of::<MonochromeSprite>(),
+                offset_of!(MonochromeSprite, order),
+                offset_of!(MonochromeSprite, pad),
+                offset_of!(MonochromeSprite, tile),
+                offset_of!(MonochromeSprite, bounds),
+                offset_of!(MonochromeSprite, clip),
+                offset_of!(MonochromeSprite, color),
+                offset_of!(MonochromeSprite, transform),
+            ],
+            [120, 4, 0, 4, 8, 48, 64, 88, 104],
+        );
+        assert_eq!(
+            [
+                size_of::<SubpixelSprite>(),
+                align_of::<SubpixelSprite>(),
+                offset_of!(SubpixelSprite, order),
+                offset_of!(SubpixelSprite, pad),
+                offset_of!(SubpixelSprite, tile),
+                offset_of!(SubpixelSprite, bounds),
+                offset_of!(SubpixelSprite, clip),
+                offset_of!(SubpixelSprite, color),
+                offset_of!(SubpixelSprite, transform),
+            ],
+            [120, 4, 0, 4, 8, 48, 64, 88, 104],
+        );
+        assert_eq!(
+            [
+                size_of::<PolychromeSprite>(),
+                align_of::<PolychromeSprite>(),
+                offset_of!(PolychromeSprite, order),
+                offset_of!(PolychromeSprite, pad),
+                offset_of!(PolychromeSprite, tile),
+                offset_of!(PolychromeSprite, grayscale),
+                offset_of!(PolychromeSprite, opacity),
+                offset_of!(PolychromeSprite, bounds),
+                offset_of!(PolychromeSprite, clip),
+                offset_of!(PolychromeSprite, corner_radii),
+                offset_of!(PolychromeSprite, transform),
+            ],
+            [128, 4, 0, 4, 8, 48, 52, 56, 72, 96, 112],
+        );
     }
 
     fn scaled_bounds(x: f32, y: f32, width: f32, height: f32) -> Bounds<ScaledPixels> {
@@ -1568,6 +1777,182 @@ mod tests {
 
     fn logical_bounds(x: f32, y: f32, width: f32, height: f32) -> Bounds<Pixels> {
         Bounds::new(point(px(x), px(y)), Size::new(px(width), px(height)))
+    }
+
+    fn monochrome_sprite(tile_id: u32, index: u32, generation: u32, x: f32) -> MonochromeSprite {
+        MonochromeSprite {
+            order: 0,
+            pad: 0,
+            tile: AtlasTile {
+                texture_id: AtlasTextureId {
+                    index,
+                    kind: AtlasTextureKind::Monochrome,
+                },
+                tile_id: TileId(tile_id),
+                padding: 0,
+                bounds: Bounds::default(),
+                texture_generation: generation,
+                texture_generation_padding: 0,
+            },
+            bounds: scaled_bounds(x, 0.0, 4.0, 4.0),
+            clip: ClipEnvelope::default(),
+            color: Hsla::default(),
+            transform: PrimitiveTransform::IDENTITY,
+        }
+    }
+
+    #[test]
+    fn disjoint_sprites_group_by_texture_slot_and_generation() {
+        let clip = ClipStackSnapshot::root(logical_bounds(0.0, 0.0, 64.0, 8.0));
+        let mut scene = Scene::default();
+        for (tile_id, index, generation, x) in [
+            (5, 2, 7, 0.0),
+            (4, 1, 8, 8.0),
+            (3, 1, 7, 16.0),
+            (2, 2, 7, 24.0),
+            (1, 1, 8, 32.0),
+            (0, 1, 7, 40.0),
+        ] {
+            scene
+                .insert_primitive_scoped(
+                    monochrome_sprite(tile_id, index, generation, x),
+                    &clip,
+                    1.0,
+                    None,
+                )
+                .unwrap();
+        }
+        scene.finish();
+
+        let batches = scene
+            .batches()
+            .map(|batch| match batch {
+                PrimitiveBatch::MonochromeSprites { texture, range } => {
+                    (texture.texture_id.index, texture.generation, range)
+                }
+                _ => panic!("unexpected batch: {batch:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(batches, [(1, 7, 0..2), (1, 8, 2..4), (2, 7, 4..6)]);
+        assert!(
+            scene
+                .monochrome_sprites
+                .iter()
+                .all(|sprite| sprite.order == 1)
+        );
+        assert!(
+            scene
+                .monochrome_sprites
+                .iter()
+                .map(|sprite| sprite.tile.tile_id.0)
+                .eq([3, 0, 4, 1, 5, 2])
+        );
+    }
+
+    #[test]
+    fn overlapping_sprites_keep_draw_order_across_textures() {
+        let clip = ClipStackSnapshot::root(logical_bounds(0.0, 0.0, 64.0, 8.0));
+        let mut scene = Scene::default();
+        for (tile_id, index, x) in [(2, 2, 0.0), (0, 1, 2.0), (1, 2, 1.0)] {
+            scene
+                .insert_primitive_scoped(monochrome_sprite(tile_id, index, 7, x), &clip, 1.0, None)
+                .unwrap();
+        }
+        scene.finish();
+
+        assert_eq!(scene.batches().count(), 3);
+        assert!(
+            scene
+                .monochrome_sprites
+                .iter()
+                .map(|sprite| (sprite.order, sprite.tile.tile_id.0))
+                .eq([(1, 2), (2, 0), (3, 1)])
+        );
+    }
+
+    #[test]
+    fn same_order_sprites_keep_legacy_order_when_raster_edges_can_share_a_pixel() {
+        let viewport = ClipStackSnapshot::root(logical_bounds(0.0, 0.0, 64.0, 8.0));
+        let mut large_origin = monochrome_sprite(2, 1, 7, 16_777_216.0);
+        large_origin.bounds.size.width = ScaledPixels(7.0);
+        large_origin.transform = PrimitiveTransform::try_new(
+            Size::new(1.0, 1.0),
+            point(ScaledPixels(-16_777_206.0), ScaledPixels(0.0)),
+        )
+        .unwrap();
+        assert_eq!(
+            Primitive::from(large_origin)
+                .try_visual_bounds()
+                .unwrap()
+                .right(),
+            ScaledPixels(17.0)
+        );
+        assert_eq!(
+            large_origin.bounds.right().0 + large_origin.transform.components()[2],
+            18.0
+        );
+
+        let left_clip = ClipStackSnapshot::root(logical_bounds(0.0, 0.0, 4.5, 8.0));
+        let right_clip = ClipStackSnapshot::root(logical_bounds(4.5, 0.0, 59.5, 8.0));
+        for ((first, first_clip), (second, second_clip)) in [
+            (
+                (large_origin, &viewport),
+                (monochrome_sprite(1, 2, 7, 17.0), &viewport),
+            ),
+            (
+                (monochrome_sprite(2, 1, 7, 2.0), &left_clip),
+                (monochrome_sprite(1, 2, 7, 4.0), &right_clip),
+            ),
+        ] {
+            let mut scene = Scene::default();
+            scene
+                .insert_primitive_scoped(first, first_clip, 1.0, None)
+                .unwrap();
+            scene
+                .insert_primitive_scoped(second, second_clip, 1.0, None)
+                .unwrap();
+            scene.finish();
+            assert!(
+                scene
+                    .monochrome_sprites
+                    .iter()
+                    .map(|sprite| (sprite.order, sprite.tile.tile_id.0))
+                    .eq([(1, 1), (1, 2)])
+            );
+        }
+    }
+
+    #[test]
+    fn fixed_layer_order_keeps_legacy_sprite_order_without_disabling_other_groups() {
+        let clip = ClipStackSnapshot::root(logical_bounds(0.0, 0.0, 64.0, 8.0));
+        let mut scene = Scene::default();
+        scene.push_layer(scaled_bounds(0.0, 0.0, 64.0, 8.0));
+        for (tile_id, index) in [(2, 2), (0, 2), (1, 1)] {
+            scene
+                .insert_primitive_scoped(
+                    monochrome_sprite(tile_id, index, 7, 0.0),
+                    &clip,
+                    1.0,
+                    None,
+                )
+                .unwrap();
+        }
+        scene.pop_layer();
+        for (tile_id, index, x) in [(5, 2, 0.0), (4, 1, 8.0), (3, 2, 16.0), (6, 1, 24.0)] {
+            scene
+                .insert_primitive_scoped(monochrome_sprite(tile_id, index, 7, x), &clip, 1.0, None)
+                .unwrap();
+        }
+        scene.finish();
+
+        assert_eq!(scene.batches().count(), 5);
+        assert!(
+            scene
+                .monochrome_sprites
+                .iter()
+                .map(|sprite| (sprite.order, sprite.tile.tile_id.0))
+                .eq([(1, 0), (1, 1), (1, 2), (2, 4), (2, 6), (2, 5), (2, 3)])
+        );
     }
 
     fn rounded_stack(viewport: Bounds<Pixels>, clip_bounds: Bounds<Pixels>) -> ClipStackSnapshot {

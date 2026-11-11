@@ -1,11 +1,11 @@
 use super::*;
 use open_gpui::{
-    AppContext as _, AtlasKey, AtlasRemoveOutcome, AtlasTile, BoxShadow, Context, Corners, FontId,
-    GlyphId, HeadlessAppContext, IntoElement, NoopTextSystem, Pixels, PlatformAtlas,
-    PlatformHeadlessRenderer, PlatformTextSystem, Primitive, Render, RenderImage,
+    AppContext as _, AtlasKey, AtlasRemoveOutcome, AtlasTile, BorderStyle, BoxShadow, Context,
+    Corners, Edges, FontId, GlyphId, HeadlessAppContext, IntoElement, NoopTextSystem, Pixels,
+    PlatformAtlas, PlatformHeadlessRenderer, PlatformTextSystem, Primitive, Render, RenderImage,
     RenderImageParams, Styled as _, SubtreeClip, SubtreeClipExt as _, SubtreeTransform,
     SubtreeTransformExt as _, SubtreeTransformOrigin, UnderlineStyle, Window, canvas, fill, font,
-    point, px, rgb, size,
+    hsla, point, px, quad, rgb, size, transparent_black,
 };
 use std::{borrow::Cow, cell::Cell};
 
@@ -52,6 +52,9 @@ enum FixturePaint {
     Images(Vec<Arc<RenderImage>>),
     CroppedImage(Arc<RenderImage>),
     Primitives,
+    HollowBorder {
+        square: bool,
+    },
     Mixed {
         image: Arc<RenderImage>,
         font_id: FontId,
@@ -126,14 +129,20 @@ impl Render for WindowFixture {
             },
         )
         .expect("the fixture clip must be valid");
-        let transform = if matches!(&paint, FixturePaint::CroppedImage(_)) {
-            SubtreeTransform::try_new(
-                size(1.5, 0.75),
-                point(px(4.25), px(4.5)),
+        let transform = match &paint {
+            FixturePaint::CroppedImage(_) | FixturePaint::HollowBorder { square: false } => {
+                SubtreeTransform::try_new(
+                    size(1.5, 0.75),
+                    point(px(4.25), px(4.5)),
+                    SubtreeTransformOrigin::TOP_LEFT,
+                )
+            }
+            FixturePaint::HollowBorder { square: true } => SubtreeTransform::try_new(
+                size(2.0, 2.0),
+                point(px(4.81), px(4.81)),
                 SubtreeTransformOrigin::TOP_LEFT,
-            )
-        } else {
-            SubtreeTransform::try_translation(point(px(4.0), px(4.0)))
+            ),
+            _ => SubtreeTransform::try_translation(point(px(4.0), px(4.0))),
         }
         .expect("the fixture transform must be valid");
         canvas(
@@ -168,6 +177,46 @@ impl Render for WindowFixture {
                         .expect("the cropped image must produce its visible sprite");
                 }
                 FixturePaint::Primitives => paint_primitives(window),
+                FixturePaint::HollowBorder { square } => {
+                    let (bounds, corners, edges) = if square {
+                        (
+                            Bounds::new(point(px(-0.405), px(-0.405)), size(px(8.0), px(8.0))),
+                            Corners::default(),
+                            Edges {
+                                top: px(0.25),
+                                right: px(1.0),
+                                bottom: px(0.25),
+                                left: px(1.0),
+                            },
+                        )
+                    } else {
+                        (
+                            Bounds::new(point(px(-1.5), px(1.0)), size(px(45.0), px(38.0))),
+                            Corners {
+                                top_left: px(6.0),
+                                top_right: px(8.0),
+                                bottom_right: px(4.0),
+                                bottom_left: px(3.0),
+                            },
+                            Edges {
+                                top: px(2.0),
+                                right: px(3.5),
+                                bottom: px(2.5),
+                                left: px(1.5),
+                            },
+                        )
+                    };
+                    let border = quad(
+                        bounds,
+                        corners,
+                        transparent_black(),
+                        edges,
+                        hsla(0.09, 0.8, 0.6, 0.6),
+                        BorderStyle::Dashed,
+                    );
+                    window.paint_quad(border.clone().background(hsla(0.0, 0.0, 0.0, f32::EPSILON)));
+                    window.paint_quad(border);
+                }
                 FixturePaint::Mixed {
                     image,
                     font_id,
@@ -540,6 +589,111 @@ fn packed_shader_reads_odd_quads_and_exact_clips_across_texture_rows() -> anyhow
             assert_eq!(renderer.core.clip_buffer_capacity, clip_capacity);
             assert_eq!(renderer.core.resources.submitted_scene_count, 1);
             renderer.check_gpu_errors()
+        },
+    )
+}
+
+#[test]
+fn hollow_border_matches_full_quad_with_both_wgpu_instance_transports() -> anyhow::Result<()> {
+    for square in [true, false] {
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        with_unleased_window_scene(
+            &mut renderer,
+            WindowFixture {
+                paint: FixturePaint::HollowBorder { square },
+                text_system: Arc::new(NoopTextSystem),
+                content_size: size(px(42.0), px(40.0)),
+            },
+            |scene, scale_factor, renderer| {
+                let mut full = scene.clone();
+                full.quads.truncate(1);
+                full.quads[0].background = transparent_black().into();
+                let mut strips = scene.clone();
+                strips.quads.remove(0);
+                assert!(strips.quads.len() >= 2);
+                let full_clip = full.quads[0].clip;
+                assert!(strips.quads.iter().all(|strip| {
+                    strip.clip.first_clip == full_clip.first_clip
+                        && strip.clip.clip_count == full_clip.clip_count
+                        && strip.clip.conservative_bounds != full_clip.conservative_bounds
+                }));
+
+                let target_size = if square {
+                    render_size(scale_factor, 64.0, 64.0)
+                } else {
+                    render_size(scale_factor, 84.0, 56.0)
+                };
+                let expected = renderer.render_scene_to_image(&full, target_size)?;
+                assert!(
+                    expected
+                        .pixels()
+                        .filter(|pixel| pixel.0 != [0, 0, 0, 255])
+                        .count()
+                        > if square { 30 } else { 100 }
+                );
+                for packed in [false, true] {
+                    if packed {
+                        renderer.core = WgpuRendererCore::new_with_transport(
+                            &renderer.context,
+                            renderer.core.atlas.clone(),
+                            renderer.core.target_format,
+                            wgpu::CompositeAlphaMode::Opaque,
+                            true,
+                        )?;
+                    }
+                    let actual = renderer.render_scene_to_image(&strips, target_size)?;
+                    for ((x, y, expected), actual) in
+                        expected.enumerate_pixels().zip(actual.pixels())
+                    {
+                        assert!(
+                            expected
+                                .0
+                                .iter()
+                                .zip(actual.0)
+                                .all(|(expected, actual)| expected.abs_diff(actual) <= 2),
+                            "packed={packed} square={square}, border pixel ({x}, {y}): {actual:?} != {expected:?}"
+                        );
+                    }
+                    renderer.check_gpu_errors()?;
+                }
+                Ok(())
+            },
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn empty_path_batch_does_not_copy_stale_intermediate_pixels() -> anyhow::Result<()> {
+    let mut renderer = WgpuHeadlessRenderer::new()?;
+    with_unleased_window_scene(
+        &mut renderer,
+        WindowFixture::primitives(),
+        |scene, scale_factor, renderer| {
+            assert_eq!(scene.paths.len(), 1);
+            let mut empty_path_scene = scene.clone();
+            empty_path_scene.paths[0].vertices.clear();
+            assert!(
+                empty_path_scene
+                    .batches()
+                    .any(|batch| matches!(batch, PrimitiveBatch::Paths(range) if range == (0..1)))
+            );
+            let target_size = render_size(scale_factor, 48.0, 48.0);
+
+            let rasterized = renderer.render_scene_to_image(scene, target_size)?;
+            assert_eq!(
+                pixel_at(&rasterized, scale_factor, 32.0, 8.0),
+                [0, 255, 0, 255]
+            );
+
+            let without_vertices =
+                renderer.render_scene_to_image(&empty_path_scene, target_size)?;
+            assert_eq!(
+                pixel_at(&without_vertices, scale_factor, 32.0, 8.0),
+                [0, 0, 255, 255]
+            );
+            assert_eq!(renderer.core.resources.submitted_scene_count, 2);
+            Ok(())
         },
     )
 }

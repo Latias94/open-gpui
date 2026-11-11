@@ -126,6 +126,8 @@ mod portal_anchor;
 #[cfg(all(test, feature = "profiler"))]
 mod profiler_tests;
 mod prompts;
+#[cfg(test)]
+mod quad_tests;
 #[doc(hidden)]
 pub mod retained_visual;
 #[cfg(test)]
@@ -11667,7 +11669,7 @@ impl Window {
         else {
             return;
         };
-        self.insert_scene_primitive(Quad {
+        let quad = Quad {
             order: 0,
             bounds,
             clip: Default::default(),
@@ -11677,7 +11679,119 @@ impl Window {
             border_widths,
             border_style: quad.border_style,
             transform,
+        };
+
+        if quad.background.is_transparent() && !quad.border_color.is_transparent() {
+            let clip_stack = self.clip_stack();
+            let scale_factor = self.scale_factor();
+            if let Some(strips) = Self::border_only_quad_strips(&quad, &clip_stack, scale_factor) {
+                if let Err(error) = self.next_frame.scene.insert_quad_strips_scoped(
+                    quad,
+                    strips,
+                    &clip_stack,
+                    scale_factor,
+                    self.subtree_geometry_validity(),
+                ) {
+                    self.record_subtree_geometry_failure(error);
+                }
+                return;
+            }
+        }
+        self.insert_scene_primitive(quad);
+    }
+
+    fn border_only_quad_interior(
+        quad: &Quad,
+        outer: Bounds<ScaledPixels>,
+        visible: Bounds<ScaledPixels>,
+    ) -> Option<Bounds<ScaledPixels>> {
+        let Corners {
+            top_left,
+            top_right,
+            bottom_right,
+            bottom_left,
+        } = quad.corner_radii;
+        let radii = [top_left, top_right, bottom_right, bottom_left];
+        let widths = quad.border_widths;
+        if radii
+            .into_iter()
+            .any(|radius| !radius.0.is_finite() || radius.0 < 0.0)
+            || (radii.into_iter().all(|radius| radius.0 == 0.0)
+                && !widths.any(|width| width.0 > 0.0))
+        {
+            return None;
+        }
+
+        let scale = quad.transform.scale();
+        let inset = |width: ScaledPixels, axis_scale: f32| {
+            let shader_aa_and_pixel_slack = (0.5 * axis_scale + 0.5).max(1.0);
+            ScaledPixels(width.0.mul_add(axis_scale, shader_aa_and_pixel_slack))
+        };
+        let interior = |edges: Edges<ScaledPixels>| {
+            Bounds::from_corners(
+                point(
+                    (outer.left() + inset(edges.left, scale.width)).ceil(),
+                    (outer.top() + inset(edges.top, scale.height)).ceil(),
+                ),
+                point(
+                    (outer.right() - inset(edges.right, scale.width)).floor(),
+                    (outer.bottom() - inset(edges.bottom, scale.height)).floor(),
+                ),
+            )
+        };
+        let horizontal_band = interior(Edges {
+            top: widths.top.max(top_left).max(top_right),
+            bottom: widths.bottom.max(bottom_left).max(bottom_right),
+            ..widths
         });
+        let vertical_band = interior(Edges {
+            left: widths.left.max(top_left).max(bottom_left),
+            right: widths.right.max(top_right).max(bottom_right),
+            ..widths
+        });
+        let skipped_area = |bounds: Bounds<ScaledPixels>| {
+            let visible_interior = bounds.intersect(&visible);
+            visible_interior.size.width.0 * visible_interior.size.height.0
+        };
+        let horizontal_area = skipped_area(horizontal_band);
+        let vertical_area = skipped_area(vertical_band);
+        if horizontal_area >= vertical_area && horizontal_area > 0.0 {
+            Some(horizontal_band)
+        } else if vertical_area > 0.0 {
+            Some(vertical_band)
+        } else {
+            None
+        }
+    }
+
+    /// Partitions the raster at device-pixel boundaries while keeping the original shader geometry.
+    fn border_only_quad_strips(
+        quad: &Quad,
+        clip_stack: &ClipStackSnapshot,
+        scale_factor: f32,
+    ) -> Option<[Bounds<ScaledPixels>; 4]> {
+        let local = quad.bounds;
+        if !quad.transform.has_precise_raster_coordinates(local) {
+            return None;
+        }
+
+        let outer = quad.transform.try_project_bounds(local).ok()?;
+        let viewport = clip_stack.clips().first()?.bounds().scale(scale_factor);
+        if ![viewport.right(), viewport.bottom()]
+            .into_iter()
+            .all(|edge| edge.0.abs() <= PrimitiveTransform::RASTER_COORDINATE_LIMIT)
+        {
+            return None;
+        }
+        let visible = outer.intersect(&clip_stack.conservative_bounds().scale(scale_factor));
+        let inner = Self::border_only_quad_interior(quad, outer, visible)?;
+        let padded = Self::cover_device_bounds(outer.dilate(ScaledPixels(0.5)));
+        Some([
+            Bounds::from_corners(padded.origin, point(padded.right(), inner.top())),
+            Bounds::from_corners(point(padded.left(), inner.bottom()), padded.bottom_right()),
+            Bounds::from_corners(point(padded.left(), inner.top()), inner.bottom_left()),
+            Bounds::from_corners(inner.top_right(), point(padded.right(), inner.bottom())),
+        ])
     }
 
     /// Paint the given `Path` into the scene for the next frame at the current z-index.

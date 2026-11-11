@@ -111,6 +111,18 @@ fn warp_renderer_recovery_invalidates_receipts_and_requires_fresh_paint() {
     .expect("actual WARP renderer reconstruction must reject old receipts and permit fresh paint");
 }
 
+#[test]
+fn warp_nonzero_instance_batches_survive_growth_and_smaller_frames() {
+    atlas_render_tests::warp_nonzero_instance_batches_survive_growth_and_smaller_frames()
+        .expect("the WARP renderer must read each batch from the current whole-buffer view");
+}
+
+#[test]
+fn warp_hollow_border_strips_match_full_quad_under_projected_rounded_clip() {
+    atlas_render_tests::warp_hollow_border_strips_match_full_quad_under_projected_rounded_clip()
+        .expect("WARP strips must preserve the unsplit border's pixels");
+}
+
 #[derive(Clone, Copy, Debug)]
 struct NativeAssetPaint {
     window_id: WindowId,

@@ -107,6 +107,37 @@ pub(crate) fn with_warp_scene_template(
     test: impl FnOnce(&Scene, Size<DevicePixels>) -> Result<()>,
 ) -> Result<()> {
     let viewport = size(DevicePixels(32), DevicePixels(16));
+    let root = WarpSceneRoot(render_image([0, 255, 0, 255]));
+    with_warp_window(viewport, root, |context, handle, snapshot| {
+        let (template, captured) = capture_scene(context, handle.into(), snapshot)?;
+        assert_eq!(captured.dimensions(), (32, 16));
+        assert_eq!(template.polychrome_sprites.len(), 2);
+        assert!(!template.clip_shapes().is_empty());
+        for (sprite, left) in template.polychrome_sprites.iter().zip([2., 18.]) {
+            assert_eq!(
+                sprite.bounds,
+                Bounds::new(
+                    point(ScaledPixels(left), ScaledPixels(2.)),
+                    size(ScaledPixels(12.), ScaledPixels(12.)),
+                )
+            );
+            assert_sprite_pixel(&captured, sprite, [0, 255, 0, 255]);
+        }
+        test(&template, viewport)
+    })
+}
+
+fn render_image(bgra: [u8; 4]) -> Arc<RenderImage> {
+    Arc::new(RenderImage::new(vec![image::Frame::new(
+        RgbaImage::from_pixel(12, 12, image::Rgba(bgra)),
+    )]))
+}
+
+fn with_warp_window<V: Render + 'static>(
+    viewport: Size<DevicePixels>,
+    root: V,
+    test: impl FnOnce(&mut HeadlessAppContext, WindowHandle<V>, &RefCell<Option<Scene>>) -> Result<()>,
+) -> Result<()> {
     let snapshot = Rc::new(RefCell::new(None));
     let native_handle = Rc::new(Cell::new(None));
     let mut context =
@@ -123,39 +154,13 @@ pub(crate) fn with_warp_scene_template(
                     as Box<dyn PlatformHeadlessRenderer>))
             }
         });
-    let handle = context.open_window(size(px(16.), px(8.)), |_, cx| {
-        cx.new(|_| {
-            WarpSceneRoot(Arc::new(RenderImage::new(vec![image::Frame::new(
-                RgbaImage::from_pixel(12, 12, image::Rgba([0, 255, 0, 255])),
-            )])))
-        })
-    })?;
-    context.update_window(handle.into(), |_, window, cx| {
-        window.draw(cx).clear(cx);
-    })?;
-    let captured = context.capture_screenshot(handle.into())?;
-    assert_eq!(captured.dimensions(), (32, 16));
-    let template = snapshot
-        .borrow_mut()
-        .take()
-        .context("the real Window must provide a complete WARP Scene snapshot")?;
-    assert_eq!(template.polychrome_sprites.len(), 2);
-    assert!(!template.clip_shapes().is_empty());
-    for (sprite, left) in template.polychrome_sprites.iter().zip([2., 18.]) {
-        assert_eq!(
-            sprite.bounds,
-            Bounds::new(
-                point(ScaledPixels(left), ScaledPixels(2.)),
-                size(ScaledPixels(12.), ScaledPixels(12.)),
-            )
-        );
-        assert_sprite_pixel(&captured, sprite, [0, 255, 0, 255]);
-    }
+    let logical_size = viewport.map(|value| px(value.0 as f32 / 2.0));
+    let handle = context.open_window(logical_size, |_, cx| cx.new(|_| root))?;
     let native_handle = native_handle
         .get()
         .context("the WARP Scene source must own its hidden native target")?;
     assert!(!unsafe { IsWindowVisible(native_handle).as_bool() });
-    let result = test(&template, viewport);
+    let result = test(&mut context, handle, &snapshot);
     let closed = context.update_window(handle.into(), |_, window, cx| {
         window.remove_window(cx);
     });
@@ -164,6 +169,202 @@ pub(crate) fn with_warp_scene_template(
     assert!(!unsafe { IsWindow(Some(native_handle)).as_bool() });
     closed?;
     result
+}
+
+fn capture_scene(
+    context: &mut HeadlessAppContext,
+    handle: AnyWindowHandle,
+    snapshot: &RefCell<Option<Scene>>,
+) -> Result<(Scene, RgbaImage)> {
+    context.update_window(handle, |_, window, cx| window.draw(cx).clear(cx))?;
+    let captured = context.capture_screenshot(handle)?;
+    let scene = snapshot
+        .borrow_mut()
+        .take()
+        .context("the real Window must provide a complete WARP Scene snapshot")?;
+    Ok((scene, captured))
+}
+
+struct WarpBatchRoot {
+    expanded: bool,
+    green: Arc<RenderImage>,
+    red: Arc<RenderImage>,
+}
+
+impl Render for WarpBatchRoot {
+    fn render(&mut self, _: &mut Window, _: &mut open_gpui::Context<Self>) -> impl IntoElement {
+        let (expanded, green, red) = (self.expanded, self.green.clone(), self.red.clone());
+        canvas(
+            |_, _, _| (),
+            move |_, (), window, _| {
+                let scale = window.scale_factor();
+                let bounds = |x, y, width, height| {
+                    Bounds::new(
+                        point(px(x / scale), px(y / scale)),
+                        size(px(width / scale), px(height / scale)),
+                    )
+                };
+                let left = bounds(2., 2., 12., 12.);
+                if !expanded {
+                    window.paint_quad(fill(left, rgb(0x0000ff)));
+                    return;
+                }
+                for _ in 0..65 {
+                    window.paint_quad(fill(left, rgb(0x0000ff)));
+                }
+                let green_bounds = bounds(2., 2., 28., 12.);
+                window
+                    .paint_image(
+                        green_bounds,
+                        green_bounds,
+                        Corners::default(),
+                        green,
+                        0,
+                        false,
+                    )
+                    .unwrap();
+                window.paint_quad(fill(bounds(18., 2., 12., 12.), rgb(0x0000ff)));
+                let red_bounds = bounds(21., 5., 6., 6.);
+                window
+                    .paint_image(red_bounds, red_bounds, Corners::default(), red, 0, false)
+                    .unwrap();
+            },
+        )
+        .size_full()
+    }
+}
+
+pub(crate) fn warp_nonzero_instance_batches_survive_growth_and_smaller_frames() -> Result<()> {
+    let root = WarpBatchRoot {
+        expanded: false,
+        green: render_image([0, 255, 0, 255]),
+        red: render_image([0, 0, 255, 255]),
+    };
+    let viewport = size(DevicePixels(32), DevicePixels(16));
+    with_warp_window(viewport, root, |context, handle, snapshot| {
+        let (_, small) = capture_scene(context, handle.into(), snapshot)?;
+        assert_pixel(&small, 5, 8, [0, 0, 255, 255]);
+        assert_pixel(&small, 24, 8, [255, 255, 255, 255]);
+
+        handle.update(context, |root, _, cx| {
+            root.expanded = true;
+            cx.notify();
+        })?;
+        let (scene, image) = capture_scene(context, handle.into(), snapshot)?;
+        let batches = scene.batches().collect::<Vec<_>>();
+        assert!(matches!(
+            batches.as_slice(),
+            [PrimitiveBatch::Quads(first), PrimitiveBatch::PolychromeSprites { range: first_image, texture: first_texture }, PrimitiveBatch::Quads(second), PrimitiveBatch::PolychromeSprites { range: second_image, texture: second_texture }]
+                if *first == (0..65) && *first_image == (0..1) && *second == (65..66)
+                    && *second_image == (1..2) && first_texture == second_texture
+        ));
+        assert_pixel(&image, 5, 8, [0, 255, 0, 255]);
+        assert_pixel(&image, 19, 8, [0, 0, 255, 255]);
+        assert_pixel(&image, 24, 8, [255, 0, 0, 255]);
+        assert_pixel(&image, 31, 8, [255, 255, 255, 255]);
+
+        handle.update(context, |root, _, cx| {
+            root.expanded = false;
+            cx.notify();
+        })?;
+        let (_, smaller) = capture_scene(context, handle.into(), snapshot)?;
+        assert_eq!(smaller, small);
+        Ok(())
+    })
+}
+
+struct WarpBorderRoot {
+    style: BorderStyle,
+    split: bool,
+}
+
+impl Render for WarpBorderRoot {
+    fn render(&mut self, _: &mut Window, _: &mut open_gpui::Context<Self>) -> impl IntoElement {
+        let (style, split) = (self.style, self.split);
+        let transform = SubtreeTransform::try_new(
+            size(1.05, 0.9),
+            point(px(1.5), px(3.5)),
+            SubtreeTransformOrigin::TOP_LEFT,
+        )
+        .unwrap();
+        let clip = SubtreeClip::try_rounded_rect(
+            Bounds::new(point(px(12.), px(6.)), size(px(70.), px(49.))),
+            Corners::all(px(7.)).map(|radius| size(*radius, *radius)),
+        )
+        .unwrap();
+        canvas(
+            |_, _, _| (),
+            move |_, (), window, _| {
+                let border = quad(
+                    Bounds::new(point(px(8.), px(7.)), size(px(75.), px(48.))),
+                    Corners {
+                        top_left: px(8.),
+                        top_right: px(6.),
+                        bottom_right: px(3.),
+                        bottom_left: px(5.),
+                    },
+                    hsla(0., 0., 0., if split { 0. } else { f32::EPSILON }),
+                    Edges {
+                        top: px(2.25),
+                        right: px(3.),
+                        bottom: px(2.),
+                        left: px(1.5),
+                    },
+                    hsla(0.59, 0.8, 0.45, 0.62),
+                    style,
+                );
+                window.paint_quad(border);
+            },
+        )
+        .size_full()
+        .with_subtree_clip(clip)
+        .with_subtree_transform(transform)
+    }
+}
+
+pub(crate) fn warp_hollow_border_strips_match_full_quad_under_projected_rounded_clip() -> Result<()>
+{
+    let viewport = size(DevicePixels(192), DevicePixels(128));
+    let root = WarpBorderRoot {
+        style: BorderStyle::Solid,
+        split: false,
+    };
+    with_warp_window(viewport, root, |context, handle, snapshot| {
+        let mut reference = WarpRenderer::new(viewport)?;
+        for style in [BorderStyle::Solid, BorderStyle::Dashed] {
+            handle.update(context, |root, _, cx| {
+                root.style = style;
+                root.split = false;
+                cx.notify();
+            })?;
+            let (mut full, _) = capture_scene(context, handle.into(), snapshot)?;
+            assert_eq!(full.quads.len(), 1);
+            assert!(full.quads[0].clip.clip_count > 1);
+            full.quads[0].background = transparent_black().into();
+            let expected = reference
+                .renderer
+                .render_to_image(&full, WindowBackgroundAppearance::Opaque)?;
+            assert!(
+                expected
+                    .pixels()
+                    .filter(|pixel| pixel.0 != [255; 4])
+                    .count()
+                    > 100
+            );
+
+            handle.update(context, |root, _, cx| {
+                root.split = true;
+                cx.notify();
+            })?;
+            let (split, actual) = capture_scene(context, handle.into(), snapshot)?;
+            assert!(split.quads.len() >= 2);
+            assert_eq!(split.clip_shapes(), full.clip_shapes());
+            for (x, y, expected) in expected.enumerate_pixels() {
+                assert_pixel(&actual, x, y, expected.0);
+            }
+        }
+        reference.finish()
+    })
 }
 
 fn warp_devices() -> Result<DirectXDevices> {

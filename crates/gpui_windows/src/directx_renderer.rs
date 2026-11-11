@@ -1,4 +1,5 @@
 use std::{
+    ops::Range,
     slice,
     sync::{Arc, OnceLock},
     thread,
@@ -20,7 +21,7 @@ use windows::{
             Dxgi::{Common::*, *},
         },
     },
-    core::{IUnknown, Interface},
+    core::{HSTRING, IUnknown, Interface},
 };
 
 use crate::directx_renderer::shader_resources::{RawShaderBytes, ShaderModule, ShaderTarget};
@@ -32,6 +33,7 @@ const RENDER_TARGET_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM;
 // This configuration is used for MSAA rendering on paths only, and it's guaranteed to be supported by DirectX 11.
 const PATH_MULTISAMPLE_COUNT: u32 = 4;
 const CLIP_SHAPES_SHADER_RESOURCE_SLOT: u32 = 2;
+const MAX_INSTANCE_BUFFER_SIZE: usize = 256 * 1024 * 1024;
 
 #[cfg(all(test, feature = "test-support"))]
 #[path = "directx_atlas/render_tests.rs"]
@@ -73,6 +75,7 @@ pub(crate) struct DirectXRendererDevices {
     pub(crate) device: ID3D11Device,
     pub(crate) device_context: ID3D11DeviceContext,
     dxgi_device: Option<IDXGIDevice>,
+    annotation: Option<ID3DUserDefinedAnnotation>,
 }
 
 struct DirectXResources {
@@ -103,11 +106,26 @@ struct DirectXRenderPipelines {
 }
 
 struct DirectXGlobalElements {
-    global_params_buffer: Option<ID3D11Buffer>,
+    constant_buffers: [Option<ID3D11Buffer>; 2],
     sampler: Option<ID3D11SamplerState>,
     clip_shapes_buffer: ID3D11Buffer,
     clip_shapes_view: Option<ID3D11ShaderResourceView>,
     clip_shapes_capacity: usize,
+}
+
+struct Annotation<'a>(&'a ID3DUserDefinedAnnotation);
+
+impl<'a> Annotation<'a> {
+    fn new(annotation: &'a ID3DUserDefinedAnnotation, label: HSTRING) -> Self {
+        unsafe { annotation.BeginEvent(&label) };
+        Self(annotation)
+    }
+}
+
+impl Drop for Annotation<'_> {
+    fn drop(&mut self) {
+        unsafe { self.0.EndEvent() };
+    }
 }
 
 struct DirectComposition {
@@ -139,6 +157,7 @@ impl DirectXRendererDevices {
             device: device.clone(),
             device_context: device_context.clone(),
             dxgi_device,
+            annotation: device_context.cast().ok(),
         })
     }
 }
@@ -206,7 +225,9 @@ impl DirectXRenderer {
             .context("scene clip arena exceeds the DirectX shader index range")?;
         update_buffer(
             device_context,
-            self.globals.global_params_buffer.as_ref().unwrap(),
+            self.globals.constant_buffers[0]
+                .as_ref()
+                .context("missing DirectX global parameters")?,
             &[GlobalParams {
                 gamma_ratios: self.font_info.gamma_ratios,
                 viewport_size: [resources.viewport.Width, resources.viewport.Height],
@@ -228,6 +249,13 @@ impl DirectXRenderer {
             device_context
                 .OMSetRenderTargets(Some(slice::from_ref(&resources.render_target_view)), None);
             device_context.RSSetViewports(Some(slice::from_ref(&resources.viewport)));
+            device_context.VSSetConstantBuffers(0, Some(&self.globals.constant_buffers));
+            device_context.PSSetConstantBuffers(0, Some(&self.globals.constant_buffers[..1]));
+            let clip_shapes = slice::from_ref(&self.globals.clip_shapes_view);
+            device_context
+                .VSSetShaderResources(CLIP_SHAPES_SHADER_RESOURCE_SLOT, Some(clip_shapes));
+            device_context
+                .PSSetShaderResources(CLIP_SHAPES_SHADER_RESOURCE_SLOT, Some(clip_shapes));
         }
         Ok(())
     }
@@ -365,6 +393,7 @@ impl DirectXRenderer {
         preflight: &DirectXAtlasPreflight,
     ) -> Result<()> {
         preflight.validate()?;
+        self.upload_scene_buffers(scene)?;
         self.pre_draw(
             &match background_appearance {
                 WindowBackgroundAppearance::Opaque => [1.0f32; 4],
@@ -373,61 +402,93 @@ impl DirectXRenderer {
             scene.clip_shapes().len(),
         )?;
 
-        self.upload_scene_buffers(scene)?;
-
+        let annotation = self
+            .devices
+            .as_ref()
+            .and_then(|devices| devices.annotation.as_ref())
+            .filter(|annotation| unsafe { annotation.GetStatus().as_bool() })
+            .cloned();
         for batch in scene.batches() {
+            let _annotation = annotation
+                .as_ref()
+                .map(|annotation| Annotation::new(annotation, HSTRING::from(batch.label())));
             match batch {
-                PrimitiveBatch::Shadows(range) => self.draw_shadows(range.start, range.len()),
-                PrimitiveBatch::Quads(range) => self.draw_quads(range.start, range.len()),
+                PrimitiveBatch::Shadows(range) => {
+                    self.draw_instance_batch(&self.pipelines.shadow_pipeline, range, None)
+                }
+                PrimitiveBatch::Quads(range) => {
+                    self.draw_instance_batch(&self.pipelines.quad_pipeline, range, None)
+                }
                 PrimitiveBatch::Paths(range) => {
                     let paths = &scene.paths[range];
                     self.draw_paths_to_intermediate(paths)?;
                     self.draw_paths_from_intermediate(paths)
                 }
-                PrimitiveBatch::Underlines(range) => self.draw_underlines(range.start, range.len()),
-                PrimitiveBatch::MonochromeSprites { texture, range } => {
-                    self.draw_monochrome_sprites(
+                PrimitiveBatch::Underlines(range) => {
+                    self.draw_instance_batch(&self.pipelines.underline_pipeline, range, None)
+                }
+                PrimitiveBatch::MonochromeSprites { texture, range } => self.draw_instance_batch(
+                    &self.pipelines.mono_sprites,
+                    range,
+                    Some(
                         preflight
                             .texture_view(texture)
                             .context("monochrome texture is absent from the DirectX preflight")?,
-                        range.start,
-                        range.len(),
-                    )
-                }
-                PrimitiveBatch::SubpixelSprites { texture, range } => {
-                    self.draw_subpixel_sprites(
+                    ),
+                ),
+                PrimitiveBatch::SubpixelSprites { texture, range } => self.draw_instance_batch(
+                    &self.pipelines.subpixel_sprites,
+                    range,
+                    Some(
                         preflight
                             .texture_view(texture)
                             .context("subpixel texture is absent from the DirectX preflight")?,
-                        range.start,
-                        range.len(),
-                    )
-                }
-                PrimitiveBatch::PolychromeSprites { texture, range } => {
-                    self.draw_polychrome_sprites(
+                    ),
+                ),
+                PrimitiveBatch::PolychromeSprites { texture, range } => self.draw_instance_batch(
+                    &self.pipelines.poly_sprites,
+                    range,
+                    Some(
                         preflight
                             .texture_view(texture)
                             .context("polychrome texture is absent from the DirectX preflight")?,
-                        range.start,
-                        range.len(),
-                    )
-                }
+                    ),
+                ),
                 PrimitiveBatch::Surfaces(range) => self.draw_surfaces(&scene.surfaces[range]),
             }
-            .context(format!(
-                "scene too large:\
-                {} paths, {} shadows, {} quads, {} underlines, {} mono, {} subpixel, {} poly, {} surfaces",
-                scene.paths.len(),
-                scene.shadows.len(),
-                scene.quads.len(),
-                scene.underlines.len(),
-                scene.monochrome_sprites.len(),
-                scene.subpixel_sprites.len(),
-                scene.polychrome_sprites.len(),
-                scene.surfaces.len(),
-            ))?;
+            .with_context(|| {
+                format!(
+                    "drawing DirectX scene with {} paths, {} shadows, {} quads, {} underlines, {} mono, {} subpixel, {} poly, {} surfaces",
+                    scene.paths.len(),
+                    scene.shadows.len(),
+                    scene.quads.len(),
+                    scene.underlines.len(),
+                    scene.monochrome_sprites.len(),
+                    scene.subpixel_sprites.len(),
+                    scene.polychrome_sprites.len(),
+                    scene.surfaces.len(),
+                )
+            })?;
         }
         Ok(())
+    }
+
+    fn draw_instance_batch<T>(
+        &self,
+        pipeline: &PipelineState<T>,
+        range: Range<usize>,
+        texture: Option<&[Option<ID3D11ShaderResourceView>; 1]>,
+    ) -> Result<()> {
+        let devices = self.devices.as_ref().context("devices missing")?;
+        let batch_params = self.globals.constant_buffers[1]
+            .as_ref()
+            .context("missing DirectX batch parameters")?;
+        pipeline.draw_range(
+            &devices.device_context,
+            batch_params,
+            range,
+            texture.map(|view| (view.as_slice(), slice::from_ref(&self.globals.sampler))),
+        )
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -579,100 +640,35 @@ impl DirectXRenderer {
             scene.clip_shapes(),
         )?;
 
-        if !scene.shadows.is_empty() {
-            self.pipelines.shadow_pipeline.update_buffer(
-                &devices.device,
-                &devices.device_context,
-                &scene.shadows,
-            )?;
-        }
-
-        if !scene.quads.is_empty() {
-            self.pipelines.quad_pipeline.update_buffer(
-                &devices.device,
-                &devices.device_context,
-                &scene.quads,
-            )?;
-        }
-
-        if !scene.underlines.is_empty() {
-            self.pipelines.underline_pipeline.update_buffer(
-                &devices.device,
-                &devices.device_context,
-                &scene.underlines,
-            )?;
-        }
-
-        if !scene.monochrome_sprites.is_empty() {
-            self.pipelines.mono_sprites.update_buffer(
-                &devices.device,
-                &devices.device_context,
-                &scene.monochrome_sprites,
-            )?;
-        }
-
-        if !scene.subpixel_sprites.is_empty() {
-            self.pipelines.subpixel_sprites.update_buffer(
-                &devices.device,
-                &devices.device_context,
-                &scene.subpixel_sprites,
-            )?;
-        }
-
-        if !scene.polychrome_sprites.is_empty() {
-            self.pipelines.poly_sprites.update_buffer(
-                &devices.device,
-                &devices.device_context,
-                &scene.polychrome_sprites,
-            )?;
-        }
-
-        Ok(())
-    }
-
-    fn draw_shadows(&mut self, start: usize, len: usize) -> Result<()> {
-        if len == 0 {
-            return Ok(());
-        }
-        let devices = self.devices.as_ref().context("devices missing")?;
-        self.pipelines.shadow_pipeline.draw_range(
+        self.pipelines.shadow_pipeline.update_buffer(
             &devices.device,
             &devices.device_context,
-            slice::from_ref(
-                &self
-                    .resources
-                    .as_ref()
-                    .context("resources missing")?
-                    .viewport,
-            ),
-            slice::from_ref(&self.globals.global_params_buffer),
-            slice::from_ref(&self.globals.clip_shapes_view),
-            4,
-            start as u32,
-            len as u32,
-        )
-    }
-
-    fn draw_quads(&mut self, start: usize, len: usize) -> Result<()> {
-        if len == 0 {
-            return Ok(());
-        }
-        let devices = self.devices.as_ref().context("devices missing")?;
-        self.pipelines.quad_pipeline.draw_range(
+            &scene.shadows,
+        )?;
+        self.pipelines.quad_pipeline.update_buffer(
             &devices.device,
             &devices.device_context,
-            slice::from_ref(
-                &self
-                    .resources
-                    .as_ref()
-                    .context("resources missing")?
-                    .viewport,
-            ),
-            slice::from_ref(&self.globals.global_params_buffer),
-            slice::from_ref(&self.globals.clip_shapes_view),
-            4,
-            start as u32,
-            len as u32,
+            &scene.quads,
+        )?;
+        self.pipelines.underline_pipeline.update_buffer(
+            &devices.device,
+            &devices.device_context,
+            &scene.underlines,
+        )?;
+        self.pipelines.mono_sprites.update_buffer(
+            &devices.device,
+            &devices.device_context,
+            &scene.monochrome_sprites,
+        )?;
+        self.pipelines.subpixel_sprites.update_buffer(
+            &devices.device,
+            &devices.device_context,
+            &scene.subpixel_sprites,
+        )?;
+        self.pipelines.poly_sprites.update_buffer(
+            &devices.device,
+            &devices.device_context,
+            &scene.polychrome_sprites,
         )
     }
 
@@ -718,13 +714,10 @@ impl DirectXRenderer {
 
         self.pipelines.path_rasterization_pipeline.draw(
             &devices.device_context,
-            slice::from_ref(&resources.viewport),
-            slice::from_ref(&self.globals.global_params_buffer),
-            slice::from_ref(&self.globals.clip_shapes_view),
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
-            vertices.len() as u32,
+            u32::try_from(vertices.len()).context("DirectX path vertex count overflow")?,
             1,
-        )?;
+        );
 
         // Resolve MSAA to non-MSAA intermediate texture
         unsafe {
@@ -788,102 +781,10 @@ impl DirectXRenderer {
         self.pipelines.path_sprite_pipeline.draw_with_texture(
             &devices.device_context,
             slice::from_ref(&resources.path_intermediate_srv),
-            slice::from_ref(&resources.viewport),
-            slice::from_ref(&self.globals.global_params_buffer),
-            slice::from_ref(&self.globals.clip_shapes_view),
             slice::from_ref(&self.globals.sampler),
-            sprites.len() as u32,
-        )
-    }
-
-    fn draw_underlines(&mut self, start: usize, len: usize) -> Result<()> {
-        if len == 0 {
-            return Ok(());
-        }
-        let devices = self.devices.as_ref().context("devices missing")?;
-        let resources = self.resources.as_ref().context("resources missing")?;
-        self.pipelines.underline_pipeline.draw_range(
-            &devices.device,
-            &devices.device_context,
-            slice::from_ref(&resources.viewport),
-            slice::from_ref(&self.globals.global_params_buffer),
-            slice::from_ref(&self.globals.clip_shapes_view),
-            4,
-            start as u32,
-            len as u32,
-        )
-    }
-
-    fn draw_monochrome_sprites(
-        &mut self,
-        texture_view: &[Option<ID3D11ShaderResourceView>; 1],
-        start: usize,
-        len: usize,
-    ) -> Result<()> {
-        if len == 0 {
-            return Ok(());
-        }
-        let devices = self.devices.as_ref().context("devices missing")?;
-        let resources = self.resources.as_ref().context("resources missing")?;
-        self.pipelines.mono_sprites.draw_range_with_texture(
-            &devices.device,
-            &devices.device_context,
-            texture_view,
-            slice::from_ref(&resources.viewport),
-            slice::from_ref(&self.globals.global_params_buffer),
-            slice::from_ref(&self.globals.clip_shapes_view),
-            slice::from_ref(&self.globals.sampler),
-            start as u32,
-            len as u32,
-        )
-    }
-
-    fn draw_subpixel_sprites(
-        &mut self,
-        texture_view: &[Option<ID3D11ShaderResourceView>; 1],
-        start: usize,
-        len: usize,
-    ) -> Result<()> {
-        if len == 0 {
-            return Ok(());
-        }
-        let devices = self.devices.as_ref().context("devices missing")?;
-        let resources = self.resources.as_ref().context("resources missing")?;
-        self.pipelines.subpixel_sprites.draw_range_with_texture(
-            &devices.device,
-            &devices.device_context,
-            texture_view,
-            slice::from_ref(&resources.viewport),
-            slice::from_ref(&self.globals.global_params_buffer),
-            slice::from_ref(&self.globals.clip_shapes_view),
-            slice::from_ref(&self.globals.sampler),
-            start as u32,
-            len as u32,
-        )
-    }
-
-    fn draw_polychrome_sprites(
-        &mut self,
-        texture_view: &[Option<ID3D11ShaderResourceView>; 1],
-        start: usize,
-        len: usize,
-    ) -> Result<()> {
-        if len == 0 {
-            return Ok(());
-        }
-        let devices = self.devices.as_ref().context("devices missing")?;
-        let resources = self.resources.as_ref().context("resources missing")?;
-        self.pipelines.poly_sprites.draw_range_with_texture(
-            &devices.device,
-            &devices.device_context,
-            texture_view,
-            slice::from_ref(&resources.viewport),
-            slice::from_ref(&self.globals.global_params_buffer),
-            slice::from_ref(&self.globals.clip_shapes_view),
-            slice::from_ref(&self.globals.sampler),
-            start as u32,
-            len as u32,
-        )
+            u32::try_from(sprites.len()).context("DirectX path sprite count overflow")?,
+        );
+        Ok(())
     }
 
     fn draw_surfaces(&mut self, surfaces: &[PaintSurface]) -> Result<()> {
@@ -1203,18 +1104,10 @@ impl DirectComposition {
 
 impl DirectXGlobalElements {
     pub fn new(device: &ID3D11Device) -> Result<Self> {
-        let global_params_buffer = unsafe {
-            let desc = D3D11_BUFFER_DESC {
-                ByteWidth: std::mem::size_of::<GlobalParams>() as u32,
-                Usage: D3D11_USAGE_DYNAMIC,
-                BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
-                CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
-                ..Default::default()
-            };
-            let mut buffer = None;
-            device.CreateBuffer(&desc, None, Some(&mut buffer))?;
-            buffer
-        };
+        let constant_buffers = [
+            Some(create_constant_buffer::<GlobalParams>(device)?),
+            Some(create_constant_buffer::<BatchParams>(device)?),
+        ];
 
         let sampler = unsafe {
             let desc = D3D11_SAMPLER_DESC {
@@ -1240,7 +1133,7 @@ impl DirectXGlobalElements {
             .context("creating DirectX clip-shape buffer view")?;
 
         Ok(Self {
-            global_params_buffer,
+            constant_buffers,
             sampler,
             clip_shapes_buffer,
             clip_shapes_view,
@@ -1255,23 +1148,15 @@ impl DirectXGlobalElements {
         clip_shapes: &[GpuClipShape],
     ) -> Result<()> {
         if self.clip_shapes_capacity < clip_shapes.len() {
-            let new_capacity = clip_shapes
-                .len()
-                .checked_next_power_of_two()
-                .context("DirectX clip-shape buffer capacity overflow")?;
-            let byte_width = std::mem::size_of::<GpuClipShape>()
-                .checked_mul(new_capacity)
-                .context("DirectX clip-shape buffer byte size overflow")?;
-            anyhow::ensure!(
-                u32::try_from(byte_width).is_ok(),
-                "DirectX clip-shape buffer exceeds the D3D11 byte-width limit"
-            );
-
-            self.clip_shapes_buffer =
-                create_buffer(device, std::mem::size_of::<GpuClipShape>(), new_capacity)
-                    .context("growing DirectX clip-shape buffer")?;
-            self.clip_shapes_view = create_buffer_view(device, &self.clip_shapes_buffer)
+            let element_size = std::mem::size_of::<GpuClipShape>();
+            let new_capacity =
+                bounded_instance_capacity(element_size, clip_shapes.len(), "clip shapes")?;
+            let buffer = create_buffer(device, element_size, new_capacity)
+                .context("growing DirectX clip-shape buffer")?;
+            let view = create_buffer_view(device, &buffer)
                 .context("recreating DirectX clip-shape buffer view")?;
+            self.clip_shapes_buffer = buffer;
+            self.clip_shapes_view = view;
             self.clip_shapes_capacity = new_capacity;
         }
 
@@ -1294,12 +1179,22 @@ struct GlobalParams {
     _pad: [u32; 2],
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+#[repr(C, align(16))]
+struct BatchParams {
+    start_index: u32,
+    _padding: [u32; 3],
+}
+
+const _: () = assert!(std::mem::size_of::<BatchParams>() == 16);
+
 struct PipelineState<T> {
     label: &'static str,
     vertex: ID3D11VertexShader,
     fragment: ID3D11PixelShader,
     buffer: ID3D11Buffer,
     buffer_size: usize,
+    uploaded_count: usize,
     view: Option<ID3D11ShaderResourceView>,
     blend_state: ID3D11BlendState,
     _marker: std::marker::PhantomData<T>,
@@ -1330,6 +1225,7 @@ impl<T> PipelineState<T> {
             fragment,
             buffer,
             buffer_size,
+            uploaded_count: 0,
             view,
             blend_state,
             _marker: std::marker::PhantomData,
@@ -1342,8 +1238,13 @@ impl<T> PipelineState<T> {
         device_context: &ID3D11DeviceContext,
         data: &[T],
     ) -> Result<()> {
+        self.uploaded_count = 0;
+        if data.is_empty() {
+            return Ok(());
+        }
         if self.buffer_size < data.len() {
-            let new_buffer_size = data.len().next_power_of_two();
+            let new_buffer_size =
+                bounded_instance_capacity(std::mem::size_of::<T>(), data.len(), self.label)?;
             log::debug!(
                 "Updating {} buffer size from {} to {}",
                 self.label,
@@ -1356,125 +1257,88 @@ impl<T> PipelineState<T> {
             self.view = view;
             self.buffer_size = new_buffer_size;
         }
-        update_buffer(device_context, &self.buffer, data)
+        update_buffer(device_context, &self.buffer, data)?;
+        self.uploaded_count = data.len();
+        Ok(())
     }
 
     fn draw(
         &self,
         device_context: &ID3D11DeviceContext,
-        viewport: &[D3D11_VIEWPORT],
-        global_params: &[Option<ID3D11Buffer>],
-        clip_shapes: &[Option<ID3D11ShaderResourceView>],
         topology: D3D_PRIMITIVE_TOPOLOGY,
         vertex_count: u32,
         instance_count: u32,
-    ) -> Result<()> {
+    ) {
         set_pipeline_state(
             device_context,
             slice::from_ref(&self.view),
-            clip_shapes,
             topology,
-            viewport,
             &self.vertex,
             &self.fragment,
-            global_params,
             &self.blend_state,
         );
         unsafe {
             device_context.DrawInstanced(vertex_count, instance_count, 0, 0);
         }
-        Ok(())
     }
 
     fn draw_with_texture(
         &self,
         device_context: &ID3D11DeviceContext,
         texture: &[Option<ID3D11ShaderResourceView>],
-        viewport: &[D3D11_VIEWPORT],
-        global_params: &[Option<ID3D11Buffer>],
-        clip_shapes: &[Option<ID3D11ShaderResourceView>],
         sampler: &[Option<ID3D11SamplerState>],
         instance_count: u32,
-    ) -> Result<()> {
-        set_pipeline_state(
-            device_context,
-            slice::from_ref(&self.view),
-            clip_shapes,
-            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
-            viewport,
-            &self.vertex,
-            &self.fragment,
-            global_params,
-            &self.blend_state,
-        );
+    ) {
         unsafe {
             device_context.PSSetSamplers(0, Some(sampler));
             device_context.VSSetShaderResources(0, Some(texture));
             device_context.PSSetShaderResources(0, Some(texture));
-
-            device_context.DrawInstanced(4, instance_count, 0, 0);
         }
-        Ok(())
+        self.draw(
+            device_context,
+            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+            4,
+            instance_count,
+        );
     }
 
     fn draw_range(
         &self,
-        device: &ID3D11Device,
         device_context: &ID3D11DeviceContext,
-        viewport: &[D3D11_VIEWPORT],
-        global_params: &[Option<ID3D11Buffer>],
-        clip_shapes: &[Option<ID3D11ShaderResourceView>],
-        vertex_count: u32,
-        first_instance: u32,
-        instance_count: u32,
+        batch_params: &ID3D11Buffer,
+        range: Range<usize>,
+        texture: Option<(
+            &[Option<ID3D11ShaderResourceView>],
+            &[Option<ID3D11SamplerState>],
+        )>,
     ) -> Result<()> {
-        let view = create_buffer_view_range(device, &self.buffer, first_instance, instance_count)?;
-        set_pipeline_state(
-            device_context,
-            slice::from_ref(&view),
-            clip_shapes,
-            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
-            viewport,
-            &self.vertex,
-            &self.fragment,
-            global_params,
-            &self.blend_state,
+        anyhow::ensure!(
+            range.start <= range.end && range.end <= self.uploaded_count,
+            "DirectX instance range exceeds uploaded {} data",
+            self.label,
         );
-        unsafe {
-            device_context.DrawInstanced(vertex_count, instance_count, 0, 0);
+        if range.is_empty() {
+            return Ok(());
         }
-        Ok(())
-    }
-
-    fn draw_range_with_texture(
-        &self,
-        device: &ID3D11Device,
-        device_context: &ID3D11DeviceContext,
-        texture: &[Option<ID3D11ShaderResourceView>],
-        viewport: &[D3D11_VIEWPORT],
-        global_params: &[Option<ID3D11Buffer>],
-        clip_shapes: &[Option<ID3D11ShaderResourceView>],
-        sampler: &[Option<ID3D11SamplerState>],
-        first_instance: u32,
-        instance_count: u32,
-    ) -> Result<()> {
-        let view = create_buffer_view_range(device, &self.buffer, first_instance, instance_count)?;
-        set_pipeline_state(
+        let start_index = u32::try_from(range.start).context("DirectX batch offset overflow")?;
+        let instance_count = u32::try_from(range.len()).context("DirectX batch count overflow")?;
+        update_buffer(
             device_context,
-            slice::from_ref(&view),
-            clip_shapes,
-            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
-            viewport,
-            &self.vertex,
-            &self.fragment,
-            global_params,
-            &self.blend_state,
-        );
-        unsafe {
-            device_context.PSSetSamplers(0, Some(sampler));
-            device_context.VSSetShaderResources(0, Some(texture));
-            device_context.PSSetShaderResources(0, Some(texture));
-            device_context.DrawInstanced(4, instance_count, 0, 0);
+            batch_params,
+            &[BatchParams {
+                start_index,
+                _padding: [0; 3],
+            }],
+        )?;
+        if let Some((view, sampler)) = texture {
+            self.draw_with_texture(device_context, view, sampler, instance_count);
+        } else {
+            self.draw(
+                device_context,
+                D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+                4,
+                instance_count,
+            );
         }
         Ok(())
     }
@@ -1545,12 +1409,20 @@ const _: () = {
     assert!(std::mem::offset_of!(GlobalParams, is_bgr) == 32);
     assert!(std::mem::offset_of!(GlobalParams, clip_shape_count) == 36);
 
-    assert!(std::mem::offset_of!(PolychromeSprite, grayscale) == 8);
-    assert!(std::mem::offset_of!(PolychromeSprite, opacity) == 12);
-    assert!(std::mem::offset_of!(PolychromeSprite, bounds) == 16);
-    assert!(std::mem::offset_of!(PolychromeSprite, clip) == 32);
-    assert!(std::mem::offset_of!(PolychromeSprite, corner_radii) == 56);
-    assert!(std::mem::offset_of!(PolychromeSprite, tile) == 72);
+    assert!(std::mem::offset_of!(MonochromeSprite, tile) == 8);
+    assert!(std::mem::offset_of!(MonochromeSprite, bounds) == 48);
+    assert!(std::mem::offset_of!(MonochromeSprite, clip) == 64);
+    assert!(std::mem::offset_of!(MonochromeSprite, color) == 88);
+    assert!(std::mem::offset_of!(SubpixelSprite, tile) == 8);
+    assert!(std::mem::offset_of!(SubpixelSprite, bounds) == 48);
+    assert!(std::mem::offset_of!(SubpixelSprite, clip) == 64);
+    assert!(std::mem::offset_of!(SubpixelSprite, color) == 88);
+    assert!(std::mem::offset_of!(PolychromeSprite, tile) == 8);
+    assert!(std::mem::offset_of!(PolychromeSprite, grayscale) == 48);
+    assert!(std::mem::offset_of!(PolychromeSprite, opacity) == 52);
+    assert!(std::mem::offset_of!(PolychromeSprite, bounds) == 56);
+    assert!(std::mem::offset_of!(PolychromeSprite, clip) == 72);
+    assert!(std::mem::offset_of!(PolychromeSprite, corner_radii) == 96);
 };
 
 impl Drop for DirectXRenderer {
@@ -1868,22 +1740,52 @@ fn create_fragment_shader(device: &ID3D11Device, bytes: &[u8]) -> Result<ID3D11P
 }
 
 #[inline]
+fn create_constant_buffer<T>(device: &ID3D11Device) -> Result<ID3D11Buffer> {
+    let desc = D3D11_BUFFER_DESC {
+        ByteWidth: std::mem::size_of::<T>() as u32,
+        Usage: D3D11_USAGE_DYNAMIC,
+        BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
+        CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+        ..Default::default()
+    };
+    let mut buffer = None;
+    unsafe { device.CreateBuffer(&desc, None, Some(&mut buffer)) }?;
+    buffer.context("DirectX did not return a constant buffer")
+}
+
+fn bounded_instance_capacity(element_size: usize, required: usize, label: &str) -> Result<usize> {
+    let maximum = MAX_INSTANCE_BUFFER_SIZE
+        .checked_div(element_size)
+        .context("DirectX instance buffer element size must be nonzero")?;
+    anyhow::ensure!(
+        required <= maximum,
+        "{label} buffer needs {required} elements of {element_size} bytes, above the {MAX_INSTANCE_BUFFER_SIZE}-byte maximum",
+    );
+    Ok(required.next_power_of_two().min(maximum))
+}
+
+#[inline]
 fn create_buffer(
     device: &ID3D11Device,
     element_size: usize,
     buffer_size: usize,
 ) -> Result<ID3D11Buffer> {
+    let byte_width = element_size
+        .checked_mul(buffer_size)
+        .filter(|size| (1..=MAX_INSTANCE_BUFFER_SIZE).contains(size))
+        .context("DirectX structured buffer byte width is outside its bounds")?;
     let desc = D3D11_BUFFER_DESC {
-        ByteWidth: (element_size * buffer_size) as u32,
+        ByteWidth: u32::try_from(byte_width).context("DirectX buffer byte width overflow")?,
         Usage: D3D11_USAGE_DYNAMIC,
         BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
         CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
         MiscFlags: D3D11_RESOURCE_MISC_BUFFER_STRUCTURED.0 as u32,
-        StructureByteStride: element_size as u32,
+        StructureByteStride: u32::try_from(element_size)
+            .context("DirectX buffer stride overflow")?,
     };
     let mut buffer = None;
     unsafe { device.CreateBuffer(&desc, None, Some(&mut buffer)) }?;
-    Ok(buffer.unwrap())
+    buffer.context("DirectX did not return a structured buffer")
 }
 
 #[inline]
@@ -1893,32 +1795,6 @@ fn create_buffer_view(
 ) -> Result<Option<ID3D11ShaderResourceView>> {
     let mut view = None;
     unsafe { device.CreateShaderResourceView(buffer, None, Some(&mut view)) }?;
-    Ok(view)
-}
-
-#[inline]
-fn create_buffer_view_range(
-    device: &ID3D11Device,
-    buffer: &ID3D11Buffer,
-    first_element: u32,
-    num_elements: u32,
-) -> Result<Option<ID3D11ShaderResourceView>> {
-    let desc = D3D11_SHADER_RESOURCE_VIEW_DESC {
-        Format: DXGI_FORMAT_UNKNOWN,
-        ViewDimension: D3D11_SRV_DIMENSION_BUFFER,
-        Anonymous: D3D11_SHADER_RESOURCE_VIEW_DESC_0 {
-            Buffer: D3D11_BUFFER_SRV {
-                Anonymous1: D3D11_BUFFER_SRV_0 {
-                    FirstElement: first_element,
-                },
-                Anonymous2: D3D11_BUFFER_SRV_1 {
-                    NumElements: num_elements,
-                },
-            },
-        },
-    };
-    let mut view = None;
-    unsafe { device.CreateShaderResourceView(buffer, Some(&desc), Some(&mut view)) }?;
     Ok(view)
 }
 
@@ -1941,25 +1817,17 @@ fn update_buffer<T>(
 fn set_pipeline_state(
     device_context: &ID3D11DeviceContext,
     buffer_view: &[Option<ID3D11ShaderResourceView>],
-    clip_shapes: &[Option<ID3D11ShaderResourceView>],
     topology: D3D_PRIMITIVE_TOPOLOGY,
-    viewport: &[D3D11_VIEWPORT],
     vertex_shader: &ID3D11VertexShader,
     fragment_shader: &ID3D11PixelShader,
-    global_params: &[Option<ID3D11Buffer>],
     blend_state: &ID3D11BlendState,
 ) {
     unsafe {
         device_context.VSSetShaderResources(1, Some(buffer_view));
         device_context.PSSetShaderResources(1, Some(buffer_view));
-        device_context.VSSetShaderResources(CLIP_SHAPES_SHADER_RESOURCE_SLOT, Some(clip_shapes));
-        device_context.PSSetShaderResources(CLIP_SHAPES_SHADER_RESOURCE_SLOT, Some(clip_shapes));
         device_context.IASetPrimitiveTopology(topology);
-        device_context.RSSetViewports(Some(viewport));
         device_context.VSSetShader(vertex_shader, None);
         device_context.PSSetShader(fragment_shader, None);
-        device_context.VSSetConstantBuffers(0, Some(global_params));
-        device_context.PSSetConstantBuffers(0, Some(global_params));
         device_context.OMSetBlendState(blend_state, None, 0xFFFFFFFF);
     }
 }

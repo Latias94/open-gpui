@@ -198,16 +198,16 @@ fn load_underline(instance_id: u32) -> Underline {
 fn load_mono_sprite(instance_id: u32) -> MonochromeSprite {
     var cursor = instance_cursor(instance_id * 30u);
     return MonochromeSprite(
-        read_word(&cursor), read_word(&cursor), read_bounds(&cursor), read_clip(&cursor),
-        read_hsla(&cursor), read_atlas_tile(&cursor), read_transform(&cursor),
+        read_word(&cursor), read_word(&cursor), read_atlas_tile(&cursor), read_bounds(&cursor),
+        read_clip(&cursor), read_hsla(&cursor), read_transform(&cursor),
     );
 }
 
 fn load_poly_sprite(instance_id: u32) -> PolychromeSprite {
     var cursor = instance_cursor(instance_id * 32u);
     return PolychromeSprite(
-        read_word(&cursor), read_word(&cursor), read_word(&cursor), read_f32(&cursor),
-        read_bounds(&cursor), read_clip(&cursor), read_corners(&cursor),
-        read_atlas_tile(&cursor), read_transform(&cursor),
+        read_word(&cursor), read_word(&cursor), read_atlas_tile(&cursor), read_word(&cursor),
+        read_f32(&cursor), read_bounds(&cursor), read_clip(&cursor), read_corners(&cursor),
+        read_transform(&cursor),
     );
 }

@@ -3,10 +3,10 @@
 struct SubpixelSprite {
     order: u32,
     pad: u32,
+    tile: AtlasTile,
     bounds: Bounds,
     clip: ClipEnvelope,
     color: Hsla,
-    tile: AtlasTile,
     transform: PrimitiveTransform,
 }
 @group(1) @binding(0) var<storage, read> b_subpixel_sprites: array<SubpixelSprite>;

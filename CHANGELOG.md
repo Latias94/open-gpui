@@ -196,6 +196,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- DirectX reuses whole instance buffer views across batches and uses the official shader offset. Sprite batches group by exact atlas texture identity where paint order permits it; renderer implementations that consume raw sprite records must update their shader field order. Hollow borders omit their unpainted interior while keeping the original rounded geometry and dash phase.
+
 - Complete `AnyDrag` literals require `external_payload_source`. Native backends implementing `start_external_drag` receive a `PlatformExternalDragSession`; retain it for source callbacks and dispatch `FileDropEvent::Ended` when that exact native session finishes. Exhaustive file-drop matches must handle `Ended`.
 
 - Custom `Platform::restart` implementations now receive `Vec<OsString>` after the optional executable path. `TestAppContext::expect_restart` observes both values; the request is consumed once after restart observers run. Windows restart explicitly requires PowerShell and leaves the process alive if its launcher cannot start.
@@ -263,6 +265,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `open-gpui-devtools` now projects Table behavior through a pre-capture allowlist with session-scoped opaque table, column, and row ordinals plus derived cell ids; raw ids, values, diagnostic source identities, selectors, and deterministic hashes are excluded from live, history, diff, Inspector, export, artifact, report, and Gallery fixture output, while sanitized diagnostic kinds and counts remain observable.
 
 ### Fixed
+
+- WGPU encodes each frame using the acquired surface texture size and omits the path composite when its batch did not rasterize. Metal uploads the frame's surface geometry together, while each video surface retains and binds its own two planes.
 
 - Ordinary `App::open_window` preserves downcasts to backend errors such as `PopupNotSupportedError`, allowing callers to choose a fallback. `open_window_detailed` retains its typed synchronous failure stage.
 

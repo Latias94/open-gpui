@@ -1,11 +1,20 @@
-//! Native atlas preflight controls using the production `Scene::batches` iterator.
+//! Native Metal renderer controls using the production `Scene::batches` iterator.
 //! The ABI fixtures exercise preflight only; they do not provide a Scene clip arena.
 //! Windows source review leaves macOS compilation and execution UNQUALIFIED.
 
 use super::*;
+use objc2_core_foundation::{CFBoolean, CFDictionary, CFString, CFType};
+use objc2_core_video::{
+    CVPixelBufferCreate, CVPixelBufferGetBaseAddressOfPlane, CVPixelBufferGetBytesPerRowOfPlane,
+    CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags, CVPixelBufferUnlockBaseAddress,
+    kCVPixelBufferIOSurfacePropertiesKey, kCVPixelBufferMetalCompatibilityKey,
+};
 use open_gpui::{
-    AtlasKey, AtlasRemoveOutcome, AtlasTile, Corners, Hsla, ImageId, MonochromeSprite,
-    PaddedBool32, PlatformAtlas, PolychromeSprite, RenderImageParams, RenderSvgParams,
+    AppContext as _, AtlasKey, AtlasRemoveOutcome, AtlasTile, Context, Corners, HeadlessAppContext,
+    Hsla, ImageId, IntoElement, MonochromeSprite, NoopTextSystem, PaddedBool32, Pixels,
+    PlatformAtlas, PlatformPixelBuffer, PolychromeSprite, Render, RenderImageParams,
+    RenderSvgParams, Styled as _, SubtreeClip, SubtreeTransform, SubtreeTransformExt as _, Window,
+    canvas, px, rgb,
 };
 use std::borrow::Cow;
 
@@ -263,6 +272,155 @@ fn repeated_batches_pin_each_instance_once_and_preserve_every_draw_range() -> Re
                 .is_none()
         );
         renderer.destroy();
+        Ok(())
+    })
+}
+
+fn video_buffer(luma: u8, chroma: [u8; 2]) -> Result<PlatformPixelBuffer> {
+    let io_surface = CFDictionary::<CFString, CFType>::empty();
+    let mut buffer = ptr::null_mut();
+    // SAFETY: The attributes have their documented CF types and the output pointer is writable.
+    let status = unsafe {
+        let attributes = CFDictionary::<CFString, CFType>::from_slices(
+            &[
+                kCVPixelBufferIOSurfacePropertiesKey,
+                kCVPixelBufferMetalCompatibilityKey,
+            ],
+            &[&io_surface, CFBoolean::new(true)],
+        );
+        CVPixelBufferCreate(
+            None,
+            16,
+            16,
+            kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+            Some(attributes.as_opaque()),
+            ptr::NonNull::from(&mut buffer),
+        )
+    };
+    anyhow::ensure!(
+        status == kCVReturnSuccess,
+        "creating test video buffer: {status}"
+    );
+    let buffer = ptr::NonNull::new(buffer).context("retrieving test video buffer")?;
+    let flags = CVPixelBufferLockFlags::empty();
+    // SAFETY: CoreVideo transfers ownership on success and no other user can access this buffer.
+    let (buffer, status) = unsafe {
+        let buffer = CFRetained::from_raw(buffer);
+        let status = CVPixelBufferLockBaseAddress(&buffer, flags);
+        (buffer, status)
+    };
+    anyhow::ensure!(
+        status == kCVReturnSuccess,
+        "locking test video buffer: {status}"
+    );
+
+    let fill: Result<()> = (|| {
+        for (plane, texel) in [(0, &[luma][..]), (1, &chroma[..])] {
+            let base = CVPixelBufferGetBaseAddressOfPlane(&buffer, plane).cast::<u8>();
+            let stride = CVPixelBufferGetBytesPerRowOfPlane(&buffer, plane);
+            let width = CVPixelBufferGetWidthOfPlane(&buffer, plane);
+            anyhow::ensure!(
+                !base.is_null() && width * texel.len() <= stride,
+                "invalid test video plane"
+            );
+            for row in 0..CVPixelBufferGetHeightOfPlane(&buffer, plane) {
+                for column in 0..width {
+                    let offset = row * stride + column * texel.len();
+                    // SAFETY: The destination texel is within the locked plane and disjoint from the source.
+                    unsafe {
+                        ptr::copy_nonoverlapping(texel.as_ptr(), base.add(offset), texel.len());
+                    }
+                }
+            }
+        }
+        Ok(())
+    })();
+    // SAFETY: The successful lock used the same flags, and the CPU writes are complete.
+    let status = unsafe { CVPixelBufferUnlockBaseAddress(&buffer, flags) };
+    fill?;
+    anyhow::ensure!(
+        status == kCVReturnSuccess,
+        "unlocking test video buffer: {status}"
+    );
+    Ok(buffer)
+}
+
+struct SurfaceBatchFixture([PlatformPixelBuffer; 3]);
+
+impl Render for SurfaceBatchFixture {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let [first, second, third] = self.0.clone();
+        let bounds_at = |x| Bounds::new(point(px(x), px(0.0)), size(px(12.0), px(12.0)));
+        let clip = SubtreeClip::try_rounded_rect(
+            bounds_at(0.0),
+            Corners::all(px(6.0)).map(|radius| size(*radius, *radius)),
+        )
+        .expect("valid rounded clip for the second surface");
+        canvas(
+            move |_, window, _| window.prepare_subtree_clip(&clip, bounds_at(16.0)),
+            move |_, clip, window, _| {
+                window.paint_surface(bounds_at(0.0), first);
+                let mut separator = Path::new(point(px(8.0), px(0.0)));
+                for (x, y) in [(40.0, 0.0), (40.0, 12.0), (8.0, 12.0), (8.0, 0.0)] {
+                    separator.line_to(point(px(x), px(y)));
+                }
+                window.paint_path(separator, rgb(0xff0000));
+                window
+                    .with_prepared_subtree_clip(&clip, |window| {
+                        window.paint_surface(bounds_at(16.0), second);
+                    })
+                    .expect("the second surface uses its prepaint clip");
+                window.paint_surface(bounds_at(32.0), third);
+            },
+        )
+        .size_full()
+        .with_subtree_transform(
+            SubtreeTransform::try_translation(point(px(2.0), px(2.0)))
+                .expect("valid fixture translation"),
+        )
+    }
+}
+
+#[test]
+fn surface_batches_read_back_with_global_instance_indices() -> Result<()> {
+    objc2::rc::autoreleasepool(|_| {
+        let fixture = SurfaceBatchFixture([
+            video_buffer(64, [128, 128])?,
+            video_buffer(96, [128, 192])?,
+            video_buffer(128, [192, 128])?,
+        ]);
+        let mut app =
+            HeadlessAppContext::with_platform(Arc::new(NoopTextSystem), Arc::new(()), || {
+                Ok(Some(Box::new(MetalHeadlessRenderer::new()?)))
+            });
+        let viewport: Size<Pixels> = size(px(48.0), px(20.0));
+        let handle = app.open_window(viewport, |_, app| app.new(|_| fixture))?;
+        app.update_window(handle.into(), |_, window, _| {
+            let _ = window.activate_window();
+        })?;
+        app.run_until_parked();
+        app.simulate_window_scheduled_frame(handle.into())?;
+        let capture = app.capture_frame(handle.into())?;
+        let scale = capture.metadata.scale_factor;
+        let image = capture.into_image()?;
+
+        for (x, y, expected) in [
+            (1.0, 8.0, [0, 0, 0, 255]),
+            (5.0, 8.0, [65, 63, 65, 255]),
+            (12.0, 8.0, [255, 0, 0, 255]),
+            (19.0, 3.0, [255, 0, 0, 255]),
+            (24.0, 8.0, [186, 50, 97, 255]),
+            (40.0, 8.0, [129, 105, 242, 255]),
+        ] {
+            let actual = image.get_pixel((x * scale) as u32, (y * scale) as u32).0;
+            assert!(
+                actual
+                    .into_iter()
+                    .zip(expected)
+                    .all(|(a, b)| a.abs_diff(b) <= 2),
+                "pixel at ({x}, {y}) was {actual:?}, expected {expected:?}",
+            );
+        }
         Ok(())
     })
 }

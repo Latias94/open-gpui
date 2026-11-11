@@ -645,15 +645,41 @@ struct QuadVarying {
     @location(6) local_position: vec2<f32>,
 }
 
+fn quad_has_precise_raster_coordinates(quad: Quad) -> bool {
+    let scale = vec2<f32>(quad.transform.scale_x, quad.transform.scale_y);
+    let translation = vec2<f32>(quad.transform.translation_x, quad.transform.translation_y);
+    let local_magnitude = abs(quad.bounds.origin) + quad.bounds.size;
+    let window_magnitude = local_magnitude * scale + abs(translation);
+    // Match PrimitiveTransform::has_precise_raster_coordinates.
+    let limit = vec2<f32>(32768.0);
+    return all(local_magnitude <= limit) && all(window_magnitude <= limit);
+}
+
 @vertex
 fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> QuadVarying {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
     let quad = load_quad(instance_id);
     let local_position = unit_vertex * quad.bounds.size + quad.bounds.origin;
     let window_position = apply_primitive_transform(local_position, quad.transform);
+    var raster_position = window_position;
+    var raster_local_position = local_position;
+    if (quad_has_precise_raster_coordinates(quad)) {
+        let scale = vec2<f32>(quad.transform.scale_x, quad.transform.scale_y);
+        let clip_bounds = quad.clip.conservative_bounds;
+        raster_position = clamp(
+            window_position,
+            floor(clip_bounds.origin),
+            ceil(clip_bounds.origin + clip_bounds.size),
+        );
+        raster_local_position = select(
+            local_position + (raster_position - window_position) / scale,
+            local_position,
+            raster_position == window_position,
+        );
+    }
 
     var out = QuadVarying();
-    out.position = to_device_position_impl(window_position);
+    out.position = to_device_position_impl(raster_position);
 
     let gradient = prepare_gradient_color(
         quad.background.tag,
@@ -666,15 +692,18 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     out.background_color1 = gradient.color1;
     out.border_color = hsla_to_rgba(quad.border_color);
     out.quad_id = instance_id;
-    out.window_position = window_position;
-    out.local_position = local_position;
+    out.window_position = raster_position;
+    out.local_position = raster_local_position;
     return out;
 }
 
 @fragment
 fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     let quad = load_quad(input.quad_id);
-    if (!clip_envelope_contains(input.window_position, quad.clip)) {
+    // This pass is single-sampled. Use the window-space pixel center so interpolation across a
+    // different strip triangle cannot move a sample across an exact half-open clip edge.
+    let pixel_center = floor(input.window_position) + vec2<f32>(0.5);
+    if (!clip_envelope_contains(pixel_center, quad.clip)) {
         return vec4<f32>(0.0);
     }
 
@@ -697,7 +726,15 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
 
     let size = quad.bounds.size;
     let half_size = size / 2.0;
-    let point = input.local_position - quad.bounds.origin;
+    let dashed = quad.border_style == 1u;
+    var point = input.local_position - quad.bounds.origin;
+    if (dashed && quad_has_precise_raster_coordinates(quad)) {
+        // A square corner chooses between two dash phases. Use the same original geometry
+        // for that choice even when the raster strip and full quad have different triangles.
+        let window_origin = apply_primitive_transform(quad.bounds.origin, quad.transform);
+        let scale = vec2<f32>(quad.transform.scale_x, quad.transform.scale_y);
+        point = (pixel_center - window_origin) / scale;
+    }
     let center_to_point = point - half_size;
 
     // Signed distance field threshold for inclusion of pixels. 0.5 is the
@@ -797,7 +834,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
         var border_color = input.border_color;
 
         // Dashed border logic when border_style == 1
-        if (quad.border_style == 1) {
+        if (dashed) {
             // Position along the perimeter in "dash space", where each dash
             // period has length 1
             var t = 0.0;
@@ -1330,10 +1367,10 @@ fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
 struct MonochromeSprite {
     order: u32,
     pad: u32,
+    tile: AtlasTile,
     bounds: Bounds,
     clip: ClipEnvelope,
     color: Hsla,
-    tile: AtlasTile,
     transform: PrimitiveTransform,
 }
 
@@ -1380,12 +1417,12 @@ fn fs_mono_sprite(input: MonoSpriteVarying) -> @location(0) vec4<f32> {
 struct PolychromeSprite {
     order: u32,
     pad: u32,
+    tile: AtlasTile,
     grayscale: u32,
     opacity: f32,
     bounds: Bounds,
     clip: ClipEnvelope,
     corner_radii: Corners,
-    tile: AtlasTile,
     transform: PrimitiveTransform,
 }
 

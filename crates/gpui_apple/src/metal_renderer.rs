@@ -193,11 +193,13 @@ enum PreparedMetalBatch {
         texture: Retained<ProtocolObject<dyn MTLTexture>>,
         range: Range<usize>,
     },
-    Surfaces(Vec<PreparedMetalSurface>),
+    Surfaces {
+        first_surface: usize,
+        surfaces: Vec<PreparedMetalSurface>,
+    },
 }
 
 struct PreparedMetalSurface {
-    bounds: SurfaceBounds,
     texture_size: Size<DevicePixels>,
     y_texture: Retained<ProtocolObject<dyn MTLTexture>>,
     cb_cr_texture: Retained<ProtocolObject<dyn MTLTexture>>,
@@ -787,12 +789,13 @@ impl MetalRenderer {
                             range,
                         }
                     }
-                    PrimitiveBatch::Surfaces(range) => PreparedMetalBatch::Surfaces(
-                        scene.surfaces[range]
+                    PrimitiveBatch::Surfaces(range) => PreparedMetalBatch::Surfaces {
+                        first_surface: range.start,
+                        surfaces: scene.surfaces[range]
                             .iter()
                             .map(|surface| self.prepare_surface(surface))
                             .collect::<Result<Vec<_>>>()?,
-                    ),
+                    },
                     PrimitiveBatch::SubpixelSprites { .. } => {
                         anyhow::bail!("Metal does not support subpixel sprite batches")
                     }
@@ -849,11 +852,6 @@ impl MetalRenderer {
         let cb_cr_texture = CVMetalTextureGetTexture(&cb_cr_cv_texture)
             .context("missing Metal surface chroma texture")?;
         Ok(PreparedMetalSurface {
-            bounds: SurfaceBounds {
-                bounds: surface.bounds,
-                clip: surface.clip,
-                transform: surface.renderer_transform(),
-            },
             texture_size,
             y_texture,
             cb_cr_texture,
@@ -1252,8 +1250,18 @@ impl MetalRenderer {
                         viewport_size,
                         &command_encoder,
                     ),
-                PreparedMetalBatch::Surfaces(surfaces) => {
-                    self.draw_surfaces(surfaces, writer, viewport_size, &command_encoder)
+                PreparedMetalBatch::Surfaces {
+                    first_surface,
+                    surfaces,
+                } => {
+                    self.draw_surfaces(
+                        *first_surface,
+                        surfaces,
+                        bindings,
+                        viewport_size,
+                        &command_encoder,
+                    );
+                    Ok(())
                 }
             };
             if let Err(error) = result {
@@ -1677,19 +1685,30 @@ impl MetalRenderer {
     }
 
     fn draw_surfaces(
-        &mut self,
+        &self,
+        first_surface: usize,
         surfaces: &[PreparedMetalSurface],
-        writer: &mut InstanceBufferWriter,
+        bindings: &InstanceBindings,
         viewport_size: Size<DevicePixels>,
         command_encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
-    ) -> Result<()> {
+    ) {
         command_encoder.setRenderPipelineState(&self.surfaces_pipeline_state);
-        // SAFETY: The unit vertices and copied viewport match the surface shader's layouts and slots.
+        // SAFETY: The unit vertices, uploaded surface array, and viewport match the shader layouts and slots.
         unsafe {
             command_encoder.setVertexBuffer_offset_atIndex(
                 Some(&self.unit_vertices),
                 0,
                 SurfaceInputIndex::Vertices as usize,
+            );
+            command_encoder.setVertexBuffer_offset_atIndex(
+                Some(&bindings.surfaces.buffer),
+                bindings.surfaces.offset,
+                SurfaceInputIndex::Surfaces as usize,
+            );
+            command_encoder.setFragmentBuffer_offset_atIndex(
+                Some(&bindings.surfaces.buffer),
+                bindings.surfaces.offset,
+                SurfaceInputIndex::Surfaces as usize,
             );
             command_encoder.setVertexBytes_length_atIndex(
                 ptr::NonNull::from(&viewport_size).cast(),
@@ -1697,20 +1716,9 @@ impl MetalRenderer {
                 SurfaceInputIndex::ViewportSize as usize,
             );
         }
-        for surface in surfaces {
-            let binding = writer.write(std::slice::from_ref(&surface.bounds))?;
-            // SAFETY: This binding owns the complete SurfaceBounds record and the preflight retains both video planes.
+        for (index, surface) in surfaces.iter().enumerate() {
+            // SAFETY: The instance indexes the uploaded scene array, and preflight retains both matching video planes.
             unsafe {
-                command_encoder.setVertexBuffer_offset_atIndex(
-                    Some(&binding.buffer),
-                    binding.offset,
-                    SurfaceInputIndex::Surfaces as usize,
-                );
-                command_encoder.setFragmentBuffer_offset_atIndex(
-                    Some(&binding.buffer),
-                    binding.offset,
-                    SurfaceInputIndex::Surfaces as usize,
-                );
                 command_encoder.setVertexBytes_length_atIndex(
                     ptr::NonNull::from(&surface.texture_size).cast(),
                     mem::size_of_val(&surface.texture_size),
@@ -1724,14 +1732,15 @@ impl MetalRenderer {
                     Some(&surface.cb_cr_texture),
                     SurfaceInputIndex::CbCrTexture as usize,
                 );
-                command_encoder.drawPrimitives_vertexStart_vertexCount(
+                command_encoder.drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(
                     MTLPrimitiveType::Triangle,
                     0,
                     6,
+                    1,
+                    first_surface + index,
                 );
             }
         }
-        Ok(())
     }
 }
 
@@ -2279,10 +2288,13 @@ mod abi_layout_tests {
         assert_eq!(size_of::<Underline>(), 88);
         assert_eq!(offset_of!(Underline, wavy), 68);
         assert_eq!(size_of::<MonochromeSprite>(), 120);
+        assert_eq!(offset_of!(MonochromeSprite, tile), 8);
         assert_eq!(size_of::<SubpixelSprite>(), 120);
+        assert_eq!(offset_of!(SubpixelSprite, tile), 8);
         assert_eq!(size_of::<PolychromeSprite>(), 128);
-        assert_eq!(offset_of!(PolychromeSprite, grayscale), 8);
-        assert_eq!(offset_of!(PolychromeSprite, opacity), 12);
+        assert_eq!(offset_of!(PolychromeSprite, tile), 8);
+        assert_eq!(offset_of!(PolychromeSprite, grayscale), 48);
+        assert_eq!(offset_of!(PolychromeSprite, opacity), 52);
     }
 
     #[test]

@@ -1589,12 +1589,14 @@ impl WgpuRenderer {
             }
         };
 
-        // Now that we know the surface is healthy, ensure intermediate textures exist
+        let size = Size {
+            width: DevicePixels(frame.texture.width() as i32),
+            height: DevicePixels(frame.texture.height() as i32),
+        };
         let frame_view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let size = self.viewport_size();
         let premultiplied_alpha =
             self.surface_config.alpha_mode == wgpu::CompositeAlphaMode::PreMultiplied;
         let submission = match self.core_mut().render_prepared_frame(
@@ -1777,7 +1779,11 @@ impl WgpuRendererCore {
                             continue;
                         }
                         drop(pass);
-                        self.draw_paths_to_intermediate(&mut encoder, paths, &mut instance_offset)?;
+                        let rasterized = self.draw_paths_to_intermediate(
+                            &mut encoder,
+                            paths,
+                            &mut instance_offset,
+                        )?;
                         pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("main_pass_continued"),
                             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1792,7 +1798,13 @@ impl WgpuRendererCore {
                             depth_stencil_attachment: None,
                             ..Default::default()
                         });
-                        self.draw_paths_from_intermediate(paths, &mut instance_offset, &mut pass)?;
+                        if rasterized {
+                            self.draw_paths_from_intermediate(
+                                paths,
+                                &mut instance_offset,
+                                &mut pass,
+                            )?;
+                        }
                     }
                     PrimitiveBatch::Underlines(range) => self.draw_instances(
                         &instance_bindings.underlines,
@@ -2036,7 +2048,7 @@ impl WgpuRendererCore {
         encoder: &mut wgpu::CommandEncoder,
         paths: &[Path<ScaledPixels>],
         instance_offset: &mut u64,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         let mut vertices = Vec::new();
         for path in paths {
             if projected_path_visible_bounds(path).is_none() {
@@ -2053,7 +2065,7 @@ impl WgpuRendererCore {
         }
 
         if vertices.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
         let instances = self.write_instance_binding(
             "path_rasterization_bind_group",
@@ -2063,7 +2075,7 @@ impl WgpuRendererCore {
         let resources = self.resources();
 
         let Some(path_intermediate_view) = resources.path_intermediate_view.as_ref() else {
-            return Ok(());
+            return Ok(false);
         };
 
         let (target_view, resolve_target) = if let Some(ref msaa_view) = resources.path_msaa_view {
@@ -2097,7 +2109,7 @@ impl WgpuRendererCore {
             );
         }
 
-        Ok(())
+        Ok(true)
     }
 
     fn prepare_clip_buffer(&mut self, clip_shapes: &[GpuClipShape]) -> Option<u32> {
@@ -3070,16 +3082,19 @@ mod abi_layout_tests {
         assert_eq!(offset_of!(Underline, wavy), 68);
         assert_eq!(size_of::<Underline>(), 88);
 
-        assert_eq!(offset_of!(MonochromeSprite, clip), 24);
+        assert_eq!(offset_of!(MonochromeSprite, tile), 8);
+        assert_eq!(offset_of!(MonochromeSprite, clip), 64);
         assert_eq!(size_of::<MonochromeSprite>(), 120);
 
-        assert_eq!(offset_of!(SubpixelSprite, clip), 24);
+        assert_eq!(offset_of!(SubpixelSprite, tile), 8);
+        assert_eq!(offset_of!(SubpixelSprite, clip), 64);
         assert_eq!(size_of::<SubpixelSprite>(), 120);
 
         let _: fn(PolychromeSprite) -> PaddedBool32 = |sprite| sprite.grayscale;
-        assert_eq!(offset_of!(PolychromeSprite, grayscale), 8);
-        assert_eq!(offset_of!(PolychromeSprite, opacity), 12);
-        assert_eq!(offset_of!(PolychromeSprite, clip), 32);
+        assert_eq!(offset_of!(PolychromeSprite, tile), 8);
+        assert_eq!(offset_of!(PolychromeSprite, grayscale), 48);
+        assert_eq!(offset_of!(PolychromeSprite, opacity), 52);
+        assert_eq!(offset_of!(PolychromeSprite, clip), 72);
         assert_eq!(size_of::<PolychromeSprite>(), 128);
         for array_stride in [
             size_of::<Quad>(),
