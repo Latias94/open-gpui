@@ -3849,6 +3849,14 @@ public cache-key authority, component crate split, raster cache or compositor th
 by this research amendment. Numerical gates need a current-source workload before implementation;
 this direction does not expand the earlier official sync gate into unrelated requalification.
 
+The first public CPU consumer for this direction is now `crates/gpui/tests/state_locality.rs`.
+Its **5/5** run (`2ae1f4fa-8e62-4817-92b3-7940c5abd6b2`) uses the existing TestApp/Visual
+publication path to cover shared non-View observation, narrow projections, equal visual values
+with a changing operation basis, changed bounds/selection/source, real panel release and late
+result rejection, and the documented non-View notify versus cached-View behavior. It introduces
+no Signal runtime or new cache owner. The counters are callback observations; no elapsed-time,
+allocation, upload, GPU or native-platform budget follows.
+
 The [standalone logger](../verification.md#standalone-logging-and-tracing) at
 `9e7b9c3a36fb0266ef68ec7ee7280b2eb8646554` and the
 [Window/Win32 successor](../verification.md#window-controls-lazy-inspector-and-win32-dispatch)

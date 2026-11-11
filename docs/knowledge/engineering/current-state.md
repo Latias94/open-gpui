@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-12T00:44:56+08:00
+timestamp: 2026-11-12T01:41:42+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -24,6 +24,11 @@ verified_by:
   ordinary-consumer measurements; article benchmarks are not current-fork evidence. No new Signal
   runtime, persistent layout, cache interface or compositor is implemented/selected by this
   research-only amendment. Engine domain policy stays in Nara; general corrections stay here.
+
+- The first public state-locality fixture passes 5/5 at
+  `2ae1f4fa-8e62-4817-92b3-7940c5abd6b2`. It qualifies existing Entity observation, cached View
+  reuse, projection equality/basis handling and subscription retirement through the public CPU
+  path. Its counters are diagnostic; no layout/upload/GPU or latency budget follows.
 
 - The explicit [linear-sRGB recorder](../../verification.md#explicit-linear-srgb-scene-composition)
   preserves GPUI's numeric-sRGB default and adds an application-selected working domain. Actual

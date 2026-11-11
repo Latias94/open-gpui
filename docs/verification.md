@@ -161,6 +161,26 @@ CI is unexecuted. The prior built xtask executable is absent after disk cleanup.
 does not rebuild the unrelated component/DevTools closure solely for unchanged aggregate static
 scans, nor claim a new whole-framework, compiler-floor, native-default or foreign-platform gate.
 
+## State Locality And Cached View Consumer
+
+The first public CPU consumer for the November 12 state-locality direction is
+`crates/gpui/tests/state_locality.rs`. It uses the existing `TestAppContext`, `VisualTestContext`,
+Entity observation and cached View contracts; it does not introduce a Signal graph, persistent
+layout owner or new cache authority. The five tests cover a shared non-View model with narrow
+panel subscriptions, equal visual projections with a changing operation basis, selection/source
+and constraint changes, release/replacement with late result rejection, and the documented case
+where direct non-View notification refreshes a window while a cached View remains unchanged until
+its owner refreshes it.
+
+The focused locked nextest run passes **5/5**
+(`2ae1f4fa-8e62-4817-92b3-7940c5abd6b2`). The assertions establish callback/release/publication
+behavior only. They do not establish elapsed-time, allocation, memory, upload, GPU, accessibility,
+native compositor or foreign-platform budgets. The separate Nara consumer owns engine-domain and
+native composition evidence. Focused correctness Clippy and workspace formatting pass; Clippy
+retains the existing lint policy's unwrap warnings in this assertion-only fixture. The existing
+Windows workflow now runs this target explicitly; YAML syntax is checked locally, with no remote
+CI execution claimed. Independent review finds no material issue in the bounded CPU evidence.
+
 ## External Scene Custody And Physical Attachment Extents
 
 This fork-owned integration successor starts from `5925a34f920563592cd6115e6f97867699f8dae6`.
