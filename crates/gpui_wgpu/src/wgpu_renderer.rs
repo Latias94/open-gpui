@@ -1851,6 +1851,7 @@ impl WgpuRendererCore {
             .resources
             .queue
             .submit(std::iter::once(encoder.finish()));
+        atlas_presentation.retain_imported_until_completed(&self.resources.queue);
         #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
         {
             self.resources.submitted_scene_count += 1;

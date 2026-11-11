@@ -112,6 +112,7 @@ mod frame_pump;
 mod frame_scheduling_tests;
 #[cfg(all(test, feature = "profiler"))]
 mod frame_signal_tests;
+mod imported_image;
 mod input_dispatch;
 #[cfg(test)]
 mod input_preference_tests;

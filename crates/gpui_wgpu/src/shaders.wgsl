@@ -1452,12 +1452,35 @@ fn vs_poly_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
 
 @fragment
 fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
-    let sample = textureSample(t_sprite, s_sprite, input.tile_position);
     let sprite = load_poly_sprite(input.sprite_id);
+    let dimensions = vec2<f32>(textureDimensions(t_sprite));
+    var position = input.tile_position;
+    if ((sprite.pad & 16u) != 0u) {
+        let first = vec2<f32>(sprite.tile.bounds.origin) + vec2<f32>(0.5);
+        let last = vec2<f32>(sprite.tile.bounds.origin + sprite.tile.bounds.size) - vec2<f32>(0.5);
+        position = clamp(position, first / dimensions, last / dimensions);
+    }
+    let filtered = textureSample(t_sprite, s_sprite, position);
     if (!clip_envelope_contains(input.window_position, sprite.clip)) {
         return vec4<f32>(0.0);
     }
-
+    var sample = filtered;
+    if ((sprite.pad & 8u) != 0u) {
+        let texel = vec2<i32>(floor(position * dimensions));
+        sample = textureLoad(t_sprite, texel, 0);
+    }
+    if ((sprite.pad & 4u) != 0u) {
+        sample.a = 1.0;
+    } else if ((sprite.pad & 2u) != 0u) {
+        if (sample.a > 0.0) {
+            sample = vec4<f32>(sample.rgb / sample.a, sample.a);
+        } else {
+            sample = vec4<f32>(0.0);
+        }
+    }
+    if ((sprite.pad & 1u) != 0u) {
+        sample = linear_to_srgba(sample);
+    }
     let distance = quad_sdf(input.local_position, sprite.bounds, sprite.corner_radii);
 
     var color = sample;

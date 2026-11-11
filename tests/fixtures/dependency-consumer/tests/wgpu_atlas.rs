@@ -1,10 +1,11 @@
 #![cfg(all(feature = "wgpu-renderer", not(target_family = "wasm")))]
 
 use open_gpui::{
-    AtlasAccessOutcome, AtlasKey, AtlasRemoveOutcome, DevicePixels, ImageId, PlatformAtlas,
-    RenderImageParams, block_on, size,
+    AtlasAccessOutcome, AtlasKey, AtlasRemoveOutcome, Bounds, DevicePixels, ImageId,
+    ImageTextureAlpha, ImageTextureSampling, ImageTextureTransfer, PlatformAtlas,
+    RenderImageParams, block_on, point, size,
 };
-use open_gpui_wgpu::WgpuAtlas;
+use open_gpui_wgpu::{WgpuAtlas, WgpuImportedImageDescriptor};
 use std::{borrow::Cow, sync::Arc, time::Duration};
 
 #[test]
@@ -76,6 +77,49 @@ fn application_owned_device_uploads_and_releases_a_leased_backend_atlas() {
             timeout: Some(Duration::from_secs(10)),
         })
         .expect("the application must complete the atlas upload on its queue");
+
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("ordinary application retained image"),
+        size: wgpu::Extent3d {
+            width: 4,
+            height: 4,
+            depth_or_array_layers: 2,
+        },
+        mip_level_count: 2,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Bgra8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let image_descriptor = WgpuImportedImageDescriptor {
+        texture,
+        mip_level: 1,
+        array_layer: 1,
+        region: Bounds::new(point(DevicePixels(0), DevicePixels(0)), dimensions),
+        transfer: ImageTextureTransfer::Srgb,
+        alpha: ImageTextureAlpha::Straight,
+        sampling: ImageTextureSampling::Linear,
+        owner: None,
+    };
+    let mut invalid = image_descriptor.clone();
+    invalid.mip_level = 2;
+    assert!(atlas.import_image(invalid).is_err());
+    let image = atlas
+        .import_image(image_descriptor)
+        .expect("the ordinary consumer imports a complete mip/layer region");
+    assert_eq!(image.size(), dimensions);
+    assert_eq!(image.sampled_transfer(), ImageTextureTransfer::Linear);
+    assert_eq!(image.alpha(), ImageTextureAlpha::Straight);
+    image
+        .validate()
+        .expect("the imported image retains its original epoch");
+    let image_clone = image.clone();
+    drop(image);
+    image_clone
+        .validate()
+        .expect("image handles share one live allocation");
+    drop(image_clone);
 
     let platform: Arc<dyn PlatformAtlas> = atlas.clone();
     let lease = platform

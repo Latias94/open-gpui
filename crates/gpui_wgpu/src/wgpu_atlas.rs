@@ -12,6 +12,10 @@ use std::{borrow::Cow, ops, sync::Arc};
 
 use crate::WgpuContext;
 
+mod imported_image;
+
+pub use imported_image::WgpuImportedImageDescriptor;
+
 fn device_size_to_etagere(size: Size<DevicePixels>) -> etagere::Size {
     size2(size.width.0, size.height.0)
 }
@@ -46,9 +50,18 @@ struct WgpuAtlasTextures {
 pub(crate) struct WgpuAtlasPresentationReceipt {
     texture_views: FxHashMap<AtlasTextureInstanceId, wgpu::TextureView>,
     _lease: AtlasTextureLease,
+    imported_resources: Vec<Arc<imported_image::ImportedImageResource>>,
 }
 
 impl WgpuAtlasPresentationReceipt {
+    pub(crate) fn retain_imported_until_completed(&self, queue: &wgpu::Queue) {
+        if self.imported_resources.is_empty() {
+            return;
+        }
+        let resources = self.imported_resources.clone();
+        queue.on_submitted_work_done(move || drop(resources));
+    }
+
     pub(crate) fn texture_view(
         &self,
         texture: AtlasTextureInstanceId,
@@ -104,52 +117,59 @@ impl WgpuAtlas {
         let textures = textures.into_iter().collect::<Vec<_>>();
         let atlas: Arc<dyn PlatformAtlas> = self.clone();
         let lease = atlas.retain_texture_instances(&textures)?;
-        let texture_views = {
+        let (texture_views, imported_resources) = {
             let lock = self.0.lock();
-            lease
-                .texture_instances()
-                .iter()
-                .copied()
-                .map(|texture| {
-                    lock.backend
-                        .storage
-                        .get(texture)
-                        .map(|resident| (texture, resident.view.clone()))
-                        .ok_or(AtlasTextureLeaseError::TextureUnavailable {
-                            texture,
-                            epoch: lock.backend.epoch,
-                        })
-                })
-                .collect::<std::result::Result<_, _>>()?
+            let mut texture_views = FxHashMap::default();
+            let mut imported_resources = Vec::new();
+            for texture in lease.texture_instances().iter().copied() {
+                let resident = lock.backend.storage.get(texture).ok_or(
+                    AtlasTextureLeaseError::TextureUnavailable {
+                        texture,
+                        epoch: lock.backend.epoch,
+                    },
+                )?;
+                texture_views.insert(texture, resident.view.clone());
+                if let Some(resource) = &resident.imported {
+                    imported_resources.push(resource.clone());
+                }
+            }
+            (texture_views, imported_resources)
         };
         Ok(WgpuAtlasPresentationReceipt {
             texture_views,
             _lease: lease,
+            imported_resources,
         })
     }
 
     /// Clears all cached textures and tiles, forcing them to be recreated.
     /// Use this for incremental recovery when the device is still valid.
     pub fn clear(&self) {
-        self.0.lock().clear(|backend| {
+        let mut state = self.0.lock();
+        let retired = std::mem::take(&mut state.backend.storage);
+        state.clear(|backend| {
             backend.epoch = backend.epoch.next();
-            backend.storage = WgpuAtlasStorage::default();
             backend.pending_uploads.clear();
         });
+        drop(state);
+        drop(retired);
     }
 
     /// Handles device lost by clearing all textures and cached tiles.
     /// The atlas will lazily recreate textures as needed on subsequent frames.
     pub fn handle_device_lost(&self, context: &WgpuContext) {
-        self.0.lock().clear(|backend| {
+        let mut state = self.0.lock();
+        let retired = std::mem::take(&mut state.backend.storage);
+        state.clear(|backend| {
             backend.epoch = backend.epoch.next();
             backend.device = context.device.clone();
             backend.queue = context.queue.clone();
             backend.max_texture_size = context.device.limits().max_texture_dimension_2d;
             backend.color_texture_format = context.color_texture_format();
-            backend.storage = WgpuAtlasStorage::default();
             backend.pending_uploads.clear();
         });
+        drop(state);
+        drop(retired);
     }
 }
 
@@ -235,9 +255,13 @@ impl PlatformAtlas for WgpuAtlas {
         if lock.backend.epoch != epoch {
             return;
         }
-        for texture in textures.iter().copied() {
-            lock.backend.release_visual_lease(texture);
-        }
+        let retired = textures
+            .iter()
+            .copied()
+            .filter_map(|texture| lock.backend.release_visual_lease(texture))
+            .collect::<Vec<_>>();
+        drop(lock);
+        drop(retired);
     }
 }
 
@@ -297,7 +321,9 @@ impl AtlasBackend for WgpuAtlasTextures {
         let mut resident = slot.take().expect("validated texture is resident");
         resident.decrement_ref_count();
         if resident.live_visual_leases == 0 {
-            resident.allocator.deallocate(tile.tile_id.into());
+            if let Some(allocator) = &mut resident.allocator {
+                allocator.deallocate(tile.tile_id.into());
+            }
         } else {
             resident.retired_tiles.push(tile);
         }
@@ -314,7 +340,10 @@ impl AtlasBackend for WgpuAtlasTextures {
 }
 
 impl WgpuAtlasTextures {
-    fn release_visual_lease(&mut self, texture: AtlasTextureInstanceId) {
+    fn release_visual_lease(
+        &mut self,
+        texture: AtlasTextureInstanceId,
+    ) -> Option<Arc<imported_image::ImportedImageResource>> {
         let Self {
             storage,
             pending_uploads,
@@ -323,24 +352,26 @@ impl WgpuAtlasTextures {
         let id = texture.texture_id;
         let texture_list = &mut storage[id.kind];
         let Some(texture_slot) = texture_list.textures.get_mut(id.index as usize) else {
-            return;
+            return None;
         };
         if texture_slot
             .as_ref()
             .is_none_or(|resident| resident.id != texture)
         {
-            return;
+            return None;
         }
         let Some(mut resident) = texture_slot.take() else {
-            return;
+            return None;
         };
         if !resident.release_visual_lease() {
             *texture_slot = Some(resident);
-            return;
+            return None;
         }
         if resident.live_visual_leases == 0 {
-            for tile in resident.retired_tiles.drain(..) {
-                resident.allocator.deallocate(tile.tile_id.into());
+            if let Some(allocator) = &mut resident.allocator {
+                for tile in resident.retired_tiles.drain(..) {
+                    allocator.deallocate(tile.tile_id.into());
+                }
             }
         }
         if resident.is_unreferenced() {
@@ -348,8 +379,10 @@ impl WgpuAtlasTextures {
             texture_list
                 .free_list
                 .push(resident.id.texture_id.index as usize);
+            resident.imported.take()
         } else {
             *texture_slot = Some(resident);
+            None
         }
     }
 
@@ -429,10 +462,11 @@ impl WgpuAtlasTextures {
                 texture_id,
                 generation,
             },
-            allocator: BucketedAtlasAllocator::new(device_size_to_etagere(size)),
+            allocator: Some(BucketedAtlasAllocator::new(device_size_to_etagere(size))),
             format,
             texture,
             view,
+            imported: None,
             live_atlas_keys: 0,
             live_visual_leases: 0,
             retired_tiles: Vec::new(),
@@ -558,9 +592,10 @@ impl WgpuAtlasStorage {
 
 struct WgpuAtlasTexture {
     id: AtlasTextureInstanceId,
-    allocator: BucketedAtlasAllocator,
+    allocator: Option<BucketedAtlasAllocator>,
     texture: wgpu::Texture,
     view: wgpu::TextureView,
+    imported: Option<Arc<imported_image::ImportedImageResource>>,
     format: wgpu::TextureFormat,
     live_atlas_keys: u32,
     live_visual_leases: u32,
@@ -569,7 +604,10 @@ struct WgpuAtlasTexture {
 
 impl WgpuAtlasTexture {
     fn allocate(&mut self, size: Size<DevicePixels>) -> Option<AtlasTile> {
-        let allocation = self.allocator.allocate(device_size_to_etagere(size))?;
+        let allocation = self
+            .allocator
+            .as_mut()?
+            .allocate(device_size_to_etagere(size))?;
         let tile = AtlasTile {
             texture_id: self.id.texture_id,
             tile_id: allocation.id.into(),
@@ -623,7 +661,7 @@ mod tests {
     use open_gpui::{FontId, GlyphId, ImageId, RenderGlyphParams, RenderImageParams, px};
     use std::sync::Arc;
 
-    fn test_device_and_queue() -> anyhow::Result<(Arc<wgpu::Device>, Arc<wgpu::Queue>)> {
+    pub(super) fn test_device_and_queue() -> anyhow::Result<(Arc<wgpu::Device>, Arc<wgpu::Queue>)> {
         block_on(async {
             let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
                 backends: wgpu::Backends::all(),

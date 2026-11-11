@@ -49,6 +49,7 @@ mod gestures;
 mod global;
 #[cfg(gpui_hot_reload)]
 mod hot_reload;
+mod image_texture;
 mod input;
 mod inspector;
 mod interactive;
@@ -138,6 +139,7 @@ pub use open_gpui_macros::{
     AppContext, IntoElement, Render, VisualContext, bench, property_test, register_action, test,
 };
 
+pub use image_texture::*;
 pub use input::*;
 pub use inspector::*;
 pub use interactive::*;

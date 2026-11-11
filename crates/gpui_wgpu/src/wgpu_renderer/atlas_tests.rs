@@ -1,8 +1,9 @@
 use super::*;
 use open_gpui::{
     AppContext as _, AtlasKey, AtlasRemoveOutcome, AtlasTile, BorderStyle, BoxShadow, Context,
-    Corners, Edges, FontId, GlyphId, HeadlessAppContext, IntoElement, NoopTextSystem, Pixels,
-    PlatformAtlas, PlatformHeadlessRenderer, PlatformTextSystem, Primitive, Render, RenderImage,
+    Corners, Edges, FontId, GlyphId, HeadlessAppContext, ImageTexture, ImageTextureAlpha,
+    ImageTextureSampling, ImageTextureTransfer, IntoElement, NoopTextSystem, Pixels, PlatformAtlas,
+    PlatformHeadlessRenderer, PlatformTextSystem, Primitive, Render, RenderImage,
     RenderImageParams, Styled as _, SubtreeClip, SubtreeClipExt as _, SubtreeTransform,
     SubtreeTransformExt as _, SubtreeTransformOrigin, UnderlineStyle, Window, canvas, fill, font,
     hsla, point, px, quad, rgb, size, transparent_black,
@@ -50,6 +51,7 @@ impl PlatformHeadlessRenderer for WindowSceneRenderer {
 #[derive(Clone)]
 enum FixturePaint {
     Images(Vec<Arc<RenderImage>>),
+    ImportedImage(ImageTexture),
     CroppedImage(Arc<RenderImage>),
     Primitives,
     HollowBorder {
@@ -72,6 +74,14 @@ impl WindowFixture {
     fn images(images: Vec<Arc<RenderImage>>) -> Self {
         Self {
             paint: FixturePaint::Images(images),
+            text_system: Arc::new(NoopTextSystem),
+            content_size: size(px(16.0), px(16.0)),
+        }
+    }
+
+    fn imported_image(image: ImageTexture) -> Self {
+        Self {
+            paint: FixturePaint::ImportedImage(image),
             text_system: Arc::new(NoopTextSystem),
             content_size: size(px(16.0), px(16.0)),
         }
@@ -154,6 +164,11 @@ impl Render for WindowFixture {
                             .paint_image(bounds, bounds, Default::default(), image, 0, false)
                             .expect("the public image consumer must produce a sprite");
                     }
+                }
+                FixturePaint::ImportedImage(image) => {
+                    window
+                        .paint_image_texture(bounds, Default::default(), &image)
+                        .expect("the imported image consumer must produce a sprite");
                 }
                 FixturePaint::CroppedImage(image) => {
                     let image_bounds = Bounds::new(
@@ -1069,6 +1084,160 @@ fn warm_atlas_cache_refuses_mixed_stale_generation_without_partial_submission() 
             assert_color(renderer, scale_factor, [0, 0, 255, 255])
         },
     )
+}
+
+#[test]
+fn builtin_submission_retains_imported_owner_until_completion_callback() -> anyhow::Result<()> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct HostOwner(Arc<AtomicUsize>);
+
+    impl Drop for HostOwner {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::PRIMARY,
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
+    });
+    let adapter = open_gpui::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        force_fallback_adapter: false,
+        apply_limit_buckets: false,
+        ..Default::default()
+    }))?;
+    let (device, queue) = open_gpui::block_on(
+        adapter.request_device(&wgpu::DeviceDescriptor {
+            required_limits: wgpu::Limits::downlevel_defaults()
+                .using_resolution(adapter.limits())
+                .using_alignment(adapter.limits()),
+            ..Default::default()
+        }),
+    )?;
+    let device = Arc::new(device);
+    let queue = Arc::new(queue);
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let atlas = Arc::new(WgpuAtlas::new(device.clone(), queue.clone(), format));
+    let mut core = WgpuRendererCore::from_device(
+        &adapter,
+        device.clone(),
+        queue.clone(),
+        atlas.clone(),
+        format,
+        wgpu::CompositeAlphaMode::Opaque,
+        false,
+    )?;
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("builtin submission imported image"),
+        size: wgpu::Extent3d {
+            width: 2,
+            height: 2,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        texture.as_image_copy(),
+        &[255_u8, 0, 0, 255].repeat(4),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(8),
+            rows_per_image: Some(2),
+        },
+        texture.size(),
+    );
+    let drops = Arc::new(AtomicUsize::new(0));
+    let owner = Arc::new(HostOwner(drops.clone()));
+    let owner_lifetime = Arc::downgrade(&owner);
+    let image = atlas.import_image(crate::WgpuImportedImageDescriptor {
+        texture: texture.clone(),
+        mip_level: 0,
+        array_layer: 0,
+        region: Bounds::new(
+            point(DevicePixels(0), DevicePixels(0)),
+            size(DevicePixels(2), DevicePixels(2)),
+        ),
+        transfer: ImageTextureTransfer::Srgb,
+        alpha: ImageTextureAlpha::Straight,
+        sampling: ImageTextureSampling::Linear,
+        owner: Some(owner),
+    })?;
+    let fixture = WindowFixture::imported_image(image.clone());
+    let captured = Rc::new(RefCell::new(None));
+    let output = captured.clone();
+    let scale_factor = Rc::new(Cell::new(None));
+    let observed_scale = scale_factor.clone();
+    let mut app = HeadlessAppContext::with_platform(fixture.text_system.clone(), Arc::new(()), {
+        let atlas = atlas.clone();
+        move || {
+            Ok(Some(Box::new(WindowSceneRenderer {
+                atlas: atlas.clone(),
+                scale_factor: observed_scale.clone(),
+                captured: output.clone(),
+            })))
+        }
+    });
+    let handle = app.open_window(size(px(32.0), px(32.0)), move |window, app| {
+        scale_factor.set(Some(window.scale_factor()));
+        app.new(|_| fixture)
+    })?;
+    app.update_window(handle.into(), |_, window, _| {
+        let _ = window.activate_window();
+    })?;
+    app.run_until_parked();
+    app.simulate_window_scheduled_frame(handle.into())?;
+    let (scene, scale_factor) = captured
+        .borrow_mut()
+        .take()
+        .context("the Window must produce an imported-image scene")?;
+    assert_eq!(scene.polychrome_sprites.len(), 1);
+    assert_eq!(scene.batches().count(), 1);
+    let target_size = render_size(scale_factor, 32.0, 32.0);
+    let target = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("builtin imported-image render target"),
+        size: wgpu::Extent3d {
+            width: target_size.width.0 as u32,
+            height: target_size.height.0 as u32,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+    let submission = core.render_frame(&scene, &view, target_size, false, wgpu::Color::BLACK)?;
+    assert_eq!(core.resources.submitted_scene_count, 1);
+    assert_eq!(core.resources.atlas_texture_bind_groups.len(), 1);
+    drop(image);
+    drop(scene);
+    drop(app);
+    atlas.clear();
+    assert!(
+        owner_lifetime.upgrade().is_some(),
+        "the submission callback must retain the host owner before polling"
+    );
+    assert_eq!(drops.load(Ordering::SeqCst), 0);
+    device.poll(wgpu::PollType::Wait {
+        submission_index: Some(submission),
+        timeout: Some(Duration::from_secs(30)),
+    })?;
+    assert!(
+        owner_lifetime.upgrade().is_none(),
+        "the completion callback must release the original host owner"
+    );
+    assert_eq!(drops.load(Ordering::SeqCst), 1);
+    assert_eq!(core.resources.atlas_texture_bind_groups.len(), 1);
+    assert_eq!(texture.width(), 2);
+    Ok(())
 }
 
 #[test]

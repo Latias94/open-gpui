@@ -7,11 +7,16 @@
 use anyhow::{Context as _, Result};
 use open_gpui::{
     AppContext as _, AtlasKey, AtlasRemoveOutcome, Bounds, Context, DevicePixels,
-    HeadlessAppContext, IntoElement, ParentElement as _, PathBuilder, PlatformAtlas,
+    HeadlessAppContext, ImageTexture, ImageTextureAlpha, ImageTextureSampling,
+    ImageTextureTransfer, IntoElement, ParentElement as _, PathBuilder, PlatformAtlas,
     PlatformHeadlessRenderer, Render, RenderImage, RenderImageParams, Scene, Size, Styled as _,
-    Window, WindowHandle, block_on, canvas, div, fill, point, px, rgb, size,
+    SubtreeClip, SubtreeClipExt as _, SubtreeTransform, SubtreeTransformExt as _, Window,
+    WindowHandle, block_on, canvas, div, fill, point, px, rgb, size,
 };
-use open_gpui_wgpu::{CosmicTextSystem, WgpuAtlas, WgpuSceneRecording, WgpuSceneRenderer, wgpu};
+use open_gpui_wgpu::{
+    CosmicTextSystem, WgpuAtlas, WgpuImportedImageDescriptor, WgpuSceneRecording,
+    WgpuSceneRenderer, wgpu,
+};
 use std::{
     cell::RefCell,
     rc::Rc,
@@ -525,5 +530,538 @@ fn host_records_two_gpui_scenes_and_retains_their_atlas_through_one_submission()
         "completed recordings must release the atlas"
     );
     assert_eq!(errors.load(Ordering::SeqCst), 2);
+    Ok(())
+}
+
+struct ImportedRoot {
+    images: Vec<ImageTexture>,
+}
+
+impl Render for ImportedRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let images = self.images.clone();
+        let clipped = images[4].clone();
+        div()
+            .size_full()
+            .child(
+                canvas(
+                    |_, _, _| {},
+                    move |bounds, (), window, _| {
+                        for (index, image) in images.iter().enumerate() {
+                            window
+                                .paint_image_texture(
+                                    Bounds::new(
+                                        bounds.origin
+                                            + point(px(2.0 + index as f32 * 12.0), px(2.0)),
+                                        size(px(10.0), px(10.0)),
+                                    ),
+                                    Default::default(),
+                                    image,
+                                )
+                                .expect("a current imported image must paint");
+                        }
+                    },
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(2.0))
+                    .top(px(2.0))
+                    .size(px(3.0))
+                    .bg(rgb(0xffff00)),
+            )
+            .child(
+                canvas(
+                    |_, _, _| {},
+                    move |bounds, (), window, _| {
+                        window
+                            .paint_image_texture(bounds, Default::default(), &clipped)
+                            .expect("the transformed image must paint");
+                    },
+                )
+                .absolute()
+                .left(px(2.0))
+                .top(px(18.0))
+                .w(px(16.0))
+                .h(px(10.0))
+                .with_subtree_clip(
+                    SubtreeClip::try_rounded_rect(
+                        Bounds::new(point(px(3.0), px(1.0)), size(px(6.0), px(8.0))),
+                        Default::default(),
+                    )
+                    .expect("the imported image clip must be valid"),
+                )
+                .with_subtree_transform(
+                    SubtreeTransform::try_translation(point(px(2.0), px(0.0)))
+                        .expect("the imported image translation must be valid"),
+                ),
+            )
+    }
+}
+
+fn imported_scene(
+    atlas: &Arc<WgpuAtlas>,
+    images: Vec<ImageTexture>,
+) -> Result<(HeadlessAppContext, Scene)> {
+    let captured = Rc::new(RefCell::new(None));
+    let mut app = HeadlessAppContext::with_platform(
+        Arc::new(CosmicTextSystem::new_without_system_fonts("sans-serif")),
+        Arc::new(()),
+        {
+            let atlas = atlas.clone();
+            let captured = captured.clone();
+            move || {
+                Ok(Some(Box::new(SceneSource {
+                    atlas: atlas.clone(),
+                    captured: captured.clone(),
+                })))
+            }
+        },
+    );
+    let handle = app.open_window(size(px(100.0), px(32.0)), move |_, app| {
+        app.new(|_| ImportedRoot { images })
+    })?;
+    assert!(app.capture_screenshot(handle.into()).is_err());
+    let scene = captured
+        .borrow_mut()
+        .take()
+        .context("the imported image composition must produce a scene")?;
+    assert_eq!(scene.polychrome_sprites.len(), 9);
+    Ok((app, scene))
+}
+
+struct HostImageOwner(Arc<AtomicUsize>);
+
+impl Drop for HostImageOwner {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+fn produce_imported_images(
+    device: &wgpu::Device,
+    encoder: &mut wgpu::CommandEncoder,
+    atlas: &Arc<WgpuAtlas>,
+    owner: &Arc<HostImageOwner>,
+    alternate: bool,
+) -> Result<Vec<ImageTexture>> {
+    let cases = [
+        (
+            wgpu::TextureFormat::Rgba8Unorm,
+            ImageTextureTransfer::Srgb,
+            ImageTextureAlpha::Straight,
+            wgpu::Color {
+                r: 0.5,
+                g: 0.25,
+                b: 0.125,
+                a: 0.5,
+            },
+        ),
+        (
+            wgpu::TextureFormat::Bgra8Unorm,
+            ImageTextureTransfer::Linear,
+            ImageTextureAlpha::Straight,
+            wgpu::Color {
+                r: 0.25,
+                g: 0.5,
+                b: 1.0,
+                a: 0.5,
+            },
+        ),
+        (
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            ImageTextureTransfer::Srgb,
+            ImageTextureAlpha::Premultiplied,
+            wgpu::Color {
+                r: 0.125,
+                g: 0.25,
+                b: 0.5,
+                a: 0.5,
+            },
+        ),
+        (
+            wgpu::TextureFormat::Rgba16Float,
+            ImageTextureTransfer::Linear,
+            ImageTextureAlpha::Premultiplied,
+            wgpu::Color {
+                r: 0.125,
+                g: 0.25,
+                b: 0.5,
+                a: 0.5,
+            },
+        ),
+        (
+            wgpu::TextureFormat::Bgra8UnormSrgb,
+            ImageTextureTransfer::Srgb,
+            ImageTextureAlpha::Opaque,
+            wgpu::Color {
+                r: 0.25,
+                g: 0.5,
+                b: 0.75,
+                a: 0.0,
+            },
+        ),
+        (
+            wgpu::TextureFormat::Rgba8Unorm,
+            ImageTextureTransfer::Srgb,
+            ImageTextureAlpha::Premultiplied,
+            wgpu::Color {
+                r: 0.25,
+                g: 0.125,
+                b: 0.0625,
+                a: 0.5,
+            },
+        ),
+        (
+            wgpu::TextureFormat::Rgba8Unorm,
+            ImageTextureTransfer::Srgb,
+            ImageTextureAlpha::Opaque,
+            wgpu::Color::BLACK,
+        ),
+        (
+            wgpu::TextureFormat::Rgba8Unorm,
+            ImageTextureTransfer::Srgb,
+            ImageTextureAlpha::Opaque,
+            wgpu::Color::BLACK,
+        ),
+    ];
+    let mut images = Vec::new();
+    for (index, (format, transfer, alpha, color)) in cases.into_iter().enumerate() {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("application-produced GPUI sampled image"),
+            size: wgpu::Extent3d {
+                width: 8,
+                height: 8,
+                depth_or_array_layers: 2,
+            },
+            mip_level_count: 2,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        for (mip_level, array_layer, clear) in [
+            (0, 0, wgpu::Color::RED),
+            (1, 0, wgpu::Color::GREEN),
+            (1, 1, if alternate { wgpu::Color::BLUE } else { color }),
+        ] {
+            let view = texture.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                base_mip_level: mip_level,
+                mip_level_count: Some(1),
+                base_array_layer: array_layer,
+                array_layer_count: Some(1),
+                ..Default::default()
+            });
+            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("host producer before GPUI sampling"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(clear),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                ..Default::default()
+            });
+        }
+        if index >= 6 && !alternate {
+            paint_host_texel_pattern(device, encoder, &texture);
+        }
+        let descriptor = WgpuImportedImageDescriptor {
+            texture,
+            mip_level: 1,
+            array_layer: 1,
+            region: Bounds::new(
+                point(DevicePixels(1), DevicePixels(1)),
+                size(DevicePixels(2), DevicePixels(2)),
+            ),
+            transfer,
+            alpha,
+            sampling: if index % 2 == 0 {
+                ImageTextureSampling::Linear
+            } else {
+                ImageTextureSampling::Nearest
+            },
+            owner: Some(owner.clone()),
+        };
+        images.push(atlas.import_image(descriptor)?);
+    }
+    Ok(images)
+}
+
+fn paint_host_texel_pattern(
+    device: &wgpu::Device,
+    encoder: &mut wgpu::CommandEncoder,
+    texture: &wgpu::Texture,
+) {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("host texel pattern"),
+        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(
+            r#"
+@vertex
+fn vertex(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
+    let vertices = array<vec2<f32>, 3>(vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+    return vec4(vertices[index], 0.0, 1.0);
+}
+@fragment
+fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    let texel = vec2<u32>(position.xy);
+    if (texel.x == 0u || texel.x == 3u || texel.y == 0u || texel.y == 3u) {
+        return vec4(1.0, 0.0, 1.0, 1.0);
+    }
+    if (texel.y == 1u) {
+        return select(vec4(1.0, 0.0, 0.0, 1.0), vec4(0.0, 1.0, 0.0, 1.0), texel.x == 2u);
+    }
+    return select(vec4(0.0, 0.0, 1.0, 1.0), vec4(1.0), texel.x == 2u);
+}
+"#,
+        )),
+    });
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("host texel pattern pipeline"),
+        layout: None,
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vertex"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fragment"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: texture.format(),
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive: Default::default(),
+        depth_stencil: None,
+        multisample: Default::default(),
+        multiview_mask: None,
+        cache: None,
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(wgpu::TextureViewDimension::D2),
+        base_mip_level: 1,
+        mip_level_count: Some(1),
+        base_array_layer: 1,
+        array_layer_count: Some(1),
+        ..Default::default()
+    });
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("host-produced region and filtering control"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: &view,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            },
+            depth_slice: None,
+        })],
+        ..Default::default()
+    });
+    pass.set_pipeline(&pipeline);
+    pass.draw(0..3, 0..1);
+}
+
+fn assert_imported_pixels(buffer: &wgpu::Buffer, alternate: bool) -> Result<()> {
+    let row_bytes = (200_u32 * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) as usize;
+    let pixels = buffer.slice(..).get_mapped_range()?;
+    let expected = [
+        [64, 32, 16, 255],
+        [69, 94, 128, 255],
+        [69, 94, 128, 255],
+        [68, 94, 128, 255],
+        [137, 188, 225, 255],
+        [64, 32, 16, 255],
+    ];
+    for (index, expected) in expected.into_iter().enumerate() {
+        let offset = 17 * row_bytes + (2 + index * 12 + 6) * 2 * 4;
+        let expected = if alternate {
+            [0, 0, 255, 255]
+        } else {
+            expected
+        };
+        for (channel, expected) in pixels[offset..offset + 4].iter().zip(expected) {
+            assert!(
+                channel.abs_diff(expected) <= 2,
+                "import {index}: {:?} differs from {expected:?}",
+                &pixels[offset..offset + 4],
+            );
+        }
+    }
+    let overlay = 7 * row_bytes + 7 * 4;
+    assert_eq!(&pixels[overlay..overlay + 4], &[255, 255, 0, 255]);
+    let background = 29 * row_bytes + 195 * 4;
+    assert_eq!(&pixels[background..background + 4], &[0, 0, 0, 255]);
+    for (left, expected) in [
+        (5, [0, 0, 0, 255]),
+        (
+            8,
+            if alternate {
+                [0, 0, 255, 255]
+            } else {
+                [137, 188, 225, 255]
+            },
+        ),
+        (15, [0, 0, 0, 255]),
+    ] {
+        let offset = 45 * row_bytes + (left * 2 + 1) * 4;
+        for (channel, expected) in pixels[offset..offset + 4].iter().zip(expected) {
+            assert!(
+                channel.abs_diff(expected) <= 2,
+                "clipped import at {left}: {:?}",
+                &pixels[offset..offset + 4]
+            );
+        }
+    }
+    for (left, top, expected) in [
+        (74, 2, [255, 0, 0, 255]),
+        (83, 2, [0, 255, 0, 255]),
+        (74, 11, [0, 0, 255, 255]),
+        (83, 11, [255, 255, 255, 255]),
+        (78, 5, [134, 115, 64, 255]),
+        (90, 5, [255, 0, 0, 255]),
+    ] {
+        let offset = (top * 2 + 1) * row_bytes + (left * 2 + 1) * 4;
+        let expected = if alternate {
+            [0, 0, 255, 255]
+        } else {
+            expected
+        };
+        for (channel, expected) in pixels[offset..offset + 4].iter().zip(expected) {
+            assert!(
+                channel.abs_diff(expected) <= 2,
+                "filter control ({left}, {top}): {:?}",
+                &pixels[offset..offset + 4]
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn host_produced_images_preserve_subresources_transfer_alpha_and_original_lifetimes() -> Result<()>
+{
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::PRIMARY,
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
+    });
+    let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        force_fallback_adapter: false,
+        apply_limit_buckets: false,
+        ..Default::default()
+    }))?;
+    let (device, queue) = block_on(
+        adapter.request_device(&wgpu::DeviceDescriptor {
+            required_limits: wgpu::Limits::downlevel_defaults()
+                .using_resolution(adapter.limits())
+                .using_alignment(adapter.limits()),
+            ..Default::default()
+        }),
+    )?;
+    let device = Arc::new(device);
+    let queue = Arc::new(queue);
+    let errors = Arc::new(AtomicUsize::new(0));
+    device.on_uncaptured_error(Arc::new({
+        let errors = errors.clone();
+        move |error| {
+            eprintln!("external image validation: {error}");
+            errors.fetch_add(1, Ordering::SeqCst);
+        }
+    }));
+    let mut renderer = WgpuSceneRenderer::new(
+        &adapter,
+        device.clone(),
+        queue.clone(),
+        wgpu::TextureFormat::Rgba8Unorm,
+    )?;
+    let atlas = renderer.sprite_atlas().clone();
+    let mut encoder = device.create_command_encoder(&Default::default());
+    let mut recordings = Vec::new();
+    let mut readbacks = Vec::new();
+    let mut counters = Vec::new();
+    for alternate in [false, true] {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let owner = Arc::new(HostImageOwner(counter.clone()));
+        let images = produce_imported_images(&device, &mut encoder, &atlas, &owner, alternate)?;
+        let stale_image = images[0].clone();
+        let (app, scene) = imported_scene(&atlas, images)?;
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("host imported image composition"),
+            size: wgpu::Extent3d {
+                width: 200,
+                height: 64,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        recordings.push(renderer.record(
+            &scene,
+            &mut encoder,
+            &target,
+            wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+        )?);
+        readbacks.push(copy_to_readback(&device, &mut encoder, &target));
+        drop(app);
+        drop(scene);
+        drop(owner);
+        atlas.clear();
+        assert!(stale_image.validate().is_err());
+        drop(stale_image);
+        assert_eq!(counter.load(Ordering::SeqCst), 0);
+        counters.push(counter);
+    }
+    drop(renderer);
+    drop(atlas);
+    let submission = queue.submit([encoder.finish()]);
+    let mappings = readbacks
+        .iter()
+        .map(|buffer| {
+            let (sender, receiver) = mpsc::channel();
+            buffer
+                .slice(..)
+                .map_async(wgpu::MapMode::Read, move |result| {
+                    let _ = sender.send(result);
+                });
+            receiver
+        })
+        .collect::<Vec<_>>();
+    device.poll(wgpu::PollType::Wait {
+        submission_index: Some(submission),
+        timeout: Some(Duration::from_secs(30)),
+    })?;
+    for mapping in mappings {
+        mapping.recv_timeout(Duration::from_secs(30))??;
+    }
+    for (readback, alternate) in readbacks.iter().zip([false, true]) {
+        assert_imported_pixels(readback, alternate)?;
+    }
+    for readback in readbacks {
+        readback.unmap();
+    }
+    drop(recordings.remove(0));
+    assert_eq!(counters[0].load(Ordering::SeqCst), 1);
+    assert_eq!(counters[1].load(Ordering::SeqCst), 0);
+    drop(recordings);
+    assert_eq!(counters[1].load(Ordering::SeqCst), 1);
+    assert_eq!(errors.load(Ordering::SeqCst), 0);
     Ok(())
 }

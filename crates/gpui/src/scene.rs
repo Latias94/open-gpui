@@ -1452,6 +1452,8 @@ impl From<SubpixelSprite> for Primitive {
 #[expect(missing_docs)]
 pub struct PolychromeSprite {
     pub order: DrawOrder,
+    /// Renderer flags: linear sampled RGB (1), premultiplied sampled RGB (2), opaque (4),
+    /// nearest sampling (8), and imported-image region clamping (16). Ordinary images use zero.
     pub pad: u32,
     pub tile: AtlasTile,
     pub grayscale: PaddedBool32,
