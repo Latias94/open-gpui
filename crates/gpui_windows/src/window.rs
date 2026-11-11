@@ -9274,10 +9274,6 @@ impl PlatformWindow for WindowsWindow {
         self.state.renderer.borrow().sprite_atlas()
     }
 
-    fn get_raw_handle(&self) -> HWND {
-        self.0.hwnd
-    }
-
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.state.renderer.borrow().gpu_specs().log_err().flatten()
     }

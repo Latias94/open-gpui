@@ -2244,12 +2244,19 @@ fn default_bounds(display: Option<&dyn PlatformDisplay>, cx: &mut App) -> Window
     window_bounds_ctor(Bounds::new(final_origin, base_size))
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum WindowOpenTarget {
+    Platform,
+    Hosted(PlatformWindowCapabilities),
+}
+
 impl Window {
     pub(crate) fn new(
         handle: AnyWindowHandle,
         options: WindowOptions,
         interaction_authority: WindowInteractionAuthority,
         cx: &mut App,
+        target: WindowOpenTarget,
         create_platform_window: impl FnOnce(
             AnyWindowHandle,
             WindowParams,
@@ -2321,7 +2328,18 @@ impl Window {
                 "popup parent is closed or its generation is stale"
             );
         }
-        cx.platform.validate_window_kind(&kind)?;
+        match target {
+            WindowOpenTarget::Platform => cx.platform.validate_window_kind(&kind)?,
+            WindowOpenTarget::Hosted(_) => {
+                anyhow::ensure!(
+                    matches!(&kind, WindowKind::Normal)
+                        && transient_for.is_none()
+                        && provisional_session.is_none()
+                        && display_id.is_none(),
+                    "a hosted surface cannot request native window relationships or placement"
+                );
+            }
+        }
         let focus_on_appearing = if matches!(&kind, WindowKind::AnchoredPopup(popup) if !popup.grab)
         {
             false
@@ -2358,7 +2376,12 @@ impl Window {
         let window_bounds =
             window_bounds.unwrap_or_else(|| default_bounds(default_bounds_display.as_deref(), cx));
         let window_kind = kind.clone();
-        let window_capabilities = cx.window_capabilities_for_resolved_display(&kind, display_id);
+        let window_capabilities = match target {
+            WindowOpenTarget::Platform => {
+                cx.window_capabilities_for_resolved_display(&kind, display_id)
+            }
+            WindowOpenTarget::Hosted(capabilities) => capabilities,
+        };
         anyhow::ensure!(
             focus_on_appearing
                 || window_capabilities
@@ -6322,13 +6345,14 @@ impl Window {
     /// Returns the latest committed presentation-stage facts.
     pub fn presentation_facts(&self) -> WindowPresentationFacts {
         WindowPresentationFacts {
-            native_created: true,
+            native_created: self.platform_window.has_native_window(),
             frame_accepted_generation: self.presentation_state.frame_accepted_generation,
             present_submitted_generation: self.presentation_state.present_submitted_generation,
             non_empty_presented_generation: self.presentation_state.non_empty_presented_generation,
             latest_present_attempt: self.presentation_state.latest_present_attempt,
             initial_presentation: self.presentation_state.initial_presentation,
-            native_visible: self.platform_window.is_visible(),
+            native_visible: self.platform_window.has_native_window()
+                && self.platform_window.is_visible(),
         }
     }
 

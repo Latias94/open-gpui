@@ -2525,7 +2525,7 @@ impl DockSurface {
                     WindowOpenFailureStage::AppShutdown => {
                         DockSurfaceWindowSessionOpeningRollbackReason::AppShutdown
                     }
-                    WindowOpenFailureStage::ClosedDuringNativeCreateOrMap
+                    WindowOpenFailureStage::ClosedDuringPlatformCreateOrMap
                     | WindowOpenFailureStage::ClosedDuringBuild
                     | WindowOpenFailureStage::ClosedDuringInitialDraw
                     | WindowOpenFailureStage::ClosedDuringInitialPresentation => {
@@ -2534,7 +2534,7 @@ impl DockSurface {
                     WindowOpenFailureStage::BeforeVisibilityPresentation => {
                         DockSurfaceWindowSessionOpeningRollbackReason::PresentationFailedBeforeVisibility
                     }
-                    WindowOpenFailureStage::NativeCreateOrMap
+                    WindowOpenFailureStage::PlatformCreateOrMap
                     | WindowOpenFailureStage::CommitRejected => {
                         DockSurfaceWindowSessionOpeningRollbackReason::WindowOpenFailed
                     }

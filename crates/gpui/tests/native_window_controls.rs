@@ -191,7 +191,7 @@ fn public_popup_refusal_uses_a_live_parent_and_publishes_no_window() {
         .expect_err("detailed popup refusal must preserve its synchronous stage");
     assert_eq!(
         detailed.stage(),
-        open_gpui::WindowOpenFailureStage::NativeCreateOrMap
+        open_gpui::WindowOpenFailureStage::PlatformCreateOrMap
     );
     assert!(
         std::error::Error::source(&detailed)

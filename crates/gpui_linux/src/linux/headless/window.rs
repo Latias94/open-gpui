@@ -96,6 +96,10 @@ impl HeadlessWindow {
 }
 
 impl PlatformWindow for HeadlessWindow {
+    fn has_native_window(&self) -> bool {
+        false
+    }
+
     fn command_dispatcher(&self) -> PlatformWindowCommandDispatcher {
         let state = Rc::downgrade(&self.0);
         PlatformWindowCommandDispatcher::new(move |command| {

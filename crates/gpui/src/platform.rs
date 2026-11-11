@@ -1,6 +1,7 @@
 mod app_menu;
 mod atlas;
 mod frame_delivery;
+mod hosted_surface;
 mod keyboard;
 mod keystroke;
 mod platform_info;
@@ -8,6 +9,7 @@ mod platform_info;
 pub use frame_delivery::{
     PlatformFrameDeliveryMode, PlatformFrameSubmission, PlatformFrameSubmissionStatus,
 };
+pub use hosted_surface::*;
 
 /// Types for configuring parent-anchored popup windows such as menus, dropdowns and tooltips.
 pub mod popup;
@@ -1543,7 +1545,7 @@ pub struct WindowPresentationFacts {
     pub non_empty_presented_generation: Option<u64>,
     /// Latest attempt to submit an accepted frame to the platform renderer.
     pub latest_present_attempt: Option<WindowPresentAttemptFacts>,
-    /// Terminal state of the bounded native initial-presentation command.
+    /// Terminal state of the bounded initial-presentation command for the target.
     pub initial_presentation: WindowInitialPresentationStatus,
     /// Whether the backend currently reports the native window as visible.
     pub native_visible: bool,
@@ -1560,7 +1562,7 @@ pub struct WindowPresentAttemptFacts {
     pub contained_valid_primitives: bool,
 }
 
-/// Terminal state of the bounded native initial-presentation command.
+/// Terminal state of the bounded initial-presentation command for the target.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum WindowInitialPresentationStatus {
     /// The command has not yet settled.
@@ -5895,6 +5897,14 @@ pub enum TextInputStateChange {
 
 #[expect(missing_docs)]
 pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
+    /// Returns whether this target has a native window.
+    ///
+    /// A hosted logical surface or non-rendering headless target has no native window even
+    /// when it runs layout, accepts input or submits its output to an application renderer.
+    fn has_native_window(&self) -> bool {
+        true
+    }
+
     fn command_dispatcher(&self) -> PlatformWindowCommandDispatcher;
     /// Returns a cloneable one-way authority that disables native interaction for this window.
     #[doc(hidden)]
@@ -6238,9 +6248,6 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         None
     }
     fn restore_native_window_state(&self, _state: &[u8]) {}
-
-    #[cfg(target_os = "windows")]
-    fn get_raw_handle(&self) -> windows::Win32::Foundation::HWND;
 
     // Linux specific methods
     fn inner_window_bounds(&self) -> WindowBounds {

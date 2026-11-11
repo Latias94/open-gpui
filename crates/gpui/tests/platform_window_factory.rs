@@ -263,7 +263,7 @@ fn public_factory_receives_reserved_identity_resolved_params_and_snapshot_once()
 }
 
 #[test]
-fn public_factory_typed_error_preserves_native_stage_without_building_root() {
+fn public_factory_typed_error_preserves_platform_stage_without_building_root() {
     let app = headless_app(bench_platform(None, Arc::new(NoopTextSystem::new())));
     let reserved = Cell::new(None);
     let calls = Cell::new(0);
@@ -290,7 +290,7 @@ fn public_factory_typed_error_preserves_native_stage_without_building_root() {
         .expect_err("factory refusal must remain a typed window-open error");
     assert_eq!(calls.get(), 1);
     assert!(!root_called.get());
-    assert_eq!(error.stage(), WindowOpenFailureStage::NativeCreateOrMap);
+    assert_eq!(error.stage(), WindowOpenFailureStage::PlatformCreateOrMap);
     let source = std::error::Error::source(&error)
         .and_then(|source| source.downcast_ref::<io::Error>())
         .expect("the factory error must retain its original source type");
@@ -496,7 +496,7 @@ fn public_owner_and_kind_preflight_refuse_before_invoking_the_factory() {
         .expect_err("the actual platform must reject an unsupported kind before attachment");
     assert_eq!(
         unsupported.stage(),
-        WindowOpenFailureStage::NativeCreateOrMap
+        WindowOpenFailureStage::PlatformCreateOrMap
     );
     assert!(
         std::error::Error::source(&unsupported)
@@ -528,7 +528,7 @@ fn public_owner_and_kind_preflight_refuse_before_invoking_the_factory() {
         .expect_err("a closed owner's full identity must fail before attachment");
     assert_eq!(
         stale_owner.stage(),
-        WindowOpenFailureStage::NativeCreateOrMap
+        WindowOpenFailureStage::PlatformCreateOrMap
     );
     assert!(
         stale_owner

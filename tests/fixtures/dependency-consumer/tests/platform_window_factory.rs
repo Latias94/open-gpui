@@ -91,7 +91,7 @@ fn downstream_ordinary_headless_app_executes_factory_refusal_and_retry() {
         .expect_err("a hostless factory must return its actual refusal");
     assert_eq!(calls.get(), 1);
     assert!(!root_called.get());
-    assert_eq!(error.stage(), WindowOpenFailureStage::NativeCreateOrMap);
+    assert_eq!(error.stage(), WindowOpenFailureStage::PlatformCreateOrMap);
     let source = std::error::Error::source(&error)
         .and_then(|source| source.downcast_ref::<io::Error>())
         .expect("the factory's typed source must survive the public error boundary");

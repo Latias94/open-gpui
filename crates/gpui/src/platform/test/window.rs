@@ -2579,11 +2579,6 @@ impl PlatformWindow for TestWindow {
         Some(self)
     }
 
-    #[cfg(target_os = "windows")]
-    fn get_raw_handle(&self) -> windows::Win32::Foundation::HWND {
-        unimplemented!()
-    }
-
     fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         self.0.lock().ime_position_history.push(bounds);
     }
@@ -3460,6 +3455,7 @@ mod window_mutation_tests {
                 },
                 crate::window::WindowInteractionAuthority::new(),
                 app,
+                crate::window::WindowOpenTarget::Platform,
                 move |handle, params, displays| {
                     platform.open_window_with_display_snapshot(handle, params, displays)
                 },

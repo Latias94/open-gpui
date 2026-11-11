@@ -154,9 +154,9 @@ pub enum WindowOpenFailureStage {
     /// Application shutdown prevented this window-open transaction from starting or committing.
     AppShutdown,
     /// The platform window could not be created or mapped.
-    NativeCreateOrMap,
-    /// The native window synchronously closed while it was being created or mapped.
-    ClosedDuringNativeCreateOrMap,
+    PlatformCreateOrMap,
+    /// The platform target synchronously closed while it was being created or mapped.
+    ClosedDuringPlatformCreateOrMap,
     /// The root builder synchronously closed the reserved window.
     ClosedDuringBuild,
     /// The initial draw synchronously closed the reserved window.
@@ -1861,6 +1861,45 @@ impl App {
         ) -> Result<Box<dyn PlatformWindow>>,
         build_root_view: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
     ) -> std::result::Result<WindowHandle<V>, WindowOpenError> {
+        self.open_window_with_target(
+            options,
+            crate::window::WindowOpenTarget::Platform,
+            create_platform_window,
+            build_root_view,
+        )
+    }
+
+    /// Opens a host-driven logical UI surface without creating a native window.
+    ///
+    /// The surface supplies geometry, frame demand, input and renderer delivery while the
+    /// original App and Window retain entity, layout, text, interaction and submission authority.
+    /// Its renderer must report actual submission and quiesce original GPU use before retirement.
+    /// A surface is bound once; closing it does not close the application's native windows.
+    /// Drive the surface and its input callbacks after releasing all App and Window borrows.
+    pub fn open_surface<V: 'static + Render>(
+        &mut self,
+        surface: &crate::HostedSurface,
+        build_root_view: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
+    ) -> std::result::Result<WindowHandle<V>, WindowOpenError> {
+        self.open_window_with_target(
+            surface.window_options(),
+            crate::window::WindowOpenTarget::Hosted(surface.capabilities()),
+            |handle, params, _| surface.create_platform_window(handle, params),
+            build_root_view,
+        )
+    }
+
+    fn open_window_with_target<V: 'static + Render>(
+        &mut self,
+        options: crate::WindowOptions,
+        target: crate::window::WindowOpenTarget,
+        create_platform_window: impl FnOnce(
+            AnyWindowHandle,
+            WindowParams,
+            PlatformDisplaySnapshot,
+        ) -> Result<Box<dyn PlatformWindow>>,
+        build_root_view: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
+    ) -> std::result::Result<WindowHandle<V>, WindowOpenError> {
         self.update(|cx| {
             let mut reservation =
                 window_registry::reserve(cx).map_err(WindowOpenError::from_reservation)?;
@@ -1872,6 +1911,7 @@ impl App {
                 options,
                 interaction_authority,
                 reservation.app_mut(),
+                target,
                 create_platform_window,
             ) {
                 Ok(window) => {
@@ -1885,9 +1925,9 @@ impl App {
                         .map_err(WindowOpenError::from_reservation)?;
                     if !rollback.window_mut().creation_can_commit() {
                         return Err(WindowOpenError::new(
-                            WindowOpenFailureStage::ClosedDuringNativeCreateOrMap,
+                            WindowOpenFailureStage::ClosedDuringPlatformCreateOrMap,
                             anyhow!(
-                                "native window closed while creating or mapping its reservation"
+                                "platform target closed while creating or mapping its reservation"
                             ),
                         ));
                     }
@@ -1958,7 +1998,7 @@ impl App {
                         Err(WindowOpenError::from_reservation(reservation_error))
                     }
                     Ok(()) => Err(WindowOpenError::new(
-                        WindowOpenFailureStage::NativeCreateOrMap,
+                        WindowOpenFailureStage::PlatformCreateOrMap,
                         error,
                     )),
                 },
@@ -4621,7 +4661,7 @@ mod test {
             })
             .expect_err("the injected native map failure must reject window creation");
 
-        assert_eq!(error.stage(), WindowOpenFailureStage::NativeCreateOrMap);
+        assert_eq!(error.stage(), WindowOpenFailureStage::PlatformCreateOrMap);
         let platform_window = cx
             .last_created_test_window()
             .expect("the failed map must retain a test platform window for retirement");
@@ -4649,7 +4689,7 @@ mod test {
 
         assert_eq!(
             error.stage(),
-            WindowOpenFailureStage::ClosedDuringNativeCreateOrMap
+            WindowOpenFailureStage::ClosedDuringPlatformCreateOrMap
         );
         assert!(
             !root_builder_called.get(),
