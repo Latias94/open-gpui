@@ -207,11 +207,13 @@ async fn roundtrip(
     let x11 = GraphicalEnvironment {
         x11_display: Some(x11_display),
         xdg_runtime_dir: detected.xdg_runtime_dir.clone(),
+        current_desktop: Some("open-gpui-x11:GNOME".into()),
         ..GraphicalEnvironment::default()
     };
     let wayland = GraphicalEnvironment {
         wayland_display: Some(wayland_display),
         xdg_runtime_dir: detected.xdg_runtime_dir,
+        current_desktop: Some("open-gpui-wayland:KDE".into()),
         ..GraphicalEnvironment::default()
     };
     let entity = cx.new(|_| 0_usize);
@@ -261,6 +263,11 @@ async fn roundtrip(
             assert_eq!(connected.wayland_display, environment.wayland_display);
             assert_eq!(connected.x11_display, environment.x11_display);
             assert_eq!(connected.xdg_runtime_dir, environment.xdg_runtime_dir);
+            assert_eq!(connected.current_desktop, environment.current_desktop);
+            assert_eq!(
+                connected.desktop_environment(),
+                environment.desktop_environment()
+            );
             assert!(connected.activation_token.is_none());
         });
         entity.update(cx, |value, _| *value += 1);
@@ -602,6 +609,7 @@ fn native_owned_startup_socket_is_initial_only_and_close_on_exec() {
     let environment = GraphicalEnvironment {
         wayland_display: Some(display),
         xdg_runtime_dir: detected.xdg_runtime_dir,
+        current_desktop: Some("open-gpui-owned-wayland:KDE".into()),
         ..GraphicalEnvironment::default()
     };
     for start_headless in [false, true] {
@@ -783,6 +791,11 @@ async fn owned_startup_roundtrip(
             };
             assert_eq!(actual.wayland_display, expected_display);
             assert_eq!(actual.xdg_runtime_dir, environment.xdg_runtime_dir);
+            assert_eq!(actual.current_desktop, environment.current_desktop);
+            assert_eq!(
+                actual.desktop_environment(),
+                environment.desktop_environment()
+            );
             assert!(actual.activation_token.is_none());
         });
         assert_eq!(entity.entity_id(), entity_id);

@@ -4259,7 +4259,7 @@ fn complete_mac_initial_presentation(
 }
 
 fn activate_mac_window(window_state: &Arc<Mutex<MacWindowState>>) -> bool {
-    let (handle, window, transient_for, window_registry) = {
+    let (handle, window, view, transient_for, window_registry) = {
         let state = window_state.lock();
         if state.is_closed()
             || state.interaction_is_quiesced()
@@ -4270,10 +4270,18 @@ fn activate_mac_window(window_state: &Arc<Mutex<MacWindowState>>) -> bool {
         (
             state.handle,
             state.native_window,
+            state.native_view,
             state.creation_facts.transient_for,
             state.window_registry.clone(),
         )
     };
+
+    unsafe {
+        let visible: Bool = msg_send![window, isVisible];
+        if !visible.as_bool() {
+            let _: () = msg_send![view.as_ptr(), setNeedsDisplay: Bool::YES];
+        }
+    }
 
     match sheet::present(window_state, true) {
         Ok(Some(presented)) => return presented,
