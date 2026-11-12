@@ -1,4 +1,4 @@
-use std::{any::TypeId, cell::RefCell, sync::Arc};
+use std::{any::TypeId, cell::RefCell, rc::Rc};
 
 use open_gpui_collections::FxHashMap;
 
@@ -13,7 +13,7 @@ pub(super) enum NativeWindowLifecycle {
 #[derive(Default)]
 pub(super) struct NativeQuerySnapshots {
     windows: RefCell<FxHashMap<WindowId, NativeWindowQuerySnapshot>>,
-    window_hit_tests: RefCell<FxHashMap<WindowId, Arc<CommittedWindowHitTestSnapshot>>>,
+    window_hit_tests: RefCell<FxHashMap<WindowId, Rc<CommittedWindowHitTestSnapshot>>>,
     app_menu_actions: RefCell<FxHashMap<TypeId, bool>>,
 }
 
@@ -79,7 +79,7 @@ impl NativeQuerySnapshots {
     pub(super) fn set_window_hit_test_snapshot(
         &self,
         window_id: WindowId,
-        snapshot: Arc<CommittedWindowHitTestSnapshot>,
+        snapshot: Rc<CommittedWindowHitTestSnapshot>,
     ) {
         if self.committed(window_id).is_some() {
             self.window_hit_tests

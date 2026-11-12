@@ -856,6 +856,33 @@ fn refusal_and_repaint_keep_s0_and_retry_with_distinct_same_generation_authority
 }
 
 #[test]
+fn resize_retires_the_original_attempt_before_the_replacement_can_submit() {
+    let mut consumer = Consumer::new(PlatformFrameDeliveryMode::Synchronous);
+    let submitted = consumer.facts().present_submitted_generation;
+    let old = consumer.prepare_a();
+    consumer
+        .native
+        .as_test()
+        .unwrap()
+        .simulate_resize(size(px(360.0), px(180.0)));
+    consumer.app.update(|_| ());
+    consumer.frame(false);
+    let replacement = consumer.pending();
+    assert_eq!(old.status(), PlatformFrameSubmissionStatus::Cancelled);
+    assert_eq!(replacement.window_id(), old.window_id());
+    assert_ne!(replacement.attempt_id(), old.attempt_id());
+    assert!(!old.complete(PlatformWindowPresentOutcome::Submitted));
+    assert!(replacement.is_pending());
+    assert_eq!(consumer.facts().present_submitted_generation, submitted);
+    consumer.complete(&replacement, PlatformWindowPresentOutcome::Submitted);
+    assert_eq!(
+        consumer.facts().present_submitted_generation,
+        Some(replacement.frame_generation())
+    );
+    consumer.app.update(App::shutdown);
+}
+
+#[test]
 fn close_cancels_original_token_before_a_replacement_window_can_submit() {
     let mut consumer = Consumer::new(PlatformFrameDeliveryMode::Synchronous);
     let candidate = consumer.prepare_a();

@@ -652,7 +652,7 @@ impl CommittedWindowHitTestEntry {
 /// not retain candidate-frame validity cells or require borrowing the live target [`Window`].
 #[derive(Clone, Debug)]
 pub(crate) struct CommittedWindowHitTestSnapshot {
-    hitboxes: Arc<[CommittedWindowHitTestEntry]>,
+    hitboxes: Rc<[CommittedWindowHitTestEntry]>,
 }
 
 impl CommittedWindowHitTestSnapshot {
@@ -8198,7 +8198,7 @@ impl Window {
         };
         cx.set_native_window_hit_test_snapshot(
             self.handle.window_id(),
-            Arc::new(CommittedWindowHitTestSnapshot::from_frame(
+            Rc::new(CommittedWindowHitTestSnapshot::from_frame(
                 &self.rendered_frame,
             )),
         );
@@ -8526,6 +8526,13 @@ impl Window {
             );
             profiling::finish_frame!();
             return PlatformWindowPresentOutcome::RepaintRequired;
+        }
+        if self.platform_window.frame_delivery_mode() == PlatformFrameDeliveryMode::Deferred {
+            // A retained scene also needs exact completion authority when its renderer
+            // submits asynchronously. Prepare a candidate on the next frame instead of
+            // retrying the synchronous draw path without a submission token forever.
+            self.refresh();
+            return PlatformWindowPresentOutcome::Deferred;
         }
         #[cfg(feature = "profiler")]
         let present_start = Instant::now();

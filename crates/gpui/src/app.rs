@@ -1664,7 +1664,7 @@ impl App {
     pub(crate) fn set_native_window_hit_test_snapshot(
         &self,
         window_id: WindowId,
-        snapshot: Arc<crate::CommittedWindowHitTestSnapshot>,
+        snapshot: Rc<crate::CommittedWindowHitTestSnapshot>,
     ) {
         if let Some(app) = self.this.upgrade() {
             app.set_native_window_hit_test_snapshot(window_id, snapshot);

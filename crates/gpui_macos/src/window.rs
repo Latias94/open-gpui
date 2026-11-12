@@ -13,25 +13,32 @@ use image::RgbaImage;
 use open_gpui::{
     AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalDragPayload,
     ExternalPaths, FileDropEvent, ForegroundExecutor, FrameRequestSource, KeyDownEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformExternalDragSession, PlatformFrameSignal,
-    PlatformInput, PlatformInputCallback, PlatformInputCallbackSlot, PlatformInputHandler,
+    Modifiers, ModifiersChangedEvent, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformExternalDragSession, PlatformFrameDeliveryMode,
+    PlatformFrameSignal, PlatformFrameSubmission, PlatformHoveredWindow, PlatformInput,
+    PlatformInputCallback, PlatformInputCallbackSlot, PlatformInputHandler,
     PlatformInputHandlerSlot, PlatformNativeWindowRetirementOutcome,
-    PlatformPresentationShutdownOutcome, PlatformShouldCloseCallbackSlot, PlatformWindow,
-    PlatformWindowActiveStatusObservation, PlatformWindowCommand, PlatformWindowCommandDispatcher,
-    PlatformWindowCommandOutcome, PlatformWindowInteractionQuiescence,
-    PlatformWindowPresentOutcome, Point, PreparedPlatformPresentationShutdown, PromptButton,
+    PlatformPointerCaptureReleaseOutcome, PlatformPresentationShutdownOutcome,
+    PlatformShouldCloseCallbackSlot, PlatformWindow, PlatformWindowActiveStatusObservation,
+    PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
+    PlatformWindowInteractionQuiescence, PlatformWindowPresentOutcome, Point,
+    PreparedPlatformPointerCaptureRelease, PreparedPlatformPresentationShutdown, PromptButton,
     PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowActivationPolicy,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
     WindowCreationFacts, WindowId, WindowKind, WindowParams, WindowPresentationShutdownTicket,
     WindowVisibility, point, popup::PopupNotSupportedError, px, size,
 };
 
+mod deferred_frame;
 mod file_drag;
+mod hover;
+mod pointer_button;
 mod simple_fullscreen;
 mod visibility;
 
+use deferred_frame::MacDeferredFrame;
 use file_drag::MacExternalDrag;
+use pointer_button::{MacPointerButton, MacPointerInput};
 use simple_fullscreen::{SimpleFullscreenState, release_simple_fullscreen_presentation_options};
 use visibility::MacWindowVisibilityObserver;
 
@@ -80,7 +87,7 @@ use std::{
     ops::Range,
     path::PathBuf,
     ptr::{self, NonNull},
-    rc::Rc,
+    rc::{Rc, Weak as RcWeak},
     sync::{
         Arc, Once, Weak,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -119,7 +126,7 @@ pub(crate) struct MacWindowRegistry(Arc<Mutex<MacWindowRegistryState>>);
 
 #[derive(Default)]
 struct MacWindowRegistryState {
-    windows: HashMap<WindowId, Weak<RegisteredMacWindow>>,
+    windows: HashMap<WindowId, RcWeak<RegisteredMacWindow>>,
     native_resources: Vec<Weak<()>>,
 }
 
@@ -132,12 +139,12 @@ struct RegisteredMacWindow {
 
 struct MacWindowRegistration {
     registry: Weak<Mutex<MacWindowRegistryState>>,
-    entry: Arc<RegisteredMacWindow>,
+    entry: Rc<RegisteredMacWindow>,
 }
 
 pub(crate) struct MacTransientOwnerLease {
     registry: Weak<Mutex<MacWindowRegistryState>>,
-    entry: Arc<RegisteredMacWindow>,
+    entry: Rc<RegisteredMacWindow>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -189,7 +196,7 @@ impl MacWindowRegistry {
             let Some(entry) = registry
                 .windows
                 .get(&owner.window_id())
-                .and_then(Weak::upgrade)
+                .and_then(RcWeak::upgrade)
             else {
                 return MacTransientOwnerResolution::Gone;
             };
@@ -254,7 +261,7 @@ impl MacWindowRegistry {
                 !window_state.is_closed(),
                 "cannot register a closed macOS platform window"
             );
-            Arc::new(RegisteredMacWindow {
+            Rc::new(RegisteredMacWindow {
                 handle: window_state.handle,
                 native_window: unsafe { Retained::retain(window_state.native_window) }
                     .expect("a registered window has a native object"),
@@ -278,8 +285,8 @@ impl MacWindowRegistry {
                     && registry
                         .windows
                         .get(&owner.entry.handle.window_id())
-                        .and_then(Weak::upgrade)
-                        .is_some_and(|current| Arc::ptr_eq(&current, &owner.entry))
+                        .and_then(RcWeak::upgrade)
+                        .is_some_and(|current| Rc::ptr_eq(&current, &owner.entry))
                     && !owner.entry.closed.load(Ordering::Acquire)
                     && !owner.entry.interaction_quiesced.load(Ordering::Acquire),
                 "macOS transient owner changed before the logical relationship was committed"
@@ -293,7 +300,7 @@ impl MacWindowRegistry {
         }
         registry
             .windows
-            .insert(entry.handle.window_id(), Arc::downgrade(&entry));
+            .insert(entry.handle.window_id(), Rc::downgrade(&entry));
         if let Some(owner) = transient_owner {
             if owner.entry.closed.load(Ordering::Acquire)
                 || owner.entry.interaction_quiesced.load(Ordering::Acquire)
@@ -320,8 +327,8 @@ impl Drop for MacWindowRegistration {
         if registry
             .windows
             .get(&self.entry.handle.window_id())
-            .and_then(Weak::upgrade)
-            .is_some_and(|entry| Arc::ptr_eq(&entry, &self.entry))
+            .and_then(RcWeak::upgrade)
+            .is_some_and(|entry| Rc::ptr_eq(&entry, &self.entry))
         {
             registry.windows.remove(&self.entry.handle.window_id());
         }
@@ -350,8 +357,8 @@ impl MacTransientOwnerLease {
         if !registry
             .windows
             .get(&self.entry.handle.window_id())
-            .and_then(Weak::upgrade)
-            .is_some_and(|entry| Arc::ptr_eq(&entry, &self.entry))
+            .and_then(RcWeak::upgrade)
+            .is_some_and(|entry| Rc::ptr_eq(&entry, &self.entry))
         {
             return MacTransientOwnerLeaseState::Retired;
         }
@@ -702,36 +709,6 @@ unsafe fn visible_app_windows_front_to_back() -> Vec<*mut AnyObject> {
             .into_iter()
             .map(|(_, window)| window)
             .collect()
-    }
-}
-
-/// Returns the native GPUI window under the mouse, matching the public hovered-window semantics.
-///
-/// The returned Objective-C object is not retained. It must only be used synchronously on the
-/// AppKit main thread.
-unsafe fn hovered_gpui_native_window() -> Option<*mut AnyObject> {
-    unsafe {
-        let mouse_location = NSEvent::mouseLocation();
-        for window in visible_app_windows_front_to_back() {
-            let frame = (&*window.cast::<NSWindow>()).frame();
-            if !ns_rect_contains_point(frame, mouse_location) {
-                continue;
-            }
-
-            if !is_gpui_window(window) {
-                return None;
-            }
-
-            let window_state = get_window_state(&*window);
-            let window_state = window_state.lock();
-            if window_state.is_closed() {
-                return None;
-            }
-            if window_state.accepts_pointer_input && !window_state.interaction_is_quiesced() {
-                return Some(window);
-            }
-        }
-        None
     }
 }
 
@@ -1745,6 +1722,7 @@ struct MacWindowState {
     cursor_visible: Arc<AtomicBool>,
     frame_source: FrameSource,
     renderer: renderer::Renderer,
+    deferred_frame: Option<MacDeferredFrame>,
     presentation_shutdown_authority: Arc<Mutex<MacPresentationShutdownAuthority>>,
     display_transaction_frame_depth: MacDisplayTransactionFrameDepth,
     request_frame_callback: Option<Rc<dyn Fn(RequestFrameOptions)>>,
@@ -1761,6 +1739,7 @@ struct MacWindowState {
     input_handler: PlatformInputHandlerSlot,
     last_key_equivalent: Option<KeyDownEvent>,
     last_left_mouse_down_event: Option<Retained<AnyObject>>,
+    pointer_button: MacPointerButton,
     external_drag: Option<Rc<MacExternalDrag>>,
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
@@ -1831,6 +1810,7 @@ impl MacWindowState {
         MacWindowVisibilityObserver,
         Option<Rc<MacExternalDrag>>,
         Option<SimpleFullscreenState>,
+        Option<MacDeferredFrame>,
     ) {
         self.closed.store(true, Ordering::Release);
         self.interaction_quiesced.store(true, Ordering::Release);
@@ -1840,6 +1820,7 @@ impl MacWindowState {
         }
         self.synthetic_drag_counter += 1;
         self.last_left_mouse_down_event = None;
+        self.pointer_button.cancel();
         self.file_drop_sequence = None;
         self.fullscreen_transition = None;
         self.observation_commit.cancel();
@@ -1859,6 +1840,7 @@ impl MacWindowState {
             mem::take(&mut self.visibility_observer),
             self.external_drag.take(),
             self.simple_fullscreen_state.take(),
+            self.deferred_frame.take(),
         )
     }
 
@@ -3001,6 +2983,7 @@ impl MacWindowInteractionQuiescenceTarget {
             let mut state = window_state.lock();
             state.synthetic_drag_counter += 1;
             state.last_left_mouse_down_event = None;
+            state.pointer_button.cancel();
             state.file_drop_sequence = None;
             state.external_drag.take()
         });
@@ -3050,6 +3033,7 @@ impl MacWindow {
             visibility_observer,
             external_drag,
             simple_fullscreen_state,
+            deferred_frame,
             accesskit_adapter,
             blurred_view,
             window,
@@ -3063,6 +3047,7 @@ impl MacWindow {
                 visibility_observer,
                 external_drag,
                 simple_fullscreen_state,
+                deferred_frame,
             ) = state.mark_closed();
             state.renderer.destroy();
             let window = state.native_window;
@@ -3077,12 +3062,14 @@ impl MacWindow {
                 visibility_observer,
                 external_drag,
                 simple_fullscreen_state,
+                deferred_frame,
                 state.accesskit_adapter.take(),
                 state.blurred_view.take(),
                 window,
                 state.foreground_executor.clone(),
             )
         };
+        deferred_frame::complete(deferred_frame, PlatformWindowPresentOutcome::Rejected);
         event_callback.terminate();
         input_handler.terminate();
         should_close_callback.terminate();
@@ -3318,6 +3305,7 @@ impl MacWindow {
                         None => FrameSource::DisplayLink(None),
                     },
                     renderer,
+                    deferred_frame: None,
                     presentation_shutdown_authority: presentation_shutdown_authority.clone(),
                     display_transaction_frame_depth: MacDisplayTransactionFrameDepth::default(),
                     request_frame_callback: None,
@@ -3334,6 +3322,7 @@ impl MacWindow {
                     input_handler: PlatformInputHandlerSlot::default(),
                     last_key_equivalent: None,
                     last_left_mouse_down_event: None,
+                    pointer_button: MacPointerButton::default(),
                     external_drag: None,
                     synthetic_drag_counter: 0,
                     traffic_light_position: titlebar
@@ -3584,10 +3573,8 @@ impl MacWindow {
         }
     }
 
-    pub fn hovered_window() -> Option<AnyWindowHandle> {
-        unsafe {
-            hovered_gpui_native_window().map(|window| get_window_state(&*window).lock().handle)
-        }
+    pub fn hovered_window() -> PlatformHoveredWindow {
+        hover::hovered_window()
     }
 
     pub fn ordered_windows() -> Vec<AnyWindowHandle> {
@@ -3633,13 +3620,6 @@ impl MacWindow {
             }
         }
     }
-}
-
-fn ns_rect_contains_point(rect: NSRect, point: NSPoint) -> bool {
-    point.x >= rect.origin.x
-        && point.x < rect.origin.x + rect.size.width
-        && point.y >= rect.origin.y
-        && point.y < rect.origin.y + rect.size.height
 }
 
 fn subscribe_window_to_display_topology(window_state: &Arc<Mutex<MacWindowState>>) -> Result<()> {
@@ -3868,7 +3848,7 @@ fn deliver_window_observation_effect_batch(
     batch: MacWindowObservationEffectBatch,
     panic_boundary: &mut MacWindowCallbackPanicBoundary,
 ) {
-    let changes = {
+    let (changes, stale_frame) = {
         let mut state = window_state.lock();
         if state.is_closed() {
             return;
@@ -3880,8 +3860,9 @@ fn deliver_window_observation_effect_batch(
         ) {
             state.move_traffic_light();
         }
-        changes
+        (changes, deferred_frame::take_stale(&mut state))
     };
+    deferred_frame::complete(stale_frame, PlatformWindowPresentOutcome::RepaintRequired);
 
     if changes.display_changed {
         report_window_display_changed(window_state);
@@ -4014,6 +3995,7 @@ fn deliver_window_request_frame(
         callback
     };
 
+    panic_boundary.deliver(|| deferred_frame::present(window_state));
     panic_boundary.deliver(|| callback(options));
     if mode.uses_display_transaction() {
         panic_boundary.deliver(|| {
@@ -4394,9 +4376,32 @@ fn rejected_or_closed_mac_window_command(
 impl PlatformWindow for MacWindow {
     fn command_dispatcher(&self) -> PlatformWindowCommandDispatcher {
         let window_state = Arc::downgrade(&self.0);
-        PlatformWindowCommandDispatcher::new(move |command| {
-            dispatch_mac_window_command(&window_state, command)
-        })
+        let pointer_window = window_state.clone();
+        PlatformWindowCommandDispatcher::new_with_pointer_capture_release(
+            move |command| dispatch_mac_window_command(&window_state, command),
+            move |_| {
+                let generation = pointer_window
+                    .upgrade()
+                    .map(|state| state.lock().pointer_button.generation());
+                let pointer_window = pointer_window.clone();
+                PreparedPlatformPointerCaptureRelease::new(move || {
+                    let Some(state) = pointer_window.upgrade() else {
+                        return PlatformPointerCaptureReleaseOutcome::NativeWindowTerminal;
+                    };
+                    let mut state = state.lock();
+                    if state.is_closed() {
+                        return PlatformPointerCaptureReleaseOutcome::NativeWindowTerminal;
+                    }
+                    if generation.is_some_and(|generation| {
+                        state.pointer_button.cancel_generation(generation)
+                    }) {
+                        state.synthetic_drag_counter += 1;
+                        state.last_left_mouse_down_event = None;
+                    }
+                    PlatformPointerCaptureReleaseOutcome::Released
+                })
+            },
+        )
     }
 
     fn interaction_quiescence(&self) -> PlatformWindowInteractionQuiescence {
@@ -4427,6 +4432,8 @@ impl PlatformWindow for MacWindow {
             .lock()
             .claim(shutdown)
             .expect("a platform-window shutdown ticket must match its native window");
+        let deferred_frame = self.0.lock().deferred_frame.take();
+        deferred_frame::complete(deferred_frame, PlatformWindowPresentOutcome::Rejected);
         PreparedPlatformPresentationShutdown::new(shutdown, move |shutdown| {
             let native_view = {
                 let Some(mut state) = window_state.try_lock() else {
@@ -5400,19 +5407,19 @@ impl PlatformWindow for MacWindow {
     }
 
     fn draw(&self, scene: &open_gpui::Scene) -> PlatformWindowPresentOutcome {
-        let mut this = self.0.lock();
-        let visible = this
-            .native_window()
-            .occlusionState()
-            .contains(NSWindowOcclusionState::Visible);
-        // AppKit can block nextDrawable for roughly one second while a window is fully occluded.
-        // Permit the first attempt to avoid initial flicker, then wait for the occlusion callback
-        // to restart frame production once the native window becomes visible again.
-        if should_defer_occluded_draw(this.attempted_window_draw, visible) {
-            return PlatformWindowPresentOutcome::Deferred;
-        }
-        this.attempted_window_draw = true;
-        this.renderer.draw(scene)
+        self.0.lock().draw_scene(scene)
+    }
+
+    fn frame_delivery_mode(&self) -> PlatformFrameDeliveryMode {
+        PlatformFrameDeliveryMode::Deferred
+    }
+
+    fn draw_with_submission(
+        &self,
+        scene: &open_gpui::Scene,
+        submission: &PlatformFrameSubmission,
+    ) -> PlatformWindowPresentOutcome {
+        deferred_frame::draw(&self.0, scene, submission)
     }
 
     fn schedule_frame(&self) {
@@ -6080,12 +6087,22 @@ extern "C" fn handle_view_event(this: &AnyObject, _: Sel, native_event: *mut Any
         return;
     }
     let window_height = lock.content_size().height;
-    let event = platform_input_from_native(
+    let MacWindowState {
+        pointer_button,
+        first_mouse,
+        ..
+    } = &mut *lock;
+    let event = pointer_button.input(
         unsafe { &*native_event.cast::<NSEvent>() },
-        Some(window_height),
+        window_height,
+        first_mouse,
     );
 
-    if let Some(mut event) = event {
+    if let Some(MacPointerInput {
+        event,
+        physical_pressed_button,
+    }) = event
+    {
         file_drag::update_left_mouse_down_event(&mut lock, native_event, &event);
         // AppKit unhides the cursor on the next mouse movement; mirror that here.
         if matches!(
@@ -6100,64 +6117,6 @@ extern "C" fn handle_view_event(this: &AnyObject, _: Sel, native_event: *mut Any
         ) {
             lock.cursor_visible.store(true, Ordering::Relaxed);
         }
-
-        match &mut event {
-            PlatformInput::MouseDown(
-                event @ MouseDownEvent {
-                    button: MouseButton::Left,
-                    modifiers: Modifiers { control: true, .. },
-                    ..
-                },
-            ) => {
-                // On mac, a ctrl-left click should be handled as a right click.
-                *event = MouseDownEvent {
-                    button: MouseButton::Right,
-                    modifiers: Modifiers {
-                        control: false,
-                        ..event.modifiers
-                    },
-                    click_count: 1,
-                    ..*event
-                };
-            }
-
-            // Handles focusing click.
-            PlatformInput::MouseDown(
-                event @ MouseDownEvent {
-                    button: MouseButton::Left,
-                    ..
-                },
-            ) if (lock.first_mouse) => {
-                *event = MouseDownEvent {
-                    first_mouse: true,
-                    ..*event
-                };
-                lock.first_mouse = false;
-            }
-
-            // Because we map a ctrl-left_down to a right_down -> right_up let's ignore
-            // the ctrl-left_up to avoid having a mismatch in button down/up events if the
-            // user is still holding ctrl when releasing the left mouse button
-            PlatformInput::MouseUp(
-                event @ MouseUpEvent {
-                    button: MouseButton::Left,
-                    modifiers: Modifiers { control: true, .. },
-                    ..
-                },
-            ) => {
-                *event = MouseUpEvent {
-                    button: MouseButton::Right,
-                    modifiers: Modifiers {
-                        control: false,
-                        ..event.modifiers
-                    },
-                    click_count: 1,
-                    ..*event
-                };
-            }
-
-            _ => {}
-        };
 
         match &event {
             PlatformInput::MouseDown(_) => {
@@ -6190,6 +6149,7 @@ extern "C" fn handle_view_event(this: &AnyObject, _: Sel, native_event: *mut Any
                             weak_window_state,
                             lock.synthetic_drag_counter,
                             event.clone(),
+                            physical_pressed_button,
                             lock.background_executor.clone(),
                         ))
                         .detach();
@@ -6684,6 +6644,7 @@ extern "C" fn close_window(this: &AnyObject, _: Sel) {
             visibility_observer,
             external_drag,
             simple_fullscreen_state,
+            deferred_frame,
             accesskit_adapter,
             blurred_view,
             close_callback,
@@ -6706,6 +6667,7 @@ extern "C" fn close_window(this: &AnyObject, _: Sel) {
                 visibility_observer,
                 external_drag,
                 simple_fullscreen_state,
+                deferred_frame,
             ) = lock.mark_closed();
             (
                 event_callback,
@@ -6714,12 +6676,14 @@ extern "C" fn close_window(this: &AnyObject, _: Sel) {
                 visibility_observer,
                 external_drag,
                 simple_fullscreen_state,
+                deferred_frame,
                 lock.accesskit_adapter.take(),
                 lock.blurred_view.take(),
                 lock.close_callback.take(),
             )
         };
 
+        deferred_frame::complete(deferred_frame, PlatformWindowPresentOutcome::Rejected);
         event_callback.terminate();
         input_handler.terminate();
         should_close_callback.terminate();
@@ -6776,6 +6740,9 @@ extern "C" fn set_frame_size(this: &AnyObject, _: Sel, size: NSSize) {
 
     let renderer_geometry = renderer_geometry_for_frame_size(lock.renderer_geometry, new_size);
     lock.update_renderer_geometry(renderer_geometry);
+    let stale_frame = deferred_frame::take_stale(&mut lock);
+    drop(lock);
+    deferred_frame::complete(stale_frame, PlatformWindowPresentOutcome::RepaintRequired);
 }
 
 extern "C" fn display_layer(this: &AnyObject, _: Sel, _: *mut AnyObject) {
@@ -7200,6 +7167,7 @@ async fn synthetic_drag(
     window_state: Weak<Mutex<MacWindowState>>,
     drag_id: usize,
     event: MouseMoveEvent,
+    physical_pressed_button: Option<MouseButton>,
     executor: BackgroundExecutor,
 ) {
     loop {
@@ -7217,7 +7185,7 @@ async fn synthetic_drag(
                 }
                 let pressed: NSUInteger =
                     unsafe { msg_send![class!(NSEvent), pressedMouseButtons] };
-                if !file_drag::synthetic_drag_button_is_pressed(event.pressed_button, pressed) {
+                if !file_drag::synthetic_drag_button_is_pressed(physical_pressed_button, pressed) {
                     lock.synthetic_drag_counter += 1;
                     break;
                 }

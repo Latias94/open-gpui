@@ -2424,7 +2424,7 @@ impl AppCell {
     pub(super) fn set_native_window_hit_test_snapshot(
         &self,
         window_id: WindowId,
-        snapshot: std::sync::Arc<CommittedWindowHitTestSnapshot>,
+        snapshot: Rc<CommittedWindowHitTestSnapshot>,
     ) {
         self.native_queries
             .set_window_hit_test_snapshot(window_id, snapshot);

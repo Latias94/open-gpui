@@ -26,9 +26,10 @@ use objc2::{
 use objc2_app_kit::{
     NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSAppearanceNameVibrantDark,
     NSAppearanceNameVibrantLight, NSApplication, NSApplicationActivationPolicy,
-    NSControlStateValueOn, NSCursor, NSDocumentController, NSEvent, NSEventModifierFlags, NSMenu,
-    NSMenuItem, NSModalResponse, NSModalResponseOK, NSOpenPanel, NSSavePanel, NSScroller,
-    NSScrollerStyle, NSWorkspace, NSWorkspaceDidWakeNotification, NSWorkspaceWillSleepNotification,
+    NSApplicationTerminateReply, NSControlStateValueOn, NSCursor, NSDocumentController, NSEvent,
+    NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSModalResponseOK, NSOpenPanel,
+    NSSavePanel, NSScroller, NSScrollerStyle, NSWorkspace, NSWorkspaceDidWakeNotification,
+    NSWorkspaceWillSleepNotification,
 };
 use objc2_foundation::{
     NSActivityOptions, NSArray, NSBundle, NSError, NSInteger, NSNotificationCenter, NSNumber,
@@ -69,6 +70,10 @@ use std::{
     },
 };
 
+mod termination;
+
+use termination::MacApplicationTermination;
+
 const MAC_PLATFORM_IVAR: &CStr = c"platform";
 static mut APP_CLASS: *const AnyClass = ptr::null();
 static mut APP_DELEGATE_CLASS: *const AnyClass = ptr::null();
@@ -99,6 +104,11 @@ unsafe fn build_classes() {
             decl.add_method(
                 sel!(applicationShouldHandleReopen:hasVisibleWindows:),
                 should_handle_reopen as extern "C-unwind" fn(_, Sel, *mut AnyObject, Bool) -> Bool,
+            );
+            decl.add_method(
+                sel!(applicationShouldTerminate:),
+                termination::should_terminate
+                    as extern "C-unwind" fn(_, Sel, *mut AnyObject) -> NSApplicationTerminateReply,
             );
             decl.add_method(
                 sel!(applicationWillTerminate:),
@@ -205,7 +215,7 @@ pub(crate) struct MacPlatformState {
     system_power_observers_registered: bool,
     thermal_observer: Option<ProcessInfoObserver>,
     power_observer: Option<ProcessInfoObserver>,
-    quit: Option<Box<dyn FnMut() -> bool>>,
+    termination: Rc<MacApplicationTermination>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
     will_open_menu: Option<Box<dyn FnMut()>>,
@@ -240,6 +250,12 @@ impl MacPlatform {
     pub fn new(headless: bool) -> Self {
         let marker = main_thread_marker().expect("Mac platform not created on main thread");
         let dispatcher = Arc::new(AppleDispatcher::new());
+        let background_executor = BackgroundExecutor::new(dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(dispatcher);
+        let termination = Rc::new(MacApplicationTermination::new(
+            foreground_executor.clone(),
+            background_executor.clone(),
+        ));
 
         #[cfg(feature = "font-kit")]
         let text_system = Arc::new(crate::AppleTextSystem::new());
@@ -260,15 +276,15 @@ impl MacPlatform {
                 activation_policy: ActivationPolicy::Regular,
                 application_created: false,
                 text_system,
-                background_executor: BackgroundExecutor::new(dispatcher.clone()),
-                foreground_executor: ForegroundExecutor::new(dispatcher),
+                background_executor,
+                foreground_executor,
                 renderer_context: renderer::Context::default(),
                 display_topology,
                 window_registry: MacWindowRegistry::default(),
                 general_pasteboard: Pasteboard::general(),
                 find_pasteboard: Pasteboard::find(),
                 reopen: None,
-                quit: None,
+                termination,
                 menu_command: None,
                 validate_menu_command: None,
                 will_open_menu: None,
@@ -839,6 +855,8 @@ impl Platform for MacPlatform {
 
             autoreleasepool(|_| app.run());
 
+            let termination = self.0.lock().termination.clone();
+            termination.cancel();
             NSNotificationCenter::defaultCenter().removeObserver(&app_delegate);
             NSWorkspace::sharedWorkspace()
                 .notificationCenter()
@@ -857,21 +875,9 @@ impl Platform for MacPlatform {
     }
 
     fn quit(&self) {
-        // Quitting the app causes us to close windows, which invokes `Window::on_close` callbacks
-        // synchronously before this method terminates. If we call `Platform::quit` while holding a
-        // borrow of the app state (which most of the time we will do), we will end up
-        // double-borrowing the app state in the `on_close` callbacks for our open windows. To solve
-        // this, we make quitting the application asynchronous so that we aren't holding borrows to
-        // the app state on the stack when we actually terminate the app.
-
-        unsafe {
-            DispatchQueue::main().exec_async_f(ptr::null_mut(), quit);
-        }
-
-        extern "C" fn quit(_: *mut c_void) {
-            let marker = main_thread_marker().expect("macOS quit must run on the main thread");
-            NSApplication::sharedApplication(marker).terminate(None);
-        }
+        let termination = self.0.lock().termination.clone();
+        let application = NSApplication::sharedApplication(self.2);
+        termination.request_quit(&application);
     }
 
     fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<std::ffi::OsString>) {
@@ -1003,7 +1009,7 @@ impl Platform for MacPlatform {
     }
 
     fn hovered_window(&self) -> PlatformHoveredWindow {
-        PlatformHoveredWindow::from_window(MacWindow::hovered_window())
+        MacWindow::hovered_window()
     }
 
     // Returns the windows ordered front-to-back, meaning that the active
@@ -1312,7 +1318,8 @@ impl Platform for MacPlatform {
     }
 
     fn on_quit(&self, callback: Box<dyn FnMut() -> bool>) {
-        self.0.lock().quit = Some(callback);
+        let termination = self.0.lock().termination.clone();
+        termination.set_callback(callback);
     }
 
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
@@ -1662,12 +1669,8 @@ extern "C-unwind" fn should_handle_reopen(
 
 extern "C-unwind" fn will_terminate(this: &AnyObject, _: Sel, _: *mut AnyObject) {
     let platform = unsafe { get_mac_platform(this) };
-    let mut lock = platform.0.lock();
-    if let Some(mut callback) = lock.quit.take() {
-        drop(lock);
-        callback();
-        platform.0.lock().quit.get_or_insert(callback);
-    }
+    let termination = platform.0.lock().termination.clone();
+    termination.did_terminate();
 }
 
 extern "C-unwind" fn on_keyboard_layout_change(this: &AnyObject, _: Sel, _: *mut AnyObject) {

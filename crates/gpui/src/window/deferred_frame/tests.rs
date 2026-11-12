@@ -28,6 +28,69 @@ impl Render for ActionRoot {
 }
 
 #[crate::test]
+fn deferred_represent_without_model_changes_uses_an_exact_submission(cx: &mut TestAppContext) {
+    cx.defer_next_window_frame_requests();
+    let handle = cx
+        .update(|app| {
+            app.open_window(
+                WindowOptions {
+                    inactive_frame_interval: None,
+                    low_power_frame_interval: None,
+                    thermal_frame_interval: None,
+                    ..Default::default()
+                },
+                |_, app| {
+                    app.new(|_| ActionRoot {
+                        revision: false,
+                        actions: Rc::new(RefCell::new(Vec::new())),
+                    })
+                },
+            )
+        })
+        .unwrap();
+    let mut native = cx.test_window(handle.into());
+    assert!(native.simulate_frame(RequestFrameOptions {
+        require_presentation: true,
+        ..Default::default()
+    }));
+    cx.run_until_parked();
+    native.set_frame_delivery_mode(crate::PlatformFrameDeliveryMode::Deferred);
+    let original = cx
+        .update_window(handle.into(), |_, window, _| {
+            assert!(!window.invalidator.is_dirty());
+            window.needs_present.set(true);
+            window.rendered_frame_revision()
+        })
+        .unwrap();
+    for _ in 0..2 {
+        assert!(native.simulate_frame(RequestFrameOptions {
+            require_presentation: true,
+            ..Default::default()
+        }));
+        cx.run_until_parked();
+    }
+    let submission = native
+        .pending_frame_submission()
+        .expect("a deferred re-presentation must reach the exact submission path");
+    assert!(submission.frame_generation() > original);
+    assert!(submission.complete(PlatformWindowPresentOutcome::Submitted));
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, _| {
+        assert_eq!(
+            window.rendered_frame_revision(),
+            submission.frame_generation()
+        );
+        assert_eq!(
+            window.presentation_facts().present_submitted_generation,
+            Some(submission.frame_generation())
+        );
+        assert!(!window.needs_present.get());
+    })
+    .unwrap();
+    assert!(!submission.complete(PlatformWindowPresentOutcome::Submitted));
+}
+
+#[crate::test]
 fn older_accessibility_ingress_cannot_publish_a_later_submitted_candidate(cx: &mut TestAppContext) {
     let actions = Rc::new(RefCell::new(Vec::new()));
     let handle = cx
