@@ -509,6 +509,7 @@ impl AppleTextSystemState {
         let mut string = CFMutableAttributedString::new();
         let mut max_ascent = 0.0f32;
         let mut max_descent = 0.0f32;
+        let mut stripped_bom_offsets = Vec::new();
 
         {
             let mut text = text;
@@ -523,8 +524,15 @@ impl AppleTextSystemState {
                 (text_run, text) = text.split_at(run.len);
 
                 let utf16_start = string.char_len(); // insert at end of string
-                // note: replace_str may silently ignore codepoints it dislikes (e.g., BOM at start of string)
-                string.replace_str(&CFString::new(text_run), CFRange::init(utf16_start, 0));
+                // CFString::new may consume a leading BOM before insertion.
+                let cf_string = CFString::new(text_run);
+                if let Some(text_after_bom) = text_run.strip_prefix('\u{feff}')
+                    && usize::try_from(cf_string.char_len()).unwrap()
+                        == text_after_bom.encode_utf16().count()
+                {
+                    stripped_bom_offsets.push(utf16_start);
+                }
+                string.replace_str(&cf_string, CFRange::init(utf16_start, 0));
                 let utf16_end = string.char_len();
 
                 let length = utf16_end - utf16_start;
@@ -584,7 +592,9 @@ impl AppleTextSystemState {
                 .zip(run.positions().iter())
                 .zip(run.string_indices().iter())
             {
-                let glyph_utf16_ix = usize::try_from(glyph_utf16_ix).unwrap();
+                let stripped_boms =
+                    stripped_bom_offsets.partition_point(|&offset| offset <= glyph_utf16_ix);
+                let glyph_utf16_ix = usize::try_from(glyph_utf16_ix).unwrap() + stripped_boms;
                 if ix_converter.utf16_ix > glyph_utf16_ix {
                     // We cannot reuse current index converter, as it can only seek forward. Restart the search.
                     ix_converter = StringIndexConverter::new(text);
@@ -752,7 +762,10 @@ mod font_installation_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core_text::font::CTFont;
+    use core_text::{
+        font::CTFont,
+        font_descriptor::{TraitAccessors, kCTFontItalicTrait},
+    };
     use font_kit::{font::Font as FontKitFont, handle::Handle, source::SystemSource};
     use open_gpui::{FontFallbacks, FontRun, GlyphId, PlatformTextSystem, font, px};
     use std::borrow::Cow;
@@ -992,6 +1005,370 @@ mod tests {
         // There's no glyph for \u{feff}
         assert_eq!(layout.runs[0].glyphs[0].id, GlyphId(68u32)); // a
         assert_eq!(layout.runs[0].glyphs[1].id, GlyphId(69u32)); // b
+    }
+
+    fn assert_bom_layout_matches_baseline(
+        fonts: &AppleTextSystem,
+        text: &str,
+        layout: &LineLayout,
+        baseline_text: &str,
+        baseline: &LineLayout,
+        prefix_len: usize,
+    ) {
+        assert_eq!(layout.len, text.len());
+        assert_eq!(layout.font_size, baseline.font_size);
+        assert!(
+            (f32::from(layout.width) - f32::from(baseline.width)).abs() < 0.001,
+            "BOM changed the native baseline width for {text:?}"
+        );
+        for glyph in layout.runs.iter().flat_map(|run| &run.glyphs) {
+            assert!(
+                glyph.index < text.len() && text.is_char_boundary(glyph.index),
+                "invalid source UTF-8 index {} for {text:?}",
+                glyph.index
+            );
+        }
+
+        let visible_glyphs = |text: &str, layout: &LineLayout| {
+            layout
+                .runs
+                .iter()
+                .flat_map(|run| {
+                    run.glyphs.iter().filter_map(move |glyph| {
+                        (!text[glyph.index..].starts_with('\u{feff}')).then_some((
+                            run.font_id,
+                            glyph.id,
+                            glyph.index,
+                            glyph.is_emoji,
+                        ))
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+        let expected = visible_glyphs(baseline_text, baseline)
+            .into_iter()
+            .map(|(font_id, glyph_id, index, is_emoji)| {
+                (font_id, glyph_id, prefix_len + index, is_emoji)
+            })
+            .collect::<Vec<_>>();
+
+        let actual = visible_glyphs(text, layout);
+        assert_eq!(actual.len(), expected.len(), "visible glyph count changed");
+        let state = fonts.0.read();
+        for (actual, expected) in actual.into_iter().zip(expected) {
+            let (actual_font_id, actual_glyph_id, actual_index, actual_is_emoji) = actual;
+            let (expected_font_id, expected_glyph_id, expected_index, expected_is_emoji) = expected;
+            assert_eq!(
+                (actual_glyph_id, actual_index, actual_is_emoji),
+                (expected_glyph_id, expected_index, expected_is_emoji),
+                "visible glyph identity or source UTF-8 index changed for {text:?}"
+            );
+
+            let actual_font = state.fonts[actual_font_id.0].native_font();
+            let expected_font = state.fonts[expected_font_id.0].native_font();
+            assert_eq!(
+                actual_font.postscript_name(),
+                expected_font.postscript_name()
+            );
+            let actual_traits = actual_font.all_traits();
+            let expected_traits = expected_font.all_traits();
+            assert_eq!(
+                [
+                    actual_traits.normalized_weight(),
+                    actual_traits.normalized_width(),
+                    actual_traits.normalized_slant(),
+                ],
+                [
+                    expected_traits.normalized_weight(),
+                    expected_traits.normalized_width(),
+                    expected_traits.normalized_slant(),
+                ],
+            );
+            assert_eq!(
+                actual_font.symbolic_traits() & kCTFontItalicTrait,
+                expected_font.symbolic_traits() & kCTFontItalicTrait,
+            );
+            let actual_face = actual_font.copy_to_CGFont();
+            let expected_face = expected_font.copy_to_CGFont();
+            for (tag, required) in [
+                (b"head", true),
+                (b"cmap", true),
+                (b"hmtx", true),
+                (b"glyf", false),
+                (b"CFF ", false),
+                (b"CFF2", false),
+            ] {
+                let actual_data = actual_face.copy_table_for_tag(u32::from_be_bytes(*tag));
+                let expected_data = expected_face.copy_table_for_tag(u32::from_be_bytes(*tag));
+                assert!(
+                    !required || expected_data.is_some(),
+                    "expected native face must contain the {} table",
+                    String::from_utf8_lossy(tag),
+                );
+                assert!(
+                    actual_data == expected_data,
+                    "native backing face differs in the {} table",
+                    String::from_utf8_lossy(tag),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_layout_line_bom_source_single_font_run() {
+        let fonts = AppleTextSystem::new();
+        let font_id = fonts.font_id(&font("Helvetica")).unwrap();
+        let baseline_text = "ab";
+        let baseline = fonts.layout_line(
+            baseline_text,
+            px(16.),
+            &[FontRun {
+                font_id,
+                len: baseline_text.len(),
+            }],
+        );
+        let prefix = "\u{feff}";
+        let text = format!("{prefix}{baseline_text}");
+        let layout = fonts.layout_line(
+            &text,
+            px(16.),
+            &[FontRun {
+                font_id,
+                len: text.len(),
+            }],
+        );
+
+        assert_bom_layout_matches_baseline(
+            &fonts,
+            &text,
+            &layout,
+            baseline_text,
+            &baseline,
+            prefix.len(),
+        );
+        assert_eq!(layout.ascent, baseline.ascent);
+        assert_eq!(layout.descent, baseline.descent);
+    }
+
+    #[test]
+    fn test_layout_line_bom_source_separate_font_runs() {
+        let fonts = AppleTextSystem::new();
+        let font_id = fonts.font_id(&font("Helvetica")).unwrap();
+        let baseline_text = "ab";
+        let visible_run = FontRun {
+            font_id,
+            len: baseline_text.len(),
+        };
+        let baseline = fonts.layout_line(baseline_text, px(16.), &[visible_run]);
+        let prefix = "\u{feff}";
+        let text = format!("{prefix}{baseline_text}");
+        let layout = fonts.layout_line(
+            &text,
+            px(16.),
+            &[
+                FontRun {
+                    font_id,
+                    len: prefix.len(),
+                },
+                visible_run,
+            ],
+        );
+
+        assert_bom_layout_matches_baseline(
+            &fonts,
+            &text,
+            &layout,
+            baseline_text,
+            &baseline,
+            prefix.len(),
+        );
+    }
+
+    #[test]
+    fn test_layout_line_bom_source_multiple_boms() {
+        let fonts = AppleTextSystem::new();
+        let font_id = fonts.font_id(&font("Helvetica")).unwrap();
+        let baseline_text = "ab";
+        let baseline = fonts.layout_line(
+            baseline_text,
+            px(16.),
+            &[FontRun {
+                font_id,
+                len: baseline_text.len(),
+            }],
+        );
+
+        for prefix in ["\u{feff}\u{feff}", "\u{feff}\u{feff}\u{feff}"] {
+            let text = format!("{prefix}{baseline_text}");
+            for lengths in [
+                vec![text.len()],
+                vec![prefix.len(), baseline_text.len()],
+                prefix
+                    .chars()
+                    .map(|character| character.len_utf8())
+                    .chain([baseline_text.len()])
+                    .collect(),
+            ] {
+                let font_runs = lengths
+                    .into_iter()
+                    .map(|len| FontRun { font_id, len })
+                    .collect::<Vec<_>>();
+                let layout = fonts.layout_line(&text, px(16.), &font_runs);
+
+                assert_bom_layout_matches_baseline(
+                    &fonts,
+                    &text,
+                    &layout,
+                    baseline_text,
+                    &baseline,
+                    prefix.len(),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_layout_line_bom_source_multibyte_and_surrogate() {
+        let fonts = AppleTextSystem::new();
+        let font_id = fonts.font_id(&font("Helvetica")).unwrap();
+        let baseline_text = "é😀b";
+        let baseline = fonts.layout_line(
+            baseline_text,
+            px(16.),
+            &[FontRun {
+                font_id,
+                len: baseline_text.len(),
+            }],
+        );
+        let prefix = "\u{feff}";
+        let text = format!("{prefix}{baseline_text}");
+
+        for lengths in [
+            vec![text.len()],
+            vec![prefix.len(), baseline_text.len()],
+            vec![prefix.len(), "é".len(), "😀".len(), "b".len()],
+        ] {
+            let font_runs = lengths
+                .into_iter()
+                .map(|len| FontRun { font_id, len })
+                .collect::<Vec<_>>();
+            let layout = fonts.layout_line(&text, px(16.), &font_runs);
+
+            assert_bom_layout_matches_baseline(
+                &fonts,
+                &text,
+                &layout,
+                baseline_text,
+                &baseline,
+                prefix.len(),
+            );
+        }
+    }
+
+    #[test]
+    fn test_layout_line_bom_source_embedded_bom() {
+        let fonts = AppleTextSystem::new();
+        let font_id = fonts.font_id(&font("Helvetica")).unwrap();
+        let baseline_text = "a\u{feff}é😀b";
+        let baseline = fonts.layout_line(
+            baseline_text,
+            px(16.),
+            &[FontRun {
+                font_id,
+                len: baseline_text.len(),
+            }],
+        );
+
+        for prefix in ["", "\u{feff}", "\u{feff}\u{feff}"] {
+            let text = format!("{prefix}{baseline_text}");
+            let layout = fonts.layout_line(
+                &text,
+                px(16.),
+                &[
+                    FontRun {
+                        font_id,
+                        len: prefix.len() + "a".len(),
+                    },
+                    FontRun {
+                        font_id,
+                        len: "\u{feff}".len(),
+                    },
+                    FontRun {
+                        font_id,
+                        len: "é😀b".len(),
+                    },
+                ],
+            );
+
+            assert_bom_layout_matches_baseline(
+                &fonts,
+                &text,
+                &layout,
+                baseline_text,
+                &baseline,
+                prefix.len(),
+            );
+        }
+    }
+
+    #[test]
+    fn test_layout_line_bom_source_preserves_font_metrics() {
+        let fonts = AppleTextSystem::new();
+        let font_id = fonts.font_id(&font("Helvetica")).unwrap();
+        let bom_font_id = fonts.font_id(&font("Menlo")).unwrap();
+        let metrics_baseline = fonts.layout_line(
+            "ma",
+            px(16.),
+            &[
+                FontRun {
+                    font_id: bom_font_id,
+                    len: 1,
+                },
+                FontRun { font_id, len: 1 },
+            ],
+        );
+        let visible_baseline = fonts.layout_line("ab", px(16.), &[FontRun { font_id, len: 2 }]);
+        assert!(
+            metrics_baseline.ascent > visible_baseline.ascent
+                || metrics_baseline.descent > visible_baseline.descent,
+            "the BOM-only run must exercise larger native font metrics"
+        );
+        let prefix = "\u{feff}\u{feff}";
+
+        for baseline_text in ["", "ab"] {
+            let visible_runs = [FontRun {
+                font_id,
+                len: baseline_text.len(),
+            }]
+            .into_iter()
+            .filter(|run| run.len > 0)
+            .collect::<Vec<_>>();
+            let baseline = fonts.layout_line(baseline_text, px(16.), &visible_runs);
+            let mut font_runs = vec![
+                FontRun {
+                    font_id: bom_font_id,
+                    len: "\u{feff}".len(),
+                },
+                FontRun {
+                    font_id,
+                    len: "\u{feff}".len(),
+                },
+            ];
+            font_runs.extend(visible_runs);
+            let text = format!("{prefix}{baseline_text}");
+            let layout = fonts.layout_line(&text, px(16.), &font_runs);
+
+            assert_eq!(layout.ascent, metrics_baseline.ascent);
+            assert_eq!(layout.descent, metrics_baseline.descent);
+            assert_bom_layout_matches_baseline(
+                &fonts,
+                &text,
+                &layout,
+                baseline_text,
+                &baseline,
+                prefix.len(),
+            );
+        }
     }
 
     #[test]
