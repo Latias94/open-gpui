@@ -7,13 +7,27 @@ plans and qualification records retain their exact scope.
 The engine development path is recorded separately in Nara:
 `docs/plans/2026-11-12-nara-ui-integration-handoff.md`.
 
+## Scope And Next Deliverable
+
+Independent framework maintenance can begin from the published baseline and qualified engine
+consumer. Completing Nara's Editor or game UI selection is not a prerequisite for that session.
+This roadmap covers reusable UI runtime, platform, rendering, control behavior and performance
+work. Nara's domain tools and Jellyflow's graph-document interface remain in their own owners.
+
+The first deliverable should address a concrete framework reproduction from those consumers,
+or complete public behavior/skin reuse with an ordinary custom control. Preserve ordinary
+standalone applications alongside hosted roots. Return the exact revision, migration notes,
+changed feature/platform scope and a focused consumer command. A compositor, new package
+hierarchy or Signals rewrite needs a measured workload and its own selected design first.
+
 ## Recorded Windows Publication
 
 ```text
 checkout: F:/SourceCodes/Rust/open-gpui
 remote: https://github.com/Latias94/open-gpui.git
 branch: main
-published HEAD: f75c10b2a9bf7b4dcb2c8c2aa446203997601369
+published code baseline: f75c10b2a9bf7b4dcb2c8c2aa446203997601369
+published main including the original handoff: 2cc8ff10304ba905ccf0d664595f3bc93c34b170
 previous remote main: 689db5b49b33a5b2e64ba332bff72c98e70092bb
 former maintenance branch: optimize/docking-graph-transaction
 ```
@@ -184,6 +198,14 @@ expected outcome, source pin and minimal reproduction. Framework fixes belong he
 interaction/measurement policy belongs in Jellyflow; documents/assets/history/compiler/RenderHost
 policy belongs in Nara.
 
+Nara's subsequent Dialogue prerequisite is `ddcc880893c0081e6ceb76be31d995e3ce7ee37b`:
+an original Session-owned domain, a bounded codec, stable dynamic choice ports and immutable
+Jellyflow facts. Its CPU/public workflow passes 75/75, including existing controls. The planned
+native external-document adapter is still missing. Its currently confirmed blockers are in
+Jellyflow's combined read-side/mutation runtime and native intent/completion path, not an
+identified Open-GPUI runtime defect. Keep framework work separate until that consumer supplies
+a concrete framework reproduction.
+
 ## Dependency And Ownership Direction
 
 Share appropriate mechanisms and complete unstyled behavior. Separate live roots, product state,
@@ -257,6 +279,6 @@ files are background inputs; current source and matching native measurements are
 5. Return the exact commit, API migration, supported source/compiler/platform scope and minimal
    consumer command to the Nara/Jellyflow sessions.
 
-The integration session may add this document in a later local commit than the published `f75`
-baseline. Do not describe a documentation-only handoff commit as another framework sync or
-runtime qualification.
+The original handoff was published in the later `2cc8ff1` documentation commit. Code consumers
+retain `f75c10b` because that change adds no runtime behavior. Subsequent local handoff updates
+do not authorize another push or constitute another upstream sync or runtime qualification.
