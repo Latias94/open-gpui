@@ -47,7 +47,7 @@ fetched or moved.
 | Official change | Mechanism and integration owner | Disposition |
 | --- | --- | --- |
 | `ba490197cfb8` / #66806 | Clip primitive geometry in the vertex stage in Metal, WGPU and DirectX. Preserve local coordinates, exact clip-stack checks, safe-domain rounding and original vertex fallback. | Implemented, including reviewed fractional-edge and tiny-UV corrections. |
-| `caead827d77c` / #66807 | Move repeated color/background work out of fragment shading and reduce redundant storage reads. | Implemented across all three shader families. |
+| `caead827d77c` / #66807 | Move repeated color/background work out of fragment shading and reduce redundant storage reads. | Background/color preparation is adopted. The subsequent Windows completeness audit identifies an incomplete ordinary polychrome-sprite fast path in WGPU; that optimization remains queued. |
 | `ffe0fa29e41e` / #66809 | Monotone quadratic outlines, CPU curve binning and analytic winding tiles replace tessellation and intermediate path MSAA. Core and all three renderers migrate together. | Implemented with checked projection, local paint coordinates and ordinary consumer migration. |
 | `1d8eda94bd4d` / #66810 | Kind-aware overlapping order and actual layer primitive bounds improve batching while respecting atlas texture reordering. | Implemented with validity-aware journal reconstruction and retained replay. |
 | `be07e43ea0ad` / #66811 | Front-to-back opaque rectangles write private depth; remaining primitives blend in paint order with depth testing. Preserve rounded/exact clipping and the host's submission/resource ownership. | Implemented with safe quad partitions and host recording-resource retention. |
@@ -75,10 +75,85 @@ fractional-clip and UV findings. The
 and WGPU results, downstream compilation and native precompiled shaders. Current AppKit startup
 has no active display, and Windows cross-compilation lacks MSVC C headers; those qualifications
 remain pending alongside browser/foreign execution, compiler-floor and numerical performance.
-This closes these six named source mechanisms without claiming exhaustive framework parity.
+This records the initial six-mechanism adoption without claiming exhaustive framework parity.
+The subsequent completeness audit below narrows the source-completion claim for #66807.
 The atomic implementation/API migration is committed at
 `0ed315daa37e94d6f80b357339ab8eff6b9b5afc`. Core/Apple/Mac passes 2077/2077 and the final
 Apple/Mac/WGPU cohort passes 296/296; neither count substitutes for the pending platform gates.
+
+## November 12 Windows Completeness Audit
+
+This read-only source review fixes Open GPUI
+`b76bf77db75588a75db90148b3ebe7a4269d8f53` and the actual `repo-ref/zed` tree
+`6ceb6fee8738274589b59139df27efc191ec2231`. The independently queried official remote HEAD
+is the same target. The reference has complete history; this Windows fork checkout is shallow.
+The reviewed fork implementation/checkpoint objects and exact source trees are locally available;
+the audit does not infer missing fixes from absent older fork ancestry. The reference checkout
+remains read-only; no fetch, reset or source reconstruction is needed for these comparisons.
+
+Four independent lanes inspect Core/WGPU rendering, DirectX/HLSL, Mac/Apple and framework
+changes after the historical whole-framework target. The Mac/Apple source reconciliation and
+its BOM/PATH/native-retirement corrections have no newly confirmed omission. Explicit sheet
+owners, accepted-frame focus/diagnostics, retained atlas regions and exact shutdown tickets
+remain justified fork contracts. New-renderer AppKit close/sheet/submitted-resize execution and
+forced native-close lock contention still require a Mac GUI runner.
+
+Three integration findings qualify the earlier rendering claim:
+
+- **Windows fixture migration:** `native_randomized_tree_tests.rs` still reads the now-private
+  `PaintedPath.bounds`. Actual Windows all-target compilation fails with E0616 before tests
+  execute. The fixture now obtains the baked device-space raster bounds through
+  `Primitive::try_visual_bounds`; no public field or renderer representation is reintroduced.
+- **Windows border reference:** the existing WARP control still assumes the tiny-background
+  sentinel prevents quad partitioning. The new mechanism produces five legitimate records,
+  so its old single-quad assertion fails before pixel comparison. Reconstruct the complete
+  border reference from the real border geometry and its original exact clip range, as the
+  already-migrated WGPU control does. Keep the captured split Scene, rounded transform,
+  Solid/Dashed styles and full-image pixel assertions.
+- **Partial #66807 performance mechanism:** upstream `fs_poly_sprite` returns the ordinary
+  no-rounded-corners/non-grayscale result before `load_poly_sprite`, using opacity passed by
+  the vertex stage. Fork WGPU sets the simple flag but still unconditionally loads the instance
+  in its fragment shader, including ordinary `pad = 0` images. Exact clips, imported-image
+  flags and LinearSrgb must survive a future adaptation. Those requirements do not establish
+  completion of the ordinary fast path. This is a source-adoption gap, not a demonstrated pixel
+  defect or a measured performance regression.
+
+DirectX's corresponding simple sprite branch already returns before reading the polychrome
+instance. Its separate exact-clip buffer lookup remains necessary and is not the omitted
+WGPU instance-read optimization.
+
+The existing DirectX hidden-window WARP harness gains four focused integration controls:
+fractional half-open clips for isolated quads/paths/sprites, rounded-clip depth with a path and
+translucent backdrop, nonuniformly transformed path gradients/patterns, and enlarged tiny-image
+UVs. Their execution, first failures, reruns and embedded-shader scope belong to the
+[Windows qualification](../verification.md#windows-follow-up-qualification).
+
+The following changes after `635026fabc38440fce5e1767d125026a17b12012` need explicit
+successors. They are not newly introduced regressions from the six rendering commits, and
+their absence does not invalidate the older target's closure. They do prevent treating
+`6ceb6fee` as a fully synchronized framework baseline.
+
+The complete non-merge history inventory for that imported closure contains **25 commits**:
+**12 adopted, 1 equivalent, 1 partial and 11 queued**. The adopted set consists of the five
+fully adopted rendering rows above plus `4ce4b7b567ac` (Div), `22580c6e6970` and
+`ddb90e5e89d3` (text), `47c46191f4e4` (pasteboards), `64ef8026c7bc` (placement),
+`ba06cc519102` (titlebar/focus) and `3d42ca7c0959` (framework diagnostics), detailed in the
+Mac reconciliation below. Mixed product commits are classified by their framework slice;
+their product settings, telemetry, CLI and socket dispatch remain outside the closure.
+The partial row is #66807; the equivalent and all eleven queued entries follow. Grouped
+table rows count their individual commits, including the List prerequisite.
+
+| Official change | Current fork evidence and disposition | Owning verification for adoption |
+| --- | --- | --- |
+| `bfcd5949ff82` / #66774 | Wayland still derives `signal_at` from callback data and `CLOCK_MONOTONIC`, although the protocol does not define that clock. Queued correctness fix; use receipt `Instant::now()` as upstream does. | Wayland/profiler signal timing and the owning Linux feature gate. |
+| `4a6121bb0f10` / #66588 | DirectWrite still measures the base glyph and uses GPU COLR composition. Upstream unions layer bounds, selects recommended rendering mode and composes CPU bitmaps. Queued complete Windows text successor; layer clipping is a correctness concern. | Layer-extending COLR glyph bounds/pixels, recommended-mode selection and existing color-emoji readback. |
+| `78fde14d12` / #64056, prerequisite `7bb5656e63` / #66614 | List still measures at outer width with zero horizontal content offset; its width cache does not account for changed padding. Queued layout/API unit with `Edges: Along`. | Padding-aware row width, origin, scrollbar geometry and cache invalidation through the public List owner. |
+| `985bbf42e6` / #66799 | Cosmic text still uses `glyph.x/y` without combining-mark offsets. Queued text correctness fix. | Nonzero-offset combining marks, shaping metrics and actual WGPU text pixels. |
+| `0929d569fa3e` / #66772 | Framework `current_desktop` and cross-platform `desktop_environment()` are absent. Queue that framework slice; product telemetry remains outside the closure. | Unix environment detection and ordinary cross-platform consumer compilation, including `None` on Windows. |
+| `39467cf4b1` / #64864 | `Element` has no blanket `IntoElement`; custom elements still implement/derive it explicitly. Queued public-API reconciliation, including coherence with fork-owned implementations. | An ordinary custom-element consumer and existing element/object-safety tests. |
+| `416cd8496390` / #66599 | The `testing` example still omits notification after two asynchronous updates. Queued example fix; not a production runtime regression. | Run the ordinary testing example and observe both asynchronous updates. |
+| `415d310e52`, `4023e3c88e`, `62682ebde9` | SharedString equality, delayed text-wrapper acquisition and batched tab-order construction retain their previous implementations. Queued performance mechanisms; no new behavioral failure or measured cost is claimed. | Existing string/text/focus regressions and a measured workload before claiming gains. |
+| `78f5d7446c55` / #66855 | Equivalent through native-event queue ingress and post-borrow App delivery. Windows native display observers already test pending callbacks while App is borrowed and stale-event retirement after close. | Existing `native_display_observation_tests`; do not add a second defer solely to match source shape. |
 
 ## November 12 macOS Reconciliation
 

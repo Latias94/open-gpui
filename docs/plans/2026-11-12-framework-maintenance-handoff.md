@@ -145,6 +145,16 @@ After those gates, measure a real consumer's frame/upload/overdraw costs before 
 renderer architecture change. Browser execution, Rust 1.93 and older-macOS qualification remain
 explicitly separate.
 
+The subsequent [Windows completeness audit](../imports/zed-gpui-upstream-sync-candidates.md#november-12-windows-completeness-audit)
+uses the actual fixed target tree and records 12 adopted, 1 equivalent, 1 partial and 11 queued
+commits after the historical whole-framework target. The WGPU ordinary-image fast path is
+partial; Windows COLR layer bounds, List padding, Cosmic mark offsets and Wayland callback
+timing have their own queued successors. Current Windows compiler/shader/GPU results and
+the test-only migration corrections are owned by the
+[Windows qualification](../verification.md#windows-follow-up-qualification). Read that record
+before treating the earlier cross-compilation limit as the current Windows result. AppKit GUI
+close/sheet/resize and forced-close contention still need their owning Mac runner.
+
 ## Upstream Maintenance
 
 The earlier whole-framework comparison target is Zed

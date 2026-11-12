@@ -28,7 +28,7 @@ Run Cargo serially with two build jobs and one nextest test thread, reusing the 
 Record compiler-floor and foreign-platform limits separately. Commit only reviewed, verified
 local changes; publication remains outside this task.
 
-The complete six-mechanism successor is implemented at
+The initial six-mechanism successor is implemented at
 `0ed315daa37e94d6f80b357339ab8eff6b9b5afc`, including the public path migration and
 reviewed overflow, antialiasing, vertex-rounding, fractional-edge and UV corrections. The
 [qualification](../verification.md#november-12-rendering-successor) records Core/Apple/Mac
@@ -36,6 +36,32 @@ reviewed overflow, antialiasing, vertex-rounding, fractional-edge and UV correct
 wasm, precompiled/runtime Metal shaders and strict Clippy. All six implementation/review
 threads are finished and closed. Active-display AppKit controls, actual Windows compiler/shader/
 WARP execution, browser execution, Rust 1.93 and numerical performance remain separate gates.
+
+The subsequent [Windows completeness audit](../imports/zed-gpui-upstream-sync-candidates.md#november-12-windows-completeness-audit)
+fixes fork `b76bf77db75588a75db90148b3ebe7a4269d8f53` against the same actual upstream tree.
+It identifies an incomplete WGPU polychrome-sprite fast path in #66807 and two unmigrated
+Windows fixtures: private `PaintedPath.bounds` access and the old pre-partition single-quad
+border reference. They are corrected through the existing Primitive raster-bounds interface
+and the already-adopted WGPU reference reconstruction. Four integration regressions extend
+the existing WARP owner, with independent oracle review; production rendering stays unchanged
+in this audit.
+The [Windows qualification](../verification.md#windows-follow-up-qualification) owns actual
+compiler, runtime/embedded shader and GPU results. Keep the partial optimization queued;
+passing pixels do not prove that its storage-read optimization was adopted.
+
+Windows qualification executes 2257/2258 Core/WGPU tests followed by the corrected diagnostic
+snapshot's 1/1 rerun, 24/25 runtime-shader Windows controls followed by the corrected border's
+1/1 rerun, and a clean 25/25 embedded-FXC cohort. All 18 HLSL entries compile with production
+FXC `/O3`. Affected all-target and independent-consumer compilation and Windows correctness/
+suspicious Clippy pass. The original failures remain in the qualification record. All four
+source-review lanes and the supplemental fixture reviewer are finished and closed.
+
+The full later upstream closure contains 25 non-merge commits: 12 adopted, 1 equivalent,
+1 partial and 11 queued. The candidate record now assigns every item, including Windows COLR
+layer bounds, List padding with `Edges: Along`, Cosmic combining offsets, Wayland callback
+receipt timing and the framework slices of mixed product commits. Those are follow-up source
+units rather than a silent extension of this rendering implementation. Native AppKit GUI,
+Rust 1.93, browser/Linux execution and measured performance retain their separate gates.
 
 ## November 12 macOS Reconciliation
 

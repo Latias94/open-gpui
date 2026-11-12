@@ -173,8 +173,110 @@ checks, before extending the native platform claims.
 The reviewed implementation, tests, lockfiles and public migration notes are committed at
 `0ed315daa37e94d6f80b357339ab8eff6b9b5afc`. The last fixture-only correction also passes
 its all-target WGPU strict Clippy rerun. All six worker/reviewer threads are closed, and no remote
-publication is performed. These results close this six-commit source-adoption unit with the
-stated local/foreign qualification limits.
+publication is performed. These initial results qualify the six-commit implementation with
+the stated local/foreign limits. The Windows follow-up below narrows the #66807 adoption
+claim and records the subsequent native compiler/shader/GPU qualification.
+
+### Windows Follow-Up Qualification
+
+The Windows continuation fixes fork `b76bf77db75588a75db90148b3ebe7a4269d8f53` and the
+actual reference tree `6ceb6fee8738274589b59139df27efc191ec2231`. The independently observed
+upstream remote HEAD is the same revision. Source findings and queued successors are recorded
+in the [completeness audit](imports/zed-gpui-upstream-sync-candidates.md#november-12-windows-completeness-audit).
+The host is Windows 11, Rust 1.99.1 (`58cf8f9c3`) on `x86_64-pc-windows-msvc`,
+cargo-nextest 0.9.138 and Windows SDK 10.0.26100.0 x64. Cargo uses one build job and one
+nextest thread, reusing the checkout's `target`; no clean or alternate build tree is used.
+Raw logs, fixed environment metadata and FXC output are retained locally under
+`target/verification/2026-11-12-windows-alignment/`.
+The focused WARP controls and fixture corrections are committed at
+`97341cbbcf93bf6b74959ce3798041fb1b9bb30f`.
+
+The first locked Core/Windows/WGPU all-target check fails before runtime execution:
+`native_randomized_tree_tests.rs:270` still accesses the private `PaintedPath.bounds` field
+after the analytic-path migration. The fixture now uses `Primitive::try_visual_bounds` for
+the baked path's raster footprint. This fixes a Windows-only consumer migration omission;
+production encapsulation and rendering semantics are unchanged.
+
+All **18/18** production HLSL entries compile using the installed x64 FXC with `/O3`,
+`vs_4_1` / `ps_4_1`, `/Fh` and `/Vn`, matching `build.rs`. The nine pairs include
+`opaque_quad`, `path_tile` and `emoji_rasterization`. Existing `pow` warnings remain.
+This standalone result establishes shader compilation; runtime and embedded-byte pixel
+qualification require actual renderer execution.
+
+Four controls extend the existing real hidden-HWND WARP Scene capture/readback harness:
+fractional clipping for isolated quads, analytic paths and sprites; rounded-clip fallback
+with translucent/path ordering; nonuniformly transformed local path gradients/patterns;
+and enlarged tiny-image UVs. Source capture requires a real submitted frame, and readback
+executes the production renderer. The WARP Scene helper does not request the D3D debug
+layer; existing atlas-upload and DirectWrite readback tests have their own debug-layer
+requirements. Actual runtime results and the tested shader selection are recorded below.
+
+The complete Core/WGPU run executes **2258 tests across 57 binaries**, initially passing
+**2257/2258**, with zero skipped (`447d09b3-30d4-4eb4-994e-6cb8ad3963ba`, 570.890 seconds).
+All WGPU tests and the shared runtime/GPU integration controls pass. The only failure is
+the presentation compile-fail suite: `retired_visibility.stderr` expects the older one-line
+underline, whereas this compiler emits a split underline and label for the same E0432
+unresolved import. `Visibility` remains unavailable. Only that reviewed diagnostic snapshot
+is updated; no API or broad `TRYBUILD=overwrite` operation is introduced. Its targeted rerun
+passes **1/1** (`1a5391f7-04ca-460d-8ac6-47a054f09c46`, 7.940 seconds); the other 2257
+cases are filtered rather than re-executed in that run.
+
+The first Windows selection passes **24/25**
+(`855c975f-69e4-4ac4-a35a-e40b1f588327`, 14.249 seconds), with all four new WARP controls
+passing. The existing hollow-border control fails at its obsolete `full.quads.len() == 1`
+assertion: the new partition owner legitimately emits five quads. As in the existing WGPU
+control, the fixture now copies the original border record, removes the sentinel background,
+restores its complete conservative bounds from the same exact clip range, and renders that
+single complete quad against the captured strips. Solid/Dashed styles, rounded clipping,
+transform, visible-pixel guard and full-image comparison retain their original per-channel
+tolerance of two. The targeted runtime-shader rerun passes **1/1**
+(`471f7248-4193-494f-b534-ea3f6c7927f5`, 0.878 seconds). Independent review confirms that
+this is a complete-quad reference rather than two partitioned references or a widened exact
+clip. Both this fixture and the Windows private-field consumer were migration omissions in
+the Mac-only qualification; neither correction changes production rendering.
+
+The complete 25-test Windows selection then passes **25/25** using embedded FXC bytes
+(`4c769045-8164-434c-8ed7-3b3ad178ec91`, 8.321 seconds). It covers 20 WARP atlas/Scene
+tests, two DirectWrite readback controls, two display-observation controls and the native
+scene-color trajectory. The 295 other Windows library cases are filtered/ignored, not
+qualified by this selection. The native scene reports `embedded FXC true`, scale 1.5 and
+cached replay with consumer counts `(3,3,3,3)` unchanged after both notifications.
+
+This embedded run uses the existing dev profile with a package-scoped
+`profile.dev.package.open-gpui-windows.debug-assertions=false` override. Cargo recompiles
+that package's build script and library, `build.rs` invokes production FXC `/O3`, and
+`RawShaderBytes` selects its generated arrays. Dependencies and the existing target remain
+reused. This qualifies the actual non-debug shader branch and pixels; it is not an optimized
+Rust release-performance result. The preceding runtime-shader run reports
+`embedded FXC false`. Window readback is not an OS-compositor screenshot.
+
+```powershell
+$env:CARGO_BUILD_JOBS = '1'
+cargo nextest run --locked -p open-gpui -p open-gpui-wgpu --features test-support,bench-support --test-threads=1 --no-fail-fast --status-level fail
+$windowsRenderingTests = 'test(warp_) | test(direct_write::readback_tests::) | test(native_scene_color_tests::) | test(native_display_observation_tests::)'
+cargo nextest run --locked -p open-gpui-windows --features test-support,bench-support --lib -E $windowsRenderingTests --test-threads=1 --no-fail-fast --no-tests fail --success-output immediate
+cargo nextest run --locked --config 'profile.dev.package.open-gpui-windows.debug-assertions=false' -p open-gpui-windows --features test-support,bench-support --lib -E $windowsRenderingTests --test-threads=1 --no-fail-fast --no-tests fail --success-output immediate
+```
+
+Final locked Core/Windows/WGPU all-target compilation passes with `test-support,bench-support`.
+The independently locked public consumer also passes all targets with
+`bench-support,wgpu-renderer`, using the same absolute `CARGO_TARGET_DIR`. This exercises its
+ordinary Windows APIs, WGPU owner and migrated randomized-tree benchmark under its own
+dependency selections. Windows all-target Clippy passes `-D clippy::correctness` and
+`-D clippy::suspicious`; non-denied advisory warnings remain. Manifests and lockfiles are
+unchanged by this continuation. Four source-review lanes and one supplemental fixture reviewer
+are finished and closed.
+
+Root formatting, public documentation links and release-document checks pass. The independent
+consumer's first formatting check finds only two outdated import-wrap lines in its randomized
+tree benchmark. Formatting that fixture with `cargo fmt` resolves the discrepancy; its rerun
+passes without changing benchmark behavior. The initial failed check remains in the local logs.
+Final root/consumer formatting, document-link, release-document and whitespace checks pass.
+
+The source audit retains #66807's WGPU sprite fast-path gap and the eleven queued later
+framework commits. Passing these controls does not establish their adoption or measured
+performance gains. AppKit GUI close/sheet/submitted-resize and forced lock-contention paths,
+Linux/browser execution, older macOS and Rust 1.93 remain separate qualifications.
 
 ## macOS Source Reconciliation On November 12
 
