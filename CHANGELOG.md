@@ -222,6 +222,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- Breaking: paths use the official analytic winding renderer in Metal, WGPU and DirectX. Replace `Path<Pixels>` with `Path`, construct contours with `PathBuilder`, and initialize the framework's `StrokeOptions` / `FillOptions` fields instead of Lyon tessellation options. Renderer integrations consume `PaintedPath::append_to` paint, curve and tile records; the old `PathVertex`, `PathId` and triangle construction APIs are removed. Geometry clipping, primitive batching, opaque depth and shadow shading follow the same upstream rendering update; numerical performance remains workload-dependent.
+- External WGPU hosts must enable four storage buffers per shader stage and six combined buffers per stage on native devices before constructing `WgpuSceneRenderer`. Path tiles use the original host encoder and submission; recording receipts retain the new private depth and uploaded resources until GPU completion.
+
 - DirectX reuses whole instance buffer views across batches and uses the official shader offset. Sprite batches group by exact atlas texture identity where paint order permits it; renderer implementations that consume raw sprite records must update their shader field order. Hollow borders omit their unpainted interior while keeping the original rounded geometry and dash phase.
 
 - Complete `AnyDrag` literals require `external_payload_source`. Native backends implementing `start_external_drag` receive a `PlatformExternalDragSession`; retain it for source callbacks and dispatch `FileDropEvent::Ended` when that exact native session finishes. Exhaustive file-drop matches must handle `Ended`.

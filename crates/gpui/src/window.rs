@@ -18,9 +18,9 @@ use crate::{
     Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, InputPreference, IsZero,
     KeyBinding, KeyContext, KeyDownEvent, KeyEvent, KeyUpEvent, Keystroke, KeystrokeEvent,
     LayoutId, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseEvent, MouseMoveEvent,
-    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformFrameDeliveryMode,
-    PlatformFrameSignal, PlatformInput, PlatformInputHandler, PlatformWindow,
-    PlatformWindowCapabilities, PlatformWindowCommand, PlatformWindowDispatch,
+    MouseUpEvent, PaintedPath, Path, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformFrameDeliveryMode, PlatformFrameSignal, PlatformInput, PlatformInputHandler,
+    PlatformWindow, PlatformWindowCapabilities, PlatformWindowCommand, PlatformWindowDispatch,
     PlatformWindowInteractionQuiescence, PlatformWindowMutationObservation,
     PlatformWindowMutationTerminal, PlatformWindowMutationUnobservedTerminal,
     PlatformWindowPresentOutcome, PlatformWindowProfile, Point, PointerCancelEvent,
@@ -7397,12 +7397,6 @@ impl Window {
         )
     }
 
-    /// Floors the near edge and ceils the far edge, producing a strict superset of the raw region.
-    #[inline]
-    fn cover_bounds(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
-        Self::cover_device_bounds(self.device_local_bounds(bounds))
-    }
-
     /// Call to prevent default handling for the event currently being dispatched.
     /// Built-in handlers consult this flag before applying behaviors such as
     /// automatic focus transfer or default scrolling.
@@ -11473,34 +11467,30 @@ impl Window {
         });
     }
 
-    /// Creates a new painting layer for the specified bounds. A "layer" is a batch
+    /// Creates a new painting layer. A "layer" is a batch
     /// of geometry that are non-overlapping and have the same draw order. This is typically used
     /// for performance reasons.
     ///
+    /// Nested layers are drawn above their parent, including primitives painted after them.
+    /// The bounds hint is retained for compatibility; actual clipped primitives determine bounds.
+    ///
     /// This method should only be called as part of the paint phase of element drawing.
-    pub fn paint_layer<R>(&mut self, bounds: Bounds<Pixels>, f: impl FnOnce(&mut Self) -> R) -> R {
+    pub fn paint_layer<R>(&mut self, _bounds: Bounds<Pixels>, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.paint_layer_with_actual_bounds(f)
+    }
+
+    pub(crate) fn paint_layer_with_actual_bounds<R>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
         self.invalidator.debug_assert_paint();
-
-        let clip_stack = self.clip_stack();
-        let clipped_bounds = self
-            .try_project_subtree_bounds(bounds)
-            .ok()
-            .map(|bounds| bounds.intersect(&clip_stack.conservative_bounds()));
-        if let Some(clipped_bounds) = clipped_bounds.filter(|bounds| !bounds.is_empty()) {
-            self.next_frame.scene.push_layer_scoped(
-                self.cover_bounds(clipped_bounds),
-                self.subtree_geometry_validity(),
-            );
-        }
-
+        self.next_frame
+            .scene
+            .push_layer_scoped(Bounds::default(), self.subtree_geometry_validity());
         let result = f(self);
-
-        if clipped_bounds.is_some_and(|bounds| !bounds.is_empty()) {
-            self.next_frame
-                .scene
-                .pop_layer_scoped(self.subtree_geometry_validity());
-        }
-
+        self.next_frame
+            .scene
+            .pop_layer_scoped(self.subtree_geometry_validity());
         result
     }
 
@@ -11652,30 +11642,63 @@ impl Window {
             transform,
         };
 
-        if quad.background.is_transparent() && !quad.border_color.is_transparent() {
-            let clip_stack = self.clip_stack();
-            let scale_factor = self.scale_factor();
-            if let Some(strips) = Self::border_only_quad_strips(&quad, &clip_stack, scale_factor) {
-                if let Err(error) = self.next_frame.scene.insert_quad_strips_scoped(
-                    quad,
-                    strips,
-                    &clip_stack,
-                    scale_factor,
-                    self.subtree_geometry_validity(),
-                ) {
-                    self.record_subtree_geometry_failure(error);
-                }
-                return;
+        self.insert_quad(quad);
+    }
+
+    fn insert_quad(&mut self, quad: Quad) {
+        let has_background = !quad.background.is_transparent();
+        let has_border =
+            quad.border_widths != Edges::default() && !quad.border_color.is_transparent();
+        if !has_background && !has_border {
+            return;
+        }
+        let is_rectangle =
+            quad.border_widths == Edges::default() && quad.corner_radii == Corners::default();
+        if has_background && is_rectangle {
+            self.insert_scene_primitive(quad);
+            return;
+        }
+        let plain_border = quad.corner_radii == Corners::default()
+            && quad.border_style == BorderStyle::Solid
+            && quad.transform.scale() == size(1.0, 1.0)
+            && (!has_background || quad.border_color.is_opaque());
+        let clip_stack = self.clip_stack();
+        let scale_factor = self.scale_factor();
+        if let Some(inner) =
+            Self::quad_partition_interior(&quad, plain_border, &clip_stack, scale_factor)
+        {
+            if let Err(error) = self.next_frame.scene.insert_quad_partition_scoped(
+                quad,
+                inner,
+                plain_border,
+                &clip_stack,
+                scale_factor,
+                self.subtree_geometry_validity(),
+            ) {
+                self.record_subtree_geometry_failure(error);
             }
+            return;
         }
         self.insert_scene_primitive(quad);
     }
 
-    fn border_only_quad_interior(
+    fn quad_partition_interior(
         quad: &Quad,
-        outer: Bounds<ScaledPixels>,
-        visible: Bounds<ScaledPixels>,
+        plain_border: bool,
+        clip_stack: &ClipStackSnapshot,
+        scale_factor: f32,
     ) -> Option<Bounds<ScaledPixels>> {
+        if !quad.transform.has_precise_raster_coordinates(quad.bounds) {
+            return None;
+        }
+        let outer = quad.transform.try_project_bounds(quad.bounds).ok()?;
+        let viewport = clip_stack.clips().first()?.bounds().scale(scale_factor);
+        if ![viewport.right(), viewport.bottom()]
+            .into_iter()
+            .all(|edge| edge.0.abs() <= PrimitiveTransform::RASTER_COORDINATE_LIMIT)
+        {
+            return None;
+        }
         let Corners {
             top_left,
             top_right,
@@ -11687,12 +11710,36 @@ impl Window {
         if radii
             .into_iter()
             .any(|radius| !radius.0.is_finite() || radius.0 < 0.0)
-            || (radii.into_iter().all(|radius| radius.0 == 0.0)
-                && !widths.any(|width| width.0 > 0.0))
+            || widths.any(|width| !width.0.is_finite() || width.0 < 0.0)
         {
             return None;
         }
-
+        if plain_border {
+            let local_inner = quad.bounds.extend(widths.map(|width| -*width));
+            if local_inner.is_empty() {
+                return None;
+            }
+            let inner =
+                Self::snap_device_bounds(quad.transform.try_project_bounds(local_inner).ok()?);
+            return (!inner.is_empty()).then_some(inner);
+        }
+        let size = quad.bounds.size;
+        let diagonal = size.width.0.hypot(size.height.0);
+        if diagonal == 0.0 || !diagonal.is_finite() {
+            return None;
+        }
+        let cos = size.height.0 / diagonal;
+        let sin = size.width.0 / diagonal;
+        let corner_inset = |radius: ScaledPixels, width_x: ScaledPixels, width_y: ScaledPixels| {
+            point(
+                width_x.max(radius - (radius - width_x) * cos),
+                width_y.max(radius - (radius - width_y) * sin),
+            )
+        };
+        let top_left = corner_inset(top_left, widths.left, widths.top);
+        let top_right = corner_inset(top_right, widths.right, widths.top);
+        let bottom_right = corner_inset(bottom_right, widths.right, widths.bottom);
+        let bottom_left = corner_inset(bottom_left, widths.left, widths.bottom);
         let scale = quad.transform.scale();
         let inset = |width: ScaledPixels, axis_scale: f32| {
             let shader_aa_and_pixel_slack = (0.5 * axis_scale + 0.5).max(1.0);
@@ -11710,65 +11757,19 @@ impl Window {
                 ),
             )
         };
-        let horizontal_band = interior(Edges {
-            top: widths.top.max(top_left).max(top_right),
-            bottom: widths.bottom.max(bottom_left).max(bottom_right),
-            ..widths
+        let inner = interior(Edges {
+            top: top_left.y.max(top_right.y),
+            right: top_right.x.max(bottom_right.x),
+            bottom: bottom_left.y.max(bottom_right.y),
+            left: top_left.x.max(bottom_left.x),
         });
-        let vertical_band = interior(Edges {
-            left: widths.left.max(top_left).max(bottom_left),
-            right: widths.right.max(top_right).max(bottom_right),
-            ..widths
-        });
-        let skipped_area = |bounds: Bounds<ScaledPixels>| {
-            let visible_interior = bounds.intersect(&visible);
-            visible_interior.size.width.0 * visible_interior.size.height.0
-        };
-        let horizontal_area = skipped_area(horizontal_band);
-        let vertical_area = skipped_area(vertical_band);
-        if horizontal_area >= vertical_area && horizontal_area > 0.0 {
-            Some(horizontal_band)
-        } else if vertical_area > 0.0 {
-            Some(vertical_band)
-        } else {
-            None
-        }
-    }
-
-    /// Partitions the raster at device-pixel boundaries while keeping the original shader geometry.
-    fn border_only_quad_strips(
-        quad: &Quad,
-        clip_stack: &ClipStackSnapshot,
-        scale_factor: f32,
-    ) -> Option<[Bounds<ScaledPixels>; 4]> {
-        let local = quad.bounds;
-        if !quad.transform.has_precise_raster_coordinates(local) {
-            return None;
-        }
-
-        let outer = quad.transform.try_project_bounds(local).ok()?;
-        let viewport = clip_stack.clips().first()?.bounds().scale(scale_factor);
-        if ![viewport.right(), viewport.bottom()]
-            .into_iter()
-            .all(|edge| edge.0.abs() <= PrimitiveTransform::RASTER_COORDINATE_LIMIT)
-        {
-            return None;
-        }
-        let visible = outer.intersect(&clip_stack.conservative_bounds().scale(scale_factor));
-        let inner = Self::border_only_quad_interior(quad, outer, visible)?;
-        let padded = Self::cover_device_bounds(outer.dilate(ScaledPixels(0.5)));
-        Some([
-            Bounds::from_corners(padded.origin, point(padded.right(), inner.top())),
-            Bounds::from_corners(point(padded.left(), inner.bottom()), padded.bottom_right()),
-            Bounds::from_corners(point(padded.left(), inner.top()), inner.bottom_left()),
-            Bounds::from_corners(inner.top_right(), point(padded.right(), inner.bottom())),
-        ])
+        (!inner.is_empty()).then_some(inner)
     }
 
     /// Paint the given `Path` into the scene for the next frame at the current z-index.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
-    pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Background>) {
+    pub fn paint_path(&mut self, path: Path, color: impl Into<Background>) {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
@@ -11777,9 +11778,19 @@ impl Window {
             return;
         };
         let color: Background = color.into();
-        path.color = color.opacity(opacity);
-        let mut path = path.scale(scale_factor);
-        path.transform = transform;
+        let path = match PaintedPath::new_transformed(
+            path,
+            scale_factor,
+            transform,
+            self.clip_stack().conservative_bounds(),
+            color.opacity(opacity),
+        ) {
+            Ok(path) => path,
+            Err(error) => {
+                self.record_subtree_transform_failure(error);
+                return;
+            }
+        };
         self.insert_scene_primitive(path);
     }
 

@@ -1469,10 +1469,7 @@ fn render_node_body(
                         );
                         path.line_to(origin + crate::point(px(-bend), bounds.size.height));
                         path.close();
-                        window.paint_path(
-                            path.build().expect("generated path must tessellate"),
-                            color,
-                        );
+                        window.paint_path(path.build().expect("generated path must build"), color);
                     }
                 },
             )

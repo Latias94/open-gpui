@@ -7,7 +7,7 @@
 use criterion::Criterion;
 use open_gpui::{
     AtlasTextureId, AtlasTextureInstanceId, AtlasTextureKind, AtlasTile, BenchAppContext,
-    BenchWindowContext, Bounds, Context, DevicePixels, Entity, PathId, Primitive, PrimitiveBatch,
+    BenchWindowContext, Bounds, Context, DevicePixels, Entity, Primitive, PrimitiveBatch,
     Scene, Task, TileId, VisualContext as _, WindowActivationTerminal, point, profiler, px,
     randomized_element_tree::{
         RandomizedElementTree, RandomizedElementTreeBounds, RandomizedElementTreeMutation,
@@ -198,10 +198,15 @@ fn scene_semantics(scene: &Scene) -> Vec<String> {
                     value.clip.first_clip = 0;
                     format!("quad {value:?}")
                 }
-                Primitive::Path(mut value) => {
-                    value.clip.first_clip = 0;
-                    value.id = PathId(0);
-                    format!("path {value:?}")
+                Primitive::Path(value) => {
+                    let mut paints = Vec::new();
+                    let mut curves = Vec::new();
+                    let mut tiles = Vec::new();
+                    value.append_to(&mut paints, &mut curves, &mut tiles);
+                    for paint in &mut paints {
+                        paint.clip.first_clip = 0;
+                    }
+                    format!("path {paints:?} {curves:?} {tiles:?}")
                 }
                 Primitive::Underline(mut value) => {
                     value.clip.first_clip = 0;

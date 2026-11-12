@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use crate::PlatformPixelBuffer;
 use crate::{
     AtlasTextureInstanceId, AtlasTextureLease, AtlasTextureLeaseError, AtlasTile, Background,
-    Bounds, Corners, Edges, Hsla, Pixels, PlatformAtlas, Point, ScaledPixels, Size,
-    SubtreeTransformError,
+    Bounds, Corners, Edges, Hsla, Path, PathTiles, Pixels, PlatformAtlas, Point, ScaledPixels,
+    Size, SubtreeTransformError,
     bounds_tree::BoundsTree,
     geometry::{
         ClipStackSnapshot, ResolvedClip, ResolvedSubtreeTransform, SubtreeGeometryError,
@@ -17,11 +17,10 @@ use crate::{
     },
     point,
 };
-use std::{fmt::Debug, iter::Peekable, ops::Range, slice, sync::Arc};
-
-#[allow(non_camel_case_types, unused)]
-#[expect(missing_docs)]
-pub type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
+use smallvec::SmallVec;
+use std::{
+    collections::VecDeque, fmt::Debug, iter::Peekable, ops::Range, rc::Rc, slice, sync::Arc,
+};
 
 #[expect(missing_docs)]
 pub type DrawOrder = u32;
@@ -36,6 +35,13 @@ pub struct PaddedBool32(u32);
 impl From<bool> for PaddedBool32 {
     fn from(value: bool) -> Self {
         Self(u32::from(value))
+    }
+}
+
+impl PaddedBool32 {
+    /// Returns the wrapped boolean.
+    pub fn as_bool(self) -> bool {
+        self.0 != 0
     }
 }
 
@@ -99,6 +105,14 @@ pub struct ClipEnvelope {
     pub clip_count: u32,
 }
 
+#[derive(Clone)]
+struct Layer {
+    primitives: SmallVec<[Range<usize>; 1]>,
+    bounds: Bounds<ScaledPixels>,
+    max_kind: PrimitiveKind,
+    max_shared_kind: PrimitiveKind,
+}
+
 /// Owned drawing data, including the frame-local clip arena and paint journal.
 ///
 /// Cloning preserves this data without acquiring atlas texture leases or transferring
@@ -109,11 +123,12 @@ pub struct ClipEnvelope {
 pub struct Scene {
     pub(crate) paint_operations: Vec<PaintOperation>,
     primitive_bounds: BoundsTree<ScaledPixels>,
-    layer_stack: Vec<DrawOrder>,
+    layer_stack: Vec<usize>,
+    layers: VecDeque<Layer>,
     legacy_sprite_order: Vec<LegacySpriteOrder>,
     pub shadows: Vec<Shadow>,
     pub quads: Vec<Quad>,
-    pub paths: Vec<Path<ScaledPixels>>,
+    pub paths: Vec<PaintedPath>,
     pub underlines: Vec<Underline>,
     pub monochrome_sprites: Vec<MonochromeSprite>,
     pub subpixel_sprites: Vec<SubpixelSprite>,
@@ -268,16 +283,21 @@ impl Scene {
         bounds: Bounds<ScaledPixels>,
         validity: Option<SubtreeGeometryValidity>,
     ) {
-        self.push_layer_for_render(bounds);
+        self.push_layer_for_render();
         self.paint_operations.push(PaintOperation {
             kind: PaintOperationKind::StartLayer(bounds),
             validity,
         });
     }
 
-    fn push_layer_for_render(&mut self, bounds: Bounds<ScaledPixels>) {
-        let order = self.primitive_bounds.insert(bounds);
-        self.layer_stack.push(order);
+    fn push_layer_for_render(&mut self) {
+        self.layer_stack.push(self.layers.len());
+        self.layers.push_back(Layer {
+            primitives: SmallVec::new(),
+            bounds: Bounds::default(),
+            max_kind: PrimitiveKind::Shadow,
+            max_shared_kind: PrimitiveKind::Surface,
+        });
     }
 
     pub fn pop_layer(&mut self) {
@@ -294,6 +314,26 @@ impl Scene {
 
     fn pop_layer_for_render(&mut self) {
         self.layer_stack.pop();
+        if self.layer_stack.is_empty() {
+            while let Some(layer) = self.layers.pop_front() {
+                self.insert_layer(layer);
+            }
+        }
+    }
+
+    fn insert_layer(&mut self, layer: Layer) {
+        if layer.primitives.is_empty() {
+            return;
+        }
+        let order =
+            self.primitive_bounds
+                .insert(layer.bounds, layer.max_kind, layer.max_shared_kind);
+        for index in layer.primitives.into_iter().flatten() {
+            if let PaintOperationKind::Primitive(primitive) = &self.paint_operations[index].kind {
+                let mut primitive = primitive.clone();
+                self.push_primitive(&mut primitive, order, true);
+            }
+        }
     }
 
     pub(crate) fn insert_primitive_scoped(
@@ -304,22 +344,45 @@ impl Scene {
         validity: Option<SubtreeGeometryValidity>,
     ) -> Result<(), SubtreeGeometryError> {
         let mut primitive = primitive.into();
-        let clip = self.intern_clip_stack(clip_stack, scale_factor)?;
+        let mut clip = self.intern_clip_stack(clip_stack, scale_factor)?;
+        if let Primitive::Path(path) = &primitive {
+            clip.conservative_bounds = clip
+                .conservative_bounds
+                .intersect(&path.paint.clip.conservative_bounds);
+        }
         primitive.set_clip_envelope(clip);
         self.record_primitive(primitive, validity)
     }
 
-    pub(crate) fn insert_quad_strips_scoped(
+    pub(crate) fn insert_quad_partition_scoped(
         &mut self,
         quad: Quad,
-        strips: [Bounds<ScaledPixels>; 4],
+        inner: Bounds<ScaledPixels>,
+        plain_border: bool,
         clip_stack: &ClipStackSnapshot,
         scale_factor: f32,
         validity: Option<SubtreeGeometryValidity>,
     ) -> Result<(), SubtreeGeometryError> {
         let clip = self.intern_clip_stack(clip_stack, scale_factor)?;
         let inherited = clip.conservative_bounds;
+        let outer = quad.transform.try_project_bounds(quad.bounds)?;
+        let outer = if plain_border {
+            outer
+        } else {
+            let padded = outer.dilate(ScaledPixels(0.5));
+            Bounds::from_corners(
+                padded.origin.map(|coordinate| coordinate.floor()),
+                padded.bottom_right().map(|coordinate| coordinate.ceil()),
+            )
+        };
+        let strips = [
+            Bounds::from_corners(outer.origin, point(outer.right(), inner.top())),
+            Bounds::from_corners(point(outer.left(), inner.bottom()), outer.bottom_right()),
+            Bounds::from_corners(point(outer.left(), inner.top()), inner.bottom_left()),
+            Bounds::from_corners(inner.top_right(), point(outer.right(), inner.bottom())),
+        ];
         let raster_bounds = strips.map(|strip| inherited.intersect(&strip));
+        let interior = inherited.intersect(&inner);
         let safe_end = |raster: ScaledPixels, cut: ScaledPixels, inherited: ScaledPixels| {
             if inherited <= cut {
                 raster == inherited
@@ -327,21 +390,51 @@ impl Scene {
                 raster <= inherited && (raster.0 - cut.0).abs() <= 0.125
             }
         };
-        if strips.iter().zip(&raster_bounds).any(|(strip, raster)| {
-            !raster.is_empty()
-                && (!safe_end(raster.right(), strip.right(), inherited.right())
-                    || !safe_end(raster.bottom(), strip.bottom(), inherited.bottom()))
-        }) {
+        if strips
+            .iter()
+            .zip(&raster_bounds)
+            .chain([(&inner, &interior)])
+            .any(|(strip, raster)| {
+                !raster.is_empty()
+                    && (!safe_end(raster.right(), strip.right(), inherited.right())
+                        || !safe_end(raster.bottom(), strip.bottom(), inherited.bottom()))
+            })
+        {
             return self.record_primitive(Quad { clip, ..quad }.into(), validity);
         }
 
+        if !quad.background.is_transparent() && !interior.is_empty() {
+            self.record_primitive(
+                Quad {
+                    clip: ClipEnvelope {
+                        conservative_bounds: interior,
+                        ..clip
+                    },
+                    border_widths: Edges::default(),
+                    corner_radii: Corners::default(),
+                    ..quad
+                }
+                .into(),
+                validity.clone(),
+            )?;
+        }
+        let strip_quad = if plain_border {
+            Quad {
+                background: quad.border_color.into(),
+                border_widths: Edges::default(),
+                corner_radii: Corners::default(),
+                ..quad
+            }
+        } else {
+            quad
+        };
         for conservative_bounds in raster_bounds {
             if !conservative_bounds.is_empty() {
                 let clip = ClipEnvelope {
                     conservative_bounds,
                     ..clip
                 };
-                self.record_primitive(Quad { clip, ..quad }.into(), validity.clone())?;
+                self.record_primitive(Quad { clip, ..strip_quad }.into(), validity.clone())?;
             }
         }
         Ok(())
@@ -367,7 +460,7 @@ impl Scene {
         mut primitive: Primitive,
         validity: Option<SubtreeGeometryValidity>,
     ) -> Result<(), SubtreeGeometryError> {
-        if !self.push_primitive_for_render(&mut primitive)? {
+        if !self.push_primitive_for_render(&mut primitive, self.paint_operations.len())? {
             return Ok(());
         }
         self.paint_operations.push(PaintOperation {
@@ -380,6 +473,7 @@ impl Scene {
     fn push_primitive_for_render(
         &mut self,
         primitive: &mut Primitive,
+        journal_index: usize,
     ) -> Result<bool, SubtreeGeometryError> {
         let clipped_bounds = primitive
             .try_visual_bounds()?
@@ -389,10 +483,33 @@ impl Scene {
             return Ok(false);
         }
 
-        let layer_order = self.layer_stack.last().copied();
-        let order = layer_order.unwrap_or_else(|| self.primitive_bounds.insert(clipped_bounds));
+        let kind = primitive.kind();
+        if let Some(&layer_index) = self.layer_stack.last()
+            && let Some(layer) = self.layers.get_mut(layer_index)
+        {
+            layer.bounds = layer.bounds.join(&clipped_bounds);
+            layer.max_kind = layer.max_kind.max(kind);
+            layer.max_shared_kind = layer.max_shared_kind.min(kind.max_shared_kind());
+            match layer.primitives.last_mut() {
+                Some(range) if range.end == journal_index => range.end += 1,
+                _ => layer.primitives.push(journal_index..journal_index + 1),
+            }
+        } else {
+            let order = self
+                .primitive_bounds
+                .insert(clipped_bounds, kind, kind.max_shared_kind());
+            self.push_primitive(primitive, order, false);
+        }
+        Ok(true)
+    }
+
+    fn push_primitive(&mut self, primitive: &mut Primitive, order: DrawOrder, in_layer: bool) {
+        let clipped_bounds = primitive
+            .try_visual_bounds()
+            .expect("accepted scene primitive must remain representable")
+            .intersect(&primitive.clip_envelope().conservative_bounds);
         let keep_sprite_order = |transform: PrimitiveTransform, bounds| {
-            layer_order.is_some()
+            in_layer
                 || !transform.has_precise_raster_coordinates(bounds)
                 || [
                     clipped_bounds.left(),
@@ -414,7 +531,6 @@ impl Scene {
             }
             Primitive::Path(path) => {
                 path.order = order;
-                path.id = PathId(self.paths.len());
                 self.paths.push(path.clone());
             }
             Primitive::Underline(underline) => {
@@ -447,7 +563,6 @@ impl Scene {
                 self.surfaces.push(surface.clone());
             }
         }
-        Ok(true)
     }
 
     fn legacy_sprite_order_mut(&mut self, order: DrawOrder) -> &mut LegacySpriteOrder {
@@ -618,32 +733,31 @@ impl Scene {
     }
 
     fn rebuild_render_state_from_journal(&mut self) {
-        let operations = std::mem::take(&mut self.paint_operations);
         self.clear_render_state();
-        for operation in &operations {
-            if operation
-                .validity
-                .as_ref()
-                .is_some_and(|validity| !validity.is_valid())
-            {
-                continue;
-            }
-            match &operation.kind {
-                PaintOperationKind::Primitive(primitive) => {
-                    let mut primitive = primitive.clone();
-                    self.push_primitive_for_render(&mut primitive)
+        for index in 0..self.paint_operations.len() {
+            let operation = self.paint_operations[index].clone();
+            match operation.kind {
+                PaintOperationKind::Primitive(mut primitive) => {
+                    if operation
+                        .validity
+                        .as_ref()
+                        .is_some_and(|validity| !validity.is_valid())
+                    {
+                        continue;
+                    }
+                    self.push_primitive_for_render(&mut primitive, index)
                         .expect("accepted scene primitive must remain representable");
                 }
-                PaintOperationKind::StartLayer(bounds) => self.push_layer_for_render(*bounds),
+                PaintOperationKind::StartLayer(_) => self.push_layer_for_render(),
                 PaintOperationKind::EndLayer => self.pop_layer_for_render(),
             }
         }
-        self.paint_operations = operations;
     }
 
     fn clear_render_state(&mut self) {
         self.primitive_bounds.clear();
         self.layer_stack.clear();
+        self.layers.clear();
         self.legacy_sprite_order.clear();
         self.paths.clear();
         self.shadows.clear();
@@ -682,6 +796,17 @@ impl Scene {
             surfaces_iter: self.surfaces.iter().peekable(),
         }
     }
+}
+
+/// The depth step between consecutive quads in a frame with `quad_count` quads.
+pub fn quad_depth_scale(quad_count: usize) -> f32 {
+    let denominator = (quad_count.min((1 << 24) - 1) + 1).next_power_of_two();
+    1.0 / denominator as f32
+}
+
+/// Maps a quad's index in [`Scene::quads`] to depth, with greater values closer.
+pub fn quad_depth(quad_id: u32, scale: f32) -> f32 {
+    ((u64::from(quad_id) + 1) as f32 * scale).min(1.0)
 }
 
 fn sort_sprites<S>(
@@ -733,6 +858,17 @@ pub(crate) enum PrimitiveKind {
     Surface,
 }
 
+impl PrimitiveKind {
+    fn max_shared_kind(self) -> Self {
+        match self {
+            Self::MonochromeSprite => Self::Underline,
+            Self::SubpixelSprite => Self::MonochromeSprite,
+            Self::PolychromeSprite => Self::SubpixelSprite,
+            kind => kind,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct PaintOperation {
     kind: PaintOperationKind,
@@ -751,7 +887,7 @@ pub(crate) enum PaintOperationKind {
 pub enum Primitive {
     Shadow(Shadow),
     Quad(Quad),
-    Path(Path<ScaledPixels>),
+    Path(PaintedPath),
     Underline(Underline),
     MonochromeSprite(MonochromeSprite),
     SubpixelSprite(SubpixelSprite),
@@ -761,6 +897,19 @@ pub enum Primitive {
 
 #[expect(missing_docs)]
 impl Primitive {
+    pub(crate) fn kind(&self) -> PrimitiveKind {
+        match self {
+            Self::Shadow(_) => PrimitiveKind::Shadow,
+            Self::Quad(_) => PrimitiveKind::Quad,
+            Self::Path(_) => PrimitiveKind::Path,
+            Self::Underline(_) => PrimitiveKind::Underline,
+            Self::MonochromeSprite(_) => PrimitiveKind::MonochromeSprite,
+            Self::SubpixelSprite(_) => PrimitiveKind::SubpixelSprite,
+            Self::PolychromeSprite(_) => PrimitiveKind::PolychromeSprite,
+            Self::Surface(_) => PrimitiveKind::Surface,
+        }
+    }
+
     pub fn bounds(&self) -> &Bounds<ScaledPixels> {
         match self {
             Primitive::Shadow(shadow) => &shadow.bounds,
@@ -792,7 +941,7 @@ impl Primitive {
         match self {
             Primitive::Shadow(shadow) => shadow.clip,
             Primitive::Quad(quad) => quad.clip,
-            Primitive::Path(path) => path.clip,
+            Primitive::Path(path) => path.paint.clip,
             Primitive::Underline(underline) => underline.clip,
             Primitive::MonochromeSprite(sprite) => sprite.clip,
             Primitive::SubpixelSprite(sprite) => sprite.clip,
@@ -805,7 +954,7 @@ impl Primitive {
         match self {
             Primitive::Shadow(shadow) => shadow.clip = clip,
             Primitive::Quad(quad) => quad.clip = clip,
-            Primitive::Path(path) => path.clip = clip,
+            Primitive::Path(path) => path.paint.clip = clip,
             Primitive::Underline(underline) => underline.clip = clip,
             Primitive::MonochromeSprite(sprite) => sprite.clip = clip,
             Primitive::SubpixelSprite(sprite) => sprite.clip = clip,
@@ -818,7 +967,7 @@ impl Primitive {
         match self {
             Primitive::Shadow(shadow) => shadow.transform,
             Primitive::Quad(quad) => quad.transform,
-            Primitive::Path(path) => path.transform,
+            Primitive::Path(path) => path.renderer_transform(),
             Primitive::Underline(underline) => underline.transform,
             Primitive::MonochromeSprite(sprite) => sprite.transform,
             Primitive::SubpixelSprite(sprite) => sprite.transform,
@@ -835,6 +984,9 @@ impl Primitive {
     }
 
     pub fn try_visual_bounds(&self) -> Result<Bounds<ScaledPixels>, SubtreeTransformError> {
+        if let Self::Path(path) = self {
+            PaintedPath::try_project_bounds(path.paint.bounds, path.paint.transform)?;
+        }
         self.transform()
             .try_project_bounds(self.local_raster_bounds())
     }
@@ -853,7 +1005,7 @@ struct BatchIterator<'a> {
     quads_start: usize,
     quads_iter: Peekable<slice::Iter<'a, Quad>>,
     paths_start: usize,
-    paths_iter: Peekable<slice::Iter<'a, Path<ScaledPixels>>>,
+    paths_iter: Peekable<slice::Iter<'a, PaintedPath>>,
     underlines_start: usize,
     underlines_iter: Peekable<slice::Iter<'a, Underline>>,
     monochrome_sprites_start: usize,
@@ -1524,166 +1676,157 @@ impl PaintSurface {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-#[expect(missing_docs)]
-pub struct PathId(pub usize);
-
-/// A line made up of a series of vertices and control points.
-#[derive(Clone, Debug)]
-#[expect(missing_docs)]
-pub struct Path<P: Clone + Debug + Default + PartialEq> {
-    pub id: PathId,
-    pub order: DrawOrder,
-    pub bounds: Bounds<P>,
-    pub clip: ClipEnvelope,
-    pub vertices: Vec<PathVertex<P>>,
-    pub color: Background,
-    pub(crate) transform: PrimitiveTransform,
-    start: Point<P>,
-    current: Point<P>,
-    contour_count: usize,
-}
-
-impl<P: Clone + Debug + Default + PartialEq> Path<P> {
-    #[doc(hidden)]
-    pub const fn renderer_transform(&self) -> PrimitiveTransform {
-        self.transform
-    }
-}
-
-impl Path<Pixels> {
-    /// Create a new path with the given starting point.
-    pub fn new(start: Point<Pixels>) -> Self {
-        Self {
-            id: PathId(0),
-            order: DrawOrder::default(),
-            vertices: Vec::new(),
-            start,
-            current: start,
-            bounds: Bounds {
-                origin: start,
-                size: Default::default(),
-            },
-            clip: Default::default(),
-            color: Default::default(),
-            transform: PrimitiveTransform::IDENTITY,
-            contour_count: 0,
-        }
-    }
-
-    /// Scale this path by the given factor.
-    pub fn scale(&self, factor: f32) -> Path<ScaledPixels> {
-        Path {
-            id: self.id,
-            order: self.order,
-            bounds: self.bounds.scale(factor),
-            clip: self.clip,
-            vertices: self
-                .vertices
-                .iter()
-                .map(|vertex| vertex.scale(factor))
-                .collect(),
-            start: self.start.map(|start| start.scale(factor)),
-            current: self.current.scale(factor),
-            contour_count: self.contour_count,
-            color: self.color,
-            transform: self.transform,
-        }
-    }
-
-    /// Move the start, current point to the given point.
-    pub fn move_to(&mut self, to: Point<Pixels>) {
-        self.contour_count += 1;
-        self.start = to;
-        self.current = to;
-    }
-
-    /// Draw a straight line from the current point to the given point.
-    pub fn line_to(&mut self, to: Point<Pixels>) {
-        self.contour_count += 1;
-        if self.contour_count > 1 {
-            self.push_triangle(
-                (self.start, self.current, to),
-                (point(0., 1.), point(0., 1.), point(0., 1.)),
-            );
-        }
-        self.current = to;
-    }
-
-    /// Draw a curve from the current point to the given point, using the given control point.
-    pub fn curve_to(&mut self, to: Point<Pixels>, ctrl: Point<Pixels>) {
-        self.contour_count += 1;
-        if self.contour_count > 1 {
-            self.push_triangle(
-                (self.start, self.current, to),
-                (point(0., 1.), point(0., 1.), point(0., 1.)),
-            );
-        }
-
-        self.push_triangle(
-            (self.current, ctrl, to),
-            (point(0., 0.), point(0.5, 0.), point(1., 1.)),
-        );
-        self.current = to;
-    }
-
-    /// Push a triangle to the Path.
-    pub fn push_triangle(
-        &mut self,
-        xy: (Point<Pixels>, Point<Pixels>, Point<Pixels>),
-        st: (Point<f32>, Point<f32>, Point<f32>),
-    ) {
-        self.bounds = self
-            .bounds
-            .union(&Bounds {
-                origin: xy.0,
-                size: Default::default(),
-            })
-            .union(&Bounds {
-                origin: xy.1,
-                size: Default::default(),
-            })
-            .union(&Bounds {
-                origin: xy.2,
-                size: Default::default(),
-            });
-
-        self.vertices.push(PathVertex {
-            xy_position: xy.0,
-            st_position: st.0,
-        });
-        self.vertices.push(PathVertex {
-            xy_position: xy.1,
-            st_position: st.1,
-        });
-        self.vertices.push(PathVertex {
-            xy_position: xy.2,
-            st_position: st.2,
-        });
-    }
-}
-
-impl From<Path<ScaledPixels>> for Primitive {
-    fn from(path: Path<ScaledPixels>) -> Self {
-        Primitive::Path(path)
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(C)]
 #[expect(missing_docs)]
-pub struct PathVertex<P: Clone + Debug + Default + PartialEq> {
-    pub xy_position: Point<P>,
-    pub st_position: Point<f32>,
+pub struct PathCurve {
+    pub p0: Point<f32>,
+    pub p1: Point<f32>,
+    pub a: Point<f32>,
+    pub b: Point<f32>,
+    pub sign: f32,
+    pub pad: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+#[expect(missing_docs)]
+pub struct PathPaint {
+    /// Device-scaled local bounds used for evaluating the background.
+    pub bounds: Bounds<ScaledPixels>,
+    pub clip: ClipEnvelope,
+    pub color: Background,
+    pub even_odd: PaddedBool32,
+    pub pad: u32,
+    /// Projects background coordinates into the device space of the baked curves.
+    pub transform: PrimitiveTransform,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(C)]
+#[expect(missing_docs)]
+pub struct PathTile {
+    pub paint: u32,
+    pub curve_start: u32,
+    pub curve_count: u32,
+    pub backdrop: i32,
+    pub top_left: Point<f32>,
+    pub bottom_right: Point<f32>,
+    pub reference: Point<f32>,
+    pub curves_top_left: Point<f32>,
+    pub curves_bottom_right: Point<f32>,
+}
+
+#[derive(Clone, Debug)]
+#[expect(missing_docs)]
+pub struct PaintedPath {
+    order: DrawOrder,
+    bounds: Bounds<ScaledPixels>,
+    tiles: Rc<PathTiles>,
+    paint: PathPaint,
 }
 
 #[expect(missing_docs)]
-impl PathVertex<Pixels> {
-    pub fn scale(&self, factor: f32) -> PathVertex<ScaledPixels> {
-        PathVertex {
-            xy_position: self.xy_position.scale(factor),
-            st_position: self.st_position,
+impl PaintedPath {
+    pub(crate) fn try_project_bounds(
+        bounds: Bounds<ScaledPixels>,
+        transform: PrimitiveTransform,
+    ) -> Result<Bounds<ScaledPixels>, SubtreeTransformError> {
+        let is_valid = |bounds: Bounds<ScaledPixels>| {
+            bounds.size.width.0 >= 0.0
+                && bounds.size.height.0 >= 0.0
+                && [bounds.left(), bounds.top(), bounds.right(), bounds.bottom()]
+                    .into_iter()
+                    .all(|edge| edge.0.is_finite())
+        };
+        if !is_valid(bounds) {
+            return Err(SubtreeTransformError::UnrepresentableResult);
         }
+        let projected = transform.try_project_bounds(bounds)?;
+        if !is_valid(projected) {
+            return Err(SubtreeTransformError::UnrepresentableResult);
+        }
+        Ok(projected)
+    }
+
+    /// Bins `path` into device tiles, to be filled with `color` within `mask_bounds`.
+    pub fn new(
+        path: Path,
+        scale_factor: f32,
+        mask_bounds: Bounds<Pixels>,
+        color: Background,
+    ) -> Result<Self, SubtreeTransformError> {
+        Self::new_transformed(
+            path,
+            scale_factor,
+            PrimitiveTransform::IDENTITY,
+            mask_bounds,
+            color,
+        )
+    }
+
+    pub(crate) fn new_transformed(
+        path: Path,
+        scale_factor: f32,
+        transform: PrimitiveTransform,
+        mask_bounds: Bounds<Pixels>,
+        color: Background,
+    ) -> Result<Self, SubtreeTransformError> {
+        let bounds = path.try_bounds(scale_factor)?;
+        Self::try_project_bounds(bounds, transform)?;
+        let conservative_bounds = mask_bounds.scale(scale_factor);
+        Self::try_project_bounds(conservative_bounds, PrimitiveTransform::IDENTITY)?;
+        let mut tiles = path.try_bin_transformed(scale_factor, transform)?;
+        tiles.retain_visible(conservative_bounds);
+        let paint = PathPaint {
+            bounds,
+            clip: ClipEnvelope {
+                conservative_bounds,
+                ..Default::default()
+            },
+            color,
+            even_odd: path.even_odd().into(),
+            pad: 0,
+            transform,
+        };
+        Ok(Self {
+            order: 0,
+            bounds: tiles.painted_bounds(),
+            tiles: Rc::new(tiles),
+            paint,
+        })
+    }
+
+    #[doc(hidden)]
+    pub const fn renderer_transform(&self) -> PrimitiveTransform {
+        PrimitiveTransform::IDENTITY
+    }
+
+    pub fn tile_count(&self) -> usize {
+        self.tiles.tiles().len()
+    }
+
+    pub fn append_to(
+        &self,
+        paints: &mut Vec<PathPaint>,
+        curves: &mut Vec<PathCurve>,
+        tiles: &mut Vec<PathTile>,
+    ) {
+        let paint_index = paints.len() as u32;
+        let curve_start = curves.len() as u32;
+        paints.push(self.paint);
+        curves.extend_from_slice(self.tiles.curves());
+        tiles.extend(self.tiles.tiles().iter().map(|tile| PathTile {
+            paint: paint_index,
+            curve_start: curve_start + tile.curve_start,
+            ..*tile
+        }));
+    }
+}
+
+impl From<PaintedPath> for Primitive {
+    fn from(path: PaintedPath) -> Self {
+        Primitive::Path(path)
     }
 }
 
@@ -1802,6 +1945,478 @@ mod tests {
 
     fn logical_bounds(x: f32, y: f32, width: f32, height: f32) -> Bounds<Pixels> {
         Bounds::new(point(px(x), px(y)), Size::new(px(width), px(height)))
+    }
+
+    fn test_quad(x: f32) -> Quad {
+        Quad {
+            bounds: scaled_bounds(x, 0.0, 10.0, 10.0),
+            ..Default::default()
+        }
+    }
+
+    fn test_underline(x: f32) -> Underline {
+        Underline {
+            order: 0,
+            pad: 0,
+            bounds: scaled_bounds(x, 0.0, 10.0, 10.0),
+            clip: ClipEnvelope::default(),
+            color: Hsla::default(),
+            thickness: ScaledPixels(1.0),
+            wavy: false.into(),
+            transform: PrimitiveTransform::IDENTITY,
+        }
+    }
+
+    fn insert_test_primitive(scene: &mut Scene, primitive: impl Into<Primitive>) {
+        scene
+            .insert_primitive_scoped(
+                primitive,
+                &ClipStackSnapshot::root(logical_bounds(-100.0, -100.0, 1000.0, 1000.0)),
+                1.0,
+                None,
+            )
+            .unwrap();
+    }
+
+    fn batch_labels(scene: &mut Scene) -> Vec<String> {
+        scene.finish();
+        scene.batches().map(|batch| batch.label()).collect()
+    }
+
+    #[test]
+    fn layers_are_drawn_in_paint_order() {
+        let mut scene = Scene::default();
+        insert_test_primitive(&mut scene, test_quad(0.0));
+        scene.push_layer(Bounds::default());
+        insert_test_primitive(&mut scene, test_underline(0.0));
+        insert_test_primitive(&mut scene, test_underline(5.0));
+        scene.pop_layer();
+        insert_test_primitive(&mut scene, test_quad(5.0));
+        assert_eq!(
+            batch_labels(&mut scene),
+            ["quads (1)", "underlines (2)", "quads (1)"]
+        );
+
+        let mut scene = Scene::default();
+        scene.push_layer(Bounds::default());
+        insert_test_primitive(&mut scene, test_underline(0.0));
+        scene.pop_layer();
+        scene.push_layer(Bounds::default());
+        insert_test_primitive(&mut scene, test_quad(5.0));
+        scene.pop_layer();
+        assert_eq!(batch_labels(&mut scene), ["underlines (1)", "quads (1)"]);
+    }
+
+    #[test]
+    fn nested_layers_are_drawn_above_their_parents() {
+        let mut scene = Scene::default();
+        scene.push_layer(Bounds::default());
+        insert_test_primitive(&mut scene, test_underline(0.0));
+        scene.push_layer(Bounds::default());
+        insert_test_primitive(&mut scene, test_quad(5.0));
+        scene.pop_layer();
+        insert_test_primitive(&mut scene, test_underline(5.0));
+        scene.pop_layer();
+        assert_eq!(batch_labels(&mut scene), ["underlines (2)", "quads (1)"]);
+
+        let mut scene = Scene::default();
+        scene.push_layer(Bounds::default());
+        insert_test_primitive(&mut scene, test_quad(0.0));
+        scene.push_layer(Bounds::default());
+        insert_test_primitive(&mut scene, test_quad(5.0));
+        scene.pop_layer();
+        insert_test_primitive(&mut scene, test_quad(8.0));
+        scene.pop_layer();
+        assert_eq!(batch_labels(&mut scene), ["quads (3)"]);
+        assert_eq!(
+            scene
+                .quads
+                .iter()
+                .map(|quad| quad.bounds)
+                .collect::<Vec<_>>(),
+            [
+                test_quad(0.0).bounds,
+                test_quad(8.0).bounds,
+                test_quad(5.0).bounds
+            ]
+        );
+
+        let mut scene = Scene::default();
+        scene.push_layer(Bounds::default());
+        scene.push_layer(Bounds::default());
+        insert_test_primitive(&mut scene, test_underline(0.0));
+        scene.pop_layer();
+        scene.pop_layer();
+        scene.push_layer(Bounds::default());
+        insert_test_primitive(&mut scene, test_quad(5.0));
+        scene.pop_layer();
+        assert_eq!(batch_labels(&mut scene), ["underlines (1)", "quads (1)"]);
+    }
+
+    #[test]
+    fn layers_use_actual_clipped_union_instead_of_the_bounds_hint() {
+        let mut scene = Scene::default();
+        insert_test_primitive(&mut scene, test_quad(0.0));
+        scene.push_layer(scaled_bounds(-100.0, -100.0, 1000.0, 1000.0));
+        scene
+            .insert_primitive_scoped(
+                Underline {
+                    bounds: scaled_bounds(0.0, 0.0, 500.0, 10.0),
+                    ..test_underline(0.0)
+                },
+                &ClipStackSnapshot::root(logical_bounds(200.0, 0.0, 10.0, 10.0)),
+                1.0,
+                None,
+            )
+            .unwrap();
+        scene.pop_layer();
+        insert_test_primitive(&mut scene, test_quad(0.0));
+        assert_eq!(batch_labels(&mut scene), ["quads (2)", "underlines (1)"]);
+    }
+
+    #[test]
+    fn invalid_layer_operations_keep_journal_indices_and_structural_balance() {
+        let invalidity = SubtreeGeometryValidity::new(None);
+        let clip = ClipStackSnapshot::root(logical_bounds(-100.0, -100.0, 1000.0, 1000.0));
+        let mut scene = Scene::default();
+        scene
+            .insert_primitive_scoped(test_quad(0.0), &clip, 1.0, Some(invalidity.clone()))
+            .unwrap();
+        scene.push_layer(Bounds::default());
+        scene
+            .insert_primitive_scoped(test_quad(0.0), &clip, 1.0, Some(invalidity.clone()))
+            .unwrap();
+        insert_test_primitive(&mut scene, test_underline(0.0));
+        scene.push_layer_scoped(Bounds::default(), Some(invalidity.clone()));
+        scene
+            .insert_primitive_scoped(test_quad(8.0), &clip, 1.0, Some(invalidity.clone()))
+            .unwrap();
+        insert_test_primitive(&mut scene, test_quad(5.0));
+        scene.pop_layer_scoped(Some(invalidity.clone()));
+        insert_test_primitive(&mut scene, test_underline(5.0));
+        scene.pop_layer();
+        let journal_len = scene.journal_len();
+        let mut copied = scene.clone();
+        invalidity.invalidate(SubtreeTransformError::UnrepresentableResult);
+
+        for scene in [&mut scene, &mut copied] {
+            assert_eq!(batch_labels(scene), ["underlines (2)", "quads (1)"]);
+            assert_eq!(scene.quads[0].bounds, test_quad(5.0).bounds);
+            assert_eq!(scene.journal_len(), journal_len);
+            assert!(scene.layer_stack.is_empty());
+            assert!(scene.layers.is_empty());
+            let mut replayed = Scene::default();
+            replayed.replay(0..journal_len, scene, None).unwrap();
+            assert_eq!(batch_labels(&mut replayed), ["underlines (2)", "quads (1)"]);
+            assert_eq!(replayed.journal_len(), journal_len);
+        }
+    }
+
+    #[test]
+    fn cloned_open_layers_own_their_journal_and_pending_primitive_ranges() {
+        let mut source = Scene::default();
+        source.push_layer(Bounds::default());
+        insert_test_primitive(&mut source, test_underline(0.0));
+        source.push_layer(Bounds::default());
+        insert_test_primitive(&mut source, test_quad(5.0));
+        let mut copied = source.clone();
+        source.clear();
+        copied.pop_layer();
+        insert_test_primitive(&mut copied, test_underline(5.0));
+        copied.pop_layer();
+        assert_eq!(batch_labels(&mut copied), ["underlines (2)", "quads (1)"]);
+        assert_eq!(copied.journal_len(), 7);
+        assert!(!source.has_primitives());
+    }
+
+    #[test]
+    fn retained_fragment_replay_failure_restores_open_layers_and_original_indices() {
+        let mut source = Scene::default();
+        let source_clip = ClipStackSnapshot::root(logical_bounds(0.0, 0.0, 100.0, 100.0));
+        source.push_layer(Bounds::default());
+        for x in [5.0, 8.0] {
+            source
+                .insert_primitive_scoped(test_quad(x), &source_clip, 1.0, None)
+                .unwrap();
+        }
+        source.pop_layer();
+        let (mut fragment, _) = source
+            .retained_visual_fragment(0..source.journal_len())
+            .unwrap();
+        let PaintOperationKind::Primitive(primitive) = &mut fragment.paint_operations[2].kind
+        else {
+            panic!("fragment must retain the second primitive");
+        };
+        let mut invalid_clip = primitive.clip_envelope();
+        invalid_clip.first_clip = u32::MAX;
+        primitive.set_clip_envelope(invalid_clip);
+
+        let invalidity = SubtreeGeometryValidity::new(None);
+        let clip = ClipStackSnapshot::root(logical_bounds(-100.0, -100.0, 1000.0, 1000.0));
+        let mut target = Scene::default();
+        target
+            .insert_primitive_scoped(test_quad(0.0), &clip, 1.0, Some(invalidity.clone()))
+            .unwrap();
+        target.push_layer(Bounds::default());
+        target
+            .insert_primitive_scoped(test_quad(8.0), &clip, 1.0, Some(invalidity.clone()))
+            .unwrap();
+        insert_test_primitive(&mut target, test_underline(0.0));
+        invalidity.invalidate(SubtreeTransformError::UnrepresentableResult);
+        let journal_len = target.journal_len();
+        let clips = target.clip_shapes().to_vec();
+        assert_eq!(
+            target.replay(0..fragment.journal_len(), &fragment, None),
+            Err(SubtreeGeometryError::DeviceConversion)
+        );
+        assert_eq!(target.journal_len(), journal_len);
+        assert_eq!(target.clip_shapes(), clips);
+        assert_eq!(target.layer_stack.len(), 1);
+        assert_eq!(target.layers.len(), 1);
+        insert_test_primitive(&mut target, test_underline(5.0));
+        target.pop_layer();
+        assert_eq!(batch_labels(&mut target), ["underlines (2)"]);
+        assert!(target.quads.is_empty());
+    }
+
+    #[test]
+    fn path_gpu_layouts_preserve_official_curves_tiles_and_fork_paint_contract() {
+        assert_eq!(size_of::<PathCurve>(), 40);
+        assert_eq!(align_of::<PathCurve>(), 4);
+        assert_eq!(offset_of!(PathCurve, sign), 32);
+        assert_eq!(offset_of!(PathCurve, pad), 36);
+        assert_eq!(size_of::<PathTile>(), 56);
+        assert_eq!(offset_of!(PathTile, top_left), 16);
+        assert_eq!(offset_of!(PathTile, curves_bottom_right), 48);
+        assert_eq!(size_of::<PathPaint>(), 136);
+        assert_eq!(align_of::<PathPaint>(), 4);
+        assert_eq!(offset_of!(PathPaint, bounds), 0);
+        assert_eq!(offset_of!(PathPaint, clip), 16);
+        assert_eq!(offset_of!(PathPaint, color), 40);
+        assert_eq!(offset_of!(PathPaint, even_odd), 112);
+        assert_eq!(offset_of!(PathPaint, pad), 116);
+        assert_eq!(offset_of!(PathPaint, transform), 120);
+    }
+
+    fn rectangular_path(bounds: Bounds<Pixels>) -> Path {
+        let mut builder = crate::PathBuilder::fill();
+        builder.add_polygon(
+            &[
+                bounds.origin,
+                bounds.top_right(),
+                bounds.bottom_right(),
+                bounds.bottom_left(),
+            ],
+            true,
+        );
+        builder.build().unwrap()
+    }
+
+    #[test]
+    fn painted_paths_keep_local_fill_bounds_and_final_device_coverage() {
+        let local = logical_bounds(2.0, 4.0, 8.0, 10.0);
+        let transform = PrimitiveTransform::try_new(
+            size(2.0, 0.5),
+            point(ScaledPixels(100.0), ScaledPixels(50.0)),
+        )
+        .unwrap();
+        let viewport = logical_bounds(0.0, 0.0, 200.0, 100.0);
+        let path = PaintedPath::new_transformed(
+            rectangular_path(local),
+            1.5,
+            transform,
+            viewport,
+            crate::red().into(),
+        )
+        .unwrap();
+        let projected = transform.try_project_bounds(local.scale(1.5)).unwrap();
+        assert_eq!(path.paint.bounds, local.scale(1.5));
+        assert_eq!(path.paint.transform, transform);
+        assert_eq!(path.renderer_transform(), PrimitiveTransform::IDENTITY);
+        assert_eq!(
+            path.bounds,
+            projected.dilate(ScaledPixels(0.5 + 1.0 / 256.0))
+        );
+        assert_eq!(
+            Primitive::from(path.clone()).try_visual_bounds().unwrap(),
+            path.bounds
+        );
+        assert!(path.tile_count() > 0);
+
+        let mut paints = Vec::new();
+        let mut curves = Vec::new();
+        let mut tiles = Vec::new();
+        path.append_to(&mut paints, &mut curves, &mut tiles);
+        let curve_count = curves.len();
+        let tile_count = tiles.len();
+        path.append_to(&mut paints, &mut curves, &mut tiles);
+        assert_eq!(paints.len(), 2);
+        assert_eq!(curves[..curve_count], curves[curve_count..]);
+        for (first, second) in tiles[..tile_count].iter().zip(&tiles[tile_count..]) {
+            assert_eq!(first.paint, 0);
+            assert_eq!(second.paint, 1);
+            assert_eq!(second.curve_start, first.curve_start + curve_count as u32);
+            assert_eq!(first.top_left, second.top_left);
+            assert_eq!(first.bottom_right, second.bottom_right);
+        }
+        assert_eq!(paints[1].bounds, local.scale(1.5));
+        assert_eq!(paints[1].transform, transform);
+    }
+
+    #[test]
+    fn painted_path_retention_replays_exact_clip_and_rebased_validity() {
+        let viewport = logical_bounds(0.0, 0.0, 200.0, 200.0);
+        let clip = rounded_stack(viewport, logical_bounds(20.0, 20.0, 80.0, 80.0));
+        let validity = SubtreeGeometryValidity::new(None);
+        let path = PaintedPath::new(
+            rectangular_path(logical_bounds(30.0, 30.0, 20.0, 20.0)),
+            1.0,
+            viewport,
+            crate::red().into(),
+        )
+        .unwrap();
+        let mut source = Scene::default();
+        source.push_layer(Bounds::default());
+        source
+            .insert_primitive_scoped(path, &clip, 1.0, Some(validity.clone()))
+            .unwrap();
+        source.pop_layer();
+        let (mut fragment, validities) = source
+            .retained_visual_fragment(0..source.journal_len())
+            .unwrap();
+        assert_eq!(validities.len(), 3);
+        let fragment_validity = fragment.paint_operations[1]
+            .validity
+            .as_ref()
+            .expect("the retained path must have its own replay validity")
+            .clone();
+        let mut recorded = source.clone();
+        source.clear();
+        let replay_validity = SubtreeGeometryValidity::new(None);
+        let mut replayed = Scene::default();
+        insert_test_primitive(&mut replayed, test_quad(0.0));
+        replayed
+            .replay(
+                0..fragment.journal_len(),
+                &fragment,
+                Some(replay_validity.clone()),
+            )
+            .unwrap();
+        replayed.finish();
+        let source_clip = fragment.paths[0].paint.clip;
+        let replayed_clip = replayed.paths[0].paint.clip;
+        assert_ne!(source_clip.first_clip, replayed_clip.first_clip);
+        assert_eq!(
+            fragment.clip_shapes_for(source_clip).unwrap(),
+            replayed.clip_shapes_for(replayed_clip).unwrap()
+        );
+        assert_eq!(
+            fragment.paths[0].tiles.curves(),
+            replayed.paths[0].tiles.curves()
+        );
+        assert_eq!(
+            fragment.paths[0].tiles.tiles(),
+            replayed.paths[0].tiles.tiles()
+        );
+        validity.invalidate(SubtreeTransformError::UnrepresentableResult);
+        recorded.finish();
+        assert!(recorded.paths.is_empty());
+        assert!(!validities[1].as_ref().unwrap().is_valid());
+        assert!(fragment_validity.is_valid());
+        assert!(replay_validity.is_valid());
+        fragment.finish();
+        replayed.finish();
+        assert_eq!(fragment.paths.len(), 1);
+        assert_eq!(replayed.paths.len(), 1);
+
+        fragment_validity.invalidate(SubtreeTransformError::UnrepresentableResult);
+        fragment.finish();
+        assert!(fragment.paths.is_empty());
+        replayed.finish();
+        assert_eq!(replayed.paths.len(), 1);
+
+        replay_validity.invalidate(SubtreeTransformError::UnrepresentableResult);
+        replayed.finish();
+        assert!(replayed.paths.is_empty());
+        assert_eq!(replayed.quads.len(), 1);
+        assert!(matches!(
+            fragment.retained_visual_fragment(0..3),
+            Err(RetainedVisualSceneError::InvalidGeometry)
+        ));
+    }
+
+    #[test]
+    fn path_visual_bounds_reject_invalid_fill_projection_before_empty_tile_culling() {
+        let viewport = logical_bounds(0.0, 0.0, 200.0, 200.0);
+        let mut path = PaintedPath::new(
+            rectangular_path(logical_bounds(1.0, 1.0, 10.0, 10.0)),
+            1.0,
+            viewport,
+            crate::red().into(),
+        )
+        .unwrap();
+        path.paint.bounds.origin.x = ScaledPixels(f32::MAX);
+        path.paint.transform =
+            PrimitiveTransform::try_new(size(2.0, 1.0), Point::default()).unwrap();
+        path.bounds = Bounds::default();
+        let mut scene = Scene::default();
+        assert_eq!(
+            scene.insert_primitive_scoped(path, &ClipStackSnapshot::root(viewport), 1.0, None),
+            Err(SubtreeGeometryError::Transform(
+                SubtreeTransformError::UnrepresentableResult
+            ))
+        );
+        assert_eq!(scene.journal_len(), 0);
+        assert!(scene.paths.is_empty());
+    }
+
+    #[test]
+    fn path_mask_restriction_survives_exact_clip_interning_and_replay() {
+        let viewport = logical_bounds(0.0, 0.0, 200.0, 200.0);
+        let mask = logical_bounds(35.0, 35.0, 5.0, 5.0);
+        let path = PaintedPath::new(
+            rectangular_path(logical_bounds(30.0, 30.0, 20.0, 20.0)),
+            1.0,
+            mask,
+            crate::red().into(),
+        )
+        .unwrap();
+        let clip = rounded_stack(viewport, logical_bounds(20.0, 20.0, 80.0, 80.0));
+        let mut source = Scene::default();
+        source
+            .insert_primitive_scoped(path, &clip, 1.0, None)
+            .unwrap();
+        assert_eq!(
+            source.paths[0].paint.clip.conservative_bounds,
+            mask.scale(1.0)
+        );
+        assert_eq!(source.paths[0].paint.clip.clip_count, 2);
+        let mut replayed = Scene::default();
+        replayed
+            .replay(0..source.journal_len(), &source, None)
+            .unwrap();
+        assert_eq!(
+            replayed.paths[0].paint.clip.conservative_bounds,
+            mask.scale(1.0)
+        );
+        assert_eq!(source.clip_shapes(), replayed.clip_shapes());
+    }
+
+    #[test]
+    fn quad_depth_uses_representable_steps_and_clamps_extreme_indices() {
+        for count in [0, 1, 2, 3, 1000, (1 << 24) - 1, usize::MAX] {
+            let scale = quad_depth_scale(count);
+            assert!(scale.is_normal() && scale > 0.0 && scale <= 1.0);
+            assert!(scale.recip().log2().fract() == 0.0);
+        }
+        let scale = quad_depth_scale(1000);
+        let mut previous = 0.0;
+        for index in 0..1000 {
+            let depth = quad_depth(index, scale);
+            assert!(depth > previous && depth < 1.0);
+            previous = depth;
+        }
+        assert_eq!(quad_depth(u32::MAX, scale), 1.0);
     }
 
     fn monochrome_sprite(tile_id: u32, index: u32, generation: u32, x: f32) -> MonochromeSprite {
@@ -2043,13 +2658,10 @@ mod tests {
         let mut scene = Scene::default();
         scene.push_layer(scaled_bounds(0.0, 0.0, 64.0, 8.0));
         for (tile_id, index) in [(2, 2), (0, 2), (1, 1)] {
+            let mut sprite = monochrome_sprite(tile_id, index, 7, 0.0);
+            sprite.bounds.size.width = ScaledPixels(64.0);
             scene
-                .insert_primitive_scoped(
-                    monochrome_sprite(tile_id, index, 7, 0.0),
-                    &clip,
-                    1.0,
-                    None,
-                )
+                .insert_primitive_scoped(sprite, &clip, 1.0, None)
                 .unwrap();
         }
         scene.pop_layer();
@@ -2131,7 +2743,9 @@ mod tests {
         scene
             .insert_primitive_scoped(second, &clip, 1.0, None)
             .unwrap();
-        assert!(scene.quads[1].order > scene.quads[0].order);
+        assert_eq!(scene.quads[1].order, scene.quads[0].order);
+        assert_eq!(scene.quads[0].bounds, first.bounds);
+        assert_eq!(scene.quads[1].bounds, second.bounds);
         assert_eq!(
             scene.clip_shapes().len(),
             1,
@@ -2336,7 +2950,11 @@ mod tests {
         copied.pop_layer();
         copied.finish();
         assert_eq!(copied.quads.len(), 2);
-        assert!(copied.quads[1].order > original_order);
+        assert_eq!(copied.quads[1].order, original_order);
+        assert_eq!(
+            copied.quads[1].bounds,
+            scaled_bounds(40.0, 40.0, 20.0, 20.0)
+        );
         assert_eq!(copied.journal_len(), 6);
     }
 

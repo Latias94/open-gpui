@@ -10,7 +10,7 @@ pub struct WgpuSceneRenderer {
     core: WgpuRendererCore,
 }
 
-/// Retains the exact atlas instances referenced by one encoded scene.
+/// Retains the atlas, private depth attachment and uploaded data of one encoded scene.
 ///
 /// Keep this value until the host's corresponding GPU submission completes, including when the
 /// renderer or original scene has been dropped. This value is not a submission or presentation
@@ -18,12 +18,15 @@ pub struct WgpuSceneRenderer {
 #[must_use]
 pub struct WgpuSceneRecording {
     _atlas: WgpuAtlasPresentationReceipt,
+    _depth: wgpu::Texture,
+    _globals: wgpu::BindGroup,
+    _uploads: EncoderUploads,
 }
 
 impl WgpuSceneRenderer {
     /// Uses the supplied enabled device without changing its device-wide callback ownership.
     ///
-    /// Native devices must enable at least four combined buffers per shader stage, including
+    /// Native devices must enable at least six combined buffers per shader stage, including
     /// when the host opts into strict WebGPU validation that does not enforce that native limit.
     pub fn new(
         adapter: &wgpu::Adapter,
@@ -86,17 +89,17 @@ impl WgpuSceneRenderer {
             ),
             (
                 limits.max_storage_buffers_per_shader_stage,
-                2,
+                4,
                 "storage buffers per stage",
             ),
             (
                 limits.max_storage_buffers_in_vertex_stage,
-                1,
+                4,
                 "vertex storage buffers",
             ),
             (
                 limits.max_storage_buffers_in_fragment_stage,
-                2,
+                4,
                 "fragment storage buffers",
             ),
             (
@@ -125,8 +128,8 @@ impl WgpuSceneRenderer {
         }
         #[cfg(not(target_family = "wasm"))]
         anyhow::ensure!(
-            limits.max_buffers_and_acceleration_structures_per_shader_stage >= 4,
-            "GPUI recording requires four combined buffers per shader stage"
+            limits.max_buffers_and_acceleration_structures_per_shader_stage >= 6,
+            "GPUI recording requires six combined buffers per shader stage"
         );
         let uniform_size = std::mem::size_of::<GlobalParams>()
             .max(std::mem::size_of::<GammaParams>())
@@ -203,7 +206,23 @@ impl WgpuSceneRenderer {
             });
             self.core
                 .encode_frame(scene, &view, &atlas, encoder, load)?;
-            Ok(WgpuSceneRecording { _atlas: atlas })
+            Ok(WgpuSceneRecording {
+                _atlas: atlas,
+                _depth: self
+                    .core
+                    .resources
+                    .depth_texture
+                    .as_ref()
+                    .context("private depth missing")?
+                    .texture
+                    .clone(),
+                _globals: self.core.resources.globals_bind_group.clone(),
+                _uploads: self
+                    .core
+                    .encoder_uploads
+                    .take()
+                    .context("recording uploads missing")?,
+            })
         })();
         self.core.encoder_uploads = None;
         result

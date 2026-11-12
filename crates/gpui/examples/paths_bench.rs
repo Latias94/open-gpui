@@ -11,7 +11,7 @@ const DEFAULT_WINDOW_WIDTH: Pixels = px(1024.0);
 const DEFAULT_WINDOW_HEIGHT: Pixels = px(768.0);
 
 struct PaintingViewer {
-    default_lines: Vec<(Path<Pixels>, Background)>,
+    default_lines: Vec<(Path, Background)>,
     _painting: bool,
 }
 

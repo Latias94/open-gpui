@@ -62,15 +62,23 @@ fn border_only_quad_partitions_snapped_device_coverage(cx: &mut TestAppContext) 
                 window.paint_quad(outline);
 
                 let scene = &window.next_frame.scene;
-                assert_eq!(scene.quads.len(), 5);
+                assert_eq!(scene.quads.len(), 9);
                 assert_eq!(scene.clip_shapes().len(), 1);
-                let baseline = &scene.quads[0];
-                let strips = &scene.quads[1..];
+                let interior = &scene.quads[0];
+                assert_eq!(interior.border_widths, Edges::default());
+                assert_eq!(interior.corner_radii, Corners::default());
+                assert_eq!(interior.background, Background::from(red().opacity(0.25)));
+                assert_eq!(
+                    raster_coverage(interior),
+                    logical_bounds(15.0, 26.0, 94.0, 155.0).scale(1.0)
+                );
+                let baseline = &scene.quads[1];
+                let strips = &scene.quads[5..];
                 let expected = [
-                    logical_bounds(10.0, 20.0, 100.0, 30.0),
-                    logical_bounds(10.0, 152.0, 100.0, 160.0),
-                    logical_bounds(10.0, 30.0, 14.0, 152.0),
-                    logical_bounds(95.0, 30.0, 100.0, 152.0),
+                    logical_bounds(10.0, 20.0, 100.0, 26.0),
+                    logical_bounds(10.0, 155.0, 100.0, 160.0),
+                    logical_bounds(10.0, 26.0, 15.0, 155.0),
+                    logical_bounds(94.0, 26.0, 100.0, 155.0),
                 ];
                 for (index, (strip, expected)) in strips.iter().zip(expected).enumerate() {
                     assert_same_raster_quad(strip, baseline);
@@ -223,19 +231,23 @@ fn border_only_quad_handles_oversized_corners_and_full_quad_fallbacks(cx: &mut T
                     1
                 );
 
-                for fallback in [
-                    wide.clone().corner_radii(200.0),
-                    wide.clone().border_widths(20.0),
-                    wide.clone().border_widths(0.0),
-                    wide.clone().corner_radii(-2.0),
-                    wide.clone().background(red().opacity(0.01)),
-                    wide.border_color(transparent_black()),
+                for (fallback, expected_count) in [
+                    (wide.clone().corner_radii(200.0), 1),
+                    (wide.clone().border_widths(20.0), 1),
+                    (wide.clone().border_widths(0.0), 0),
+                    (wide.clone().corner_radii(-2.0), 1),
+                    (wide.clone().background(red().opacity(0.01)), 5),
+                    (wide.border_color(transparent_black()), 0),
                 ] {
                     let first = window.next_frame.scene.quads.len();
                     window.paint_quad(fallback);
                     let scene = &window.next_frame.scene;
-                    assert_eq!(scene.quads.len(), first + 1);
-                    assert_eq!(scene.quads[first].clip.clip_count, 1);
+                    assert_eq!(scene.quads.len(), first + expected_count);
+                    assert!(
+                        scene.quads[first..]
+                            .iter()
+                            .all(|quad| quad.clip.clip_count == 1)
+                    );
                 }
             },
         )
@@ -475,4 +487,244 @@ fn border_only_quad_strips_share_late_geometry_invalidation(cx: &mut TestAppCont
         assert_eq!(scene.quads[0].background, Background::from(green()));
         assert_eq!(scene.len(), 1);
     });
+}
+
+#[open_gpui::test]
+fn filled_quad_partition_preserves_local_paint_and_exact_rounded_clip(cx: &mut TestAppContext) {
+    let visual = cx.add_empty_window();
+    visual.update(|window, _| window.scale_factor = 1.25);
+    let clip = SubtreeClip::try_rounded_rect(
+        logical_bounds(0.0, 0.0, 100.0, 80.0),
+        Corners {
+            top_left: size(px(12.0), px(8.0)),
+            top_right: size(px(12.0), px(8.0)),
+            bottom_right: size(px(12.0), px(8.0)),
+            bottom_left: size(px(12.0), px(8.0)),
+        },
+    )
+    .unwrap();
+    let transform = SubtreeTransform::try_new(
+        size(2.0, 0.5),
+        point(px(4.0), px(8.0)),
+        SubtreeTransformOrigin::TOP_LEFT,
+    )
+    .unwrap();
+    visual.draw(Point::default(), size(px(220.0), px(100.0)), move |_, _| {
+        canvas(
+            |_, _, _| (),
+            |_, (), window, _| {
+                window.paint_quad(
+                    fill(logical_bounds(5.0, 5.0, 80.0, 65.0), red())
+                        .corner_radii(10.0)
+                        .border_widths(2.0)
+                        .border_color(blue().opacity(0.5)),
+                );
+                let scene = &window.next_frame.scene;
+                assert_eq!(scene.quads.len(), 5);
+                let interior = &scene.quads[0];
+                assert_eq!(interior.corner_radii, Corners::default());
+                assert_eq!(interior.border_widths, Edges::default());
+                assert_eq!(interior.clip.clip_count, 2);
+                assert!(!interior.transform.is_identity());
+                let inherited = clips(scene, interior.clip);
+                assert!(
+                    inherited
+                        .iter()
+                        .any(|clip| clip.radii_x != Corners::default())
+                );
+                for strip in &scene.quads[1..] {
+                    assert_eq!(strip.bounds, interior.bounds);
+                    assert_eq!(strip.transform, interior.transform);
+                    assert_eq!(strip.background, interior.background);
+                    assert_eq!(strip.clip.first_clip, interior.clip.first_clip);
+                    assert_eq!(clips(scene, strip.clip), inherited);
+                    assert!(!raster_coverage(strip).intersects(&raster_coverage(interior)));
+                }
+            },
+        )
+        .size_full()
+        .with_subtree_clip(clip)
+        .with_subtree_transform(transform)
+    });
+}
+
+#[open_gpui::test]
+fn plain_opaque_borders_split_into_rectangles_without_losing_background_coordinates(
+    cx: &mut TestAppContext,
+) {
+    let visual = cx.add_empty_window();
+    visual.update(|window, _| window.scale_factor = 1.0);
+    visual.draw(Point::default(), size(px(160.0), px(140.0)), |_, _| {
+        canvas(
+            |_, _, _| (),
+            |_, (), window, _| {
+                let bounds = logical_bounds(10.0, 20.0, 110.0, 100.0);
+                window.paint_quad(
+                    fill(bounds, red().opacity(0.5))
+                        .border_widths(4.0)
+                        .border_color(blue()),
+                );
+                let scene = &window.next_frame.scene;
+                assert_eq!(scene.quads.len(), 5);
+                let interior = &scene.quads[0];
+                assert_eq!(interior.bounds, bounds.scale(1.0));
+                assert_eq!(interior.background, Background::from(red().opacity(0.5)));
+                assert_eq!(
+                    raster_coverage(interior),
+                    logical_bounds(14.0, 24.0, 106.0, 96.0).scale(1.0)
+                );
+                let expected = [
+                    logical_bounds(10.0, 20.0, 110.0, 24.0),
+                    logical_bounds(10.0, 96.0, 110.0, 100.0),
+                    logical_bounds(10.0, 24.0, 14.0, 96.0),
+                    logical_bounds(106.0, 24.0, 110.0, 96.0),
+                ];
+                for (strip, expected) in scene.quads[1..].iter().zip(expected) {
+                    assert_eq!(strip.bounds, interior.bounds);
+                    assert_eq!(strip.background, Background::from(blue()));
+                    assert_eq!(strip.border_widths, Edges::default());
+                    assert_eq!(strip.corner_radii, Corners::default());
+                    assert_eq!(raster_coverage(strip), expected.scale(1.0));
+                }
+            },
+        )
+        .size_full()
+    });
+}
+
+#[open_gpui::test]
+fn plain_borders_keep_shader_geometry_for_nonunit_raster_scale(cx: &mut TestAppContext) {
+    let visual = cx.add_empty_window();
+    visual.update(|window, _| window.scale_factor = 1.0);
+    let transform = SubtreeTransform::try_new(
+        size(4.0, 1.0),
+        Point::default(),
+        SubtreeTransformOrigin::TOP_LEFT,
+    )
+    .unwrap();
+    visual.draw(Point::default(), size(px(100.0), px(40.0)), move |_, _| {
+        canvas(
+            |_, _, _| (),
+            |_, (), window, _| {
+                window.paint_quad(
+                    outline(
+                        logical_bounds(0.0, 0.0, 20.0, 20.0),
+                        red(),
+                        BorderStyle::Solid,
+                    )
+                    .border_widths(2.0),
+                );
+                let strips = &window.next_frame.scene.quads;
+                assert_eq!(strips.len(), 4);
+                for strip in strips {
+                    assert!(strip.background.is_transparent());
+                    assert_eq!(
+                        strip.bounds,
+                        logical_bounds(0.0, 0.0, 20.0, 20.0).scale(1.0)
+                    );
+                    assert_eq!(strip.border_widths.left, ScaledPixels(2.0));
+                    assert_eq!(strip.transform.scale(), size(4.0, 1.0));
+                }
+                for x in [7.5, 8.5] {
+                    let sample = point(ScaledPixels(x), ScaledPixels(10.5));
+                    assert_eq!(
+                        strips
+                            .iter()
+                            .filter(|strip| raster_coverage(strip).contains(&sample))
+                            .count(),
+                        1
+                    );
+                }
+            },
+        )
+        .size_full()
+        .with_subtree_transform(transform)
+    });
+}
+
+#[open_gpui::test]
+fn path_device_conversion_failure_invalidates_previously_painted_scope(cx: &mut TestAppContext) {
+    for (display_scale, subtree_scale, curved) in [
+        (2.0, 1.0, false),
+        (1.0, 4.0, false),
+        (2.0, 1.0, true),
+        (1.0, 4.0, true),
+    ] {
+        let visual = cx.add_empty_window();
+        visual.update(|window, _| window.scale_factor = display_scale);
+        let transform = SubtreeTransform::try_new(
+            size(subtree_scale, subtree_scale),
+            Point::default(),
+            SubtreeTransformOrigin::TOP_LEFT,
+        )
+        .unwrap();
+        visual.draw(Point::default(), size(px(160.0), px(160.0)), move |_, _| {
+            div()
+                .size_full()
+                .child(
+                    canvas(
+                        |_, _, _| (),
+                        move |_, (), window, _| {
+                            window.paint_quad(fill(logical_bounds(0.0, 0.0, 10.0, 10.0), red()));
+                            let validity = window.subtree_geometry_validity().unwrap();
+                            assert!(validity.is_valid());
+                            let mut path = crate::PathBuilder::fill();
+                            if curved {
+                                let extent =
+                                    f32::MAX * if display_scale == 2.0 { 0.4 } else { 0.2 };
+                                path.move_to(point(px(0.0), px(10.0)));
+                                path.curve_to(
+                                    point(px(extent), px(20.0)),
+                                    point(px(extent), px(10.0)),
+                                );
+                                path.line_to(point(px(0.0), px(20.0)));
+                                path.close();
+                            } else {
+                                path.add_polygon(
+                                    &[
+                                        point(px(f32::MAX * 0.5), px(10.0)),
+                                        point(px(f32::MAX * 0.75), px(10.0)),
+                                        point(px(f32::MAX * 0.75), px(20.0)),
+                                        point(px(f32::MAX * 0.5), px(20.0)),
+                                    ],
+                                    true,
+                                );
+                            }
+                            let path = path.build().unwrap();
+                            if curved {
+                                let bounds = path.try_bounds(display_scale).unwrap();
+                                assert!(
+                                    PaintedPath::try_project_bounds(
+                                        bounds,
+                                        window.base_primitive_transform().unwrap()
+                                    )
+                                    .is_ok()
+                                );
+                            }
+                            window.paint_path(path, red());
+                            assert!(!validity.is_valid());
+                        },
+                    )
+                    .size_full()
+                    .with_subtree_transform(transform),
+                )
+                .child(
+                    canvas(
+                        |_, _, _| (),
+                        |_, (), window, _| {
+                            window
+                                .paint_quad(fill(logical_bounds(40.0, 40.0, 80.0, 80.0), green()));
+                        },
+                    )
+                    .size_full(),
+                )
+        });
+        visual.update(|window, _| {
+            let scene = &window.rendered_frame.scene;
+            assert!(scene.paths.is_empty());
+            assert_eq!(scene.quads.len(), 1);
+            assert_eq!(scene.quads[0].background, Background::from(green()));
+            assert_eq!(scene.len(), 1);
+        });
+    }
 }

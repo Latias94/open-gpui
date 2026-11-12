@@ -123,7 +123,8 @@ thiserror.workspace = true
 open_gpui_core_util.workspace = true
 hdrhistogram = { workspace = true, optional = true }
 waker-fn = "1.2.0"
-lyon = "1.0"
+lyon_path = "1.0.19"
+tiny-skia-path = "0.11"
 pin-project = "1.1.10"
 spin = "0.12.3"
 pollster.workspace = true
@@ -172,7 +173,7 @@ backtrace.workspace = true
 open_gpui_collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 open_gpui_core_util = { workspace = true }
-lyon = { version = "1.0", features = ["extra"] }
+lyon_extra = "1.1.0"
 proptest = { workspace = true }
 rand.workspace = true
 open_gpui_scheduler = { workspace = true, features = ["test-support"] }

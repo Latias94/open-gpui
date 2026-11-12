@@ -236,7 +236,7 @@ fn assert_pixels(buffer: &wgpu::Buffer, width: u32, cases: &[(u32, u32, [u8; 4])
 }
 
 #[test]
-fn host_records_two_gpui_scenes_and_retains_their_atlas_through_one_submission() -> Result<()> {
+fn host_records_two_gpui_scenes_and_retains_resources_through_one_submission() -> Result<()> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::PRIMARY | wgpu::Backends::GL,
         ..wgpu::InstanceDescriptor::new_without_display_handle()
@@ -248,7 +248,7 @@ fn host_records_two_gpui_scenes_and_retains_their_atlas_through_one_submission()
         apply_limit_buckets: false,
     }))?;
     for (bind_groups, uniforms, attachment_bytes, combined_buffers) in
-        [(2, 3, 32, 4), (3, 2, 32, 4), (3, 3, 4, 4), (3, 3, 32, 3)]
+        [(2, 3, 32, 6), (3, 2, 32, 6), (3, 3, 4, 6), (3, 3, 32, 5)]
     {
         let limits = wgpu::Limits {
             max_bind_groups: bind_groups,

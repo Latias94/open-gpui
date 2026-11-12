@@ -8,7 +8,7 @@ use open_gpui::{
 use open_gpui_platform::application;
 
 struct PaintingViewer {
-    default_lines: Vec<(Path<Pixels>, Background)>,
+    default_lines: Vec<(Path, Background)>,
     background_quads: Vec<(Bounds<Pixels>, Background)>,
     lines: Vec<Vec<Point<Pixels>>>,
     start: Point<Pixels>,
@@ -157,8 +157,8 @@ impl PaintingViewer {
         lines.push((path, red2.into()));
 
         // draw a Rust logo
-        let mut builder = lyon::path::Path::svg_builder();
-        lyon::extra::rust_logo::build_logo_path(&mut builder);
+        let mut builder = lyon_path::Path::svg_builder();
+        lyon_extra::rust_logo::build_logo_path(&mut builder);
         // move down the Path
         let mut builder: PathBuilder = builder.into();
         builder.translate(point(px(10.), px(200.)));
@@ -276,9 +276,11 @@ impl PaintingViewer {
         }
 
         // draw a wave
-        let options = StrokeOptions::default()
-            .with_line_width(1.)
-            .with_line_join(lyon::path::LineJoin::Bevel);
+        let options = StrokeOptions {
+            line_width: 1.,
+            line_join: open_gpui::LineJoin::Bevel,
+            ..Default::default()
+        };
         let mut builder = PathBuilder::stroke(px(1.)).with_style(PathStyle::Stroke(options));
         builder.move_to(point(px(40.), px(420.)));
         for i in 1..50 {

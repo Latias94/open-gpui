@@ -155,33 +155,38 @@ fn aligned_wrapped_backgrounds_and_decorations_cover_each_actual_row(cx: &mut Te
                         let scene = &window.next_frame.scene;
                         assert_eq!(scene.quads.len(), 2);
                         assert_eq!(scene.underlines.len(), 2);
-                        let footprint = line_paint_bounds(
-                            origin,
-                            &line.unwrapped_layout,
-                            px(20.),
-                            align,
-                            Some(px(align_width)),
-                            line.wrap_boundaries(),
-                        );
+                        let footprint =
+                            scene.quads.iter().fold(Bounds::default(), |bounds, quad| {
+                                let projected =
+                                    quad.transform.try_project_bounds(quad.bounds).unwrap();
+                                bounds.join(&projected.intersect(&quad.clip.conservative_bounds))
+                            });
+                        let mut expected_footprint = Bounds::default();
                         for (row, width) in [(0, 40.), (1, 20.)] {
                             let expected = Bounds::new(
                                 point(row_x(width), origin.y + px(row as f32 * 20.)),
                                 size(px(width), px(20.)),
                             );
                             let quad = &scene.quads[row];
-                            assert_eq!(quad.bounds, expected.scale(window.scale_factor()));
+                            let expected = expected.scale(window.scale_factor());
+                            expected_footprint = expected_footprint.join(&expected);
+                            assert_eq!(quad.bounds, expected);
                             assert!(footprint.contains(&expected.origin));
                             assert!(footprint.right() >= expected.right());
                             assert!(footprint.bottom() >= expected.bottom());
-                            assert_eq!(
-                                scene.underlines[row].bounds.origin.x,
-                                expected.origin.x.scale(window.scale_factor())
-                            );
+                            assert_eq!(scene.underlines[row].bounds.origin.x, expected.origin.x);
                             assert_eq!(
                                 scene.underlines[row].bounds.size.width,
-                                expected.size.width.scale(window.scale_factor())
+                                expected.size.width
                             );
                         }
+                        assert_eq!(footprint, expected_footprint);
+                        let line_order = scene.underlines[0].order;
+                        window.paint_quad(fill(
+                            Bounds::new(point(row_x(40.), origin.y), size(px(1.), px(20.))),
+                            color,
+                        ));
+                        assert!(window.next_frame.scene.quads.last().unwrap().order > line_order);
                     },
                 )
                 .size_full()
@@ -229,7 +234,11 @@ fn zero_advance_underline_and_background_receive_the_same_half_cell_adjustment(
                     ),
                     black(),
                 ));
-                assert!(background.order < window.next_frame.scene.quads.last().unwrap().order);
+                assert_eq!(
+                    background.order,
+                    window.next_frame.scene.quads.last().unwrap().order
+                );
+                assert_eq!(window.next_frame.scene.quads[0].bounds, background.bounds);
                 line.paint_with_underline_handler(
                     origin,
                     px(20.),

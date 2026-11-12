@@ -79,8 +79,8 @@ mod tests {
     use super::*;
     use crate::{
         DevicePixels, HeadlessAtlas, ImageId, ImageTextureAlpha, ImageTextureSampling,
-        ImageTextureTransfer, PlatformAtlas, Point, RenderImageParams, Styled as _, TestAppContext,
-        canvas, fill, point, px, red, size,
+        ImageTextureTransfer, PlatformAtlas, Point, Primitive, PrimitiveBatch, RenderImageParams,
+        Styled as _, TestAppContext, canvas, fill, point, px, red, size,
     };
     use std::{borrow::Cow, sync::Arc};
 
@@ -178,13 +178,40 @@ mod tests {
                         .paint_image_texture(bounds, Corners::all(px(4.0)), &source)
                         .unwrap();
                     window.paint_quad(fill(bounds, red()));
-                    let sprite = window.next_frame.scene.polychrome_sprites.last().unwrap();
+                    let scene = &window.next_frame.scene;
+                    let sprite = scene.polychrome_sprites.last().unwrap();
                     assert_eq!(sprite.pad, 27);
                     assert_eq!(sprite.tile, source.tile());
                     assert!(sprite.corner_radii.top_left.0 > 0.0);
-                    assert_eq!(window.next_frame.scene.quads.len(), 2);
-                    assert!(window.next_frame.scene.quads[0].order < sprite.order);
-                    assert!(sprite.order < window.next_frame.scene.quads[1].order);
+                    assert_eq!(scene.quads.len(), 2);
+                    let image_bounds = Primitive::PolychromeSprite(*sprite)
+                        .try_visual_bounds()
+                        .unwrap();
+                    for quad in &scene.quads {
+                        assert_eq!(
+                            Primitive::Quad(*quad).try_visual_bounds().unwrap(),
+                            image_bounds
+                        );
+                        assert_eq!(
+                            quad.clip.conservative_bounds,
+                            sprite.clip.conservative_bounds
+                        );
+                    }
+                    let draws = scene
+                        .batches()
+                        .flat_map(|batch| {
+                            let (kind, range) = match batch {
+                                PrimitiveBatch::Quads(range) => ("quad", range),
+                                PrimitiveBatch::PolychromeSprites { texture, range } => {
+                                    assert_eq!(texture, source.tile().texture_instance());
+                                    ("image", range)
+                                }
+                                other => panic!("unexpected painter-order batch: {other:?}"),
+                            };
+                            range.map(move |index| (kind, index))
+                        })
+                        .collect::<Vec<_>>();
+                    assert_eq!(draws, [("quad", 0), ("image", 0), ("quad", 1)]);
                 },
             )
             .size_full()

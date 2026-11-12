@@ -15,8 +15,8 @@ struct SubpixelSpriteOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) tile_position: vec2<f32>,
     @location(1) @interpolate(flat) color: vec4<f32>,
-    @location(2) @interpolate(flat) sprite_id: u32,
-    @location(3) window_position: vec2<f32>,
+    @location(4) @interpolate(flat) clip_bounds: vec4<f32>,
+    @location(5) @interpolate(flat) clip_range: vec2<u32>,
 }
 
 struct SubpixelSpriteFragmentOutput {
@@ -28,15 +28,14 @@ struct SubpixelSpriteFragmentOutput {
 fn vs_subpixel_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> SubpixelSpriteOutput {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
     let sprite = b_subpixel_sprites[instance_id];
-    let local_position = unit_vertex * sprite.bounds.size + sprite.bounds.origin;
-    let window_position = apply_primitive_transform(local_position, sprite.transform);
+    let clipped = clip_to_mask(unit_vertex, sprite.bounds, sprite.clip, sprite.transform);
 
     var out = SubpixelSpriteOutput();
-    out.position = to_device_position_impl(window_position);
-    out.tile_position = to_tile_position(unit_vertex, sprite.tile);
+    out.position = to_device_position_impl(clipped.position);
+    out.tile_position = to_tile_position(clipped.unit_vertex, sprite.tile);
     out.color = hsla_to_rgba(sprite.color);
-    out.sprite_id = instance_id;
-    out.window_position = window_position;
+    out.clip_bounds = vec4<f32>(sprite.clip.conservative_bounds.origin, sprite.clip.conservative_bounds.size);
+    out.clip_range = vec2<u32>(sprite.clip.first_clip, sprite.clip.clip_count);
     return out;
 }
 
@@ -48,8 +47,8 @@ fn fs_subpixel_sprite(input: SubpixelSpriteOutput) -> SubpixelSpriteFragmentOutp
     }
     let alpha_corrected = apply_contrast_and_gamma_correction3(sample, input.color.rgb, gamma_params.subpixel_enhanced_contrast, gamma_params.gamma_ratios);
 
-    let sprite = b_subpixel_sprites[input.sprite_id];
-    if (!clip_envelope_contains(input.window_position, sprite.clip)) {
+    let clip = ClipEnvelope(Bounds(input.clip_bounds.xy, input.clip_bounds.zw), input.clip_range.x, input.clip_range.y);
+    if (!clip_envelope_contains(input.position.xy, clip)) {
         return SubpixelSpriteFragmentOutput(vec4<f32>(0.0), vec4<f32>(0.0));
     }
 

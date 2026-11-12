@@ -1193,6 +1193,19 @@ impl<T: PartialOrd + Add<T, Output = T> + Sub<Output = T> + Clone + Debug + Defa
         let bottom_right = self.bottom_right().max(&other.bottom_right());
         Bounds::from_corners(top_left, bottom_right)
     }
+
+    /// Computes the smallest bounds covering the non-empty area of both bounds.
+    ///
+    /// Unlike [`Bounds::union`], empty bounds do not extend the result.
+    pub fn join(&self, other: &Self) -> Self {
+        if self.is_empty() {
+            other.clone()
+        } else if other.is_empty() {
+            self.clone()
+        } else {
+            self.union(other)
+        }
+    }
 }
 
 impl<T> Bounds<T>
@@ -3094,7 +3107,7 @@ impl From<usize> for DevicePixels {
 /// a single logical pixel may correspond to multiple physical pixels. By using `ScaledPixels`,
 /// dimensions and positions can be specified in a way that scales appropriately across different
 /// display resolutions.
-#[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, DivAssign, PartialEq)]
+#[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Neg, Div, DivAssign, PartialEq)]
 #[repr(transparent)]
 pub struct ScaledPixels(pub f32);
 
@@ -3245,6 +3258,18 @@ impl Mul<ScaledPixels> for usize {
 impl MulAssign<f32> for ScaledPixels {
     fn mul_assign(&mut self, rhs: f32) {
         self.0 *= rhs;
+    }
+}
+
+impl std::iter::Sum for ScaledPixels {
+    fn sum<Values: Iterator<Item = Self>>(values: Values) -> Self {
+        values.fold(Self::default(), |total, value| total + value)
+    }
+}
+
+impl<'a> std::iter::Sum<&'a ScaledPixels> for ScaledPixels {
+    fn sum<Values: Iterator<Item = &'a Self>>(values: Values) -> Self {
+        values.fold(Self::default(), |total, value| total + *value)
     }
 }
 
@@ -5402,6 +5427,18 @@ mod tests {
             bottom_right: size(px(bottom_right.0), px(bottom_right.1)),
             bottom_left: size(px(bottom_left.0), px(bottom_left.1)),
         }
+    }
+
+    #[test]
+    fn test_bounds_join() {
+        let bounds = Bounds::new(point(5.0, 5.0), Size::new(5.0, 5.0));
+        let other = Bounds::new(point(20.0, 0.0), Size::new(5.0, 5.0));
+        let empty = Bounds::new(point(0.0, 0.0), Size::new(0.0, 10.0));
+        assert_eq!(bounds.join(&other), bounds.union(&other));
+        assert_eq!(bounds.join(&empty), bounds);
+        assert_eq!(empty.join(&bounds), bounds);
+        assert_eq!(Bounds::default().join(&bounds), bounds);
+        assert_ne!(bounds.union(&empty), bounds);
     }
 
     #[test]

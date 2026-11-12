@@ -1460,6 +1460,7 @@ mod measured_layout_tests;
 #[cfg(test)]
 mod text_layer_tests {
     use super::*;
+    use crate::scene::PrimitiveKind;
     use crate::{
         AppContext as _, Context, DevicePixels, Font, FontId, FontMetrics, FontRun, GlyphId,
         HeadlessAppContext, LineLayout, NoopTextSystem, ParentElement as _, PlatformTextSystem,
@@ -1681,17 +1682,28 @@ mod text_layer_tests {
                 let underlines = window.next_frame.scene.underlines[start.2..].to_vec();
                 assert!(!sprites.is_empty());
                 assert!(!underlines.is_empty());
-                for background in &backgrounds {
+                for (background_index, background) in backgrounds.iter().enumerate() {
                     let background_bounds = crate::Primitive::Quad(*background)
                         .try_visual_bounds()
                         .unwrap();
-                    for highlight in &highlights {
+                    for (highlight_index, highlight) in highlights.iter().enumerate() {
                         if background_bounds.intersects(
                             &crate::Primitive::Quad(*highlight)
                                 .try_visual_bounds()
                                 .unwrap(),
                         ) {
-                            assert!(background.order < highlight.order);
+                            assert!(
+                                (
+                                    background.order,
+                                    PrimitiveKind::Quad,
+                                    start.0 + background_index
+                                ) < (
+                                    highlight.order,
+                                    PrimitiveKind::Quad,
+                                    start.0 + backgrounds.len() + highlight_index,
+                                ),
+                                "overlapping row highlights must draw after their run backgrounds"
+                            );
                         }
                     }
                 }
@@ -1705,7 +1717,11 @@ mod text_layer_tests {
                                 .try_visual_bounds()
                                 .unwrap(),
                         ) {
-                            assert!(highlight.order < sprite.order);
+                            assert!(
+                                (highlight.order, PrimitiveKind::Quad)
+                                    < (sprite.order, PrimitiveKind::MonochromeSprite),
+                                "overlapping glyphs must draw after row highlights"
+                            );
                         }
                     }
                 }
@@ -1757,7 +1773,8 @@ mod text_layer_tests {
                                 .unwrap(),
                         ) {
                             assert!(
-                                background.order < sprite.order,
+                                (background.order, PrimitiveKind::Quad)
+                                    < (sprite.order, PrimitiveKind::MonochromeSprite),
                                 "ordinary paint must finish every background before overlapping glyphs"
                             );
                         }
@@ -1812,7 +1829,8 @@ mod text_layer_tests {
                 ));
                 let cover = window.next_frame.scene.quads.last().unwrap();
                 assert!(
-                    sprite.order < cover.order,
+                    (sprite.order, PrimitiveKind::MonochromeSprite)
+                        < (cover.order, PrimitiveKind::Quad),
                     "a later opaque cover must paint above the fragment glyph outside its advance"
                 );
             };

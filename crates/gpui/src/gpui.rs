@@ -56,6 +56,7 @@ mod interactive;
 mod key_dispatch;
 mod keymap;
 mod path_builder;
+mod path_winding;
 mod platform;
 pub mod prelude;
 /// Profiling utilities for task timing and thread performance tracking.
@@ -150,6 +151,7 @@ pub use open_gpui_http_client as http_client;
 pub use open_gpui_refineable::*;
 pub use open_gpui_shared_string::*;
 pub use path_builder::*;
+pub(crate) use path_winding::PathTiles;
 pub use platform::*;
 pub use profiler::*;
 #[cfg(any(

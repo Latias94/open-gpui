@@ -7,8 +7,7 @@ use crate::{
 #[derive(Debug, PartialEq)]
 pub(super) struct SceneSnapshot {
     pub(super) quads: Vec<QuadSnapshot>,
-    /// Every other primitive kind, formatted without the per-window atlas tile and
-    /// path IDs, which differ between two windows drawing the same scene.
+    /// Every other primitive kind, normalized for per-window atlas and clip allocation.
     pub(super) other_primitives: Vec<String>,
     pub(super) element_ids: BTreeSet<u64>,
 }
@@ -45,6 +44,26 @@ impl SceneSnapshot {
             tile.texture_generation = 0;
             tile.tile_id = crate::TileId(tile_id);
         };
+        let mut path_draw_indices = vec![0; scene.paths.len()];
+        let mut draw_index = 0;
+        for batch in scene.batches() {
+            let (range, is_path) = match batch {
+                crate::PrimitiveBatch::Paths(range) => (range, true),
+                crate::PrimitiveBatch::Shadows(range)
+                | crate::PrimitiveBatch::Quads(range)
+                | crate::PrimitiveBatch::Underlines(range)
+                | crate::PrimitiveBatch::Surfaces(range)
+                | crate::PrimitiveBatch::MonochromeSprites { range, .. }
+                | crate::PrimitiveBatch::SubpixelSprites { range, .. }
+                | crate::PrimitiveBatch::PolychromeSprites { range, .. } => (range, false),
+            };
+            if is_path {
+                for (offset, index) in range.clone().enumerate() {
+                    path_draw_indices[index] = draw_index + offset;
+                }
+            }
+            draw_index += range.len();
+        }
         let other_primitives = scene
             .shadows
             .iter()
@@ -60,15 +79,16 @@ impl SceneSnapshot {
                 underline.clip.first_clip = 0;
                 format!("underline {underline:?} {clip:?}")
             }))
-            .chain(scene.paths.iter().map(|path| {
+            .chain(scene.paths.iter().enumerate().map(|(index, path)| {
+                let mut paints = Vec::new();
+                let mut curves = Vec::new();
+                let mut tiles = Vec::new();
+                path.append_to(&mut paints, &mut curves, &mut tiles);
+                let clip = ClipSnapshot::new(scene, paints[0].clip);
+                paints[0].clip.first_clip = 0;
                 format!(
-                    "path {} {:?} {:?} {:?} {:?} {:?}",
-                    path.order,
-                    path.bounds,
-                    ClipSnapshot::new(scene, path.clip),
-                    path.color,
-                    path.vertices,
-                    path.transform,
+                    "path {} {paints:?} {curves:?} {tiles:?} {clip:?}",
+                    path_draw_indices[index],
                 )
             }))
             .chain(scene.monochrome_sprites.iter().map(|sprite| {

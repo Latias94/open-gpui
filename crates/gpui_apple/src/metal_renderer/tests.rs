@@ -11,10 +11,10 @@ use objc2_core_video::{
 };
 use open_gpui::{
     AppContext as _, AtlasKey, AtlasRemoveOutcome, AtlasTile, Context, Corners, HeadlessAppContext,
-    Hsla, ImageId, IntoElement, MonochromeSprite, NoopTextSystem, PaddedBool32, Pixels,
-    PlatformAtlas, PlatformPixelBuffer, PolychromeSprite, Render, RenderImageParams,
+    Hsla, ImageId, IntoElement, MonochromeSprite, NoopTextSystem, PaddedBool32, PathBuilder,
+    Pixels, PlatformAtlas, PlatformPixelBuffer, PolychromeSprite, Render, RenderImageParams,
     RenderSvgParams, Styled as _, SubtreeClip, SubtreeTransform, SubtreeTransformExt as _, Window,
-    canvas, px, rgb,
+    canvas, fill, point, px, rgb,
 };
 use std::borrow::Cow;
 
@@ -183,7 +183,7 @@ fn mixed_missing_preflight_refuses_both_orders_and_recovers_after_reallocation()
                 renderer.instance_buffer_pool.lock().buffer_size,
                 buffer_size
             );
-            assert!(renderer.path_intermediate_texture.is_none());
+            assert!(renderer.depth_texture.is_none());
             assert!(renderer.headless_render_target.is_none());
             assert!(renderer.last_submitted_command_buffer.is_none());
         }
@@ -412,11 +412,13 @@ impl Render for SurfaceBatchFixture {
             move |_, window, _| window.prepare_subtree_clip(&clip, bounds_at(16.0)),
             move |_, clip, window, _| {
                 window.paint_surface(bounds_at(0.0), first);
-                let mut separator = Path::new(point(px(8.0), px(0.0)));
+                let mut separator = PathBuilder::fill();
+                separator.move_to(point(px(8.0), px(0.0)));
                 for (x, y) in [(40.0, 0.0), (40.0, 12.0), (8.0, 12.0), (8.0, 0.0)] {
                     separator.line_to(point(px(x), px(y)));
                 }
-                window.paint_path(separator, rgb(0xff0000));
+                separator.close();
+                window.paint_path(separator.build().expect("valid separator"), rgb(0xff0000));
                 window
                     .with_prepared_subtree_clip(&clip, |window| {
                         window.paint_surface(bounds_at(16.0), second);
@@ -473,6 +475,306 @@ fn surface_batches_read_back_with_global_instance_indices() -> Result<()> {
                 "pixel at ({x}, {y}) was {actual:?}, expected {expected:?}",
             );
         }
+        Ok(())
+    })
+}
+
+struct OpaqueClipFixture;
+
+impl Render for OpaqueClipFixture {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let clip_bounds = Bounds::new(point(px(4.0), px(4.0)), size(px(24.0), px(24.0)));
+        let clip = SubtreeClip::try_rounded_rect(
+            Bounds::new(point(px(0.0), px(0.0)), clip_bounds.size),
+            Corners::all(px(12.0)).map(|radius| size(*radius, *radius)),
+        )
+        .expect("valid opaque clip");
+        canvas(
+            move |_, window, _| window.prepare_subtree_clip(&clip, clip_bounds),
+            move |_, clip, window, _| {
+                let bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(32.0), px(32.0)));
+                window.paint_quad(fill(bounds, rgb(0x0000ff)));
+                let mut path = PathBuilder::fill();
+                path.add_polygon(
+                    &[
+                        point(px(0.0), px(0.0)),
+                        point(px(32.0), px(0.0)),
+                        point(px(32.0), px(32.0)),
+                        point(px(0.0), px(32.0)),
+                    ],
+                    true,
+                );
+                window.paint_path(path.build().expect("valid background path"), rgb(0x00ff00));
+                window
+                    .with_prepared_subtree_clip(&clip, |window| {
+                        window.paint_quad(fill(clip_bounds, rgb(0xff0000)));
+                    })
+                    .expect("matching prepaint clip");
+                window.paint_quad(fill(
+                    Bounds::new(point(px(20.0), px(0.0)), size(px(12.0), px(32.0))),
+                    open_gpui::rgba(0xffffff80),
+                ));
+            },
+        )
+        .size_full()
+    }
+}
+
+#[test]
+fn opaque_depth_preserves_paths_and_blending_outside_exact_rounded_clips() -> Result<()> {
+    objc2::rc::autoreleasepool(|_| {
+        let mut app =
+            HeadlessAppContext::with_platform(Arc::new(NoopTextSystem), Arc::new(()), || {
+                Ok(Some(Box::new(MetalHeadlessRenderer::new()?)))
+            });
+        let handle = app.open_window(size(px(32.0), px(32.0)), |_, app| {
+            app.new(|_| OpaqueClipFixture)
+        })?;
+        app.update_window(handle.into(), |_, window, _| {
+            let _ = window.activate_window();
+        })?;
+        app.run_until_parked();
+        app.simulate_window_scheduled_frame(handle.into())?;
+        let capture = app.capture_frame(handle.into())?;
+        let scale = capture.metadata.scale_factor;
+        let image = capture.into_image()?;
+        for (x, y, expected) in [
+            (1.0, 1.0, [0, 255, 0, 255]),
+            (4.0, 4.0, [0, 255, 0, 255]),
+            (16.0, 16.0, [255, 0, 0, 255]),
+            (24.0, 16.0, [255, 128, 128, 255]),
+            (30.0, 1.0, [128, 255, 128, 255]),
+        ] {
+            let actual = image.get_pixel((x * scale) as u32, (y * scale) as u32).0;
+            assert_eq!(actual, expected, "pixel at ({x}, {y})");
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn manual_clip_gpu_readback_preserves_large_coordinates_tiny_uvs_and_fractional_edges() -> Result<()>
+{
+    objc2::rc::autoreleasepool(|_| {
+        let mut renderer = MetalRenderer::new_headless(Default::default())?;
+        let source = format!(
+            "{}\n{}\n{}",
+            include_str!(concat!(env!("OUT_DIR"), "/scene.h")),
+            include_str!("../shaders.metal"),
+            r#"
+struct ClipPrecisionOutput {
+  float4 position [[position]];
+  float2 unit_vertex;
+  float2 local_position;
+  float4 clip_bounds [[flat]];
+};
+
+vertex ClipPrecisionOutput clip_precision_vertex(
+    uint vertex_id [[vertex_id]],
+    constant float4 *parameters [[buffer(0)]],
+    constant Size_DevicePixels *viewport [[buffer(1)]]) {
+  Bounds_ScaledPixels bounds = {{parameters[0].x, parameters[0].y},
+                                {parameters[0].z, parameters[0].w}};
+  PrimitiveTransform transform = {parameters[1].x, parameters[1].y,
+                                  parameters[1].z, parameters[1].w};
+  ClipEnvelope clip = {{{parameters[2].x, parameters[2].y},
+                        {parameters[2].z, parameters[2].w}}, 0u, 1u};
+  float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
+  ClippedVertex clipped = clip_transformed_primitive(unit_vertex, bounds, clip, transform);
+  return ClipPrecisionOutput{to_device_position_impl(clipped.position, viewport),
+                              clipped.unit_vertex, clipped.local_position, parameters[2]};
+}
+
+fragment float4 clip_precision_fragment(
+    ClipPrecisionOutput input [[stage_in]],
+    constant GpuClipShape *clip_shapes [[buffer(GlobalInputIndex_ClipShapes)]]) {
+  ClipEnvelope clip = {{{input.clip_bounds.x, input.clip_bounds.y},
+                        {input.clip_bounds.z, input.clip_bounds.w}}, 0u, 1u};
+  if (!clip_stack_contains(input.position.xy, clip, clip_shapes)) {
+    discard_fragment();
+  }
+  return float4(input.unit_vertex, input.local_position.x, 1.0);
+}
+"#,
+        );
+        let library = renderer.device.newLibraryWithSource_options_error(
+            &NSString::from_str(&source),
+            Some(&objc2_metal::MTLCompileOptions::new()),
+        )?;
+        let pipeline = build_pipeline_state(
+            &renderer.device,
+            &library,
+            "clip_precision",
+            "clip_precision_vertex",
+            "clip_precision_fragment",
+            MTLPixelFormat::RGBA32Float,
+            false,
+        )?;
+        let viewport = size(DevicePixels(64), DevicePixels(4));
+        renderer.update_depth_texture(viewport)?;
+        let descriptor = MTLTextureDescriptor::new();
+        unsafe {
+            descriptor.setWidth(64);
+            descriptor.setHeight(4);
+        }
+        descriptor.setPixelFormat(MTLPixelFormat::RGBA32Float);
+        descriptor.setUsage(MTLTextureUsage::RenderTarget);
+        let shared_storage = cfg!(target_os = "ios") || renderer.is_apple_gpu;
+        descriptor.setStorageMode(if shared_storage {
+            MTLStorageMode::Shared
+        } else {
+            MTLStorageMode::Managed
+        });
+        let target = renderer
+            .device
+            .newTextureWithDescriptor(&descriptor)
+            .context("allocating clip precision render target")?;
+        for (case, parameters) in [
+            [
+                [16_777_216.0f32, 0.0, 7.0, 2.0],
+                [1.0, 1.0, -16_777_206.0, 0.0],
+                [0.0, 0.0, 64.0, 4.0],
+            ],
+            [
+                [0.0, 0.0, 1e-7, 2.0],
+                [1e8, 1.0, 10.0, 0.0],
+                [12.25, 0.0, 6.25, 4.0],
+            ],
+            [
+                [8.0, 0.0, 16.0, 4.0],
+                [1.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 16.5001, 1.5001],
+            ],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let clip_shape = open_gpui::GpuClipShape {
+                bounds: Bounds::new(
+                    point(
+                        ScaledPixels(parameters[2][0]),
+                        ScaledPixels(parameters[2][1]),
+                    ),
+                    size(
+                        ScaledPixels(parameters[2][2]),
+                        ScaledPixels(parameters[2][3]),
+                    ),
+                ),
+                ..Default::default()
+            };
+            let render_pass = MTLRenderPassDescriptor::new();
+            let color = unsafe { render_pass.colorAttachments().objectAtIndexedSubscript(0) };
+            color.setTexture(Some(&target));
+            color.setLoadAction(MTLLoadAction::Clear);
+            color.setStoreAction(MTLStoreAction::Store);
+            color.setClearColor(MTLClearColor {
+                red: 0.0,
+                green: 0.0,
+                blue: 0.0,
+                alpha: 0.0,
+            });
+            let depth = render_pass.depthAttachment();
+            depth.setTexture(renderer.depth_texture.as_deref());
+            depth.setLoadAction(MTLLoadAction::Clear);
+            depth.setClearDepth(0.0);
+            depth.setStoreAction(MTLStoreAction::DontCare);
+            let command_buffer = renderer
+                .command_queue
+                .commandBuffer()
+                .context("creating clip precision commands")?;
+            let encoder = command_buffer
+                .renderCommandEncoderWithDescriptor(&render_pass)
+                .context("creating clip precision encoder")?;
+            encoder.setRenderPipelineState(&pipeline);
+            encoder.setViewport(MTLViewport {
+                originX: 0.0,
+                originY: 0.0,
+                width: 64.0,
+                height: 4.0,
+                znear: 0.0,
+                zfar: 1.0,
+            });
+            unsafe {
+                encoder.setVertexBytes_length_atIndex(
+                    ptr::NonNull::from(&parameters).cast(),
+                    mem::size_of_val(&parameters),
+                    0,
+                );
+                encoder.setVertexBytes_length_atIndex(
+                    ptr::NonNull::from(&viewport).cast(),
+                    mem::size_of_val(&viewport),
+                    1,
+                );
+                encoder.setFragmentBytes_length_atIndex(
+                    ptr::NonNull::from(&clip_shape).cast(),
+                    mem::size_of_val(&clip_shape),
+                    GlobalInputIndex::ClipShapes as usize,
+                );
+                encoder.drawPrimitives_vertexStart_vertexCount(
+                    MTLPrimitiveType::TriangleStrip,
+                    0,
+                    4,
+                );
+            }
+            encoder.endEncoding();
+            #[cfg(target_os = "macos")]
+            if !shared_storage {
+                let blit = command_buffer
+                    .blitCommandEncoder()
+                    .context("synchronizing clip precision target")?;
+                blit.synchronizeResource(ProtocolObject::from_ref(&*target));
+                blit.endEncoding();
+            }
+            command_buffer.commit();
+            command_buffer.waitUntilCompleted();
+            anyhow::ensure!(
+                command_buffer.status() == MTLCommandBufferStatus::Completed,
+                "clip precision GPU failure: {:?}",
+                command_buffer.error()
+            );
+            let mut pixels = [[0.0f32; 4]; 64 * 4];
+            unsafe {
+                target.getBytes_bytesPerRow_fromRegion_mipmapLevel(
+                    ptr::NonNull::from(&mut pixels).cast(),
+                    64 * mem::size_of::<[f32; 4]>(),
+                    MTLRegion {
+                        origin: MTLOrigin { x: 0, y: 0, z: 0 },
+                        size: MTLSize {
+                            width: 64,
+                            height: 4,
+                            depth: 1,
+                        },
+                    },
+                    0,
+                );
+            }
+            let pixel =
+                |pixel_x: usize, pixel_y: usize| -> [f32; 4] { pixels[pixel_y * 64 + pixel_x] };
+            let expected_uv = match case {
+                0 => 0.8125,
+                1 => 0.65,
+                _ => 0.53125,
+            };
+            let sample = pixel(16, 1);
+            assert_eq!(sample[3], 1.0, "case {case}: missing pixel center");
+            assert!(
+                (sample[0] - expected_uv).abs() < 1e-5,
+                "case {case}: UV was {}, expected {expected_uv}",
+                sample[0]
+            );
+            if case == 0 {
+                assert_eq!(pixel(17, 1)[3], 1.0);
+                assert_eq!(pixel(18, 1)[3], 0.0);
+            } else if case == 1 {
+                assert!((sample[2] - 6.5e-8).abs() < 1e-12);
+                assert_eq!(pixel(12, 1)[3], 1.0);
+                assert_eq!(pixel(18, 1)[3], 0.0);
+            } else {
+                assert_eq!(pixel(17, 1)[3], 0.0);
+                assert_eq!(pixel(16, 2)[3], 0.0);
+            }
+        }
+        renderer.destroy();
         Ok(())
     })
 }

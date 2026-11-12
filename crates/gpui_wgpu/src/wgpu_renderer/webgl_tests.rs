@@ -63,8 +63,9 @@ fn webgl_record_sizes_match_shader_word_strides() {
     use open_gpui::{MonochromeSprite, PolychromeSprite, Quad, Shadow, SubpixelSprite, Underline};
     assert_eq!(std::mem::size_of::<Quad>(), 46 * 4);
     assert_eq!(std::mem::size_of::<Shadow>(), 34 * 4);
-    assert_eq!(std::mem::size_of::<PathRasterizationVertex>(), 36 * 4);
-    assert_eq!(std::mem::size_of::<PathSprite>(), 4 * 4);
+    assert_eq!(std::mem::size_of::<PathPaint>(), 34 * 4);
+    assert_eq!(std::mem::size_of::<PathCurve>(), 10 * 4);
+    assert_eq!(std::mem::size_of::<PathTile>(), 14 * 4);
     assert_eq!(std::mem::size_of::<Underline>(), 22 * 4);
     assert_eq!(std::mem::size_of::<MonochromeSprite>(), 30 * 4);
     assert_eq!(std::mem::size_of::<SubpixelSprite>(), 30 * 4);
@@ -147,7 +148,7 @@ fn webgl_quad_layout_matches_fixed_decoder() {
 #[test]
 fn packed_allocations_keep_whole_records_and_partial_texels_disjoint() -> anyhow::Result<()> {
     let mut offset = 16;
-    for stride in [184, 136, 144, 16, 88, 120, 128] {
+    for stride in [184, 136, 40, 56, 88, 120, 128] {
         for count in [0, 1, 2, 3, 19] {
             let (start, allocation, first) =
                 instance_allocation(offset, stride * count, stride, 16, true)?;

@@ -30,19 +30,21 @@ use objc2_metal::MTLBlitCommandEncoder;
 use objc2_metal::MTLCopyAllDevices;
 use objc2_metal::{
     MTLBlendFactor, MTLBlendOperation, MTLBuffer, MTLClearColor, MTLCommandBuffer,
-    MTLCommandEncoder, MTLCommandQueue, MTLCreateSystemDefaultDevice, MTLDevice, MTLDrawable,
-    MTLGPUFamily, MTLLibrary, MTLLoadAction, MTLPixelFormat, MTLPrimitiveType,
-    MTLRenderCommandEncoder, MTLRenderPassDescriptor, MTLRenderPipelineDescriptor,
-    MTLRenderPipelineState, MTLResourceOptions, MTLStorageMode, MTLStoreAction, MTLTexture,
-    MTLTextureDescriptor, MTLTextureType, MTLTextureUsage, MTLViewport,
+    MTLCommandEncoder, MTLCommandQueue, MTLCompareFunction, MTLCreateSystemDefaultDevice,
+    MTLDepthStencilDescriptor, MTLDepthStencilState, MTLDevice, MTLDrawable, MTLGPUFamily,
+    MTLLibrary, MTLLoadAction, MTLPixelFormat, MTLPrimitiveType, MTLRenderCommandEncoder,
+    MTLRenderPassDescriptor, MTLRenderPipelineDescriptor, MTLRenderPipelineState,
+    MTLResourceOptions, MTLStorageMode, MTLStoreAction, MTLTexture, MTLTextureDescriptor,
+    MTLTextureUsage, MTLViewport,
 };
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 use objc2_metal::{MTLCommandBufferStatus, MTLOrigin, MTLRegion, MTLSize};
 use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
 use open_gpui::{
-    AtlasTextureLease, Background, Bounds, ClipEnvelope, DevicePixels, PaintSurface, Path,
-    PlatformWindowPresentOutcome, Point, PrimitiveBatch, PrimitiveTransform, ScaledPixels, Scene,
-    Size, WindowPresentationShutdownTicket, point, size,
+    AtlasTextureLease, Bounds, ClipEnvelope, DevicePixels, PaintSurface, PaintedPath, PathCurve,
+    PathPaint, PathTile, PlatformWindowPresentOutcome, PrimitiveBatch, PrimitiveTransform,
+    ScaledPixels, Scene, Size, WindowPresentationShutdownTicket, quad_depth, quad_depth_scale,
+    size,
 };
 
 use parking_lot::Mutex;
@@ -51,18 +53,12 @@ use std::{cell::Cell, mem, ops::Range, ptr, sync::Arc};
 
 mod instance_buffer;
 
-use instance_buffer::{InstanceBindings, InstanceBufferWriter, write_instances};
-
-// Exported to metal
-pub(crate) type PointF = open_gpui::Point<f32>;
+use instance_buffer::{InstanceBinding, InstanceBindings, InstanceBufferWriter, write_instances};
 
 #[cfg(not(feature = "runtime_shaders"))]
 const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
 #[cfg(feature = "runtime_shaders")]
 const SHADERS_SOURCE_FILE: &str = include_str!(concat!(env!("OUT_DIR"), "/stitched_shaders.metal"));
-// Use 4x MSAA, all devices support it.
-// https://developer.apple.com/documentation/metal/mtldevice/1433355-supportstexturesamplecount
-const PATH_SAMPLE_COUNT: u32 = 4;
 
 pub type Context = Arc<Mutex<InstanceBufferPool>>;
 pub type Renderer = MetalRenderer;
@@ -153,21 +149,20 @@ pub struct MetalRenderer {
     /// For headless rendering, tracks whether output should be opaque
     opaque: bool,
     command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
-    paths_rasterization_pipeline_state: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
-    path_sprites_pipeline_state: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
+    path_tiles_pipeline_state: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
     shadows_pipeline_state: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
     quads_pipeline_state: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
+    opaque_quads_pipeline_state: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
     underlines_pipeline_state: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
     monochrome_sprites_pipeline_state: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
     polychrome_sprites_pipeline_state: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
     surfaces_pipeline_state: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
-    unit_vertices: Retained<ProtocolObject<dyn MTLBuffer>>,
+    depth_write_state: Retained<ProtocolObject<dyn MTLDepthStencilState>>,
+    depth_test_state: Retained<ProtocolObject<dyn MTLDepthStencilState>>,
+    depth_texture: Option<Retained<ProtocolObject<dyn MTLTexture>>>,
     instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
     sprite_atlas: Arc<MetalAtlas>,
     core_video_texture_cache: CFRetained<CVMetalTextureCache>,
-    path_intermediate_texture: Option<Retained<ProtocolObject<dyn MTLTexture>>>,
-    path_intermediate_msaa_texture: Option<Retained<ProtocolObject<dyn MTLTexture>>>,
-    path_sample_count: u32,
     last_submitted_command_buffer: Option<Retained<ProtocolObject<dyn MTLCommandBuffer>>>,
     #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
     headless_render_target: Option<Retained<ProtocolObject<dyn MTLTexture>>>,
@@ -178,6 +173,20 @@ struct PreparedMetalScene<'a> {
     scene: &'a Scene,
     batches: Vec<PreparedMetalBatch>,
     atlas_lease: AtlasTextureLease,
+    paths: PreparedMetalPaths,
+}
+
+#[derive(Default)]
+struct PreparedMetalPaths {
+    paints: Vec<PathPaint>,
+    curves: Vec<PathCurve>,
+    tiles: Vec<PathTile>,
+}
+
+struct PathInstanceBindings {
+    paints: InstanceBinding,
+    curves: InstanceBinding,
+    tiles: InstanceBinding,
 }
 
 enum PreparedMetalBatch {
@@ -205,23 +214,6 @@ struct PreparedMetalSurface {
     cb_cr_texture: Retained<ProtocolObject<dyn MTLTexture>>,
     _y_cv_texture: CFRetained<CVMetalTexture>,
     _cb_cr_cv_texture: CFRetained<CVMetalTexture>,
-}
-
-#[repr(C)]
-pub struct PathRasterizationVertex {
-    pub xy_position: Point<ScaledPixels>,
-    pub st_position: Point<f32>,
-    pub color: Background,
-    pub local_bounds: Bounds<ScaledPixels>,
-    pub clip: ClipEnvelope,
-    pub transform: PrimitiveTransform,
-}
-
-fn path_visual_bounds(path: &Path<ScaledPixels>) -> Option<Bounds<ScaledPixels>> {
-    path.renderer_transform()
-        .try_project_bounds(path.bounds)
-        .ok()
-        .map(|bounds| bounds.intersect(&path.clip.conservative_bounds))
 }
 
 impl MetalRenderer {
@@ -344,13 +336,6 @@ impl MetalRenderer {
             ))
             .context("building Metal library")?;
 
-        fn to_float2_bits(point: PointF) -> u64 {
-            let mut output = point.y.to_bits() as u64;
-            output <<= 32;
-            output |= point.x.to_bits() as u64;
-            output
-        }
-
         // Shared memory can be used only if CPU and GPU share the same memory space.
         // https://developer.apple.com/documentation/metal/setting-resource-storage-modes
         let is_unified_memory = cfg!(target_os = "ios") || device.hasUnifiedMemory();
@@ -360,45 +345,14 @@ impl MetalRenderer {
         // https://developer.apple.com/documentation/metal/mtlgpufamily
         let is_apple_gpu = device.supportsFamily(MTLGPUFamily::Apple1);
 
-        let unit_vertices = [
-            to_float2_bits(point(0., 0.)),
-            to_float2_bits(point(1., 0.)),
-            to_float2_bits(point(0., 1.)),
-            to_float2_bits(point(0., 1.)),
-            to_float2_bits(point(1., 0.)),
-            to_float2_bits(point(1., 1.)),
-        ];
-        // SAFETY: The source contains six initialized float2 vertices and Metal copies their bytes.
-        let unit_vertices = unsafe {
-            device.newBufferWithBytes_length_options(
-                ptr::NonNull::from(&unit_vertices).cast(),
-                mem::size_of_val(&unit_vertices),
-                if is_unified_memory {
-                    MTLResourceOptions::StorageModeShared
-                        | MTLResourceOptions::CPUCacheModeWriteCombined
-                } else {
-                    MTLResourceOptions::StorageModeManaged
-                },
-            )
-        }
-        .context("allocating unit vertex buffer")?;
-
-        let paths_rasterization_pipeline_state = build_path_rasterization_pipeline_state(
+        let path_tiles_pipeline_state = build_pipeline_state(
             &device,
             &library,
-            "paths_rasterization",
-            "path_rasterization_vertex",
-            "path_rasterization_fragment",
+            "path_tiles",
+            "path_tile_vertex",
+            "path_tile_fragment",
             MTLPixelFormat::BGRA8Unorm,
-            PATH_SAMPLE_COUNT,
-        )?;
-        let path_sprites_pipeline_state = build_path_sprite_pipeline_state(
-            &device,
-            &library,
-            "path_sprites",
-            "path_sprite_vertex",
-            "path_sprite_fragment",
-            MTLPixelFormat::BGRA8Unorm,
+            true,
         )?;
         let shadows_pipeline_state = build_pipeline_state(
             &device,
@@ -407,6 +361,7 @@ impl MetalRenderer {
             "shadow_vertex",
             "shadow_fragment",
             MTLPixelFormat::BGRA8Unorm,
+            true,
         )?;
         let quads_pipeline_state = build_pipeline_state(
             &device,
@@ -415,6 +370,16 @@ impl MetalRenderer {
             "quad_vertex",
             "quad_fragment",
             MTLPixelFormat::BGRA8Unorm,
+            true,
+        )?;
+        let opaque_quads_pipeline_state = build_pipeline_state(
+            &device,
+            &library,
+            "opaque_quads",
+            "opaque_quad_vertex",
+            "opaque_quad_fragment",
+            MTLPixelFormat::BGRA8Unorm,
+            false,
         )?;
         let underlines_pipeline_state = build_pipeline_state(
             &device,
@@ -423,6 +388,7 @@ impl MetalRenderer {
             "underline_vertex",
             "underline_fragment",
             MTLPixelFormat::BGRA8Unorm,
+            true,
         )?;
         let monochrome_sprites_pipeline_state = build_pipeline_state(
             &device,
@@ -431,6 +397,7 @@ impl MetalRenderer {
             "monochrome_sprite_vertex",
             "monochrome_sprite_fragment",
             MTLPixelFormat::BGRA8Unorm,
+            true,
         )?;
         let polychrome_sprites_pipeline_state = build_pipeline_state(
             &device,
@@ -439,6 +406,7 @@ impl MetalRenderer {
             "polychrome_sprite_vertex",
             "polychrome_sprite_fragment",
             MTLPixelFormat::BGRA8Unorm,
+            true,
         )?;
         let surfaces_pipeline_state = build_pipeline_state(
             &device,
@@ -447,7 +415,11 @@ impl MetalRenderer {
             "surface_vertex",
             "surface_fragment",
             MTLPixelFormat::BGRA8Unorm,
+            true,
         )?;
+
+        let depth_write_state = build_depth_stencil_state(&device, true)?;
+        let depth_test_state = build_depth_stencil_state(&device, false)?;
 
         let command_queue = device.newCommandQueue().context("creating command queue")?;
         #[expect(
@@ -481,21 +453,20 @@ impl MetalRenderer {
             is_unified_memory,
             opaque,
             command_queue,
-            paths_rasterization_pipeline_state,
-            path_sprites_pipeline_state,
+            path_tiles_pipeline_state,
             shadows_pipeline_state,
             quads_pipeline_state,
+            opaque_quads_pipeline_state,
             underlines_pipeline_state,
             monochrome_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
             surfaces_pipeline_state,
-            unit_vertices,
+            depth_write_state,
+            depth_test_state,
+            depth_texture: None,
             instance_buffer_pool,
             sprite_atlas,
             core_video_texture_cache,
-            path_intermediate_texture: None,
-            path_intermediate_msaa_texture: None,
-            path_sample_count: PATH_SAMPLE_COUNT,
             last_submitted_command_buffer: None,
             #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
             headless_render_target: None,
@@ -583,8 +554,8 @@ impl MetalRenderer {
         if let Some(layer) = &self.layer {
             layer.setDrawableSize(CGSize::new(size.width.0 as f64, size.height.0 as f64));
         }
-        if let Err(error) = self.update_path_intermediate_textures(size) {
-            log::error!("failed to resize path textures: {error:#}");
+        if let Err(error) = self.update_depth_texture(size) {
+            log::error!("failed to resize depth texture: {error:#}");
         }
     }
 
@@ -610,70 +581,41 @@ impl MetalRenderer {
         }
     }
 
-    fn update_path_intermediate_textures(&mut self, size: Size<DevicePixels>) -> Result<()> {
+    fn update_depth_texture(&mut self, size: Size<DevicePixels>) -> Result<()> {
         // We are uncertain when this happens, but sometimes size can be 0 here. Most likely before
         // the layout pass on window creation. Zero-sized texture creation causes SIGABRT.
         // https://github.com/zed-industries/zed/issues/36229
         if size.width.0 <= 0 || size.height.0 <= 0 {
-            self.path_intermediate_texture = None;
-            self.path_intermediate_msaa_texture = None;
+            self.depth_texture = None;
             return Ok(());
         }
         self.validate_render_target_size(size)?;
 
-        if self
-            .path_intermediate_texture
-            .as_ref()
-            .is_some_and(|texture| {
-                texture.width() == size.width.0 as NSUInteger
-                    && texture.height() == size.height.0 as NSUInteger
-            })
-        {
+        if self.depth_texture.as_ref().is_some_and(|texture| {
+            texture.width() == size.width.0 as NSUInteger
+                && texture.height() == size.height.0 as NSUInteger
+        }) {
             return Ok(());
         }
 
-        self.path_intermediate_texture = None;
-        self.path_intermediate_msaa_texture = None;
         let texture_descriptor = MTLTextureDescriptor::new();
         // SAFETY: The dimensions have been checked against this device's texture limit.
         unsafe {
             texture_descriptor.setWidth(size.width.0 as NSUInteger);
             texture_descriptor.setHeight(size.height.0 as NSUInteger);
         }
-        texture_descriptor.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
-        texture_descriptor.setStorageMode(MTLStorageMode::Private);
-        texture_descriptor.setUsage(MTLTextureUsage::RenderTarget | MTLTextureUsage::ShaderRead);
-        let intermediate_texture = self
+        texture_descriptor.setPixelFormat(MTLPixelFormat::Depth32Float);
+        texture_descriptor.setStorageMode(if self.is_apple_gpu {
+            MTLStorageMode::Memoryless
+        } else {
+            MTLStorageMode::Private
+        });
+        texture_descriptor.setUsage(MTLTextureUsage::RenderTarget);
+        let depth_texture = self
             .device
             .newTextureWithDescriptor(&texture_descriptor)
-            .context("allocating path intermediate texture")?;
-
-        let msaa_texture = if self.path_sample_count > 1 {
-            // https://developer.apple.com/documentation/metal/choosing-a-resource-storage-mode-for-apple-gpus
-            // Rendering MSAA textures are done in a single pass, so we can use memory-less storage on Apple Silicon
-            let storage_mode = if self.is_apple_gpu {
-                MTLStorageMode::Memoryless
-            } else {
-                MTLStorageMode::Private
-            };
-
-            let msaa_descriptor = texture_descriptor;
-            msaa_descriptor.setTextureType(MTLTextureType::Type2DMultisample);
-            msaa_descriptor.setStorageMode(storage_mode);
-            // SAFETY: The multisample texture uses the same sample count as its render pipeline.
-            unsafe {
-                msaa_descriptor.setSampleCount(self.path_sample_count as _);
-            }
-            Some(
-                self.device
-                    .newTextureWithDescriptor(&msaa_descriptor)
-                    .context("allocating multisample path texture")?,
-            )
-        } else {
-            None
-        };
-        self.path_intermediate_texture = Some(intermediate_texture);
-        self.path_intermediate_msaa_texture = msaa_texture;
+            .context("allocating depth texture")?;
+        self.depth_texture = Some(depth_texture);
         Ok(())
     }
 
@@ -692,8 +634,7 @@ impl MetalRenderer {
         if let Some(command_buffer) = self.last_submitted_command_buffer.take() {
             command_buffer.waitUntilCompleted();
         }
-        self.path_intermediate_texture = None;
-        self.path_intermediate_msaa_texture = None;
+        self.depth_texture = None;
         #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
         {
             self.headless_render_target = None;
@@ -744,8 +685,7 @@ impl MetalRenderer {
             .is_some_and(|current| current.same_authority(shutdown))
             && shutdown.snapshot().quiesced()
             && self.last_submitted_command_buffer.is_none()
-            && self.path_intermediate_texture.is_none()
-            && self.path_intermediate_msaa_texture.is_none()
+            && self.depth_texture.is_none()
             && self.layer.is_none()
     }
 
@@ -754,6 +694,20 @@ impl MetalRenderer {
     }
 
     fn prepare_scene<'a>(&self, scene: &'a Scene) -> Result<PreparedMetalScene<'a>> {
+        let mut paths = PreparedMetalPaths::default();
+        for path in &scene.paths {
+            path.append_to(&mut paths.paints, &mut paths.curves, &mut paths.tiles);
+        }
+        for paint in &paths.paints {
+            anyhow::ensure!(
+                clip_envelope_range(paint.clip, scene.clip_shapes().len()).is_some()
+                    && valid_clip_bounds(paint.clip.conservative_bounds)
+                    && paint.bounds.size.width.0 >= 0.0
+                    && paint.bounds.size.height.0 >= 0.0
+                    && paint.transform.try_project_bounds(paint.bounds).is_ok(),
+                "Metal scene has invalid path paint geometry"
+            );
+        }
         let batches = scene.batches().collect::<Vec<_>>();
         let instances = batches
             .iter()
@@ -771,15 +725,7 @@ impl MetalRenderer {
                 Ok(match batch {
                     PrimitiveBatch::Shadows(range) => PreparedMetalBatch::Shadows(range),
                     PrimitiveBatch::Quads(range) => PreparedMetalBatch::Quads(range),
-                    PrimitiveBatch::Paths(range) => {
-                        anyhow::ensure!(
-                            scene.paths[range.clone()]
-                                .iter()
-                                .all(|path| path_visual_bounds(path).is_some()),
-                            "Metal scene has invalid path geometry"
-                        );
-                        PreparedMetalBatch::Paths(range)
-                    }
+                    PrimitiveBatch::Paths(range) => PreparedMetalBatch::Paths(range),
                     PrimitiveBatch::Underlines(range) => PreparedMetalBatch::Underlines(range),
                     PrimitiveBatch::MonochromeSprites { texture, range } => {
                         PreparedMetalBatch::MonochromeSprites {
@@ -816,6 +762,7 @@ impl MetalRenderer {
             scene,
             batches,
             atlas_lease,
+            paths,
         })
     }
 
@@ -921,11 +868,6 @@ impl MetalRenderer {
             DevicePixels(texture.width() as i32),
             DevicePixels(texture.height() as i32),
         );
-        if let Err(error) = self.update_path_intermediate_textures(viewport_size) {
-            log::error!("failed to prepare path textures: {error:#}");
-            return PlatformWindowPresentOutcome::Rejected;
-        }
-
         let command_buffer = match self.render_frame(prepared, &texture, viewport_size) {
             Ok(command_buffer) => command_buffer,
             Err(error) => {
@@ -992,9 +934,6 @@ impl MetalRenderer {
             "cannot render after Metal presentation shutdown"
         );
         let prepared = self.prepare_scene(scene)?;
-
-        // Update path intermediate textures for this size
-        self.update_path_intermediate_textures(size)?;
 
         // Create an offscreen texture as render target
         let texture_descriptor = MTLTextureDescriptor::new();
@@ -1103,7 +1042,6 @@ impl MetalRenderer {
         let prepared = self.prepare_scene(scene)?;
 
         objc2::rc::autoreleasepool(|_| {
-            self.update_path_intermediate_textures(size)?;
             let needs_new_target = self.headless_render_target.as_ref().is_none_or(|texture| {
                 texture.width() != size.width.0 as NSUInteger
                     || texture.height() != size.height.0 as NSUInteger
@@ -1152,10 +1090,15 @@ impl MetalRenderer {
         )?;
         let bindings = write_instances(prepared.scene, &mut writer)
             .context("writing Metal scene instance data")?;
+        let path_bindings = PathInstanceBindings {
+            paints: writer.write(&prepared.paths.paints)?,
+            curves: writer.write(&prepared.paths.curves)?,
+            tiles: writer.write(&prepared.paths.tiles)?,
+        };
         let command_buffer = self.draw_primitives_to_texture(
             &prepared,
             &bindings,
-            &mut writer,
+            &path_bindings,
             target_texture,
             size,
         )?;
@@ -1164,12 +1107,13 @@ impl MetalRenderer {
             writer.finish(),
             prepared.batches,
             prepared.atlas_lease,
+            path_bindings,
         )));
         let block = RcBlock::new(
             move |_: ptr::NonNull<ProtocolObject<dyn MTLCommandBuffer>>| {
-                if let Some((instance_buffer, batches, lease)) = resources.take() {
+                if let Some((instance_buffer, batches, lease, path_bindings)) = resources.take() {
                     instance_buffer_pool.lock().release(instance_buffer);
-                    drop((batches, lease));
+                    drop((batches, lease, path_bindings));
                 }
             },
         );
@@ -1184,7 +1128,7 @@ impl MetalRenderer {
         &mut self,
         prepared: &PreparedMetalScene<'_>,
         bindings: &InstanceBindings,
-        writer: &mut InstanceBufferWriter,
+        path_bindings: &PathInstanceBindings,
         texture: &ProtocolObject<dyn MTLTexture>,
         viewport_size: Size<DevicePixels>,
     ) -> Result<Retained<ProtocolObject<dyn MTLCommandBuffer>>> {
@@ -1194,83 +1138,90 @@ impl MetalRenderer {
             .commandBuffer()
             .context("creating command buffer")?;
         let alpha = if self.opaque { 1. } else { 0. };
-        let mut command_encoder = new_command_encoder_for_texture(
+        self.update_depth_texture(viewport_size)?;
+        let depth_texture = self
+            .depth_texture
+            .as_ref()
+            .context("missing depth texture")?;
+        let command_encoder = new_command_encoder_for_texture(
             &command_buffer,
             texture,
+            depth_texture,
             viewport_size,
-            Some(MTLClearColor {
+            MTLClearColor {
                 red: 0.,
                 green: 0.,
                 blue: 0.,
                 alpha,
-            }),
+            },
             bindings,
         )?;
 
+        let depth_scale = quad_depth_scale(scene.quads.len());
+        unsafe {
+            command_encoder.setVertexBytes_length_atIndex(
+                ptr::NonNull::from(&viewport_size).cast(),
+                mem::size_of_val(&viewport_size),
+                GlobalInputIndex::ViewportSize as usize,
+            );
+            command_encoder.setVertexBytes_length_atIndex(
+                ptr::NonNull::from(&depth_scale).cast(),
+                mem::size_of_val(&depth_scale),
+                GlobalInputIndex::DepthScale as usize,
+            );
+        }
+        self.draw_opaque_quads(scene.quads.len(), bindings, &command_encoder);
+        command_encoder.setDepthStencilState(Some(&self.depth_test_state));
+
+        let mut quad_cursor = 0u32;
+        let mut path_tile_cursor = 0;
+
         for batch in &prepared.batches {
+            let (znear, zfar) = if matches!(batch, PreparedMetalBatch::Quads(_)) {
+                (0.0, 1.0)
+            } else {
+                let depth = quad_depth(quad_cursor, depth_scale) as f64;
+                (depth, depth)
+            };
+            command_encoder.setViewport(MTLViewport {
+                originX: 0.0,
+                originY: 0.0,
+                width: i32::from(viewport_size.width) as f64,
+                height: i32::from(viewport_size.height) as f64,
+                znear,
+                zfar,
+            });
             let result = match batch {
                 PreparedMetalBatch::Shadows(range) => {
-                    self.draw_shadows(range.clone(), bindings, viewport_size, &command_encoder)
+                    self.draw_shadows(range.clone(), bindings, &command_encoder)
                 }
                 PreparedMetalBatch::Quads(range) => {
-                    self.draw_quads(range.clone(), bindings, viewport_size, &command_encoder)
+                    quad_cursor += range.len() as u32;
+                    self.draw_quads(range.clone(), bindings, &command_encoder)
                 }
                 PreparedMetalBatch::Paths(range) => {
-                    let paths = &scene.paths[range.clone()];
-                    command_encoder.endEncoding();
-
-                    self.draw_paths_to_intermediate(
-                        paths,
-                        writer,
-                        viewport_size,
-                        &command_buffer,
-                        bindings,
-                    )?;
-
-                    command_encoder = new_command_encoder_for_texture(
-                        &command_buffer,
-                        texture,
-                        viewport_size,
-                        None,
-                        bindings,
-                    )?;
-                    self.draw_paths_from_intermediate(
-                        paths,
-                        writer,
-                        viewport_size,
-                        &command_encoder,
-                    )
+                    let start = path_tile_cursor;
+                    path_tile_cursor += scene.paths[range.clone()]
+                        .iter()
+                        .map(PaintedPath::tile_count)
+                        .sum::<usize>();
+                    self.draw_path_tiles(start..path_tile_cursor, path_bindings, &command_encoder);
+                    Ok(())
                 }
                 PreparedMetalBatch::Underlines(range) => {
-                    self.draw_underlines(range.clone(), bindings, viewport_size, &command_encoder)
+                    self.draw_underlines(range.clone(), bindings, &command_encoder)
                 }
-                PreparedMetalBatch::MonochromeSprites { texture, range } => self
-                    .draw_monochrome_sprites(
-                        texture,
-                        range.clone(),
-                        bindings,
-                        viewport_size,
-                        &command_encoder,
-                    ),
-                PreparedMetalBatch::PolychromeSprites { texture, range } => self
-                    .draw_polychrome_sprites(
-                        texture,
-                        range.clone(),
-                        bindings,
-                        viewport_size,
-                        &command_encoder,
-                    ),
+                PreparedMetalBatch::MonochromeSprites { texture, range } => {
+                    self.draw_monochrome_sprites(texture, range.clone(), bindings, &command_encoder)
+                }
+                PreparedMetalBatch::PolychromeSprites { texture, range } => {
+                    self.draw_polychrome_sprites(texture, range.clone(), bindings, &command_encoder)
+                }
                 PreparedMetalBatch::Surfaces {
                     first_surface,
                     surfaces,
                 } => {
-                    self.draw_surfaces(
-                        *first_surface,
-                        surfaces,
-                        bindings,
-                        viewport_size,
-                        &command_encoder,
-                    );
+                    self.draw_surfaces(*first_surface, surfaces, bindings, &command_encoder);
                     Ok(())
                 }
             };
@@ -1283,99 +1234,48 @@ impl MetalRenderer {
         Ok(command_buffer)
     }
 
-    fn draw_paths_to_intermediate(
+    fn draw_opaque_quads(
         &self,
-        paths: &[Path<ScaledPixels>],
-        writer: &mut InstanceBufferWriter,
-        viewport_size: Size<DevicePixels>,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        quad_count: usize,
         bindings: &InstanceBindings,
-    ) -> Result<()> {
-        if paths.is_empty() {
-            return Ok(());
+        command_encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
+    ) {
+        if quad_count == 0 {
+            return;
         }
-        let intermediate_texture = self
-            .path_intermediate_texture
-            .as_ref()
-            .context("missing path intermediate texture")?;
-        let mut vertices = Vec::new();
-        for path in paths {
-            anyhow::ensure!(
-                path_visual_bounds(path).is_some(),
-                "invalid Metal path geometry"
-            );
-            vertices.extend(path.vertices.iter().map(|v| PathRasterizationVertex {
-                xy_position: v.xy_position,
-                st_position: v.st_position,
-                color: path.color,
-                local_bounds: path.bounds,
-                clip: path.clip,
-                transform: path.renderer_transform(),
-            }));
-        }
-        let vertex_binding = writer.write(&vertices)?;
-        let render_pass_descriptor = MTLRenderPassDescriptor::new();
-        // SAFETY: Index zero is within the render pass's color attachment array.
-        let color_attachment = unsafe {
-            render_pass_descriptor
-                .colorAttachments()
-                .objectAtIndexedSubscript(0)
-        };
-        color_attachment.setLoadAction(MTLLoadAction::Clear);
-        color_attachment.setClearColor(MTLClearColor {
-            red: 0.,
-            green: 0.,
-            blue: 0.,
-            alpha: 0.,
-        });
-
-        if let Some(msaa_texture) = &self.path_intermediate_msaa_texture {
-            color_attachment.setTexture(Some(msaa_texture));
-            color_attachment.setResolveTexture(Some(intermediate_texture));
-            color_attachment.setStoreAction(MTLStoreAction::MultisampleResolve);
-        } else {
-            color_attachment.setTexture(Some(intermediate_texture));
-            color_attachment.setStoreAction(MTLStoreAction::Store);
-        }
-
-        let command_encoder = command_buffer
-            .renderCommandEncoderWithDescriptor(&render_pass_descriptor)
-            .context("creating path render command encoder")?;
-        bind_clip_shapes(&command_encoder, bindings);
-        command_encoder.setRenderPipelineState(&self.paths_rasterization_pipeline_state);
-        // SAFETY: The binding contains the shader-compatible path vertices at an aligned offset.
-        // Metal retains the buffers; writer.finish publishes the writes before submission.
+        let quad_count_value = quad_count as u32;
+        command_encoder.setRenderPipelineState(&self.opaque_quads_pipeline_state);
+        command_encoder.setDepthStencilState(Some(&self.depth_write_state));
         unsafe {
             command_encoder.setVertexBuffer_offset_atIndex(
-                Some(&vertex_binding.buffer),
-                vertex_binding.offset,
-                PathRasterizationInputIndex::Vertices as usize,
+                Some(&bindings.quads.buffer),
+                bindings.quads.offset,
+                QuadInputIndex::Quads as usize,
             );
             command_encoder.setVertexBytes_length_atIndex(
-                ptr::NonNull::from(&viewport_size).cast(),
-                mem::size_of_val(&viewport_size),
-                PathRasterizationInputIndex::ViewportSize as usize,
+                ptr::NonNull::from(&quad_count_value).cast(),
+                mem::size_of_val(&quad_count_value),
+                QuadInputIndex::QuadCount as usize,
             );
             command_encoder.setFragmentBuffer_offset_atIndex(
-                Some(&vertex_binding.buffer),
-                vertex_binding.offset,
-                PathRasterizationInputIndex::Vertices as usize,
+                Some(&bindings.quads.buffer),
+                bindings.quads.offset,
+                QuadInputIndex::Quads as usize,
             );
-            command_encoder.drawPrimitives_vertexStart_vertexCount(
-                MTLPrimitiveType::Triangle,
+            command_encoder.drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(
+                MTLPrimitiveType::TriangleStrip,
                 0,
-                vertices.len(),
+                4,
+                quad_count,
+                0,
             );
         }
-        command_encoder.endEncoding();
-        Ok(())
     }
 
     fn draw_shadows(
         &self,
         shadows: Range<usize>,
         bindings: &InstanceBindings,
-        viewport_size: Size<DevicePixels>,
         command_encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
     ) -> Result<()> {
         if shadows.is_empty() {
@@ -1385,11 +1285,6 @@ impl MetalRenderer {
         // SAFETY: The range indexes the uploaded scene shadows; the viewport is copied into its shader slot.
         unsafe {
             command_encoder.setVertexBuffer_offset_atIndex(
-                Some(&self.unit_vertices),
-                0,
-                ShadowInputIndex::Vertices as usize,
-            );
-            command_encoder.setVertexBuffer_offset_atIndex(
                 Some(&bindings.shadows.buffer),
                 bindings.shadows.offset,
                 ShadowInputIndex::Shadows as usize,
@@ -1399,15 +1294,10 @@ impl MetalRenderer {
                 bindings.shadows.offset,
                 ShadowInputIndex::Shadows as usize,
             );
-            command_encoder.setVertexBytes_length_atIndex(
-                ptr::NonNull::from(&viewport_size).cast(),
-                mem::size_of_val(&viewport_size),
-                ShadowInputIndex::ViewportSize as usize,
-            );
             command_encoder.drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(
-                MTLPrimitiveType::Triangle,
+                MTLPrimitiveType::TriangleStrip,
                 0,
-                6,
+                4,
                 shadows.len(),
                 shadows.start,
             );
@@ -1419,7 +1309,6 @@ impl MetalRenderer {
         &self,
         quads: Range<usize>,
         bindings: &InstanceBindings,
-        viewport_size: Size<DevicePixels>,
         command_encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
     ) -> Result<()> {
         if quads.is_empty() {
@@ -1429,11 +1318,6 @@ impl MetalRenderer {
         // SAFETY: The range indexes the uploaded scene quads; the viewport is copied into its shader slot.
         unsafe {
             command_encoder.setVertexBuffer_offset_atIndex(
-                Some(&self.unit_vertices),
-                0,
-                QuadInputIndex::Vertices as usize,
-            );
-            command_encoder.setVertexBuffer_offset_atIndex(
                 Some(&bindings.quads.buffer),
                 bindings.quads.offset,
                 QuadInputIndex::Quads as usize,
@@ -1443,15 +1327,10 @@ impl MetalRenderer {
                 bindings.quads.offset,
                 QuadInputIndex::Quads as usize,
             );
-            command_encoder.setVertexBytes_length_atIndex(
-                ptr::NonNull::from(&viewport_size).cast(),
-                mem::size_of_val(&viewport_size),
-                QuadInputIndex::ViewportSize as usize,
-            );
             command_encoder.drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(
-                MTLPrimitiveType::Triangle,
+                MTLPrimitiveType::TriangleStrip,
                 0,
-                6,
+                4,
                 quads.len(),
                 quads.start,
             );
@@ -1459,88 +1338,56 @@ impl MetalRenderer {
         Ok(())
     }
 
-    fn draw_paths_from_intermediate(
+    fn draw_path_tiles(
         &self,
-        paths: &[Path<ScaledPixels>],
-        writer: &mut InstanceBufferWriter,
-        viewport_size: Size<DevicePixels>,
+        tiles: Range<usize>,
+        bindings: &PathInstanceBindings,
         command_encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
-    ) -> Result<()> {
-        let Some(first_path) = paths.first() else {
-            return Ok(());
-        };
-
-        let intermediate_texture = self
-            .path_intermediate_texture
-            .as_ref()
-            .context("missing path intermediate texture")?;
-
-        // When copying paths from the intermediate texture to the drawable,
-        // each pixel must only be copied once, in case of transparent paths.
-        //
-        // If all paths have the same draw order, then their bounds are all
-        // disjoint, so we can copy each path's bounds individually. If this
-        // batch combines different draw orders, we perform a single copy
-        // for a minimal spanning rect.
-        let sprites;
-        if paths
-            .last()
-            .is_some_and(|path| path.order == first_path.order)
-        {
-            sprites = paths
-                .iter()
-                .map(|path| path_visual_bounds(path).map(|bounds| PathSprite { bounds }))
-                .collect::<Option<Vec<_>>>();
-        } else {
-            let mut bounds =
-                path_visual_bounds(first_path).context("invalid Metal path geometry")?;
-            for path in paths.iter().skip(1) {
-                let path_bounds =
-                    path_visual_bounds(path).context("invalid Metal path geometry")?;
-                bounds = bounds.union(&path_bounds);
-            }
-            sprites = Some(vec![PathSprite { bounds }]);
+    ) {
+        if tiles.is_empty() {
+            return;
         }
-
-        let sprites = sprites.context("invalid Metal path geometry")?;
-        let sprite_binding = writer.write(&sprites)?;
-        command_encoder.setRenderPipelineState(&self.path_sprites_pipeline_state);
-        // SAFETY: The uploaded sprites contain projected, clipped bounds and six unit vertices per instance.
+        command_encoder.setRenderPipelineState(&self.path_tiles_pipeline_state);
         unsafe {
             command_encoder.setVertexBuffer_offset_atIndex(
-                Some(&self.unit_vertices),
-                0,
-                SpriteInputIndex::Vertices as usize,
+                Some(&bindings.tiles.buffer),
+                bindings.tiles.offset,
+                PathTileInputIndex::Tiles as usize,
             );
             command_encoder.setVertexBuffer_offset_atIndex(
-                Some(&sprite_binding.buffer),
-                sprite_binding.offset,
-                SpriteInputIndex::Sprites as usize,
+                Some(&bindings.paints.buffer),
+                bindings.paints.offset,
+                PathTileInputIndex::Paints as usize,
             );
-            command_encoder.setVertexBytes_length_atIndex(
-                ptr::NonNull::from(&viewport_size).cast(),
-                mem::size_of_val(&viewport_size),
-                SpriteInputIndex::ViewportSize as usize,
+            command_encoder.setFragmentBuffer_offset_atIndex(
+                Some(&bindings.tiles.buffer),
+                bindings.tiles.offset,
+                PathTileInputIndex::Tiles as usize,
             );
-            command_encoder.setFragmentTexture_atIndex(
-                Some(intermediate_texture),
-                SpriteInputIndex::AtlasTexture as usize,
+            command_encoder.setFragmentBuffer_offset_atIndex(
+                Some(&bindings.curves.buffer),
+                bindings.curves.offset,
+                PathTileInputIndex::Curves as usize,
             );
-            command_encoder.drawPrimitives_vertexStart_vertexCount_instanceCount(
-                MTLPrimitiveType::Triangle,
+            command_encoder.setFragmentBuffer_offset_atIndex(
+                Some(&bindings.paints.buffer),
+                bindings.paints.offset,
+                PathTileInputIndex::Paints as usize,
+            );
+            command_encoder.drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(
+                MTLPrimitiveType::TriangleStrip,
                 0,
-                6,
-                sprites.len(),
+                4,
+                tiles.len(),
+                tiles.start,
             );
         }
-        Ok(())
     }
 
     fn draw_underlines(
         &self,
         underlines: Range<usize>,
         bindings: &InstanceBindings,
-        viewport_size: Size<DevicePixels>,
         command_encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
     ) -> Result<()> {
         if underlines.is_empty() {
@@ -1550,11 +1397,6 @@ impl MetalRenderer {
         // SAFETY: The range indexes the uploaded underlines; viewport bytes are copied into their shader slot.
         unsafe {
             command_encoder.setVertexBuffer_offset_atIndex(
-                Some(&self.unit_vertices),
-                0,
-                UnderlineInputIndex::Vertices as usize,
-            );
-            command_encoder.setVertexBuffer_offset_atIndex(
                 Some(&bindings.underlines.buffer),
                 bindings.underlines.offset,
                 UnderlineInputIndex::Underlines as usize,
@@ -1564,15 +1406,10 @@ impl MetalRenderer {
                 bindings.underlines.offset,
                 UnderlineInputIndex::Underlines as usize,
             );
-            command_encoder.setVertexBytes_length_atIndex(
-                ptr::NonNull::from(&viewport_size).cast(),
-                mem::size_of_val(&viewport_size),
-                UnderlineInputIndex::ViewportSize as usize,
-            );
             command_encoder.drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(
-                MTLPrimitiveType::Triangle,
+                MTLPrimitiveType::TriangleStrip,
                 0,
-                6,
+                4,
                 underlines.len(),
                 underlines.start,
             );
@@ -1585,7 +1422,6 @@ impl MetalRenderer {
         texture: &ProtocolObject<dyn MTLTexture>,
         sprites: Range<usize>,
         bindings: &InstanceBindings,
-        viewport_size: Size<DevicePixels>,
         command_encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
     ) -> Result<()> {
         if sprites.is_empty() {
@@ -1600,11 +1436,6 @@ impl MetalRenderer {
         // SAFETY: The range indexes uploaded sprites and the retained preflight texture matches every tile instance.
         unsafe {
             command_encoder.setVertexBuffer_offset_atIndex(
-                Some(&self.unit_vertices),
-                0,
-                SpriteInputIndex::Vertices as usize,
-            );
-            command_encoder.setVertexBuffer_offset_atIndex(
                 Some(&bindings.monochrome_sprites.buffer),
                 bindings.monochrome_sprites.offset,
                 SpriteInputIndex::Sprites as usize,
@@ -1615,11 +1446,6 @@ impl MetalRenderer {
                 SpriteInputIndex::Sprites as usize,
             );
             command_encoder.setVertexBytes_length_atIndex(
-                ptr::NonNull::from(&viewport_size).cast(),
-                mem::size_of_val(&viewport_size),
-                SpriteInputIndex::ViewportSize as usize,
-            );
-            command_encoder.setVertexBytes_length_atIndex(
                 ptr::NonNull::from(&texture_size).cast(),
                 mem::size_of_val(&texture_size),
                 SpriteInputIndex::AtlasTextureSize as usize,
@@ -1627,9 +1453,9 @@ impl MetalRenderer {
             command_encoder
                 .setFragmentTexture_atIndex(Some(texture), SpriteInputIndex::AtlasTexture as usize);
             command_encoder.drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(
-                MTLPrimitiveType::Triangle,
+                MTLPrimitiveType::TriangleStrip,
                 0,
-                6,
+                4,
                 sprites.len(),
                 sprites.start,
             );
@@ -1642,7 +1468,6 @@ impl MetalRenderer {
         texture: &ProtocolObject<dyn MTLTexture>,
         sprites: Range<usize>,
         bindings: &InstanceBindings,
-        viewport_size: Size<DevicePixels>,
         command_encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
     ) -> Result<()> {
         if sprites.is_empty() {
@@ -1657,11 +1482,6 @@ impl MetalRenderer {
         // SAFETY: The range indexes uploaded sprites and the retained preflight texture matches every tile instance.
         unsafe {
             command_encoder.setVertexBuffer_offset_atIndex(
-                Some(&self.unit_vertices),
-                0,
-                SpriteInputIndex::Vertices as usize,
-            );
-            command_encoder.setVertexBuffer_offset_atIndex(
                 Some(&bindings.polychrome_sprites.buffer),
                 bindings.polychrome_sprites.offset,
                 SpriteInputIndex::Sprites as usize,
@@ -1672,11 +1492,6 @@ impl MetalRenderer {
                 SpriteInputIndex::Sprites as usize,
             );
             command_encoder.setVertexBytes_length_atIndex(
-                ptr::NonNull::from(&viewport_size).cast(),
-                mem::size_of_val(&viewport_size),
-                SpriteInputIndex::ViewportSize as usize,
-            );
-            command_encoder.setVertexBytes_length_atIndex(
                 ptr::NonNull::from(&texture_size).cast(),
                 mem::size_of_val(&texture_size),
                 SpriteInputIndex::AtlasTextureSize as usize,
@@ -1684,9 +1499,9 @@ impl MetalRenderer {
             command_encoder
                 .setFragmentTexture_atIndex(Some(texture), SpriteInputIndex::AtlasTexture as usize);
             command_encoder.drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(
-                MTLPrimitiveType::Triangle,
+                MTLPrimitiveType::TriangleStrip,
                 0,
-                6,
+                4,
                 sprites.len(),
                 sprites.start,
             );
@@ -1699,17 +1514,11 @@ impl MetalRenderer {
         first_surface: usize,
         surfaces: &[PreparedMetalSurface],
         bindings: &InstanceBindings,
-        viewport_size: Size<DevicePixels>,
         command_encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
     ) {
         command_encoder.setRenderPipelineState(&self.surfaces_pipeline_state);
         // SAFETY: The unit vertices, uploaded surface array, and viewport match the shader layouts and slots.
         unsafe {
-            command_encoder.setVertexBuffer_offset_atIndex(
-                Some(&self.unit_vertices),
-                0,
-                SurfaceInputIndex::Vertices as usize,
-            );
             command_encoder.setVertexBuffer_offset_atIndex(
                 Some(&bindings.surfaces.buffer),
                 bindings.surfaces.offset,
@@ -1719,11 +1528,6 @@ impl MetalRenderer {
                 Some(&bindings.surfaces.buffer),
                 bindings.surfaces.offset,
                 SurfaceInputIndex::Surfaces as usize,
-            );
-            command_encoder.setVertexBytes_length_atIndex(
-                ptr::NonNull::from(&viewport_size).cast(),
-                mem::size_of_val(&viewport_size),
-                SurfaceInputIndex::ViewportSize as usize,
             );
         }
         for (index, surface) in surfaces.iter().enumerate() {
@@ -1743,9 +1547,9 @@ impl MetalRenderer {
                     SurfaceInputIndex::CbCrTexture as usize,
                 );
                 command_encoder.drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(
-                    MTLPrimitiveType::Triangle,
+                    MTLPrimitiveType::TriangleStrip,
                     0,
-                    6,
+                    4,
                     1,
                     first_surface + index,
                 );
@@ -1761,8 +1565,9 @@ mod atlas_preflight_tests;
 fn new_command_encoder_for_texture(
     command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
     texture: &ProtocolObject<dyn MTLTexture>,
+    depth_texture: &ProtocolObject<dyn MTLTexture>,
     viewport_size: Size<DevicePixels>,
-    clear_color: Option<MTLClearColor>,
+    clear_color: MTLClearColor,
     bindings: &InstanceBindings,
 ) -> Result<Retained<ProtocolObject<dyn MTLRenderCommandEncoder>>> {
     let render_pass_descriptor = MTLRenderPassDescriptor::new();
@@ -1774,12 +1579,13 @@ fn new_command_encoder_for_texture(
     };
     color_attachment.setTexture(Some(texture));
     color_attachment.setStoreAction(MTLStoreAction::Store);
-    if let Some(clear_color) = clear_color {
-        color_attachment.setLoadAction(MTLLoadAction::Clear);
-        color_attachment.setClearColor(clear_color);
-    } else {
-        color_attachment.setLoadAction(MTLLoadAction::Load);
-    }
+    color_attachment.setLoadAction(MTLLoadAction::Clear);
+    color_attachment.setClearColor(clear_color);
+    let depth_attachment = render_pass_descriptor.depthAttachment();
+    depth_attachment.setTexture(Some(depth_texture));
+    depth_attachment.setLoadAction(MTLLoadAction::Clear);
+    depth_attachment.setClearDepth(0.0);
+    depth_attachment.setStoreAction(MTLStoreAction::DontCare);
     let command_encoder = command_buffer
         .renderCommandEncoderWithDescriptor(&render_pass_descriptor)
         .context("creating render command encoder")?;
@@ -1802,6 +1608,7 @@ fn build_pipeline_state(
     vertex_fn_name: &str,
     fragment_fn_name: &str,
     pixel_format: MTLPixelFormat,
+    blending: bool,
 ) -> Result<Retained<ProtocolObject<dyn MTLRenderPipelineState>>> {
     let vertex_fn = library
         .newFunctionWithName(&NSString::from_str(vertex_fn_name))
@@ -1817,92 +1624,30 @@ fn build_pipeline_state(
     // SAFETY: Index zero is within the pipeline's color attachment array.
     let color_attachment = unsafe { descriptor.colorAttachments().objectAtIndexedSubscript(0) };
     color_attachment.setPixelFormat(pixel_format);
-    color_attachment.setBlendingEnabled(true);
+    color_attachment.setBlendingEnabled(blending);
     color_attachment.setRgbBlendOperation(MTLBlendOperation::Add);
     color_attachment.setAlphaBlendOperation(MTLBlendOperation::Add);
     color_attachment.setSourceRGBBlendFactor(MTLBlendFactor::SourceAlpha);
     color_attachment.setSourceAlphaBlendFactor(MTLBlendFactor::One);
     color_attachment.setDestinationRGBBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
     color_attachment.setDestinationAlphaBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
+    descriptor.setDepthAttachmentPixelFormat(MTLPixelFormat::Depth32Float);
 
     device
         .newRenderPipelineStateWithDescriptor_error(&descriptor)
         .with_context(|| format!("creating {label} render pipeline"))
 }
 
-fn build_path_sprite_pipeline_state(
+fn build_depth_stencil_state(
     device: &ProtocolObject<dyn MTLDevice>,
-    library: &ProtocolObject<dyn MTLLibrary>,
-    label: &str,
-    vertex_fn_name: &str,
-    fragment_fn_name: &str,
-    pixel_format: MTLPixelFormat,
-) -> Result<Retained<ProtocolObject<dyn MTLRenderPipelineState>>> {
-    let vertex_fn = library
-        .newFunctionWithName(&NSString::from_str(vertex_fn_name))
-        .with_context(|| format!("locating vertex function {vertex_fn_name}"))?;
-    let fragment_fn = library
-        .newFunctionWithName(&NSString::from_str(fragment_fn_name))
-        .with_context(|| format!("locating fragment function {fragment_fn_name}"))?;
-
-    let descriptor = MTLRenderPipelineDescriptor::new();
-    descriptor.setLabel(Some(&NSString::from_str(label)));
-    descriptor.setVertexFunction(Some(&vertex_fn));
-    descriptor.setFragmentFunction(Some(&fragment_fn));
-    // SAFETY: Index zero is within the pipeline's color attachment array.
-    let color_attachment = unsafe { descriptor.colorAttachments().objectAtIndexedSubscript(0) };
-    color_attachment.setPixelFormat(pixel_format);
-    color_attachment.setBlendingEnabled(true);
-    color_attachment.setRgbBlendOperation(MTLBlendOperation::Add);
-    color_attachment.setAlphaBlendOperation(MTLBlendOperation::Add);
-    color_attachment.setSourceRGBBlendFactor(MTLBlendFactor::One);
-    color_attachment.setSourceAlphaBlendFactor(MTLBlendFactor::One);
-    color_attachment.setDestinationRGBBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
-    color_attachment.setDestinationAlphaBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
-
+    write_depth: bool,
+) -> Result<Retained<ProtocolObject<dyn MTLDepthStencilState>>> {
+    let descriptor = MTLDepthStencilDescriptor::new();
+    descriptor.setDepthCompareFunction(MTLCompareFunction::Greater);
+    descriptor.setDepthWriteEnabled(write_depth);
     device
-        .newRenderPipelineStateWithDescriptor_error(&descriptor)
-        .with_context(|| format!("creating {label} render pipeline"))
-}
-
-fn build_path_rasterization_pipeline_state(
-    device: &ProtocolObject<dyn MTLDevice>,
-    library: &ProtocolObject<dyn MTLLibrary>,
-    label: &str,
-    vertex_fn_name: &str,
-    fragment_fn_name: &str,
-    pixel_format: MTLPixelFormat,
-    path_sample_count: u32,
-) -> Result<Retained<ProtocolObject<dyn MTLRenderPipelineState>>> {
-    let vertex_fn = library
-        .newFunctionWithName(&NSString::from_str(vertex_fn_name))
-        .with_context(|| format!("locating vertex function {vertex_fn_name}"))?;
-    let fragment_fn = library
-        .newFunctionWithName(&NSString::from_str(fragment_fn_name))
-        .with_context(|| format!("locating fragment function {fragment_fn_name}"))?;
-
-    let descriptor = MTLRenderPipelineDescriptor::new();
-    descriptor.setLabel(Some(&NSString::from_str(label)));
-    descriptor.setVertexFunction(Some(&vertex_fn));
-    descriptor.setFragmentFunction(Some(&fragment_fn));
-    if path_sample_count > 1 {
-        descriptor.setRasterSampleCount(path_sample_count as _);
-        descriptor.setAlphaToCoverageEnabled(false);
-    }
-    // SAFETY: Index zero is within the pipeline's color attachment array.
-    let color_attachment = unsafe { descriptor.colorAttachments().objectAtIndexedSubscript(0) };
-    color_attachment.setPixelFormat(pixel_format);
-    color_attachment.setBlendingEnabled(true);
-    color_attachment.setRgbBlendOperation(MTLBlendOperation::Add);
-    color_attachment.setAlphaBlendOperation(MTLBlendOperation::Add);
-    color_attachment.setSourceRGBBlendFactor(MTLBlendFactor::One);
-    color_attachment.setSourceAlphaBlendFactor(MTLBlendFactor::One);
-    color_attachment.setDestinationRGBBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
-    color_attachment.setDestinationAlphaBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
-
-    device
-        .newRenderPipelineStateWithDescriptor_error(&descriptor)
-        .with_context(|| format!("creating {label} render pipeline"))
+        .newDepthStencilStateWithDescriptor(&descriptor)
+        .context("creating depth stencil state")
 }
 
 fn validate_scene_clip_envelopes(scene: &Scene) -> Result<()> {
@@ -1912,7 +1657,6 @@ fn validate_scene_clip_envelopes(scene: &Scene) -> Result<()> {
         .iter()
         .map(|primitive| ("shadow", primitive.clip))
         .chain(scene.quads.iter().map(|primitive| ("quad", primitive.clip)))
-        .chain(scene.paths.iter().map(|primitive| ("path", primitive.clip)))
         .chain(
             scene
                 .underlines
@@ -1997,59 +1741,47 @@ fn bind_clip_shapes(
 
 #[repr(C)]
 enum GlobalInputIndex {
+    ViewportSize = 0,
+    DepthScale = 1,
     ClipShapes = 8,
 }
 
 #[repr(C)]
 enum ShadowInputIndex {
-    Vertices = 0,
-    Shadows = 1,
-    ViewportSize = 2,
+    Shadows = 2,
 }
 
 #[repr(C)]
 enum QuadInputIndex {
-    Vertices = 0,
-    Quads = 1,
-    ViewportSize = 2,
+    Quads = 2,
+    QuadCount = 3,
 }
 
 #[repr(C)]
 enum UnderlineInputIndex {
-    Vertices = 0,
-    Underlines = 1,
-    ViewportSize = 2,
+    Underlines = 2,
 }
 
 #[repr(C)]
 enum SpriteInputIndex {
-    Vertices = 0,
-    Sprites = 1,
-    ViewportSize = 2,
+    Sprites = 2,
     AtlasTextureSize = 3,
     AtlasTexture = 4,
 }
 
 #[repr(C)]
 enum SurfaceInputIndex {
-    Vertices = 0,
-    Surfaces = 1,
-    ViewportSize = 2,
+    Surfaces = 2,
     TextureSize = 3,
     YTexture = 4,
     CbCrTexture = 5,
 }
 
 #[repr(C)]
-enum PathRasterizationInputIndex {
-    Vertices = 0,
-    ViewportSize = 1,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-#[repr(C)]
-pub struct PathSprite {
-    pub bounds: Bounds<ScaledPixels>,
+enum PathTileInputIndex {
+    Tiles = 2,
+    Curves = 3,
+    Paints = 4,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -2064,8 +1796,8 @@ pub struct SurfaceBounds {
 mod abi_layout_tests {
     use super::*;
     use open_gpui::{
-        Corners, GpuClipShape, MonochromeSprite, PolychromeSprite, Quad, Shadow, SubpixelSprite,
-        Underline,
+        Background, Corners, GpuClipShape, MonochromeSprite, Point, PolychromeSprite, Quad, Shadow,
+        SubpixelSprite, Underline, point,
     };
     use std::mem::{align_of, offset_of, size_of};
 
@@ -2092,8 +1824,7 @@ mod abi_layout_tests {
                         .render_scene_to_image(&scene, invalid_size)
                         .is_err()
                 );
-                assert!(headless.renderer.path_intermediate_texture.is_none());
-                assert!(headless.renderer.path_intermediate_msaa_texture.is_none());
+                assert!(headless.renderer.depth_texture.is_none());
                 assert!(headless.renderer.headless_render_target.is_none());
                 assert!(headless.renderer.last_submitted_command_buffer.is_none());
             }
@@ -2106,12 +1837,7 @@ mod abi_layout_tests {
                 .as_ref()
                 .unwrap()
                 .clone();
-            let intermediate = headless
-                .renderer
-                .path_intermediate_texture
-                .as_ref()
-                .unwrap()
-                .clone();
+            let depth = headless.renderer.depth_texture.as_ref().unwrap().clone();
             let submission = headless
                 .renderer
                 .last_submitted_command_buffer
@@ -2126,12 +1852,8 @@ mod abi_layout_tests {
                 &**headless.renderer.headless_render_target.as_ref().unwrap(),
             ));
             assert!(ptr::eq(
-                &*intermediate,
-                &**headless
-                    .renderer
-                    .path_intermediate_texture
-                    .as_ref()
-                    .unwrap(),
+                &*depth,
+                &**headless.renderer.depth_texture.as_ref().unwrap(),
             ));
             assert!(ptr::eq(
                 &*submission,
@@ -2151,33 +1873,77 @@ mod abi_layout_tests {
     }
 
     #[test]
-    fn intermediate_textures_accept_the_device_limit_and_rebuild_after_zero_size() -> Result<()> {
+    fn depth_texture_accepts_the_device_limit_and_rebuilds_after_zero_size() -> Result<()> {
         objc2::rc::autoreleasepool(|_| {
             let mut renderer = MetalRenderer::new_headless(Default::default())?;
             let max_dimension = renderer.max_texture_dimension_2d();
-            renderer.update_path_intermediate_textures(size(
+            renderer.update_depth_texture(size(
                 DevicePixels(i32::try_from(max_dimension)?),
                 DevicePixels(1),
             ))?;
             assert_eq!(
-                renderer.path_intermediate_texture.as_ref().unwrap().width(),
+                renderer.depth_texture.as_ref().unwrap().width(),
                 max_dimension
             );
             assert_eq!(
-                renderer
-                    .path_intermediate_msaa_texture
-                    .as_ref()
-                    .unwrap()
-                    .width(),
-                max_dimension
+                renderer.depth_texture.as_ref().unwrap().pixelFormat(),
+                MTLPixelFormat::Depth32Float
             );
 
-            renderer.update_path_intermediate_textures(size(DevicePixels(0), DevicePixels(1)))?;
-            assert!(renderer.path_intermediate_texture.is_none());
-            assert!(renderer.path_intermediate_msaa_texture.is_none());
+            renderer.update_depth_texture(size(DevicePixels(0), DevicePixels(1)))?;
+            assert!(renderer.depth_texture.is_none());
             renderer.render_scene(&Scene::default(), size(DevicePixels(7), DevicePixels(3)))?;
             assert!(renderer.last_submitted_command_buffer.is_some());
             renderer.destroy();
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn native_shutdown_keeps_depth_resources_until_the_exact_ticket_finishes() -> Result<()> {
+        objc2::rc::autoreleasepool(|_| {
+            let mut renderer = MetalRenderer::new(Default::default(), false, false)?;
+            let scene = Scene::default();
+            renderer.render_scene(&scene, size(DevicePixels(7), DevicePixels(3)))?;
+            renderer.update_drawable_size(size(DevicePixels(0), DevicePixels(1)));
+            assert!(renderer.depth_texture.is_none());
+            renderer.render_scene(&scene, size(DevicePixels(9), DevicePixels(5)))?;
+            let depth = renderer.depth_texture.as_ref().unwrap().clone();
+            assert_eq!((depth.width(), depth.height()), (9, 5));
+            let submitted = renderer
+                .last_submitted_command_buffer
+                .as_ref()
+                .unwrap()
+                .clone();
+            let ticket = WindowPresentationShutdownTicket::new(open_gpui::WindowId::from(42), 7);
+            let foreign = WindowPresentationShutdownTicket::new(open_gpui::WindowId::from(42), 7);
+            assert!(renderer.reserve_surface_quiescence(&ticket));
+            assert!(!renderer.reserve_surface_quiescence(&foreign));
+            renderer.update_drawable_size(size(DevicePixels(0), DevicePixels(1)));
+            renderer.update_drawable_size(size(DevicePixels(11), DevicePixels(6)));
+            assert!(ptr::eq(
+                &*depth,
+                &**renderer.depth_texture.as_ref().unwrap()
+            ));
+            assert!(!renderer.finish_surface_quiescence(&foreign));
+            assert!(renderer.headless_render_target.is_some());
+            assert!(renderer.layer.is_some());
+            assert!(!renderer.is_quiesced_for(&ticket));
+            assert!(
+                renderer
+                    .render_scene(&scene, size(DevicePixels(9), DevicePixels(5)))
+                    .is_err()
+            );
+            assert!(renderer.finish_surface_quiescence(&ticket));
+            assert_eq!(submitted.status(), MTLCommandBufferStatus::Completed);
+            assert!(renderer.depth_texture.is_none());
+            assert!(renderer.last_submitted_command_buffer.is_none());
+            assert!(renderer.headless_render_target.is_none());
+            assert!(renderer.layer.is_none());
+            assert!(renderer.is_quiesced_for(&ticket));
+            assert!(!renderer.is_quiesced_for(&foreign));
+            assert!(renderer.finish_surface_quiescence(&ticket));
+            assert!(ticket.acknowledge_native_terminal());
             Ok(())
         })
     }
@@ -2342,12 +2108,17 @@ mod abi_layout_tests {
     #[test]
     fn global_clip_buffer_slot_does_not_overlap_pipeline_buffers() {
         let clip_slot = GlobalInputIndex::ClipShapes as u64;
-        assert!((ShadowInputIndex::ViewportSize as u64) < clip_slot);
-        assert!((QuadInputIndex::ViewportSize as u64) < clip_slot);
-        assert!((UnderlineInputIndex::ViewportSize as u64) < clip_slot);
+        assert!((GlobalInputIndex::ViewportSize as u64) < clip_slot);
+        assert!((GlobalInputIndex::DepthScale as u64) < clip_slot);
+        assert!((ShadowInputIndex::Shadows as u64) < clip_slot);
+        assert!((QuadInputIndex::Quads as u64) < clip_slot);
+        assert!((QuadInputIndex::QuadCount as u64) < clip_slot);
+        assert!((UnderlineInputIndex::Underlines as u64) < clip_slot);
         assert!((SpriteInputIndex::AtlasTextureSize as u64) < clip_slot);
         assert!((SurfaceInputIndex::TextureSize as u64) < clip_slot);
-        assert!((PathRasterizationInputIndex::ViewportSize as u64) < clip_slot);
+        assert!((PathTileInputIndex::Tiles as u64) < clip_slot);
+        assert!((PathTileInputIndex::Curves as u64) < clip_slot);
+        assert!((PathTileInputIndex::Paints as u64) < clip_slot);
     }
 
     #[test]
@@ -2380,26 +2151,39 @@ mod abi_layout_tests {
 
     #[test]
     fn renderer_owned_shader_structs_have_contiguous_c_layouts() {
-        assert_eq!(align_of::<PathRasterizationVertex>(), align_of::<f32>());
-        assert_eq!(offset_of!(PathRasterizationVertex, xy_position), 0);
-        assert_eq!(offset_of!(PathRasterizationVertex, st_position), 8);
-        assert_eq!(offset_of!(PathRasterizationVertex, color), 16);
+        assert_eq!(align_of::<PathCurve>(), align_of::<f32>());
+        assert_eq!(size_of::<PathCurve>(), 40);
+        assert_eq!(offset_of!(PathCurve, p0), 0);
+        assert_eq!(offset_of!(PathCurve, p1), 8);
+        assert_eq!(offset_of!(PathCurve, a), 16);
+        assert_eq!(offset_of!(PathCurve, b), 24);
+        assert_eq!(offset_of!(PathCurve, sign), 32);
+        assert_eq!(offset_of!(PathCurve, pad), 36);
+        assert_eq!(align_of::<PathTile>(), align_of::<f32>());
+        assert_eq!(size_of::<PathTile>(), 56);
+        assert_eq!(offset_of!(PathTile, paint), 0);
+        assert_eq!(offset_of!(PathTile, curve_start), 4);
+        assert_eq!(offset_of!(PathTile, curve_count), 8);
+        assert_eq!(offset_of!(PathTile, backdrop), 12);
+        assert_eq!(offset_of!(PathTile, top_left), 16);
+        assert_eq!(offset_of!(PathTile, bottom_right), 24);
+        assert_eq!(offset_of!(PathTile, reference), 32);
+        assert_eq!(offset_of!(PathTile, curves_top_left), 40);
+        assert_eq!(offset_of!(PathTile, curves_bottom_right), 48);
+        assert_eq!(align_of::<PathPaint>(), align_of::<f32>());
+        assert_eq!(offset_of!(PathPaint, bounds), 0);
+        assert_eq!(offset_of!(PathPaint, clip), 16);
+        assert_eq!(offset_of!(PathPaint, color), 40);
         assert_eq!(
-            offset_of!(PathRasterizationVertex, local_bounds),
-            16 + size_of::<Background>()
+            offset_of!(PathPaint, even_odd),
+            40 + size_of::<Background>()
         );
+        assert_eq!(offset_of!(PathPaint, pad), 44 + size_of::<Background>());
         assert_eq!(
-            offset_of!(PathRasterizationVertex, clip),
-            offset_of!(PathRasterizationVertex, local_bounds) + size_of::<Bounds<ScaledPixels>>()
+            offset_of!(PathPaint, transform),
+            48 + size_of::<Background>()
         );
-        assert_eq!(
-            offset_of!(PathRasterizationVertex, transform),
-            offset_of!(PathRasterizationVertex, clip) + size_of::<ClipEnvelope>()
-        );
-        assert_eq!(
-            size_of::<PathRasterizationVertex>(),
-            offset_of!(PathRasterizationVertex, transform) + size_of::<PrimitiveTransform>()
-        );
+        assert_eq!(size_of::<PathPaint>(), 64 + size_of::<Background>());
 
         assert_eq!(align_of::<SurfaceBounds>(), align_of::<f32>());
         assert_eq!(offset_of!(SurfaceBounds, bounds), 0);

@@ -136,6 +136,17 @@ fn adapter_info(adapter: &wgpu::Adapter) -> wgpu::AdapterInfo {
 }
 
 impl WgpuContext {
+    pub(crate) fn adapter_supports_transient_attachments(adapter: &wgpu::Adapter) -> bool {
+        #[cfg(target_family = "wasm")]
+        if adapter.get_info().backend == wgpu::Backend::BrowserWebGpu {
+            return js_sys::Reflect::get(&js_sys::global(), &"GPUTextureUsage".into())
+                .and_then(|usage| js_sys::Reflect::has(&usage, &"TRANSIENT_ATTACHMENT".into()))
+                .unwrap_or(false);
+        }
+        let _ = adapter;
+        true
+    }
+
     #[cfg(not(target_family = "wasm"))]
     pub fn new(
         instance: wgpu::Instance,
