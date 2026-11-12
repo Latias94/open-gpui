@@ -41,6 +41,19 @@ The first import copied the Apache-2.0 GPUI framework closure from Zed into this
 - Declared `cfg(rust_analyzer)` as an expected workspace cfg because GPUI uses it in debug
   inspector-related code.
 
+## November 12 Analytic Path Dependencies
+
+The [rendering successor](zed-gpui-upstream-sync-candidates.md#november-12-rendering-successor)
+selects Zed `6ceb6fee8738274589b59139df27efc191ec2231`, including the complete path
+mechanism introduced at `ffe0fa29e41ee16c948ccbc312edd304b9bf7a3f`. Core replaces the
+`lyon` facade/tessellator dependency with crates.io `lyon_path = "1.0.19"` and
+`tiny-skia-path = "0.11"`; development examples use `lyon_extra = "1.1.0"`. Existing locks
+already contain the selected path releases, so this migration removes unused tessellation
+packages rather than upgrading the closure. The upstream GPUI sources retain their Apache-2.0
+license, and the winding shader's Eric Lengyel attribution and MIT source notice are preserved.
+Zed product changes remain excluded. Numerical performance and foreign-platform execution
+require the separate [qualification](../verification.md#november-12-rendering-successor).
+
 ## Known Follow-Ups
 
 - Continue monitoring Open GPUI-owned fork dependencies: `font-kit` and `open-gpui-scap`.

@@ -37,6 +37,145 @@ The gate runs:
 On Windows, `xtask verify` sets `CARGO_BUILD_JOBS=1` only on the two DevTools all-features child
 processes. It does not mutate the parent shell environment.
 
+## November 12 Rendering Successor
+
+This cycle starts at Open GPUI `986dbcbff6e5234e8a9e4c4a338ff72229ee2aca` and selects
+Zed `6ceb6fee8738274589b59139df27efc191ec2231`. The
+[inventory](imports/zed-gpui-upstream-sync-candidates.md#november-12-rendering-successor)
+records the six official rendering commits and exact temporary-source reconstruction. The
+previous Mac continuation remains a separate qualification. The host is Apple Silicon,
+macOS 27.0, Rust 1.99.1 and SDK 26.5; Cargo is serialized with two build jobs and one nextest
+test thread, reusing the checkout target.
+
+Initial Core checks expose integration errors rather than runtime results: the fork has retired
+`ContentMask` and `Scene::insert_primitive`, and a line-paint fixture still calls the replaced
+footprint helper. The adaptation uses direct mask bounds and the exact scoped clip stack.
+Subsequent checks catch nonexistent `Point::floor` / `ceil` convenience methods and a new test
+using `Corners::all(Size<Pixels>)`, whose Half constraint does not apply. These sites use the
+existing coordinate mapping and explicit corners. Core all-target compilation with
+`test-support,bench-support` then passes. The first WGPU all-target check catches a temporary
+bind-group-layout array borrowed past its branch; a named array preserves its lifetime and the
+subsequent affected check passes.
+
+Independent Core review identifies two fork adaptation defects: plain border hard partitions
+lose the local SDF's antialiasing under nonuniform scaling, and left-associated f32 coefficient
+scaling can overflow before a small subtree scale makes the final value representable. Both
+findings are corrected, receive focused regressions and pass independent source re-review.
+Integration review also corrects layer reconstruction reading an emptied paint journal and
+device-bounds conversion failures being accepted as an empty path.
+
+The first complete shared Apple/Mac library run passes **158/158**, with no skips
+(`079cddaa-4c48-4061-8206-c1a4629b8cc3`, 69.359 seconds). It compiles the new Rust/cbindgen
+interface and actually executes runtime Metal shader compilation, headless GPU readback,
+path/rounded-clip opaque depth, surface instance indexing, atlas preflight/leases, resize/zero-size
+depth-resource rebuilding and exact-ticket renderer retirement. This intermediate worktree pass
+precedes the final path arithmetic and border adaptation corrections; it is not a final combined
+revision qualification.
+
+```sh
+CARGO_BUILD_JOBS=2 cargo check --locked -p open-gpui-apple -p open-gpui-macos --all-targets --features test-support,runtime_shaders,screen-capture
+CARGO_BUILD_JOBS=2 cargo nextest run --locked -p open-gpui-apple -p open-gpui-macos --lib --features test-support,runtime_shaders,screen-capture --test-threads=1 --no-fail-fast --status-level fail
+```
+
+Root, independently locked consumer, current smoke-Web, test-support consumer and hot-reload
+consumer locks replace the tessellation facade with path-only dependencies without upgrading
+their existing selected package versions. Initial offline metadata lacks cached packages/index
+entries; online metadata succeeds. The old hello-Web 0.1 lock is outside this continuation.
+Compiler-floor, Windows/Linux/browser execution, older macOS, physical input and numerical
+performance/energy claims retain their own qualification. Final results follow below.
+
+The attempted `x86_64-pc-windows-msvc` all-target check with `test-support` stops in
+`zstd-sys` before reaching the changed DirectX renderer. Apple Clang cannot locate the MSVC C
+standard headers (`stdlib.h` / `string.h`) on this host. No target/sysroot substitution or fake
+native dependency is used. The DirectX lane's source/ABI review does not replace Windows Rust,
+FXC/DXC, WARP or native presentation qualification.
+
+The focused Core run is initially **104/105** (`4f715675-9142-4f7c-9f49-54c2d8a1a03e`):
+the new retained-path fixture incorrectly expects a completed replay to remain attached to the
+source frame's validity. The existing `replayed_under` contract deliberately rebinds it. The
+corrected fixture separately invalidates the source clone, fragment and replay parent while
+preserving exact remapped clip/curve/tile assertions. The subsequent full Core run is
+**1917/1919** (`fefd3132-9d5c-4676-8800-8c15b04be8d9`). Its two old text-layer/imported-image
+oracles assume every overlap increments order. The new official mechanism also uses primitive
+kind and stable position; corrected controls check that complete draw order, actual overlap,
+image resource identity and original text/reentry behavior.
+
+The first complete WGPU execution is **134/135** without skips
+(`dd6b83ee-b6d0-4c7e-9eaf-8daac063e589`, 61.865 seconds). All shader validation, native GPU
+pixel, path local-gradient/pattern, rounded depth, atlas and shared-host cases in that run pass.
+The remaining newly added fractional-DPI border fixture returns Deferred from a synchronous
+Scene-capture source, so initial hosted-surface admission refuses it before GPU comparison.
+The source now acknowledges synchronous capture; actual GPU work remains the subsequent WGPU
+render/readback. Its corrected border comparison passes **1/1**
+(`1bde3569-6b83-4330-bfa1-ae57dccfc537`), covering storage and packed instance transport,
+nonuniform scaling and fractional DPI without hard-cutting border coverage.
+
+The independently locked public consumer compiles all targets with
+`bench-support,wgpu-renderer,mac-screen-capture,open_gpui_platform/runtime_shaders`, including
+the migrated randomized-tree benchmark. Production Web/Core/WGPU compiles for
+`wasm32-unknown-unknown` with `cargo +nightly check --locked -p open-gpui-web --lib`; this is
+compilation, not browser execution or compiler-floor qualification.
+
+After those corrections, the combined Core/Apple/Mac libraries pass **2077/2077**, with no skips
+(`3e758061-3dd3-4f47-8936-ec77cb892742`, 131.396 seconds), and the complete WGPU package
+passes **135/135**, with no skips (`89d3ae1b-7826-4d9f-ad77-4ae32c841a55`, 57.851 seconds).
+The later independent shader review identifies three remaining precision adaptations: Metal's
+origin-plus-size reconstruction changes original endpoint rounding after a large opposing
+translation; a fixed epsilon compresses tiny enlarged image UVs; raw fractional clip vertices
+can quantize past a valid half-open pixel center. Safe-domain clipping now preserves original
+vertices/local coordinates outside its precision domain, keeps unchanged UV axes and divides
+changed axes by their actual positive sizes, and rounds raster masks outward before exact
+fragment checks. DirectX's equivalent safe helpers are confirmed by source review.
+
+The new precision regressions and affected color/depth/border controls pass **7/7**
+(`511c4566-2656-4ee1-8c7f-436a5f118577`, 13.071 seconds). Metal uses its production helper
+with an actual RGBA32Float GPU target to check endpoint coverage, UV and local position. WGPU
+checks actual storage/packed pixels at clip edges `16.4999` / `16.5001` and visible 10-pixel
+images enlarged from sub-micro local dimensions. Independent reviewers close all five source
+findings without adding public test-only APIs or replacing the original candidate/resource owners.
+
+Expanding the fractional-edge control to isolate opaque quads, paths and ordinary image sprites
+exposes a fixture error in the final combined backend run: **295/296** pass
+(`d471972f-8c9a-4d4b-845b-be847866588c`). At the image's outer edge, bilinear filtering
+legitimately samples atlas padding, so a solid-255 color oracle is invalid there. The image
+geometry now extends beyond the clip while the exact fractional clip and all pixel assertions
+remain unchanged. This separates clipping coverage from texture-edge filtering; the separate
+tiny-image test still checks actual UV/color sampling.
+
+The corrected fractional-edge control passes **1/1**
+(`594d839a-f991-41cc-a122-47772523e886`), followed by the final complete
+Apple/Mac/WGPU package cohort at **296/296**, with no skips
+(`8ea86a5e-e44d-479c-9689-9768e1156fe0`, 143.101 seconds). This includes the latest
+production clip helpers, all new precision controls and the WGPU public integration binaries.
+Together with the unchanged final Core cohort above, these are this cycle's executed local
+runtime results; the previous failed runs remain recorded.
+
+```sh
+CARGO_BUILD_JOBS=2 cargo nextest run --locked -p open-gpui -p open-gpui-apple -p open-gpui-macos --lib --features test-support,bench-support,runtime_shaders,screen-capture --test-threads=1 --no-fail-fast --status-level fail
+CARGO_BUILD_JOBS=2 cargo nextest run --locked -p open-gpui-apple -p open-gpui-macos -p open-gpui-wgpu --features test-support,bench-support,runtime_shaders,screen-capture --test-threads=1 --no-fail-fast --status-level fail
+```
+
+Final workspace all-target compilation passes with `open-gpui-apple/runtime_shaders`. All-target
+Core/Apple/Mac/WGPU Clippy passes both `-D clippy::correctness` and `-D clippy::suspicious`;
+existing advisory warnings remain. A transient type-inference error in the new RGBA32Float test
+closure is corrected before those final checks. Formatting, whitespace, import-boundary, public
+API-tier, document-link and release-document gates pass.
+
+The ordinary `native_windowing` and `native_layer_shutdown` examples build successfully with
+precompiled Metal shaders and `font-kit,screen-capture`; completed binaries are copied to the
+task-owned path before execution. The `native-close` process then fails before creating a native
+window because CoreGraphics returns no active displays. Sheet and submitted-resize layer modes
+are therefore not executed in this run. Headless GPU passes above remain valid; the previous
+continuation's GUI successes are not relabeled as this renderer's native qualification. Repeat
+those existing controls in an active GUI session, and run actual Windows shader/compiler/WARP
+checks, before extending the native platform claims.
+
+The reviewed implementation, tests, lockfiles and public migration notes are committed at
+`0ed315daa37e94d6f80b357339ab8eff6b9b5afc`. The last fixture-only correction also passes
+its all-target WGPU strict Clippy rerun. All six worker/reviewer threads are closed, and no remote
+publication is performed. These results close this six-commit source-adoption unit with the
+stated local/foreign qualification limits.
+
 ## macOS Source Reconciliation On November 12
 
 This native Apple Silicon continuation starts at Open GPUI

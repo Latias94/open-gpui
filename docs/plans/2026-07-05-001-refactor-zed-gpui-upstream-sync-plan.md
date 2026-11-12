@@ -10,6 +10,33 @@ execution: code
 
 # Zed GPUI Upstream Sync - Plan
 
+## November 12 Rendering Successor
+
+The owner authorizes implementing the six rendering commits in the
+[fixed successor inventory](../imports/zed-gpui-upstream-sync-candidates.md#november-12-rendering-successor),
+starting at Open GPUI `986dbcbf` and selecting Zed
+`6ceb6fee8738274589b59139df27efc191ec2231`. Keep the previous Mac and whole-framework
+qualification intact. Five disjoint implementation lanes own path construction/binning, Core
+scene/window ordering, shared Apple Metal, WGPU (including WebGL/storage) and DirectX. The
+main thread owns dependencies, external consumers, serial Cargo, integration and records.
+
+Adopt the complete official geometry, shading, path, batching, depth and shadow mechanisms.
+Preserve accepted-candidate recovery, exact geometry/clips, local paint coordinates and resource
+retirement. Compile affected packages/public consumers, retain upstream algorithm regressions,
+exercise actual Metal/WGPU pixels and native retirement, and obtain independent source review.
+Run Cargo serially with two build jobs and one nextest test thread, reusing the checkout target.
+Record compiler-floor and foreign-platform limits separately. Commit only reviewed, verified
+local changes; publication remains outside this task.
+
+The complete six-mechanism successor is implemented at
+`0ed315daa37e94d6f80b357339ab8eff6b9b5afc`, including the public path migration and
+reviewed overflow, antialiasing, vertex-rounding, fractional-edge and UV corrections. The
+[qualification](../verification.md#november-12-rendering-successor) records Core/Apple/Mac
+2077/2077 and final Apple/Mac/WGPU 296/296, independent consumer and workspace compilation,
+wasm, precompiled/runtime Metal shaders and strict Clippy. All six implementation/review
+threads are finished and closed. Active-display AppKit controls, actual Windows compiler/shader/
+WARP execution, browser execution, Rust 1.93 and numerical performance remain separate gates.
+
 ## November 12 macOS Reconciliation
 
 The owner requests a complete Mac/Apple review and authorizes synchronization of confirmed

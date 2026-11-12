@@ -80,6 +80,57 @@ Physical input, fullscreen pixels, older macOS, actual M5 frame timing, energy a
 Keychain behavior retain their separate qualification. A macOS pass does not replace Windows,
 Linux, browser, engine-consumer or compiler-floor evidence.
 
+## November 12 Rendering Continuation
+
+The owner subsequently authorizes the six-commit rendering successor, starting at `986dbcbf`
+and selecting Zed `6ceb6fee8738274589b59139df27efc191ec2231`. Its
+[fixed inventory](../imports/zed-gpui-upstream-sync-candidates.md#november-12-rendering-successor)
+owns source provenance, dependencies and implemented dispositions. The rendering qualification
+is recorded [separately](../verification.md#november-12-rendering-successor); the earlier Mac
+qualification does not establish the new shaders or path representation.
+
+The resulting local implementation/API checkpoint is
+`0ed315daa37e94d6f80b357339ab8eff6b9b5afc`. Core/Apple/Mac passes 2077/2077, and the
+final Apple/Mac/WGPU package cohort passes 296/296, without skips. Workspace and independently
+locked consumer compilation, wasm, precompiled/runtime Metal and strict correctness/suspicious
+Clippy pass. Six implementation/review workers are finished and closed. This checkpoint is
+committed locally and has not been pushed.
+
+The public path migration follows the official analytic winding implementation:
+
+- Replace `Path<Pixels>` fields and return types with `Path`.
+- Build contours with `PathBuilder`, then pass the result to `Window::paint_path`. Direct
+  triangulated `Path::new`, `PathVertex`, `PathId` and `PathBuilder::build_path` consumers migrate
+  to contours rather than constructing the retired GPU representation.
+- Initialize framework `StrokeOptions` fields (`line_width`, `line_cap`, `line_join`,
+  `miter_limit`) and `FillOptions::fill_rule`; the old Lyon tessellation option builders are
+  no longer the public option types.
+- Renderer consumers receive `Primitive::Path(PaintedPath)` and use `tile_count` / `append_to`
+  for paint, curve and tile records. Exact clip indices remain frame-local. Keep local paint
+  coordinates distinct from projected coverage geometry. `PaintedPath::new` accepts mask bounds
+  directly and returns a `Result` for invalid device conversions; the Window paint path records
+  these failures through its existing candidate-validity owner.
+
+The successor preserves the original host's WGPU device, encoder, queue and actual submission.
+Private depth and path recording resources follow that submission's lifetime. Native Metal
+shutdown still requires exact surface quiescence before AppKit terminal close. Do not infer
+quantitative performance gains from the official commit descriptions or existing functional
+benchmark completion.
+
+External WGPU devices must enable at least four storage buffers per shader stage (including
+vertex and fragment limits) and six combined buffers per stage on native targets. The recorder
+validates the enabled device rather than the adapter's advertised maximum. Update an explicit
+host limit request before constructing `WgpuSceneRenderer`; the shader data now includes path
+tiles, curves, paint and exact clip records.
+
+Next, run the existing native close, sheet and submitted-resize retirement controls in an active
+macOS GUI session, then run the Windows renderer compiler/shader/WARP gates on Windows. The
+current host can execute headless Metal/WGPU pixels but CoreGraphics reports no active displays;
+its MSVC cross-check stops in native compression dependencies before DirectX source checking.
+After those gates, measure a real consumer's frame/upload/overdraw costs before choosing another
+renderer architecture change. Browser execution, Rust 1.93 and older-macOS qualification remain
+explicitly separate.
+
 ## Upstream Maintenance
 
 The earlier whole-framework comparison target is Zed

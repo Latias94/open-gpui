@@ -28,6 +28,58 @@ The November continuation applies the
 Record retained differences and their consumer/verification basis here; an unimplemented
 official mechanism remains queued until it receives an explicit disposition.
 
+## November 12 Rendering Successor
+
+The owner explicitly authorizes the next rendering refresh after the Mac reconciliation and
+its correctness follow-ups. This cycle fixes Open GPUI
+`986dbcbff6e5234e8a9e4c4a338ff72229ee2aca` and selects Zed
+`6ceb6fee8738274589b59139df27efc191ec2231`, advancing from
+the previous Mac target `78f5d7446c55f6c1aa9b66e8111f6b3f4625ebb0`. The six framework
+commits below end at `8a5cf7e23a7ce5797bb020a4b7be2ef1b7dc8f79`; the target's following
+git_ui task-lifetime change is outside the extracted framework closure.
+
+The existing `repo-ref/zed` stays read-only. Missing new objects are represented by the official
+fixed-SHA comparison patch, split and applied in order to the previous fixed tree in a temporary
+source snapshot. The reconstructed final `scene.rs` and Metal shader match the target's official
+raw sources byte for byte. This is source evidence, not a claim that the reference checkout was
+fetched or moved.
+
+| Official change | Mechanism and integration owner | Disposition |
+| --- | --- | --- |
+| `ba490197cfb8` / #66806 | Clip primitive geometry in the vertex stage in Metal, WGPU and DirectX. Preserve local coordinates, exact clip-stack checks, safe-domain rounding and original vertex fallback. | Implemented, including reviewed fractional-edge and tiny-UV corrections. |
+| `caead827d77c` / #66807 | Move repeated color/background work out of fragment shading and reduce redundant storage reads. | Implemented across all three shader families. |
+| `ffe0fa29e41e` / #66809 | Monotone quadratic outlines, CPU curve binning and analytic winding tiles replace tessellation and intermediate path MSAA. Core and all three renderers migrate together. | Implemented with checked projection, local paint coordinates and ordinary consumer migration. |
+| `1d8eda94bd4d` / #66810 | Kind-aware overlapping order and actual layer primitive bounds improve batching while respecting atlas texture reordering. | Implemented with validity-aware journal reconstruction and retained replay. |
+| `be07e43ea0ad` / #66811 | Front-to-back opaque rectangles write private depth; remaining primitives blend in paint order with depth testing. Preserve rounded/exact clipping and the host's submission/resource ownership. | Implemented with safe quad partitions and host recording-resource retention. |
+| `8a5cf7e23a7c` / #66812 | Levien shadow approximation in all renderer shader variants. | Implemented; original algorithm/source references retained. |
+
+The path dependency successor selects `lyon_path` 1.0.19, `tiny-skia-path` 0.11 and development
+`lyon_extra` 1.1.0 instead of the `lyon` tessellation facade. `Path` becomes nongeneric;
+`FillOptions` and `StrokeOptions` become framework-owned types. Ordinary example and independently
+locked benchmark consumers migrate with the implementation. The declared Rust 1.93 floor remains
+unchanged and requires its own qualification.
+
+Fork adaptations retain Scene cloning, candidate-validity journals, unwind/replay recovery,
+exact clip arenas, checked subtree transforms, atlas generations/leases, native renderer retirement
+and explicit LinearSrgb composition. Curves are projected before device-space binning so coverage
+remains half a device pixel under nonuniform scale; path paint keeps the local bounds and inverse
+transform for gradients, patterns and dithering. WGPU recording keeps private depth and its new
+buffers alive through the host's actual GPU completion, using the original host encoder/queue.
+The existing public `Window::paint_layer(bounds, callback)` and `Scene::push_layer(bounds)`
+signatures retain their bounds argument for ordinary consumers; actual clipped primitive union
+determines ordering, matching the official mechanism. Framework owners use the actual-bounds
+entry point rather than calculating an unused hint.
+Independent review closes the adapted border-antialiasing, curve-overflow, vertex-rounding,
+fractional-clip and UV findings. The
+[qualification](../verification.md#november-12-rendering-successor) owns actual Core/Apple/Mac
+and WGPU results, downstream compilation and native precompiled shaders. Current AppKit startup
+has no active display, and Windows cross-compilation lacks MSVC C headers; those qualifications
+remain pending alongside browser/foreign execution, compiler-floor and numerical performance.
+This closes these six named source mechanisms without claiming exhaustive framework parity.
+The atomic implementation/API migration is committed at
+`0ed315daa37e94d6f80b357339ab8eff6b9b5afc`. Core/Apple/Mac passes 2077/2077 and the final
+Apple/Mac/WGPU cohort passes 296/296; neither count substitutes for the pending platform gates.
+
 ## November 12 macOS Reconciliation
 
 This continuation compares committed Open GPUI
