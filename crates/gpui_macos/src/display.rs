@@ -295,7 +295,7 @@ fn invalid_candidate(message: impl Into<Arc<str>>) -> MacDisplayTopologyFailure 
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::{
         MacDisplay, MacDisplayTopologyCandidate, MacDisplayTopologyFailure,
         MacDisplayTopologySnapshot, display_id_from_uuid, native::MacDisplayObservation,
@@ -304,7 +304,7 @@ mod tests {
     use smallvec::{SmallVec, smallvec};
     use uuid::Uuid;
 
-    fn display(
+    pub(crate) fn display(
         provenance: u128,
         origin_x: f32,
         origin_y: f32,

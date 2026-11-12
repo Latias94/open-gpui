@@ -1641,7 +1641,15 @@ fn moved_or_display_facts_changed<D: PartialEq>(
 }
 
 impl MacWindowNativeObservationChanges {
-    fn between(previous: MacWindowNativeObservation, current: MacWindowNativeObservation) -> Self {
+    fn between(
+        previous: Option<MacWindowNativeObservation>,
+        current: MacWindowNativeObservation,
+    ) -> Self {
+        // AppKit can report backing changes while attaching the native view, before open() has
+        // published an initial observation. The first complete fact establishes the baseline.
+        let Some(previous) = previous else {
+            return Self::default();
+        };
         let minimized_or_maximized_changed = previous.is_minimized != current.is_minimized
             || previous.is_maximized != current.is_maximized;
         Self {
@@ -2251,9 +2259,9 @@ impl MacWindowState {
         &mut self,
         observation: MacWindowNativeObservation,
     ) -> MacWindowNativeObservationChanges {
-        let previous = self.committed_native_observation();
+        let changes =
+            MacWindowNativeObservationChanges::between(self.native_observation, observation);
         self.store_native_observation(observation);
-        let changes = MacWindowNativeObservationChanges::between(previous, observation);
         self.update_renderer_geometry(observation.renderer_geometry());
         changes
     }
@@ -7546,6 +7554,56 @@ mod creation_projection_tests {
             is_fullscreen: false,
             is_active: true,
         }
+    }
+
+    fn complete_native_observation() -> MacWindowNativeObservation {
+        MacWindowNativeObservation {
+            topology_generation: 1,
+            bounds: restore_bounds(),
+            display: crate::display::tests::display(7_u128 << 64, 0.0, 0.0, 2.0, 1_920.0),
+            is_minimized: false,
+            is_maximized: false,
+            is_fullscreen: false,
+            simple_fullscreen_restore_bounds: None,
+            is_active: false,
+            style_mask: NSWindowStyleMask::Titled.bits(),
+            titlebar_appears_transparent: true,
+        }
+    }
+
+    #[test]
+    fn backing_observation_during_view_attachment_establishes_the_initial_baseline() {
+        let observation = complete_native_observation();
+        let changes = MacWindowNativeObservationChanges::between(None, observation);
+
+        assert_eq!(changes, MacWindowNativeObservationChanges::default());
+    }
+
+    #[test]
+    fn observations_after_view_attachment_preserve_real_geometry_and_state_changes() {
+        let initial = complete_native_observation();
+        let later = MacWindowNativeObservation {
+            topology_generation: 2,
+            bounds: Bounds::new(point(px(-800.0), px(120.0)), size(px(900.0), px(640.0))),
+            display: crate::display::tests::display(9_u128 << 64, -1_920.0, 0.0, 1.0, 1_920.0),
+            is_maximized: true,
+            ..initial
+        };
+
+        assert_eq!(
+            MacWindowNativeObservationChanges::between(Some(initial), later),
+            MacWindowNativeObservationChanges {
+                renderer_geometry_changed: true,
+                moved: true,
+                display_changed: true,
+                minimized_or_maximized_changed: true,
+                state_changed: true,
+            },
+        );
+        assert_eq!(
+            MacWindowNativeObservationChanges::between(Some(later), later),
+            MacWindowNativeObservationChanges::default(),
+        );
     }
 
     #[test]
