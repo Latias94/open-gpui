@@ -923,7 +923,75 @@ mod wrapping_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::GlyphId;
+    use crate::{GlyphId, NoopTextSystem, TextRun, TextSystem, WindowTextSystem, font};
+
+    #[test]
+    fn shape_line_shares_its_text_with_the_layout_cache() {
+        let text_system =
+            WindowTextSystem::new(Arc::new(TextSystem::new(Arc::new(NoopTextSystem::new()))));
+        let text = SharedString::from("let value = compute_something(argument_one, argument_two);");
+        let runs = [TextRun {
+            len: text.len(),
+            font: font(".ZedMono"),
+            ..Default::default()
+        }];
+
+        text_system.shape_line(text.clone(), px(14.), &runs, None);
+        let state = text_system.line_layout_cache.state.borrow();
+        let (key, _) = state.current_frame.lines.iter().next().unwrap();
+        assert_eq!(key.text.as_ptr(), text.as_ptr());
+    }
+
+    #[test]
+    fn layout_line_cache_hits_do_not_convert_borrowed_text_after_candidate_rejection() {
+        struct ObservedText<'a> {
+            source: &'a str,
+            conversions: &'a std::cell::Cell<usize>,
+        }
+
+        impl AsRef<str> for ObservedText<'_> {
+            fn as_ref(&self) -> &str {
+                self.source
+            }
+        }
+
+        impl From<ObservedText<'_>> for SharedString {
+            fn from(text: ObservedText<'_>) -> Self {
+                text.conversions.set(text.conversions.get() + 1);
+                text.source.into()
+            }
+        }
+
+        let text_system =
+            WindowTextSystem::new(Arc::new(TextSystem::new(Arc::new(NoopTextSystem::new()))));
+        let source = "let value = compute_something(argument_one, argument_two);";
+        let conversions = std::cell::Cell::new(0);
+        let runs = [TextRun {
+            len: source.len(),
+            font: font(".ZedMono"),
+            ..Default::default()
+        }];
+        let lookup = || {
+            text_system.layout_line(
+                ObservedText {
+                    source,
+                    conversions: &conversions,
+                },
+                px(14.),
+                &runs,
+                None,
+            )
+        };
+
+        let original = lookup();
+        assert_eq!(conversions.get(), 1);
+        assert!(Arc::ptr_eq(&original, &lookup()));
+        text_system.finish_frame();
+        assert!(Arc::ptr_eq(&original, &lookup()));
+        text_system.abort_frame();
+        assert!(Arc::ptr_eq(&original, &lookup()));
+        assert_eq!(conversions.get(), 1);
+    }
 
     fn glyph_at(x: f32, index: usize) -> ShapedGlyph {
         ShapedGlyph {
