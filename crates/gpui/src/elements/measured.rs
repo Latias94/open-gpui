@@ -125,14 +125,6 @@ impl Element for MeasuredElement {
     }
 }
 
-impl IntoElement for MeasuredElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

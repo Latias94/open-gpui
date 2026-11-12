@@ -43,14 +43,6 @@ pub(super) fn accessibility_scope(
     }
 }
 
-impl IntoElement for AccessibilityScopeElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for AccessibilityScopeElement {
     type RequestLayoutState = AnyElement;
     type PrepaintState = ();

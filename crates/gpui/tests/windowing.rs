@@ -57,6 +57,7 @@ fn public_display_environment_overrides_and_removals_belong_only_to_the_child_co
         wayland_display: Some("wayland-public-消费者".into()),
         x11_display: None,
         xdg_runtime_dir: Some("/tmp/open-gpui-public-session".into()),
+        current_desktop: None,
         activation_token: Some("connection-only-token".into()),
     };
     let mut command = Command::new("open-gpui-unstarted-windowing-control");

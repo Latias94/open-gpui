@@ -191,14 +191,6 @@ struct MeasuredText {
     paints: Rc<RefCell<Vec<PaintedMeasurement>>>,
 }
 
-impl IntoElement for MeasuredText {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for MeasuredText {
     type RequestLayoutState = ();
     type PrepaintState = SmallVec<[Arc<WrappedLineLayout>; 1]>;

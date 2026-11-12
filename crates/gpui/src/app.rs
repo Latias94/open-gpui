@@ -47,20 +47,20 @@ pub use visual_test_context::*;
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::InspectorElementRegistry;
 use crate::{
-    Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Arena,
-    ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, ClipboardReadError,
-    CursorStyle, DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor,
-    Global, HitboxId, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem,
-    MouseButton, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
-    PlatformDisplaySnapshot, PlatformFocusedWindow, PlatformHoveredWindow, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformViewportCapabilities, PlatformWindow,
-    PlatformWindowCapabilities, PlatformWindowProfile, Point, PointerCaptureHandle, PowerMode,
-    Priority, PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
-    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, SystemNotification, SystemNotificationResponse, Task,
-    TextRenderingMode, TextSystem, ThermalState, Window, WindowAppearance, WindowBounds,
-    WindowButtonLayout, WindowHandle, WindowId, WindowInvalidator, WindowKind, WindowParams,
-    WindowTransientOwner,
+    Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext,
+    AppLifecyclePhase, Arena, ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds,
+    ClipboardItem, ClipboardReadError, CursorStyle, DispatchPhase, DisplayId, EventEmitter,
+    FocusHandle, FocusMap, ForegroundExecutor, Global, HitboxId, KeyBinding, KeyContext, Keymap,
+    Keystroke, LayoutId, Menu, MenuItem, MouseButton, OwnedMenu, PathPromptOptions, Pixels,
+    Platform, PlatformDisplay, PlatformDisplaySnapshot, PlatformFocusedWindow,
+    PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformViewportCapabilities, PlatformWindow, PlatformWindowCapabilities,
+    PlatformWindowProfile, Point, PointerCaptureHandle, PowerMode, Priority, PromptBuilder,
+    PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
+    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer,
+    SystemNotification, SystemNotificationResponse, Task, TextRenderingMode, TextSystem,
+    ThermalState, Window, WindowAppearance, WindowBounds, WindowButtonLayout, WindowHandle,
+    WindowId, WindowInvalidator, WindowKind, WindowParams, WindowTransientOwner,
     asset_cache::CachedLoad,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
@@ -84,6 +84,8 @@ mod external_drag;
 mod headless_app_context;
 #[cfg(test)]
 mod idle_sleep_tests;
+#[cfg(test)]
+mod lifecycle_tests;
 mod missing_glyphs;
 mod native_callback_diagnostics;
 mod native_captured_drag;
@@ -454,6 +456,7 @@ impl Application {
 }
 
 type Handler = Box<dyn FnMut(&mut App) -> bool + 'static>;
+type AppLifecycleHandler = Box<dyn FnMut(AppLifecyclePhase, &mut App) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut App) -> bool + 'static>;
 pub(crate) type KeystrokeObserver =
     Box<dyn FnMut(&KeystrokeEvent, &mut Window, &mut App) -> bool + 'static>;
@@ -851,6 +854,8 @@ pub struct App {
     power_mode_observers: SubscriberSet<(), Handler>,
     pub(crate) system_sleep_observers: SubscriberSet<(), Handler>,
     pub(crate) system_wake_observers: SubscriberSet<(), Handler>,
+    app_lifecycle_observers: SubscriberSet<(), AppLifecycleHandler>,
+    memory_warning_observers: SubscriberSet<(), Handler>,
     display_observers: SubscriberSet<(), displays::DisplayHandler>,
     displays: HashMap<DisplayId, displays::DisplayState>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
@@ -1071,6 +1076,8 @@ impl App {
                 power_mode_observers: SubscriberSet::new(),
                 system_sleep_observers: SubscriberSet::new(),
                 system_wake_observers: SubscriberSet::new(),
+                app_lifecycle_observers: SubscriberSet::new(),
+                memory_warning_observers: SubscriberSet::new(),
                 display_observers: SubscriberSet::new(),
                 displays: displays::read_displays(platform.as_ref()),
                 global_observers: SubscriberSet::new(),
@@ -1130,6 +1137,27 @@ impl App {
             move || {
                 if let Some(app) = app.upgrade() {
                     app.enqueue_native_app_event(native_event_ingress::NativeAppEvent::Reopen);
+                }
+            }
+        }));
+
+        platform.on_app_lifecycle(Box::new({
+            let app = Rc::downgrade(&app);
+            move |phase| {
+                if let Some(app) = app.upgrade() {
+                    app.enqueue_native_app_event(
+                        native_event_ingress::NativeAppEvent::AppLifecycle(phase),
+                    );
+                }
+            }
+        }));
+        platform.on_memory_warning(Box::new({
+            let app = Rc::downgrade(&app);
+            move || {
+                if let Some(app) = app.upgrade() {
+                    app.enqueue_native_app_event(
+                        native_event_ingress::NativeAppEvent::MemoryWarning,
+                    );
                 }
             }
         }));
@@ -2302,6 +2330,38 @@ impl App {
             (),
             Box::new(move |cx| {
                 callback(cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    /// Observes mobile scene lifecycle changes. Desktop platforms do not emit these events.
+    ///
+    /// Save important changes incrementally; background termination need not emit quit or
+    /// disconnection. Retain the returned subscription to continue receiving notifications.
+    pub fn on_app_lifecycle(
+        &self,
+        mut callback: impl FnMut(AppLifecyclePhase, &mut App) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.app_lifecycle_observers.insert(
+            (),
+            Box::new(move |phase, app| {
+                callback(phase, app);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    /// Observes mobile memory-pressure warnings so expendable caches can be released.
+    pub fn on_memory_warning(&self, mut callback: impl FnMut(&mut App) + 'static) -> Subscription {
+        let (subscription, activate) = self.memory_warning_observers.insert(
+            (),
+            Box::new(move |app| {
+                callback(app);
                 true
             }),
         );

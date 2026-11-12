@@ -1,9 +1,9 @@
 use crate::{
     AnyElement, AnyImageCache, App, Asset, AssetLogger, Bounds, DefiniteLength, Element, ElementId,
     Entity, GlobalElementId, Hitbox, Image, ImageCache, InspectorElementId, InteractiveElement,
-    Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, PreparedSubtreeClip,
-    RenderImage, Resource, SharedString, SharedUri, StyleRefinement, Styled, Task, Window,
-    decode_gif_image, decode_static_image, decode_webp_image, px,
+    Interactivity, LayoutId, Length, ObjectFit, Pixels, PreparedSubtreeClip, RenderImage, Resource,
+    SharedString, SharedUri, StyleRefinement, Styled, Task, Window, decode_gif_image,
+    decode_static_image, decode_webp_image, px,
 };
 use anyhow::Result;
 
@@ -521,14 +521,6 @@ impl InteractiveElement for Img {
     }
 }
 
-impl IntoElement for Img {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl StatefulInteractiveElement for Img {}
 
 impl ImageSource {
@@ -580,6 +572,16 @@ impl ImageSource {
             }
             ImageSource::Custom(_) | ImageSource::Render(_) => {}
             ImageSource::Image(data) => cx.remove_asset::<AssetLogger<ImageDecoder>>(data),
+        }
+    }
+
+    /// Returns whether this source is loading or loaded in the asset cache without fetching it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn is_asset_cached(&self, cx: &App) -> bool {
+        match self {
+            ImageSource::Resource(resource) => cx.has_asset::<ImgResourceLoader>(resource),
+            ImageSource::Custom(_) | ImageSource::Render(_) => false,
+            ImageSource::Image(data) => cx.has_asset::<AssetLogger<ImageDecoder>>(data),
         }
     }
 }

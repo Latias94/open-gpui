@@ -243,14 +243,6 @@ impl Element for PhaseThemeProbe {
     }
 }
 
-impl IntoElement for PhaseThemeProbe {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 #[derive(IntoElement)]
 struct DeferredOpeningProbe {
     observations: Observations,
@@ -847,14 +839,6 @@ impl Element for EarlyReturnThemeProbe {
     }
 }
 
-impl IntoElement for EarlyReturnThemeProbe {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 struct EarlyReturnScopeView {
     observations: Observations,
 }
@@ -955,14 +939,6 @@ impl Element for PanickingThemeProbe {
         _window: &mut Window,
         _cx: &mut App,
     ) {
-    }
-}
-
-impl IntoElement for PanickingThemeProbe {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 
@@ -1286,14 +1262,6 @@ impl Element for PaletteThemeProbe {
         cx: &mut App,
     ) {
         self.record(ProbePhase::Paint, window, cx);
-    }
-}
-
-impl IntoElement for PaletteThemeProbe {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 

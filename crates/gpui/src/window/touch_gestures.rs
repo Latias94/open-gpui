@@ -24,6 +24,12 @@ pub(super) fn is_touch_cancellation(event: &dyn Any) -> bool {
 }
 
 impl Window {
+    /// Returns whether recognized touch pans may use platform-predicted positions.
+    /// Defaults to true.
+    pub fn touch_prediction_enabled(&self) -> bool {
+        self.touch_prediction_enabled
+    }
+
     /// Enables platform-predicted touch positions for recognized pans.
     ///
     /// Predictions affect emitted movement, not gesture classification or velocity estimation.

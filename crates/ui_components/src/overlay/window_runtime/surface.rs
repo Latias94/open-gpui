@@ -404,14 +404,6 @@ pub struct OverlaySurface {
     child: Option<AnyElement>,
 }
 
-impl IntoElement for OverlaySurface {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for OverlaySurface {
     type RequestLayoutState = AnyElement;
     type PrepaintState = ();

@@ -22,6 +22,7 @@ fn downstream_windowing_api_and_facades_are_available_without_optional_features(
         <dyn Platform>::graphical_environment;
     let _: fn(&dyn Platform, ActivationPolicy) = <dyn Platform>::set_activation_policy;
     let _: fn(&GraphicalEnvironment, &mut Command) = GraphicalEnvironment::apply_to;
+    let _: fn(&GraphicalEnvironment) -> Option<String> = GraphicalEnvironment::desktop_environment;
     let _: fn() -> Application = open_gpui_platform::application;
     let _: fn() -> Application = open_gpui_platform::headless;
     assert_eq!(ActivationPolicy::default(), ActivationPolicy::Regular);
@@ -50,19 +51,29 @@ fn downstream_display_environment_is_detected_and_applied_only_to_child_commands
         detected.xdg_runtime_dir,
         std::env::var_os("XDG_RUNTIME_DIR")
     );
+    assert_eq!(
+        detected.current_desktop,
+        std::env::var_os("XDG_CURRENT_DESKTOP")
+    );
     assert!(detected.activation_token.is_none());
 
     let environment = GraphicalEnvironment {
         wayland_display: None,
         x11_display: Some(":consumer-会话".into()),
         xdg_runtime_dir: Some("/tmp/open-gpui-consumer-session".into()),
+        current_desktop: Some("consumer:GNOME".into()),
         activation_token: Some("attach-only-token".into()),
     };
+    assert_eq!(
+        environment.desktop_environment().as_deref(),
+        Some("consumer:GNOME")
+    );
     let mut command = Command::new("open-gpui-unstarted-consumer-control");
     command
         .env("WAYLAND_DISPLAY", "old-wayland")
         .env("DISPLAY", ":old")
         .env("XDG_RUNTIME_DIR", "/old-runtime")
+        .env("XDG_CURRENT_DESKTOP", "child:KDE")
         .env("XDG_ACTIVATION_TOKEN", "child-owned-token")
         .env("OPEN_GPUI_UNRELATED", "preserved");
 
@@ -85,6 +96,10 @@ fn downstream_display_environment_is_detected_and_applied_only_to_child_commands
                     Some("child-owned-token".into()),
                 ),
                 (
+                    OsString::from("XDG_CURRENT_DESKTOP"),
+                    Some("child:KDE".into()),
+                ),
+                (
                     OsString::from("OPEN_GPUI_UNRELATED"),
                     Some("preserved".into())
                 ),
@@ -104,12 +119,17 @@ fn downstream_display_environment_is_detected_and_applied_only_to_child_commands
         cleared.get(&OsString::from("XDG_ACTIVATION_TOKEN")),
         Some(&Some(OsString::from("child-owned-token")))
     );
+    assert_eq!(
+        cleared.get(&OsString::from("XDG_CURRENT_DESKTOP")),
+        Some(&Some(OsString::from("child:KDE")))
+    );
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 #[test]
 fn downstream_graphical_environment_preserves_explicit_child_environment() {
     let environment = GraphicalEnvironment::detect();
+    assert_eq!(environment.desktop_environment(), None);
     #[cfg(target_os = "windows")]
     let environment = {
         assert!(
@@ -124,6 +144,7 @@ fn downstream_graphical_environment_preserves_explicit_child_environment() {
     command
         .env("DISPLAY", "child-owned-display")
         .env("XDG_ACTIVATION_TOKEN", "child-owned-token")
+        .env("XDG_CURRENT_DESKTOP", "child:KDE")
         .env_remove("WAYLAND_DISPLAY");
     let expected = command
         .get_envs()

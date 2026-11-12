@@ -111,14 +111,6 @@ impl Element for SubtreeTransformElement {
     }
 }
 
-impl IntoElement for SubtreeTransformElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 /// Adds a checked, layout-neutral transform to any element subtree.
 pub trait SubtreeTransformExt: IntoElement + Sized + 'static {
     /// Applies `transform` after layout to this element and all of its descendants.

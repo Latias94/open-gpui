@@ -596,6 +596,17 @@ impl TestAppContext {
         self.run_until_parked();
     }
 
+    /// Simulates a display scale change through the platform resize notification.
+    pub fn simulate_window_scale_factor_change(
+        &self,
+        window_handle: AnyWindowHandle,
+        scale_factor: f32,
+    ) {
+        self.test_window(window_handle)
+            .simulate_scale_factor_change(scale_factor);
+        self.run_until_parked();
+    }
+
     /// Simulates a change in whether the platform presents this window's frames.
     pub fn simulate_window_visibility_change(
         &self,
@@ -1893,6 +1904,11 @@ impl VisualTestContext {
         self.simulate_window_resize(self.window, size)
     }
 
+    /// Simulates a display scale change while preserving logical window bounds.
+    pub fn simulate_scale_factor_change(&self, scale_factor: f32) {
+        self.simulate_window_scale_factor_change(self.window, scale_factor)
+    }
+
     /// Simulates a change in whether the platform presents this window's frames.
     pub fn simulate_visibility_change(&self, visibility: crate::WindowVisibility) {
         self.simulate_window_visibility_change(self.window, visibility);
@@ -2229,6 +2245,12 @@ mod clip_tests;
 
 #[cfg(test)]
 mod display_tests;
+
+#[cfg(test)]
+mod menu_tests;
+
+#[cfg(test)]
+mod scale_factor_tests;
 
 #[cfg(test)]
 mod tests {

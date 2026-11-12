@@ -3691,6 +3691,14 @@ fn command_palette_controller_preflights_keymap_dispatch_with_query(
         })
         .unwrap();
     let inspector = CommandShortcutInspectorState::from_preflight(&matched);
+    let expected_shortcut = cx.read(|cx| {
+        open_gpui::KeyBinding::new("ctrl-k ctrl-o", OpenPaletteCommand, None)
+            .keystrokes()
+            .iter()
+            .map(|keystroke| keystroke.display(cx.platform_info().os).to_string())
+            .collect::<Vec<_>>()
+            .join(" ")
+    });
     assert_eq!(matched.query(), "open workspace");
     assert_eq!(
         matched.primary_dispatchable_command_id(),
@@ -3700,7 +3708,7 @@ fn command_palette_controller_preflights_keymap_dispatch_with_query(
         matched
             .primary_command()
             .map(|command| (command.command_id(), command.shortcut().to_owned())),
-        Some(("workspace.open", display_shortcut("ctrl-k ctrl-o")))
+        Some(("workspace.open", expected_shortcut))
     );
     assert_eq!(inspector.query(), "open workspace");
     assert_eq!(inspector.input_label(), "ctrl-k ctrl-o");

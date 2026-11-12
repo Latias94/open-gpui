@@ -81,14 +81,6 @@ impl Element for SubtreeClipElement {
     }
 }
 
-impl IntoElement for SubtreeClipElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 /// Adds checked child-local clipping to any complete element subtree.
 pub trait SubtreeClipExt: IntoElement + Sized + 'static {
     /// Applies `clip` after layout to this element and all descendants.

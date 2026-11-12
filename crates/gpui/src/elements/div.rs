@@ -19,14 +19,14 @@ use crate::{
     AcceptedFrameFence, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, BackGestureEvent,
     Bounds, ClickEvent, DispatchPhase, Display, Element, ElementId, Entity, EntityId,
     ExternalDragPayload, ExternalDragPayloadSource, FileDropEvent, FocusHandle, Global,
-    GlobalElementId, Hitbox, HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero,
-    KeyContext, KeyDownEvent, KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId,
-    LongPressEvent, ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent,
-    MouseExitEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, OngoingScroll, Overflow,
-    ParentElement, PinchEvent, Pixels, Point, PointerCancelEvent, PointerCaptureHandle,
-    PrepaintPublicationId, PreparedSubtreeClip, Render, ScrollEvent, ScrollSource, SharedString,
-    Size, Style, StyleRefinement, Styled, TargetedEvent, Task, TooltipId, TouchPhase, Window,
-    WindowControlArea, point, px, size,
+    GlobalElementId, Hitbox, HitboxBehavior, HitboxId, InspectorElementId, IsZero, KeyContext,
+    KeyDownEvent, KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, LongPressEvent,
+    ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseExitEvent,
+    MouseMoveEvent, MousePressureEvent, MouseUpEvent, OngoingScroll, Overflow, ParentElement,
+    PinchEvent, Pixels, Point, PointerCancelEvent, PointerCaptureHandle, PrepaintPublicationId,
+    PreparedSubtreeClip, Render, ScrollEvent, ScrollSource, SharedString, Size, Style,
+    StyleRefinement, Styled, TargetedEvent, Task, TooltipId, TouchPhase, Window, WindowControlArea,
+    point, px, size,
 };
 use open_gpui_collections::HashMap;
 use open_gpui_core_util::ResultExt;
@@ -47,6 +47,9 @@ use std::{
 
 use super::ImageCacheProvider;
 
+#[cfg(test)]
+use crate::IntoElement;
+
 #[cfg(feature = "stacker")]
 type StackSafe<T> = stacksafe::StackSafe<T>;
 #[cfg(not(feature = "stacker"))]
@@ -54,7 +57,11 @@ type StackSafe<T> = T;
 
 mod accessibility;
 #[cfg(test)]
+mod debug_selector_tests;
+#[cfg(test)]
 mod drag_exit_tests;
+#[cfg(test)]
+mod drag_over_tests;
 #[cfg(test)]
 mod gesture_tests;
 #[cfg(test)]
@@ -1123,19 +1130,25 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     /// Set a key that can be used to look up this element's bounds
-    /// in the [`crate::VisualTestContext::debug_bounds`] map
-    /// This is a noop in release builds
+    /// in the [`crate::VisualTestContext::debug_bounds`] map.
+    ///
+    /// Selectors are only recorded in GPUI's own tests and in debug builds with the
+    /// `test-support` feature. Elsewhere this is a no-op, so `test-support` can stay
+    /// enabled in release builds without the per-frame cost.
+    #[cfg(any(test, all(debug_assertions, feature = "test-support")))]
     fn debug_selector(mut self, f: impl FnOnce() -> String) -> Self {
         self.interactivity().debug_selector = Some(f());
         self
     }
 
-    #[cfg(not(any(test, feature = "test-support")))]
     /// Set a key that can be used to look up this element's bounds
-    /// in the [`crate::VisualTestContext::debug_bounds`] map
-    /// This is a noop in release builds
+    /// in the [`crate::VisualTestContext::debug_bounds`] map.
+    ///
+    /// Selectors are only recorded in GPUI's own tests and in debug builds with the
+    /// `test-support` feature. Elsewhere this is a no-op, so `test-support` can stay
+    /// enabled in release builds without the per-frame cost.
+    #[cfg(not(any(test, all(debug_assertions, feature = "test-support"))))]
     #[inline]
     fn debug_selector(self, _: impl FnOnce() -> String) -> Self {
         self
@@ -2965,14 +2978,6 @@ impl Element for Div {
     }
 }
 
-impl IntoElement for Div {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 /// The interactivity struct. Powers all of the general-purpose
 /// interactivity in the `Div` element.
 #[derive(Default)]
@@ -3049,7 +3054,7 @@ pub struct Interactivity {
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, all(debug_assertions, feature = "test-support")))]
     pub(crate) debug_selector: Option<String>,
 }
 
@@ -3536,6 +3541,7 @@ impl Interactivity {
             || !self.back_gesture_listeners.is_empty()
             || self.drag_listener.is_some()
             || !self.drop_listeners.is_empty()
+            || !self.drag_over_styles.is_empty()
             || self.tooltip_builder.is_some()
             || window.is_inspector_picking(cx)
     }
@@ -3662,7 +3668,7 @@ impl Interactivity {
 
                 let style = self.compute_style_internal(hitbox, element_state.as_mut(), window, cx);
 
-                #[cfg(any(feature = "test-support", test))]
+                #[cfg(any(test, all(debug_assertions, feature = "test-support")))]
                 if let Some(debug_selector) = &self.debug_selector {
                     window.record_debug_bounds(debug_selector.clone(), bounds);
                     if let Some(focus_handle) = &self.tracked_focus_handle {
@@ -5649,17 +5655,6 @@ where
     }
 }
 
-impl<E> IntoElement for Stateful<E>
-where
-    E: Element,
-{
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl<E> ParentElement for Stateful<E>
 where
     E: ParentElement,
@@ -6105,7 +6100,7 @@ mod tests {
     use super::*;
     use crate::{
         AppContext as _, Context, DevicePixels, DisplayId, Empty, GestureTuning, InputEvent,
-        Modifiers, MouseButton, MouseMoveEvent, PlatformNativeDragHysteresis,
+        IntoElement, Modifiers, MouseButton, MouseMoveEvent, PlatformNativeDragHysteresis,
         PlatformNativeDragStartSnapshot, PlatformPhysicalDisplayObservation,
         PlatformWindowPhysicalGeometry, ScrollDelta, SubtreeTransform, SubtreeTransformExt as _,
         TestAppContext, TouchEvent, TouchId, VisualContext as _, bounds, util::FluentBuilder as _,
@@ -6769,14 +6764,6 @@ mod tests {
     struct TooltipCaptureElement {
         child: AnyElement,
         captured_active_tooltip: CapturedActiveTooltip,
-    }
-
-    impl IntoElement for TooltipCaptureElement {
-        type Element = Self;
-
-        fn into_element(self) -> Self::Element {
-            self
-        }
     }
 
     impl Element for TooltipCaptureElement {

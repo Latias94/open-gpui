@@ -1092,17 +1092,42 @@ impl TestWindow {
 
     pub fn simulate_resize(&mut self, size: Size<Pixels>) {
         let scale_factor = self.scale_factor();
-        let mut lock = self.0.lock();
-        // Always update bounds, even if no callback is registered
-        lock.bounds.size = size;
-        if !lock.is_minimized && !lock.is_maximized && !lock.is_fullscreen {
-            lock.window_bounds = WindowBounds::Windowed(lock.bounds);
-        }
-        let Some(callback) = lock.resize_callback.clone() else {
+        self.simulate_geometry_change(size, scale_factor);
+    }
+
+    /// Simulates a display scale change through resize ingress, preserving logical bounds.
+    pub fn simulate_scale_factor_change(&mut self, scale_factor: f32) {
+        self.simulate_geometry_change(self.content_size(), scale_factor);
+    }
+
+    fn simulate_geometry_change(&mut self, size: Size<Pixels>, scale_factor: f32) {
+        assert!(
+            scale_factor.is_finite() && scale_factor > 0.0,
+            "test window scale factor must be finite and positive"
+        );
+        let mut state = self.0.lock();
+        if state.closed {
             return;
-        };
-        drop(lock);
-        callback(size, scale_factor);
+        }
+        let physical_bounds = state.physical_client_bounds.map(|bounds| {
+            let bounds = Bounds::new(bounds.origin, size.to_device_pixels(scale_factor));
+            PlatformWindowPhysicalGeometry::try_new(bounds, scale_factor)
+                .expect("test physical geometry must be representable");
+            bounds
+        });
+        state.bounds.size = size;
+        state.scale_factor = scale_factor;
+        state.physical_client_bounds = physical_bounds;
+        state.physical_display_observation =
+            physical_bounds.and_then(|_| test_display_observation(&state));
+        if !state.is_minimized && !state.is_maximized && !state.is_fullscreen {
+            state.window_bounds = WindowBounds::Windowed(state.bounds);
+        }
+        let callback = state.resize_callback.clone();
+        drop(state);
+        if let Some(callback) = callback {
+            callback(size, scale_factor);
+        }
     }
 
     pub fn simulate_move_to_display(&self, display_id: DisplayId) {

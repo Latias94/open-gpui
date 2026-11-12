@@ -184,14 +184,6 @@ struct RawPresentationProbe {
     ime: PresentationImeState,
 }
 
-impl IntoElement for RawPresentationProbe {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Styled for RawPresentationProbe {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.style
@@ -440,14 +432,6 @@ struct DelayedMeasurePresentationProbe {
     hitbox_active: Rc<Cell<Option<bool>>>,
 }
 
-impl IntoElement for DelayedMeasurePresentationProbe {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for DelayedMeasurePresentationProbe {
     type RequestLayoutState = ();
     type PrepaintState = ();
@@ -682,14 +666,6 @@ struct RolledBackFocusCompletion {
 struct RolledBackFocusElement {
     child: Option<AnyElement>,
     completion: Option<RolledBackFocusCompletion>,
-}
-
-impl IntoElement for RolledBackFocusElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
 }
 
 impl Element for RolledBackFocusElement {

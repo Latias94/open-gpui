@@ -76,14 +76,6 @@ impl Element for RevealTargetElement {
     }
 }
 
-impl IntoElement for RevealTargetElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 /// Binds any element's post-layout root geometry to a stable reveal target.
 pub trait RevealTargetExt: IntoElement + Sized + 'static {
     /// Tracks this element as the handle's only target in each rendered frame.

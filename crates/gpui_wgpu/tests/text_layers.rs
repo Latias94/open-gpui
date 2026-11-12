@@ -251,14 +251,6 @@ struct LayeredText {
     paints: Rc<RefCell<Vec<PaintedText>>>,
 }
 
-impl IntoElement for LayeredText {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for LayeredText {
     type RequestLayoutState = ();
     type PrepaintState = Option<PreparedSubtreeClip>;

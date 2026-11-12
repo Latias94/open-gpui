@@ -1,5 +1,3 @@
-#[path = "support/a11y.rs"]
-mod a11y_support;
 mod support;
 
 use open_gpui::{Context, IntoElement, ParentElement, Render, Styled, Window, accesskit, div};
@@ -12,7 +10,7 @@ use open_gpui_ui_core::{Orientation, Role, Sizable, Size, Toggled, semantic, ui_
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use support::tokens::custom_tokens;
+use support::{a11y as a11y_support, tokens::custom_tokens};
 
 #[test]
 fn default_button_state_uses_button_role_and_medium_metrics() {

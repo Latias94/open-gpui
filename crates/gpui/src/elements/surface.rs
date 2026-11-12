@@ -1,8 +1,8 @@
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use crate::PlatformPixelBuffer;
 use crate::{
-    App, Bounds, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, LayoutId,
-    ObjectFit, Pixels, Style, StyleRefinement, Styled, Window,
+    App, Bounds, Element, ElementId, GlobalElementId, InspectorElementId, LayoutId, ObjectFit,
+    Pixels, Style, StyleRefinement, Styled, Window,
 };
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use objc2_core_video::{CVPixelBufferGetHeight, CVPixelBufferGetWidth};
@@ -116,14 +116,6 @@ impl Element for Surface {
             #[allow(unreachable_patterns)]
             _ => {}
         }
-    }
-}
-
-impl IntoElement for Surface {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 

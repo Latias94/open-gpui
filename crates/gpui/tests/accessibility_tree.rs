@@ -212,14 +212,6 @@ struct SyntheticEditor {
     source: &'static Location<'static>,
 }
 
-impl IntoElement for SyntheticEditor {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for SyntheticEditor {
     type RequestLayoutState = AnyElement;
     type PrepaintState = PreparedText;

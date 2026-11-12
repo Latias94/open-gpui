@@ -81,14 +81,6 @@ impl Element for PortalAnchorElement {
     }
 }
 
-impl IntoElement for PortalAnchorElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 /// Binds any element's post-layout bounds to a typed portal-anchor handle.
 pub trait PortalAnchorExt: IntoElement + Sized + 'static {
     /// Tracks this element as the handle's only target in each rendered frame.
@@ -198,14 +190,6 @@ impl Element for PortalAnchorFollower {
     }
 }
 
-impl IntoElement for PortalAnchorFollower {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 struct PortalAnchorFollowerTask {
     handle: PortalAnchorHandle,
     build: Option<PortalAnchorFollowerBuilder>,
@@ -307,13 +291,5 @@ impl Element for PortalAnchorFollowerTask {
         if let Some(validity) = prepared.validity.as_ref() {
             window.record_subtree_geometry_scope_diagnostic(validity);
         }
-    }
-}
-
-impl IntoElement for PortalAnchorFollowerTask {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }

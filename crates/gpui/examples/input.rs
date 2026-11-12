@@ -140,7 +140,9 @@ impl TextInput {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.is_selecting && let Ok(position) = event.target_layout_position() {
+        if self.is_selecting
+            && let Ok(position) = event.target_layout_position()
+        {
             self.select_to(self.index_for_mouse_position(position), cx);
         }
     }
@@ -438,14 +440,6 @@ struct PrepaintState {
     line: Option<ShapedLine>,
     cursor: Option<PaintQuad>,
     selection: Option<PaintQuad>,
-}
-
-impl IntoElement for TextElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
 }
 
 impl Element for TextElement {

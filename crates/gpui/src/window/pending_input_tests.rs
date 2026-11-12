@@ -631,14 +631,6 @@ impl Element for PendingTextInputTestView {
     }
 }
 
-impl IntoElement for PendingTextInputTestView {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Render for PendingTextInputTestView {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         self.clone()

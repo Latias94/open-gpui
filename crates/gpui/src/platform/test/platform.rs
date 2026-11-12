@@ -4,7 +4,7 @@ use crate::ClipboardReadError;
 use crate::{
     ActivityGuard, AnyWindowHandle, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle,
     DevicePixels, DisplayId, DummyKeyboardMapper, ForegroundExecutor, Keymap, MouseButton,
-    NativeAppNotificationHandler, NoopTextSystem, PathPromptOptions, Pixels, Platform,
+    NativeAppNotificationHandler, NoopTextSystem, OwnedMenu, PathPromptOptions, Pixels, Platform,
     PlatformDisplay, PlatformDisplaySnapshot, PlatformFocusedWindow, PlatformHeadlessRenderer,
     PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
     PlatformNativeDragHysteresis, PlatformTextSystem, PlatformWindowActivationSupport,
@@ -95,6 +95,8 @@ pub(crate) struct TestPlatform {
     system_notifications: RefCell<TestSystemNotifications>,
     system_wake_callback: RefCell<Option<NativeAppNotificationHandler>>,
     system_sleep_callback: RefCell<Option<NativeAppNotificationHandler>>,
+    app_lifecycle_callback: RefCell<Option<Box<dyn FnMut(crate::AppLifecyclePhase)>>>,
+    memory_warning_callback: RefCell<Option<Box<dyn FnMut()>>>,
     thermal_state: Cell<ThermalState>,
     thermal_state_callback: RefCell<Option<NativeAppNotificationHandler>>,
     power_mode: Cell<PowerMode>,
@@ -103,6 +105,7 @@ pub(crate) struct TestPlatform {
     will_open_app_menu_callback: RefCell<Option<Box<dyn FnMut()>>>,
     app_menu_action_callback: RefCell<Option<Box<dyn FnMut(&dyn crate::Action)>>>,
     validate_app_menu_command_callback: RefCell<Option<Box<dyn FnMut(&dyn crate::Action) -> bool>>>,
+    menus: RefCell<Vec<OwnedMenu>>,
     headless_renderer_factory:
         Option<Box<dyn Fn() -> Result<Option<Box<dyn PlatformHeadlessRenderer>>>>>,
     weak: Weak<Self>,
@@ -305,6 +308,8 @@ impl TestPlatform {
             system_notifications: Default::default(),
             system_wake_callback: Default::default(),
             system_sleep_callback: Default::default(),
+            app_lifecycle_callback: Default::default(),
+            memory_warning_callback: Default::default(),
             thermal_state: Cell::new(ThermalState::Nominal),
             thermal_state_callback: Default::default(),
             power_mode: Cell::new(PowerMode::Unknown),
@@ -313,6 +318,7 @@ impl TestPlatform {
             will_open_app_menu_callback: Default::default(),
             app_menu_action_callback: Default::default(),
             validate_app_menu_command_callback: Default::default(),
+            menus: Default::default(),
             current_clipboard_item: Mutex::new(None),
             #[cfg(any(test, feature = "test-support"))]
             next_clipboard_read: RefCell::new(None),
@@ -781,6 +787,32 @@ impl TestPlatform {
         callback();
     }
 
+    #[cfg(test)]
+    pub(crate) fn simulate_app_lifecycle(&self, phase: crate::AppLifecyclePhase) {
+        let mut callback = self
+            .app_lifecycle_callback
+            .take()
+            .expect("application lifecycle callback must be installed during App initialization");
+        callback(phase);
+        let mut slot = self.app_lifecycle_callback.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(callback);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn simulate_memory_warning(&self) {
+        let mut callback = self
+            .memory_warning_callback
+            .take()
+            .expect("memory warning callback must be installed during App initialization");
+        callback();
+        let mut slot = self.memory_warning_callback.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(callback);
+        }
+    }
+
     pub(crate) fn simulate_open_urls(&self, urls: Vec<String>) {
         let mut callback = self
             .open_urls_callback
@@ -984,6 +1016,14 @@ impl Platform for TestPlatform {
             self.system_sleep_callback.replace(Some(callback)).is_none(),
             "system sleep callback must be installed exactly once"
         );
+    }
+
+    fn on_app_lifecycle(&self, callback: Box<dyn FnMut(crate::AppLifecyclePhase)>) {
+        *self.app_lifecycle_callback.borrow_mut() = Some(callback);
+    }
+
+    fn on_memory_warning(&self, callback: Box<dyn FnMut()>) {
+        *self.memory_warning_callback.borrow_mut() = Some(callback);
     }
 
     fn thermal_state(&self) -> ThermalState {
@@ -1368,7 +1408,13 @@ impl Platform for TestPlatform {
         );
     }
 
-    fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {}
+    fn set_menus(&self, menus: Vec<crate::Menu>, _keymap: &Keymap) {
+        *self.menus.borrow_mut() = menus.into_iter().map(|menu| menu.owned()).collect();
+    }
+
+    fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
+        Some(self.menus.borrow().clone())
+    }
     fn set_dock_menu(&self, _menu: Vec<crate::MenuItem>, _keymap: &Keymap) {}
 
     fn add_recent_document(&self, _paths: &Path) {}

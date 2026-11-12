@@ -1,6 +1,8 @@
 mod app_menu;
 mod atlas;
 mod frame_delivery;
+#[cfg(test)]
+mod graphical_environment_tests;
 mod hosted_surface;
 mod keyboard;
 mod keystroke;
@@ -40,7 +42,10 @@ pub mod scap_screen_capture;
 pub(crate) type PlatformScreenCaptureFrame = scap::frame::Frame;
 #[cfg(not(feature = "screen-capture"))]
 pub(crate) type PlatformScreenCaptureFrame = ();
-#[cfg(all(target_os = "macos", feature = "screen-capture"))]
+#[cfg(all(
+    any(target_os = "macos", target_os = "ios"),
+    feature = "screen-capture"
+))]
 pub(crate) type PlatformScreenCaptureFrame = PlatformPixelBuffer;
 /// A retained Apple CoreVideo pixel buffer used by screen capture and surface painting.
 #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -173,6 +178,10 @@ pub struct GraphicalEnvironment {
     pub x11_display: Option<OsString>,
     /// The directory containing Wayland sockets.
     pub xdg_runtime_dir: Option<OsString>,
+    /// `XDG_CURRENT_DESKTOP`: the session's desktop environment, such as `ubuntu:GNOME`.
+    ///
+    /// Only reported by [`Self::desktop_environment`]; [`Self::apply_to`] leaves it alone.
+    pub current_desktop: Option<OsString>,
     /// An optional one-shot Wayland activation token for a later windowed connection.
     /// Detection leaves this unset; a connected environment never retains a consumed token.
     pub activation_token: Option<String>,
@@ -186,12 +195,13 @@ impl GraphicalEnvironment {
             wayland_display: std::env::var_os("WAYLAND_DISPLAY"),
             x11_display: std::env::var_os("DISPLAY"),
             xdg_runtime_dir: std::env::var_os("XDG_RUNTIME_DIR"),
+            current_desktop: std::env::var_os("XDG_CURRENT_DESKTOP"),
             activation_token: None,
         }
     }
 
     /// Applies this session's display variables to a child command, removing absent values.
-    /// Leaves the child's activation token unchanged.
+    /// Leaves the child's desktop environment and activation token unchanged.
     pub fn apply_to(&self, command: &mut std::process::Command) {
         for (name, value) in [
             ("WAYLAND_DISPLAY", &self.wayland_display),
@@ -205,6 +215,18 @@ impl GraphicalEnvironment {
         }
     }
 
+    /// Returns the session's desktop environment, if `XDG_CURRENT_DESKTOP` names one.
+    ///
+    /// The value is a colon-separated list ordered from most to least specific,
+    /// such as `ubuntu:GNOME`.
+    pub fn desktop_environment(&self) -> Option<String> {
+        self.current_desktop
+            .as_ref()
+            .and_then(|desktop| desktop.to_str())
+            .filter(|desktop| !desktop.is_empty())
+            .map(str::to_owned)
+    }
+
     /// Selects Wayland, X11 or headless without attempting a connection.
     pub fn guess_compositor(&self) -> &'static str {
         let is_set =
@@ -214,7 +236,7 @@ impl GraphicalEnvironment {
         } else if cfg!(feature = "x11") && is_set(&self.x11_display) {
             "X11"
         } else {
-            "Headless"
+            "headless"
         }
     }
 }
@@ -246,6 +268,11 @@ impl GraphicalEnvironment {
 
     /// Leaves the command unchanged; children inherit their parent's Windows session.
     pub fn apply_to(&self, _command: &mut std::process::Command) {}
+
+    /// Returns `None`: this platform has no desktop environments to tell apart.
+    pub fn desktop_environment(&self) -> Option<String> {
+        None
+    }
 }
 
 /// The graphical session to connect to; currently carries no data on this platform.
@@ -262,6 +289,11 @@ impl GraphicalEnvironment {
 
     /// Leaves the command unchanged on this platform.
     pub fn apply_to(&self, _command: &mut std::process::Command) {}
+
+    /// Returns `None`: this platform has no desktop environments to tell apart.
+    pub fn desktop_environment(&self) -> Option<String> {
+        None
+    }
 }
 
 /// A mode requested through [`App::request_windowing`].
@@ -3699,7 +3731,7 @@ impl PlatformFocusedWindow {
 #[inline]
 pub fn guess_compositor() -> &'static str {
     if std::env::var_os("ZED_HEADLESS").is_some() {
-        return "Headless";
+        return "headless";
     }
 
     GraphicalEnvironment::detect().guess_compositor()
@@ -3908,6 +3940,12 @@ pub trait Platform: 'static {
     fn on_system_sleep(&self, callback: NativeAppNotificationHandler);
     /// Registers the native callback invoked when the system resumes from sleep.
     fn on_system_wake(&self, callback: NativeAppNotificationHandler);
+
+    /// Registers mobile lifecycle notifications. Desktop platforms do not emit these events.
+    fn on_app_lifecycle(&self, _callback: Box<dyn FnMut(AppLifecyclePhase)>) {}
+
+    /// Registers mobile memory-pressure notifications so applications can release caches.
+    fn on_memory_warning(&self, _callback: Box<dyn FnMut()>) {}
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
@@ -5864,6 +5902,24 @@ mod platform_window_interaction_quiescence_tests {
     }
 }
 
+/// The application's lifecycle phase, as owned and reported by a mobile OS.
+///
+/// Save important changes incrementally: disconnection and quit are not guaranteed before
+/// a backgrounded process is terminated. These phases describe the connected native scene.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum AppLifecyclePhase {
+    /// Foreground and receiving input.
+    Active,
+    /// Foreground and visible, but not receiving input.
+    Inactive,
+    /// Not visible; the system may destroy the GPU surface or terminate the process.
+    Background,
+    /// Becoming visible again, before input is restored.
+    Foreground,
+    /// The native scene disconnected. Its windows may reconnect later.
+    Disconnected,
+}
+
 /// Regions of a window that are obscured or reserved by the system.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct WindowInsets {
@@ -7516,7 +7572,8 @@ impl PlatformInputHandler {
         self.validity.clone()
     }
 
-    pub(crate) fn focus_id(&self) -> FocusId {
+    /// Returns the focus identity captured by this input handler's original owner.
+    pub fn focus_id(&self) -> FocusId {
         self.focus_id
     }
 
@@ -8595,7 +8652,7 @@ impl PromptButton {
 impl From<&str> for PromptButton {
     fn from(value: &str) -> Self {
         match value.to_lowercase().as_str() {
-            "ok" => PromptButton::Ok("Ok".into()),
+            "ok" => PromptButton::Ok("OK".into()),
             "cancel" => PromptButton::Cancel("Cancel".into()),
             _ => PromptButton::Other(SharedString::from(value.to_owned())),
         }
@@ -8909,6 +8966,21 @@ impl ImageFormat {
         }
     }
 
+    /// Returns the file extension for this image format (without leading dot).
+    pub const fn extension(self) -> &'static str {
+        match self {
+            ImageFormat::Png => "png",
+            ImageFormat::Jpeg => "jpg",
+            ImageFormat::Webp => "webp",
+            ImageFormat::Gif => "gif",
+            ImageFormat::Svg => "svg",
+            ImageFormat::Bmp => "bmp",
+            ImageFormat::Tiff => "tiff",
+            ImageFormat::Ico => "ico",
+            ImageFormat::Pnm => "pnm",
+        }
+    }
+
     /// Returns the ImageFormat for the given mime type, including known aliases.
     pub fn from_mime_type(mime_type: &str) -> Option<Self> {
         use strum::IntoEnumIterator;
@@ -9017,6 +9089,12 @@ impl Hash for Image {
 }
 
 impl Image {
+    /// Returns whether this encoded image is loading or loaded without fetching it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn is_asset_cached(self: &Arc<Self>, cx: &App) -> bool {
+        crate::ImageSource::Image(self.clone()).is_asset_cached(cx)
+    }
+
     /// An empty image containing no data
     pub fn empty() -> Self {
         Self::from_bytes(ImageFormat::Png, Vec::new())

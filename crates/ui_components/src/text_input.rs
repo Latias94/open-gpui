@@ -1845,14 +1845,6 @@ struct EditableTextPrepaint {
     selection: Option<PaintQuad>,
 }
 
-impl IntoElement for EditableTextElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for EditableTextElement {
     type RequestLayoutState = ();
     type PrepaintState = EditableTextPrepaint;

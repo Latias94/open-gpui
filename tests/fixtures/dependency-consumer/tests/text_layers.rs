@@ -5,14 +5,6 @@ use open_gpui::{
 
 struct SearchText(StyledText);
 
-impl IntoElement for SearchText {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for SearchText {
     type RequestLayoutState = ();
     type PrepaintState = ();

@@ -27,11 +27,11 @@ use super::{
     },
 };
 use crate::{
-    Action, App, ForegroundExecutor, ModifiersChangedEvent, PlatformFrameSubmission, PlatformInput,
-    PlatformWindowActiveStatusObservation, PlatformWindowCommand, PlatformWindowCommandDispatcher,
-    PlatformWindowMutationObservation, PlatformWindowPresentOutcome, PointerCancelEvent,
-    PointerCancelReason, RequestFrameOptions, SystemNotificationResponse,
-    SystemWindowTabController, Task, Window, WindowId,
+    Action, App, AppLifecyclePhase, ForegroundExecutor, ModifiersChangedEvent,
+    PlatformFrameSubmission, PlatformInput, PlatformWindowActiveStatusObservation,
+    PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowMutationObservation,
+    PlatformWindowPresentOutcome, PointerCancelEvent, PointerCancelReason, RequestFrameOptions,
+    SystemNotificationResponse, SystemWindowTabController, Task, Window, WindowId,
 };
 
 pub(super) const MAX_NATIVE_WORK_PER_DRAIN: u8 = 64;
@@ -2002,6 +2002,8 @@ pub(super) enum NativeAppEvent {
     SystemNotificationResponse(SystemNotificationResponse),
     SystemSleep,
     SystemWake,
+    AppLifecycle(AppLifecyclePhase),
+    MemoryWarning,
     WillOpenAppMenu,
     AppMenuAction(Box<dyn Action>),
     KeyboardLayoutChanged,
@@ -2040,6 +2042,18 @@ impl NativeAppEvent {
             }
             Self::SystemWake => {
                 app.system_wake_observers
+                    .clone()
+                    .retain(&(), |callback| callback(app));
+                NativeEventDrainControl::Continue
+            }
+            Self::AppLifecycle(phase) => {
+                app.app_lifecycle_observers
+                    .clone()
+                    .retain(&(), |callback| callback(phase, app));
+                NativeEventDrainControl::Continue
+            }
+            Self::MemoryWarning => {
+                app.memory_warning_observers
                     .clone()
                     .retain(&(), |callback| callback(app));
                 NativeEventDrainControl::Continue
@@ -2095,6 +2109,8 @@ impl NativeAppEvent {
             | Self::SystemNotificationResponse(_)
             | Self::SystemSleep
             | Self::SystemWake
+            | Self::AppLifecycle(_)
+            | Self::MemoryWarning
             | Self::WillOpenAppMenu
             | Self::AppMenuAction(_)
             | Self::Quit => None,
@@ -2108,6 +2124,8 @@ impl NativeAppEvent {
             Self::SystemNotificationResponse(_) => NativeCallbackKind::SystemNotificationResponse,
             Self::SystemSleep => NativeCallbackKind::SystemSleep,
             Self::SystemWake => NativeCallbackKind::SystemWake,
+            Self::AppLifecycle(_) => NativeCallbackKind::AppLifecycle,
+            Self::MemoryWarning => NativeCallbackKind::MemoryWarning,
             Self::WillOpenAppMenu => NativeCallbackKind::WillOpenAppMenu,
             Self::AppMenuAction(_) => NativeCallbackKind::AppMenuAction,
             Self::KeyboardLayoutChanged => NativeCallbackKind::KeyboardLayoutChanged,

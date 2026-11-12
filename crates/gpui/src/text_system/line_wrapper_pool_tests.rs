@@ -235,7 +235,7 @@ struct WrappedTextRoot;
 impl Render for WrappedTextRoot {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         use crate::ParentElement as _;
-        div().w(px(64.)).child("hello world 你好 ééé")
+        div().w(px(64.)).truncate().child("hello world 你好 ééé")
     }
 }
 

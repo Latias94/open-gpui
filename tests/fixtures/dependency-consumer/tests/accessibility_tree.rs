@@ -14,14 +14,6 @@ use open_gpui::{
 
 struct ConsumerText(String);
 
-impl IntoElement for ConsumerText {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for ConsumerText {
     type RequestLayoutState = ();
     type PrepaintState = String;

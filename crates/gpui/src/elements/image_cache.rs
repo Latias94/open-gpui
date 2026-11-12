@@ -1,9 +1,11 @@
 use crate::{
     AnyElement, AnyEntity, App, AppContext, Asset, AssetLogger, Bounds, Element, ElementId, Entity,
-    GlobalElementId, ImageAssetLoader, ImageCacheError, InspectorElementId, IntoElement, LayoutId,
+    GlobalElementId, ImageAssetLoader, ImageCacheError, InspectorElementId, LayoutId,
     ParentElement, Pixels, RenderImage, Resource, Style, StyleRefinement, Styled, Window, hash,
 };
 
+#[cfg(test)]
+use crate::IntoElement;
 use crate::asset_cache::CachedLoad;
 use open_gpui_refineable::Refineable;
 use smallvec::SmallVec;
@@ -83,14 +85,6 @@ impl ParentElement for ImageCacheElement {
 impl Styled for ImageCacheElement {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.style
-    }
-}
-
-impl IntoElement for ImageCacheElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 

@@ -3854,14 +3854,6 @@ impl Element for PresentedAnyView {
     }
 }
 
-impl IntoElement for PresentedAnyView {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 /// Records that the source proxy replay completed successfully in the frame being painted.
 ///
 /// Call this only after the source's retained visual or equivalent proxy content has replayed
@@ -4064,14 +4056,6 @@ impl Element for SourceReleaseBarrier {
         cx: &mut App,
     ) {
         child.paint(window, cx);
-    }
-}
-
-impl IntoElement for SourceReleaseBarrier {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 

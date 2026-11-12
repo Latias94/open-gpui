@@ -1289,14 +1289,6 @@ struct EditableTextareaPrepaint {
     selections: Vec<PaintQuad>,
 }
 
-impl IntoElement for EditableTextareaElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for EditableTextareaElement {
     type RequestLayoutState = ();
     type PrepaintState = EditableTextareaPrepaint;

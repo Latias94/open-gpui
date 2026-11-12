@@ -145,6 +145,8 @@ mod spring_tests;
 mod touch_gestures;
 #[cfg(test)]
 mod underline_tests;
+#[cfg(test)]
+mod upstream_api_tests;
 mod visibility;
 #[cfg(test)]
 mod visibility_tests;
@@ -6150,6 +6152,12 @@ impl Window {
     pub fn bounds_changed(&mut self, cx: &mut App) {
         self.cancel_deferred_candidate(cx);
         self.refresh_platform_facts();
+        if self.user_interaction_is_admitted()
+            && !self.has_active_pointer_session(cx)
+            && cx.active_native_captured_drag_source_window() != Some(self.handle.window_id())
+        {
+            self.mouse_position = self.platform_window.mouse_position();
+        }
         self.refresh();
         self.notify_bounds_observers(cx);
     }
@@ -6439,12 +6447,34 @@ impl Window {
         self.capture_frame().into_image()
     }
 
-    /// Borrows the accepted rendered frame's scene for benchmark output checks and batch counts.
+    /// Borrows the accepted rendered frame's scene for output checks and batch counts.
     ///
-    /// This observation does not establish renderer submission or native presentation.
-    #[cfg(feature = "bench-support")]
+    /// Its clip-shape arena resolves the exact envelopes returned by [`Self::painted_quads`]
+    /// and [`Self::painted_underlines`]. Clone and finish the scene to filter late-invalidated
+    /// scopes before inspecting its primitives. This observation does not establish renderer
+    /// submission or native presentation.
+    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
     pub fn rendered_scene(&self) -> &crate::Scene {
         &self.rendered_frame.scene
+    }
+
+    /// Returns valid quads from the accepted frame in scaled pixels.
+    ///
+    /// Bounds retain their primitive transform and exact clip envelope. This observation does
+    /// not establish renderer submission or native presentation.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn painted_quads(&self) -> Vec<Quad> {
+        let mut scene = self.rendered_frame.scene.clone();
+        scene.finish();
+        scene.quads
+    }
+
+    /// Returns valid underlines from the accepted frame, retaining their transforms and clips.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn painted_underlines(&self) -> Vec<Underline> {
+        let mut scene = self.rendered_frame.scene.clone();
+        scene.finish();
+        scene.underlines
     }
 
     /// Renders the current frame's scene and returns pixels plus capture metadata.
@@ -7255,6 +7285,20 @@ impl Window {
     /// be rendered as two pixels on screen.
     pub fn scale_factor(&self) -> f32 {
         self.scale_factor
+    }
+
+    /// Changes the test platform's display scale while preserving logical window bounds.
+    ///
+    /// The platform updates physical client geometry and emits its normal resize notification.
+    /// Requires a test platform window; native windows observe their platform's actual scale.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_scale_factor(&mut self, scale_factor: f32) {
+        self.platform_window
+            .as_test()
+            .expect("scale simulation requires a test platform window")
+            .simulate_scale_factor_change(scale_factor);
+        self.refresh_platform_facts();
+        self.refresh();
     }
 
     /// Returns the debug selectors and bounds from the most recently committed frame.
@@ -12417,6 +12461,21 @@ impl Window {
         Ok(())
     }
 
+    /// Returns whether every frame of an image is currently present in this window's atlas.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn has_image_atlas_entry(&self, data: &RenderImage) -> bool {
+        data.frame_count() > 0
+            && (0..data.frame_count()).all(|frame_index| {
+                self.sprite_atlas.contains(
+                    &RenderImageParams {
+                        image_id: data.id,
+                        frame_index,
+                    }
+                    .into(),
+                )
+            })
+    }
+
     /// Records a side effect to commit after the current frame finishes prepainting and painting.
     ///
     /// Cached subtrees retain the record and enqueue it again when their prepaint journal is reused.
@@ -15362,6 +15421,12 @@ impl TryInto<SharedString> for ElementId {
         } else {
             anyhow::bail!("element id is not string")
         }
+    }
+}
+
+impl From<u64> for ElementId {
+    fn from(id: u64) -> Self {
+        ElementId::Integer(id)
     }
 }
 

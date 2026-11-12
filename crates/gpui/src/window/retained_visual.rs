@@ -622,14 +622,6 @@ impl Element for SourceElement {
     }
 }
 
-impl IntoElement for SourceElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 /// Acquires an exclusive lease from the source window's last committed frame.
 #[doc(hidden)]
 pub fn lease_committed(window: &mut Window, source_id: &SourceId) -> Result<Ticket, Invalidation> {

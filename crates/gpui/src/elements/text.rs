@@ -167,14 +167,6 @@ macro_rules! text {
     }};
 }
 
-impl IntoElement for Text {
-    type Element = Self;
-    #[inline]
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for Text {
     type RequestLayoutState = TextLayout;
     type PrepaintState = ();
@@ -272,7 +264,7 @@ impl Element for &'static str {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut state = TextLayout::default();
-        let layout_id = state.layout(SharedString::from(*self), None, window, cx);
+        let layout_id = state.layout(SharedString::new_static(self), None, window, cx);
         (layout_id, state)
     }
 
@@ -299,14 +291,6 @@ impl Element for &'static str {
         cx: &mut App,
     ) {
         text_layout.paint(self, window, cx)
-    }
-}
-
-impl IntoElement for &'static str {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 
@@ -373,14 +357,6 @@ impl Element for SharedString {
         cx: &mut App,
     ) {
         text_layout.paint(self.as_ref(), window, cx)
-    }
-}
-
-impl IntoElement for SharedString {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 
@@ -602,14 +578,6 @@ impl Element for StyledText {
     }
 }
 
-impl IntoElement for StyledText {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 /// The Layout for TextElement. This can be used to map indices to pixels and vice versa.
 #[derive(Default, Clone)]
 pub struct TextLayout(Rc<RefCell<Option<TextLayoutInner>>>);
@@ -692,8 +660,10 @@ impl TextLayout {
                     return size;
                 }
 
-                let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
                 let (text, runs) = if let Some(truncate_width) = truncate_width {
+                    // Taking a wrapper locks the pool twice and moves its width cache.
+                    let mut line_wrapper =
+                        cx.text_system().line_wrapper(text_style.font(), font_size);
                     if let Some(max_lines) = text_style.line_clamp
                         && let Some(wrap_width) = wrap_width
                     {
@@ -1441,14 +1411,6 @@ impl Element for InteractiveText {
     }
 }
 
-impl IntoElement for InteractiveText {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 #[cfg(test)]
 #[path = "text/measurement_tests.rs"]
 mod measurement_tests;
@@ -1551,14 +1513,6 @@ mod text_layer_tests {
         align: TextAlign,
         align_width: Pixels,
         clipped: bool,
-    }
-
-    impl IntoElement for LayeredSceneProbe {
-        type Element = Self;
-
-        fn into_element(self) -> Self::Element {
-            self
-        }
     }
 
     impl Element for LayeredSceneProbe {

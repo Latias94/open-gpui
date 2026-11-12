@@ -1,18 +1,22 @@
-use std::fmt::Debug;
+use std::{cell::RefCell, fmt::Debug};
 
-use ::open_gpui_sum_tree::SumTree;
 use open_gpui_collections::FxHashMap;
-use open_gpui_sum_tree::Bias;
 
 use crate::{FocusHandle, FocusId, geometry::SubtreeGeometryValidity};
 
 /// Represents a collection of focus handles using the tab-index APIs.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(crate) struct TabStopMap {
     current_path: TabStopPath,
     pub(crate) insertion_history: Vec<TabStopOperation>,
-    by_id: FxHashMap<FocusId, TabStopNode>,
-    order: SumTree<TabStopNode>,
+    order: RefCell<TabStopOrder>,
+}
+
+#[derive(Debug, Default)]
+struct TabStopOrder {
+    by_id: FxHashMap<FocusId, usize>,
+    nodes: Vec<TabStopNode>,
+    sorted: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -77,22 +81,18 @@ impl PartialOrd for TabStopNode {
     }
 }
 
-impl Default for TabStopMap {
-    fn default() -> Self {
-        Self {
-            current_path: TabStopPath::default(),
-            insertion_history: Vec::new(),
-            by_id: FxHashMap::default(),
-            order: SumTree::new(()),
-        }
-    }
-}
-
 impl TabStopMap {
     pub fn tab_stop_count(&self) -> usize {
-        self.by_id
+        let order = self.order.borrow();
+        order
+            .by_id
             .values()
-            .filter(|node| node.tab_stop && node.is_active())
+            .filter(|index| {
+                order
+                    .nodes
+                    .get(**index)
+                    .is_some_and(|node| node.tab_stop && node.is_active())
+            })
             .count()
     }
 
@@ -107,14 +107,15 @@ impl TabStopMap {
         });
         let mut path = self.current_path.clone();
         path.0.push(focus_handle.tab_index);
-        let order = TabStopNode {
+        let order = self.order.get_mut();
+        order.by_id.insert(focus_handle.id, order.nodes.len());
+        order.sorted = false;
+        order.nodes.push(TabStopNode {
             node_insertion_index: self.insertion_history.len() - 1,
             tab_stop: focus_handle.tab_stop,
             path,
             validity,
-        };
-        self.by_id.insert(focus_handle.id, order.clone());
-        self.order.insert_or_replace(order, ());
+        });
     }
 
     pub fn begin_group(&mut self, tab_index: isize) {
@@ -129,35 +130,25 @@ impl TabStopMap {
     }
 
     pub fn clear(&mut self) {
-        *self = Self::default();
         self.current_path.0.clear();
         self.insertion_history.clear();
-        self.by_id.clear();
-        self.order = SumTree::new(());
+        let order = self.order.get_mut();
+        order.by_id.clear();
+        order.nodes.clear();
+        order.sorted = false;
     }
 
     pub fn next(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
-        let Some(focused_id) = focused_id else {
-            let first = self.order.first()?;
-            if first.tab_stop && first.is_active() {
-                return self.focus_handle_for_order(first);
-            } else {
-                return self
-                    .next_inner(first)
-                    .and_then(|order| self.focus_handle_for_order(order));
-            }
-        };
-
-        let Some(node) = self.tab_node_for_focus_id(focused_id) else {
-            return self.next(None);
-        };
-        let item = self.next_inner(node);
-
-        if let Some(item) = item {
-            self.focus_handle_for_order(&item)
-        } else {
-            self.next(None)
-        }
+        let mut order = self.order.borrow_mut();
+        order.ensure_sorted(&self.insertion_history);
+        let start = focused_id
+            .and_then(|id| order.by_id.get(id))
+            .map_or(0, |position| position + 1);
+        let node = order.nodes[start..]
+            .iter()
+            .chain(&order.nodes[..start])
+            .find(|node| node.tab_stop && node.is_active())?;
+        self.focus_handle_for_order(node)
     }
 
     pub fn next_where(
@@ -176,41 +167,18 @@ impl TabStopMap {
         None
     }
 
-    fn next_inner(&self, node: &TabStopNode) -> Option<&TabStopNode> {
-        let mut cursor = self.order.cursor::<TabStopNode>(());
-        cursor.seek(&node, Bias::Left);
-        cursor.next();
-        while let Some(item) = cursor.item()
-            && (!item.tab_stop || !item.is_active())
-        {
-            cursor.next();
-        }
-
-        cursor.item()
-    }
-
     pub fn prev(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
-        let Some(focused_id) = focused_id else {
-            let last = self.order.last()?;
-            if last.tab_stop && last.is_active() {
-                return self.focus_handle_for_order(last);
-            } else {
-                return self
-                    .prev_inner(last)
-                    .and_then(|order| self.focus_handle_for_order(order));
-            }
-        };
-
-        let Some(node) = self.tab_node_for_focus_id(focused_id) else {
-            return self.prev(None);
-        };
-        let item = self.prev_inner(node);
-
-        if let Some(item) = item {
-            self.focus_handle_for_order(&item)
-        } else {
-            self.prev(None)
-        }
+        let mut order = self.order.borrow_mut();
+        order.ensure_sorted(&self.insertion_history);
+        let end = focused_id
+            .and_then(|id| order.by_id.get(id).copied())
+            .unwrap_or(order.nodes.len());
+        let node = order.nodes[..end]
+            .iter()
+            .rev()
+            .chain(order.nodes[end..].iter().rev())
+            .find(|node| node.tab_stop && node.is_active())?;
+        self.focus_handle_for_order(node)
     }
 
     pub fn prev_where(
@@ -227,19 +195,6 @@ impl TabStopMap {
             current = Some(candidate.id);
         }
         None
-    }
-
-    fn prev_inner(&self, node: &TabStopNode) -> Option<&TabStopNode> {
-        let mut cursor = self.order.cursor::<TabStopNode>(());
-        cursor.seek(&node, Bias::Left);
-        cursor.prev();
-        while let Some(item) = cursor.item()
-            && (!item.tab_stop || !item.is_active())
-        {
-            cursor.prev();
-        }
-
-        cursor.item()
     }
 
     pub fn replay_scoped(
@@ -277,13 +232,6 @@ impl TabStopMap {
         );
         handle.cloned()
     }
-
-    fn tab_node_for_focus_id(&self, focused_id: &FocusId) -> Option<&TabStopNode> {
-        let Some(order) = self.by_id.get(focused_id) else {
-            return None;
-        };
-        Some(order)
-    }
 }
 
 impl TabStopNode {
@@ -294,101 +242,26 @@ impl TabStopNode {
     }
 }
 
-mod sum_tree_impl {
-    use open_gpui_sum_tree::SeekTarget;
-
-    use crate::tab_stop::{TabStopNode, TabStopPath};
-
-    #[derive(Clone, Debug)]
-    pub struct TabStopOrderNodeSummary {
-        max_index: usize,
-        max_path: TabStopPath,
-        pub tab_stops: usize,
-    }
-
-    pub type TabStopCount = usize;
-
-    impl open_gpui_sum_tree::ContextLessSummary for TabStopOrderNodeSummary {
-        fn zero() -> Self {
-            TabStopOrderNodeSummary {
-                max_index: 0,
-                max_path: TabStopPath::default(),
-                tab_stops: 0,
+impl TabStopOrder {
+    fn ensure_sorted(&mut self, insertion_history: &[TabStopOperation]) {
+        if self.sorted {
+            return;
+        }
+        self.nodes.sort_unstable();
+        self.by_id.clear();
+        for (position, node) in self.nodes.iter().enumerate() {
+            let Some(focus_handle) = insertion_history
+                .get(node.node_insertion_index)
+                .and_then(TabStopOperation::focus_handle)
+            else {
+                continue;
+            };
+            let latest = self.by_id.entry(focus_handle.id).or_insert(position);
+            if self.nodes[*latest].node_insertion_index < node.node_insertion_index {
+                *latest = position;
             }
         }
-
-        fn add_summary(&mut self, summary: &Self) {
-            self.max_index = summary.max_index;
-            self.max_path = summary.max_path.clone();
-            self.tab_stops += summary.tab_stops;
-        }
-    }
-
-    impl open_gpui_sum_tree::KeyedItem for TabStopNode {
-        type Key = Self;
-
-        fn key(&self) -> Self::Key {
-            self.clone()
-        }
-    }
-
-    impl open_gpui_sum_tree::Item for TabStopNode {
-        type Summary = TabStopOrderNodeSummary;
-
-        fn summary(
-            &self,
-            _cx: <Self::Summary as open_gpui_sum_tree::Summary>::Context<'_>,
-        ) -> Self::Summary {
-            TabStopOrderNodeSummary {
-                max_index: self.node_insertion_index,
-                max_path: self.path.clone(),
-                tab_stops: if self.tab_stop { 1 } else { 0 },
-            }
-        }
-    }
-
-    impl<'a> open_gpui_sum_tree::Dimension<'a, TabStopOrderNodeSummary> for TabStopCount {
-        fn zero(_: <TabStopOrderNodeSummary as open_gpui_sum_tree::Summary>::Context<'_>) -> Self {
-            0
-        }
-
-        fn add_summary(
-            &mut self,
-            summary: &'a TabStopOrderNodeSummary,
-            _: <TabStopOrderNodeSummary as open_gpui_sum_tree::Summary>::Context<'_>,
-        ) {
-            *self += summary.tab_stops;
-        }
-    }
-
-    impl<'a> open_gpui_sum_tree::Dimension<'a, TabStopOrderNodeSummary> for TabStopNode {
-        fn zero(_: <TabStopOrderNodeSummary as open_gpui_sum_tree::Summary>::Context<'_>) -> Self {
-            TabStopNode::default()
-        }
-
-        fn add_summary(
-            &mut self,
-            summary: &'a TabStopOrderNodeSummary,
-            _: <TabStopOrderNodeSummary as open_gpui_sum_tree::Summary>::Context<'_>,
-        ) {
-            self.node_insertion_index = summary.max_index;
-            self.path = summary.max_path.clone();
-        }
-    }
-
-    impl<'a, 'b> SeekTarget<'a, TabStopOrderNodeSummary, TabStopNode> for &'b TabStopNode {
-        fn cmp(
-            &self,
-            cursor_location: &TabStopNode,
-            _: <TabStopOrderNodeSummary as open_gpui_sum_tree::Summary>::Context<'_>,
-        ) -> std::cmp::Ordering {
-            Iterator::cmp(self.path.0.iter(), cursor_location.path.0.iter()).then(
-                <usize as Ord>::cmp(
-                    &self.node_insertion_index,
-                    &cursor_location.node_insertion_index,
-                ),
-            )
-        }
+        self.sorted = true;
     }
 }
 
@@ -396,7 +269,10 @@ mod sum_tree_impl {
 mod tests {
     use itertools::Itertools as _;
 
-    use crate::{FocusHandle, FocusId, FocusMap, TabStopMap};
+    use crate::{
+        FocusHandle, FocusId, FocusMap, SubtreeTransformError, TabStopMap,
+        geometry::SubtreeGeometryValidity,
+    };
     use parking_lot::RwLock;
     use std::sync::Arc;
 
@@ -509,6 +385,185 @@ mod tests {
         tab_index_map.insert_scoped(&tab_non_stop_0, None);
         let result = tab_index_map.next(Some(&tab_stop_0.id)).unwrap();
         assert_eq!(result.id, tab_stop_2.id);
+    }
+
+    #[test]
+    fn test_insert_after_sorting() {
+        let focus_map = Arc::new(RwLock::new(FocusMap::default()));
+        let mut tab_index_map = TabStopMap::default();
+        let second = FocusHandle::new(&focus_map).tab_stop(true).tab_index(1);
+        let first = FocusHandle::new(&focus_map).tab_stop(true).tab_index(0);
+
+        tab_index_map.insert_scoped(&second, None);
+        assert_eq!(tab_index_map.next(None), Some(second.clone()));
+
+        tab_index_map.insert_scoped(&first, None);
+        assert_eq!(tab_index_map.next(None), Some(first.clone()));
+        assert_eq!(tab_index_map.next(Some(&first.id)), Some(second.clone()));
+        assert_eq!(tab_index_map.prev(Some(&first.id)), Some(second));
+
+        tab_index_map.clear();
+        assert_eq!(tab_index_map.paint_index(), 0);
+        assert_eq!(tab_index_map.tab_stop_count(), 0);
+        assert_eq!(tab_index_map.next(None), None);
+        assert_eq!(tab_index_map.prev(None), None);
+
+        tab_index_map.insert_scoped(&first, None);
+        assert_eq!(tab_index_map.next(Some(&first.id)), Some(first.clone()));
+        assert_eq!(tab_index_map.prev(Some(&first.id)), Some(first));
+    }
+
+    #[test]
+    fn test_duplicate_focus_ids_use_latest_insertion() {
+        let focus_map = Arc::new(RwLock::new(FocusMap::default()));
+        let mut tab_index_map = TabStopMap::default();
+        let first = FocusHandle::new(&focus_map).tab_stop(true).tab_index(0);
+        let middle = FocusHandle::new(&focus_map).tab_stop(true).tab_index(2);
+        let repeated = FocusHandle::new(&focus_map).tab_stop(true).tab_index(3);
+        let last = FocusHandle::new(&focus_map).tab_stop(true).tab_index(4);
+
+        for handle in [&first, &middle, &repeated, &last] {
+            tab_index_map.insert_scoped(handle, None);
+        }
+        tab_index_map.insert_scoped(&repeated.clone().tab_index(-1), None);
+        assert_eq!(tab_index_map.tab_stop_count(), 4);
+        assert_eq!(tab_index_map.next(Some(&repeated.id)), Some(first.clone()));
+        assert_eq!(tab_index_map.prev(Some(&repeated.id)), Some(last.clone()));
+        assert_eq!(tab_index_map.next(Some(&middle.id)), Some(repeated.clone()));
+        assert_eq!(tab_index_map.tab_stop_count(), 4);
+
+        tab_index_map.insert_scoped(&repeated.clone().tab_stop(false).tab_index(1), None);
+        assert_eq!(tab_index_map.tab_stop_count(), 3);
+        assert_eq!(tab_index_map.next(Some(&repeated.id)), Some(middle));
+        assert_eq!(tab_index_map.prev(Some(&repeated.id)), Some(first));
+        assert_eq!(tab_index_map.prev(Some(&last.id)), Some(repeated));
+        assert_eq!(tab_index_map.tab_stop_count(), 3);
+    }
+
+    #[test]
+    fn test_geometry_filtering_after_sorting() {
+        let focus_map = Arc::new(RwLock::new(FocusMap::default()));
+        let mut tab_index_map = TabStopMap::default();
+        let boundary_validity = SubtreeGeometryValidity::new(None);
+        let middle_validity = SubtreeGeometryValidity::new(None);
+        let first = FocusHandle::new(&focus_map).tab_stop(true).tab_index(0);
+        let middle = FocusHandle::new(&focus_map).tab_stop(true).tab_index(1);
+        let last = FocusHandle::new(&focus_map).tab_stop(true).tab_index(2);
+
+        tab_index_map.insert_scoped(&first, Some(boundary_validity.clone()));
+        tab_index_map.insert_scoped(&middle, Some(middle_validity.clone()));
+        tab_index_map.insert_scoped(
+            &last,
+            Some(SubtreeGeometryValidity::new(Some(
+                boundary_validity.clone(),
+            ))),
+        );
+        assert_eq!(tab_index_map.next(None), Some(first.clone()));
+        assert_eq!(tab_index_map.prev(None), Some(last.clone()));
+
+        boundary_validity.invalidate(SubtreeTransformError::UnrepresentableResult);
+        assert_eq!(tab_index_map.tab_stop_count(), 1);
+        assert_eq!(tab_index_map.next(Some(&first.id)), Some(middle.clone()));
+        assert_eq!(tab_index_map.prev(Some(&last.id)), Some(middle.clone()));
+        assert_eq!(
+            tab_index_map.next_where(None, |candidate| {
+                tab_index_map.prev(Some(&candidate.id)).as_ref() == Some(candidate)
+            }),
+            Some(middle.clone())
+        );
+        assert_eq!(
+            tab_index_map.prev_where(None, |candidate| {
+                tab_index_map.next(Some(&candidate.id)).as_ref() == Some(candidate)
+            }),
+            Some(middle)
+        );
+        assert_eq!(
+            tab_index_map.next_where(None, |candidate| candidate.id == first.id),
+            None
+        );
+        assert_eq!(
+            tab_index_map.prev_where(None, |candidate| candidate.id == last.id),
+            None
+        );
+
+        middle_validity.invalidate(SubtreeTransformError::UnrepresentableResult);
+        assert_eq!(tab_index_map.tab_stop_count(), 0);
+        assert_eq!(tab_index_map.next(None), None);
+        assert_eq!(tab_index_map.prev(None), None);
+    }
+
+    #[test]
+    fn test_nested_group_replay_preserves_order_and_geometry() {
+        let focus_map = Arc::new(RwLock::new(FocusMap::default()));
+        let mut recorded = TabStopMap::default();
+        let recorded_validity = SubtreeGeometryValidity::new(None);
+        let invalid_validity = SubtreeGeometryValidity::new(Some(recorded_validity.clone()));
+        let first = FocusHandle::new(&focus_map).tab_stop(true).tab_index(2);
+        let nested = FocusHandle::new(&focus_map).tab_stop(true).tab_index(1);
+        let invalid = FocusHandle::new(&focus_map).tab_stop(true).tab_index(0);
+        let last = FocusHandle::new(&focus_map).tab_stop(true).tab_index(4);
+        let outside = FocusHandle::new(&focus_map).tab_stop(true).tab_index(0);
+        let excluded = FocusHandle::new(&focus_map).tab_stop(true).tab_index(5);
+
+        recorded.insert_scoped(&excluded, Some(recorded_validity.clone()));
+        let start = recorded.paint_index();
+        recorded.begin_group(2);
+        recorded.insert_scoped(&first, Some(recorded_validity.clone()));
+        recorded.begin_group(1);
+        recorded.insert_scoped(&nested, Some(recorded_validity.clone()));
+        recorded.insert_scoped(&invalid, Some(invalid_validity.clone()));
+        recorded.end_group();
+        recorded.end_group();
+        recorded.insert_scoped(&last, Some(recorded_validity.clone()));
+        let end = recorded.paint_index();
+        assert_eq!(recorded.next(None), Some(invalid));
+        invalid_validity.invalidate(SubtreeTransformError::UnrepresentableResult);
+
+        let replay_validity = SubtreeGeometryValidity::new(None);
+        let mut candidate = TabStopMap::default();
+        candidate.replay_scoped(
+            &recorded.insertion_history[start..end],
+            Some(replay_validity.clone()),
+        );
+        assert_eq!(candidate.next(None), Some(nested.clone()));
+        candidate.clear();
+        assert_eq!(candidate.next(None), None);
+        assert_eq!(recorded.next(None), Some(nested.clone()));
+
+        candidate.insert_scoped(&outside, None);
+        assert_eq!(candidate.next(None), Some(outside.clone()));
+        candidate.begin_group(3);
+        candidate.replay_scoped(
+            &recorded.insertion_history[start..end],
+            Some(replay_validity.clone()),
+        );
+        candidate.end_group();
+        assert_eq!(candidate.paint_index(), end - start + 3);
+        assert_eq!(recorded.paint_index(), end);
+        assert_eq!(candidate.tab_stop_count(), 4);
+
+        let expected = [outside.clone(), nested, first, last];
+        for (position, handle) in expected.iter().enumerate() {
+            assert_eq!(
+                candidate.next(Some(&handle.id)),
+                Some(expected[(position + 1) % expected.len()].clone())
+            );
+            assert_eq!(
+                candidate.prev(Some(&handle.id)),
+                Some(expected[(position + expected.len() - 1) % expected.len()].clone())
+            );
+        }
+
+        recorded_validity.invalidate(SubtreeTransformError::UnrepresentableResult);
+        assert_eq!(recorded.tab_stop_count(), 0);
+        assert_eq!(candidate.tab_stop_count(), 4);
+        assert_eq!(candidate.next(None), expected.first().cloned());
+        assert_eq!(candidate.prev(None), expected.last().cloned());
+
+        replay_validity.invalidate(SubtreeTransformError::UnrepresentableResult);
+        assert_eq!(candidate.tab_stop_count(), 1);
+        assert_eq!(candidate.next(Some(&outside.id)), Some(outside.clone()));
+        assert_eq!(candidate.prev(Some(&outside.id)), Some(outside));
     }
 
     #[must_use]

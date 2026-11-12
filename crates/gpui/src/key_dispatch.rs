@@ -940,14 +940,6 @@ mod tests {
             }
         }
 
-        impl IntoElement for CustomElement {
-            type Element = Self;
-
-            fn into_element(self) -> Self::Element {
-                self
-            }
-        }
-
         impl InputHandler for CustomElement {
             fn selected_text_range(
                 &mut self,
@@ -1150,14 +1142,6 @@ mod tests {
                 window.on_action(std::any::TypeId::of::<TestAction>(), |_, _, _, _| {});
             }
         }
-        impl IntoElement for CustomElement {
-            type Element = Self;
-
-            fn into_element(self) -> Self::Element {
-                self
-            }
-        }
-
         impl InputHandler for CustomElement {
             fn selected_text_range(
                 &mut self,

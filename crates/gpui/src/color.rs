@@ -359,7 +359,7 @@ impl Display for Hsla {
 }
 
 /// Construct an [`Hsla`] object from plain values
-pub fn hsla(h: f32, s: f32, l: f32, a: f32) -> Hsla {
+pub const fn hsla(h: f32, s: f32, l: f32, a: f32) -> Hsla {
     Hsla {
         h: h.clamp(0., 1.),
         s: s.clamp(0., 1.),
@@ -399,7 +399,7 @@ pub const fn transparent_white() -> Hsla {
 }
 
 /// Opaque grey in [`Hsla`], values will be clamped to the range [0, 1]
-pub fn opaque_grey(lightness: f32, opacity: f32) -> Hsla {
+pub const fn opaque_grey(lightness: f32, opacity: f32) -> Hsla {
     Hsla {
         h: 0.,
         s: 0.,

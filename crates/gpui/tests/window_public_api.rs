@@ -113,7 +113,7 @@ fn public_prompt_query_tracks_only_window_rendered_prompts() {
         answer
     });
     assert!(cx.has_pending_prompt());
-    cx.simulate_prompt_answer("Ok");
+    cx.simulate_prompt_answer("OK");
     assert_eq!(native_answer.try_recv().unwrap(), Some(0));
 
     let active_during_render = Rc::new(Cell::new(false));

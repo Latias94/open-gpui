@@ -120,14 +120,6 @@ impl Element for SubtreePresentationElement {
     }
 }
 
-impl IntoElement for SubtreePresentationElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 /// Adds inherited layout-preserving presentation semantics to any element subtree.
 pub trait SubtreePresentationExt: IntoElement + Sized + 'static {
     /// Applies the requested presentation state to this element and all descendants.

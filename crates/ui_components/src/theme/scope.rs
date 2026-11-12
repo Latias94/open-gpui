@@ -140,14 +140,6 @@ struct ThemeScopeElementState {
     effective_context: ThemeContext,
 }
 
-impl IntoElement for ThemeScope {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 struct ThemeScopeGuard {
     stack: Rc<RefCell<Vec<ThemeContext>>>,
     entered_depth: usize,
