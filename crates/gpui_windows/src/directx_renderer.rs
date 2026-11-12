@@ -1902,7 +1902,6 @@ pub(crate) mod shader_resources {
         MonochromeSprite,
         SubpixelSprite,
         PolychromeSprite,
-        EmojiRasterization,
     }
 
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -1976,10 +1975,6 @@ pub(crate) mod shader_resources {
                     ShaderTarget::Vertex => POLYCHROME_SPRITE_VERTEX_BYTES,
                     ShaderTarget::Fragment => POLYCHROME_SPRITE_FRAGMENT_BYTES,
                 },
-                ShaderModule::EmojiRasterization => match target {
-                    ShaderTarget::Vertex => EMOJI_RASTERIZATION_VERTEX_BYTES,
-                    ShaderTarget::Fragment => EMOJI_RASTERIZATION_FRAGMENT_BYTES,
-                },
             };
             Self { inner: bytes }
         }
@@ -1990,12 +1985,6 @@ pub(crate) mod shader_resources {
         unsafe {
             use windows::Win32::Graphics::{
                 Direct3D::ID3DInclude, Hlsl::D3D_COMPILE_STANDARD_FILE_INCLUDE,
-            };
-
-            let shader_name = if matches!(entry, ShaderModule::EmojiRasterization) {
-                "color_text_raster.hlsl"
-            } else {
-                "shaders.hlsl"
             };
 
             let entry = format!(
@@ -2014,7 +2003,7 @@ pub(crate) mod shader_resources {
             let mut compile_blob = None;
             let mut error_blob = None;
             let shader_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join(&format!("src/{}", shader_name))
+                .join("src/shaders.hlsl")
                 .canonicalize()?;
 
             let entry_point = PCSTR::from_raw(entry.as_ptr());
@@ -2066,7 +2055,6 @@ pub(crate) mod shader_resources {
                 ShaderModule::MonochromeSprite => "monochrome_sprite",
                 ShaderModule::SubpixelSprite => "subpixel_sprite",
                 ShaderModule::PolychromeSprite => "polychrome_sprite",
-                ShaderModule::EmojiRasterization => "emoji_rasterization",
             }
         }
     }

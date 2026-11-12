@@ -284,7 +284,6 @@ pub struct WindowsPlatform {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     text_system: Arc<dyn PlatformTextSystem>,
-    direct_write_text_system: Option<Arc<DirectWriteTextSystem>>,
     renderer_factory: Option<Rc<dyn WindowsRendererFactory>>,
     drop_target_helper: Option<IDropTargetHelper>,
     /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
@@ -1039,26 +1038,21 @@ impl WindowsPlatform {
         custom_renderer: Option<(Arc<dyn PlatformTextSystem>, Rc<dyn WindowsRendererFactory>)>,
     ) -> Result<Self> {
         let mut construction_guard = WindowsPlatformConstructionGuard::initialize()?;
-        let (text_system, direct_write_text_system, renderer_factory) =
-            if let Some((text, factory)) = custom_renderer {
-                (text, None, Some(factory))
-            } else if !headless {
-                let dw_text_system = Arc::new(
-                    DirectWriteTextSystem::new(None)
-                        .context("Error creating DirectWriteTextSystem")?,
-                );
-                (
-                    dw_text_system.clone() as Arc<dyn PlatformTextSystem>,
-                    Some(dw_text_system),
-                    None,
-                )
-            } else {
-                (
-                    Arc::new(open_gpui::NoopTextSystem::new()) as Arc<dyn PlatformTextSystem>,
-                    None,
-                    None,
-                )
-            };
+        let (text_system, renderer_factory) = if let Some((text, factory)) = custom_renderer {
+            (text, Some(factory))
+        } else if !headless {
+            (
+                Arc::new(
+                    DirectWriteTextSystem::new().context("Error creating DirectWriteTextSystem")?,
+                ) as Arc<dyn PlatformTextSystem>,
+                None,
+            )
+        } else {
+            (
+                Arc::new(open_gpui::NoopTextSystem::new()) as Arc<dyn PlatformTextSystem>,
+                None,
+            )
+        };
 
         let (main_sender, main_receiver) = PriorityQueueReceiver::new();
         let validation_number = if usize::BITS == 64 {
@@ -1166,7 +1160,6 @@ impl WindowsPlatform {
             background_executor,
             foreground_executor,
             text_system,
-            direct_write_text_system,
             renderer_factory,
             suspend_resume_notification: RefCell::new(None),
             power_saving_notification: RefCell::new(None),
@@ -1532,9 +1525,6 @@ impl WindowsPlatform {
         };
         let devices = if self.renderer_factory.is_none() {
             let devices = DirectXDevices::new().context("Creating DirectX devices")?;
-            if let Some(text_system) = &self.direct_write_text_system {
-                text_system.handle_gpu_lost(&devices)?;
-            }
             Some(devices)
         } else {
             None
@@ -1562,9 +1552,6 @@ impl WindowsPlatform {
         self.invalidate_devices
             .borrow()
             .store(false, Ordering::Release);
-        if let Some(text_system) = &self.direct_write_text_system {
-            text_system.release_gpu();
-        }
         self.inner.state.directx_devices.borrow_mut().take();
         self.inner.state.windowing_connected.set(false);
     }
@@ -1573,13 +1560,7 @@ impl WindowsPlatform {
         if self.vsync_owner_live.borrow().is_some() {
             return Ok(());
         }
-        let directx_recovery = self
-            .inner
-            .state
-            .directx_devices
-            .borrow()
-            .clone()
-            .zip(self.direct_write_text_system.as_ref().map(Arc::downgrade));
+        let directx_recovery = self.inner.state.directx_devices.borrow().clone();
         let generation = self
             .inner
             .state
@@ -1606,7 +1587,7 @@ impl WindowsPlatform {
                     if !*thread_owner_live.read() {
                         break;
                     }
-                    if let Some((directx_device, text_system)) = &mut directx_recovery {
+                    if let Some(directx_device) = &mut directx_recovery {
                         let needs_recovery = with_live_vsync_owner(&thread_owner_live, || {
                             check_device_lost(&directx_device.device)
                                 || invalidate_devices.swap(false, Ordering::AcqRel)
@@ -1620,7 +1601,6 @@ impl WindowsPlatform {
                                 platform_window.as_raw(),
                                 validation_number,
                                 &all_windows,
-                                text_system,
                                 &recovered_directx_devices,
                                 &thread_owner_live,
                                 generation,
@@ -4639,7 +4619,6 @@ fn handle_gpu_device_lost(
     platform_window: HWND,
     validation_number: usize,
     all_windows: &std::sync::Weak<RegisteredWindows>,
-    text_system: &std::sync::Weak<DirectWriteTextSystem>,
     recovered_directx_devices: &RwLock<Option<DirectXDevices>>,
     vsync_owner_live: &RwLock<bool>,
     generation: usize,
@@ -4658,10 +4637,7 @@ fn handle_gpu_device_lost(
     if let Some(after_creation) = AFTER_GPU_RECOVERY_CREATION.with_borrow_mut(|hook| hook.take()) {
         after_creation();
     }
-    let committed = with_live_vsync_owner(vsync_owner_live, || -> Result<()> {
-        if let Some(text_system) = text_system.upgrade() {
-            text_system.handle_gpu_lost(&devices)?;
-        }
+    let committed = with_live_vsync_owner(vsync_owner_live, || {
         *recovered_directx_devices.write() = Some(devices.clone());
         *directx_devices = devices;
         unsafe {
@@ -4673,12 +4649,10 @@ fn handle_gpu_device_lost(
             )
             .log_err();
         }
-        Ok(())
     });
-    let Some(committed) = committed else {
+    if committed.is_none() {
         return Ok(());
-    };
-    committed?;
+    }
     log::info!("DirectX devices successfully recreated.");
     if let Some(all_windows) = all_windows.upgrade() {
         let registered_windows = all_windows.read().clone();

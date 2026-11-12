@@ -573,7 +573,6 @@ fn native_custom_renderer_submits_imported_texture_resizes_and_retires_exact_gpu
     assert!(platform.is_windowed());
     assert!(platform.graphical_environment().is_some());
     assert!(platform.inner.state.directx_devices.borrow().is_none());
-    assert!(platform.direct_write_text_system.is_none());
     assert!(Arc::ptr_eq(&platform.text_system(), &text));
     assert!(platform.vsync_owner_live.borrow().is_some());
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
@@ -833,7 +832,7 @@ fn native_custom_renderer_submits_imported_texture_resizes_and_retires_exact_gpu
     assert!(platform.is_windowed());
     assert!(platform.vsync_owner_live.borrow().is_some());
     assert!(platform.inner.state.directx_devices.borrow().is_none());
-    assert!(platform.direct_write_text_system.is_none());
+    assert!(Arc::ptr_eq(&platform.text_system(), &text));
     drop(native);
     assert!(
         observations

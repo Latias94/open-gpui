@@ -592,6 +592,16 @@ struct WindowsNonClientButtonOutcome {
     capture_acquisition_failed: bool,
 }
 
+impl WindowsNonClientButtonOutcome {
+    fn caption_action_for_style(self, style: WINDOW_STYLE) -> Option<WindowsCaptionButtonAction> {
+        self.caption_action.filter(|action| match action {
+            WindowsCaptionButtonAction::Minimize => style.contains(WS_MINIMIZEBOX),
+            WindowsCaptionButtonAction::ToggleMaximize => style.contains(WS_MAXIMIZEBOX),
+            WindowsCaptionButtonAction::Close => true,
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct WindowsPointerCancelOutcome {
     canceled: bool,
@@ -1857,7 +1867,11 @@ impl WindowsWindowInner {
                     .ok()
                     .log_err();
             } else {
-                if let Some(ctx) = ImeContext::get(handle) {
+                // The IME context is per-thread, so only its focused window may commit
+                // the composition when disabling text input.
+                if GetFocus() == handle
+                    && let Some(ctx) = ImeContext::get(handle)
+                {
                     ImmNotifyIME(*ctx, NI_COMPOSITIONSTR, CPS_COMPLETE, 0)
                         .ok()
                         .log_err();
@@ -2209,12 +2223,14 @@ impl WindowsWindowInner {
             return None;
         }
 
-        let drag_area =
+        let control_area =
             with_windows_callback(&self.state.callbacks.hit_test_window_control, |callback| {
                 callback()
             })
-            .flatten()
-            .and_then(|area| hit_test_window_control_area(area, self.is_movable));
+            .flatten();
+        let style = WINDOW_STYLE(unsafe { get_window_long(handle, GWL_STYLE) } as u32);
+        let drag_area = control_area
+            .and_then(|area| hit_test_window_control_area(area, self.is_movable, style));
 
         if matches!(
             self.non_client_policy(),
@@ -2224,7 +2240,6 @@ impl WindowsWindowInner {
             return drag_area;
         }
 
-        let style = WINDOW_STYLE(unsafe { get_window_long(handle, GWL_STYLE) } as u32);
         if !self.state.is_maximized() && style.contains(WS_THICKFRAME) {
             let dpi = unsafe { GetDpiForWindow(handle) };
             let frame_x = get_frame_thicknessx(dpi);
@@ -2345,7 +2360,9 @@ impl WindowsWindowInner {
         if outcome.capture_acquisition_failed {
             self.settle_failed_native_pointer_capture_acquisition(handle);
         }
-        if let Some(caption_action) = outcome.caption_action {
+        // Input callbacks can change an attached host's caption capabilities.
+        let style = WINDOW_STYLE(unsafe { get_window_long(handle, GWL_STYLE) } as u32);
+        if let Some(caption_action) = outcome.caption_action_for_style(style) {
             match caption_action {
                 WindowsCaptionButtonAction::Minimize => {
                     unsafe { ShowWindowAsync(handle, SW_MINIMIZE).ok().log_err() };
@@ -3029,13 +3046,19 @@ fn non_client_resize_hit_test(
     }
 }
 
-fn hit_test_window_control_area(area: WindowControlArea, is_movable: bool) -> Option<isize> {
+fn hit_test_window_control_area(
+    area: WindowControlArea,
+    is_movable: bool,
+    style: WINDOW_STYLE,
+) -> Option<isize> {
     match area {
         WindowControlArea::Drag if is_movable => Some(HTCAPTION as _),
         WindowControlArea::Drag => None,
         WindowControlArea::Close => Some(HTCLOSE as _),
-        WindowControlArea::Max => Some(HTMAXBUTTON as _),
-        WindowControlArea::Min => Some(HTMINBUTTON as _),
+        WindowControlArea::Max if style.contains(WS_MAXIMIZEBOX) => Some(HTMAXBUTTON as _),
+        WindowControlArea::Min if style.contains(WS_MINIMIZEBOX) => Some(HTMINBUTTON as _),
+        WindowControlArea::Max | WindowControlArea::Min if is_movable => Some(HTCAPTION as _),
+        WindowControlArea::Max | WindowControlArea::Min => Some(HTNOWHERE as _),
     }
 }
 
@@ -3089,9 +3112,10 @@ mod tests {
         UI::Controls::WM_MOUSELEAVE,
         UI::WindowsAndMessaging::{
             HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCAPTION, HTCLOSE, HTLEFT, HTMAXBUTTON,
-            HTMINBUTTON, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, SPI_SETLOGICALDPIOVERRIDE,
-            SPI_SETWORKAREA, SYSTEM_PARAMETERS_INFO_ACTION, WM_LBUTTONDOWN, WM_LBUTTONUP,
-            WM_MOUSEMOVE, WM_NCMOUSELEAVE, WM_RBUTTONDOWN, WM_RBUTTONUP,
+            HTMINBUTTON, HTNOWHERE, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT,
+            SPI_SETLOGICALDPIOVERRIDE, SPI_SETWORKAREA, SYSTEM_PARAMETERS_INFO_ACTION,
+            WINDOW_STYLE, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCMOUSELEAVE,
+            WM_RBUTTONDOWN, WM_RBUTTONUP, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
         },
     };
 
@@ -3653,6 +3677,71 @@ mod tests {
     }
 
     #[test]
+    fn caption_release_rechecks_capabilities_after_input_and_remains_consumed() {
+        for (hit_test, enabled_style, action) in [
+            (
+                HTMINBUTTON,
+                WS_MINIMIZEBOX,
+                WindowsCaptionButtonAction::Minimize,
+            ),
+            (
+                HTMAXBUTTON,
+                WS_MAXIMIZEBOX,
+                WindowsCaptionButtonAction::ToggleMaximize,
+            ),
+        ] {
+            let style = Rc::new(Cell::new(enabled_style));
+            let callbacks = Callbacks::default();
+            callbacks.set_test_input(Box::new({
+                let style = style.clone();
+                move |input| {
+                    if matches!(input, PlatformInput::MouseUp(_)) {
+                        style.set(WINDOW_STYLE(0));
+                    }
+                    DispatchEventResult::default()
+                }
+            }));
+            let pointer_capture = Cell::new(WindowsPointerCaptureState::default());
+            let dispatch_state = Cell::new(WindowsInputDispatchState::default());
+            let pressed_caption_button = Cell::new(None);
+            let boundary = WindowsNonClientPointerBoundary {
+                pointer: WindowsClientPointerBoundary {
+                    pointer_capture: &pointer_capture,
+                    native_pointer_capture_release: &Default::default(),
+                    pressed_caption_button: &pressed_caption_button,
+                    callbacks: &callbacks,
+                    dispatch_state: &dispatch_state,
+                },
+            };
+
+            let down = boundary.handle_button_message(
+                WindowsClientMouseButtonMessage::Down(MouseButton::Left),
+                hit_test,
+                Point::default(),
+                Modifiers::default(),
+                1,
+                |_| true,
+            );
+            assert!(down.consumed);
+            assert_eq!(pressed_caption_button.get(), Some(action));
+
+            let up = boundary.handle_button_message(
+                WindowsClientMouseButtonMessage::Up(MouseButton::Left),
+                hit_test,
+                Point::default(),
+                Modifiers::default(),
+                1,
+                |_| true,
+            );
+            assert!(up.consumed);
+            assert_eq!(up.caption_action_for_style(style.get()), None);
+            assert_eq!(up.caption_action_for_style(enabled_style), Some(action));
+            assert_eq!(pressed_caption_button.get(), None);
+            assert_eq!(pointer_capture.get(), WindowsPointerCaptureState::default());
+        }
+    }
+
+    #[test]
     fn non_left_up_does_not_terminate_left_caption_session() {
         let callbacks = Callbacks::default();
         callbacks.set_test_input(Box::new(|_| DispatchEventResult::default()));
@@ -3701,7 +3790,7 @@ mod tests {
             |_| true,
         );
         assert_eq!(
-            left_up.caption_action,
+            left_up.caption_action_for_style(WINDOW_STYLE(0)),
             Some(WindowsCaptionButtonAction::Close)
         );
     }
@@ -4209,27 +4298,46 @@ mod tests {
     #[test]
     fn immovable_windows_still_hit_test_caption_buttons() {
         assert_eq!(
-            hit_test_window_control_area(WindowControlArea::Drag, false),
+            hit_test_window_control_area(WindowControlArea::Drag, false, WINDOW_STYLE(0)),
             None
         );
         assert_eq!(
-            hit_test_window_control_area(WindowControlArea::Close, false),
+            hit_test_window_control_area(WindowControlArea::Close, false, WINDOW_STYLE(0)),
             Some(HTCLOSE as _)
         );
         assert_eq!(
-            hit_test_window_control_area(WindowControlArea::Max, false),
+            hit_test_window_control_area(WindowControlArea::Max, false, WS_MAXIMIZEBOX),
             Some(HTMAXBUTTON as _)
         );
         assert_eq!(
-            hit_test_window_control_area(WindowControlArea::Min, false),
+            hit_test_window_control_area(WindowControlArea::Min, false, WS_MINIMIZEBOX),
             Some(HTMINBUTTON as _)
         );
     }
 
     #[test]
+    fn disabled_caption_controls_only_allow_drag_when_movable() {
+        for (area, other_control_style) in [
+            (WindowControlArea::Max, WS_MINIMIZEBOX),
+            (WindowControlArea::Min, WS_MAXIMIZEBOX),
+        ] {
+            for style in [WINDOW_STYLE(0), other_control_style] {
+                assert_eq!(
+                    hit_test_window_control_area(area, true, style),
+                    Some(HTCAPTION as _)
+                );
+                assert_eq!(
+                    hit_test_window_control_area(area, false, style),
+                    Some(HTNOWHERE as _)
+                );
+            }
+        }
+    }
+
+    #[test]
     fn movable_windows_hit_test_caption_drag_area() {
         assert_eq!(
-            hit_test_window_control_area(WindowControlArea::Drag, true),
+            hit_test_window_control_area(WindowControlArea::Drag, true, WINDOW_STYLE(0)),
             Some(HTCAPTION as _)
         );
     }

@@ -1,157 +1,142 @@
-use super::{DirectWriteTextSystem, MappedColorReadback, readback_color_texture};
-use crate::directx_devices::DirectXDevices;
+use super::DirectWriteTextSystem;
 use anyhow::{Context, Result};
 use open_gpui::{
-    DevicePixels, Font, FontRun, PlatformTextSystem, RenderGlyphParams, point, px, size,
+    Bounds, DevicePixels, Font, FontRun, PlatformTextSystem, RenderGlyphParams, point, px, size,
 };
-use windows::Win32::{
-    Foundation::HMODULE,
-    Graphics::{
-        Direct3D::{D3D_DRIVER_TYPE_WARP, D3D_FEATURE_LEVEL_11_0},
-        Direct3D11::*,
-        Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC},
-    },
-};
-use windows::core::Interface;
+use windows::Win32::Graphics::DirectWrite::*;
 
 #[test]
-fn color_readback_releases_staging_texture_for_repeated_reads() -> Result<()> {
-    let mut device = None;
-    let mut device_context = None;
-    unsafe {
-        D3D11CreateDevice(
-            None,
-            D3D_DRIVER_TYPE_WARP,
-            HMODULE::default(),
-            D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_DEBUG,
-            Some(&[D3D_FEATURE_LEVEL_11_0]),
-            D3D11_SDK_VERSION,
-            Some(&mut device),
-            None,
-            Some(&mut device_context),
-        )
-    }
-    .context("creating WARP color readback device")?;
-    let device = device.context("WARP color readback device missing")?;
-    let device_context = device_context.context("WARP color readback context missing")?;
-    let info_queue: ID3D11InfoQueue = device.cast().context("querying WARP debug queue")?;
-    let bitmap_size = size(DevicePixels(3), DevicePixels(3));
-    let rows: [[u8; 12]; 3] = [
-        [1, 2, 3, 255, 17, 23, 31, 128, 0, 0, 0, 0],
-        [41, 43, 47, 255, 5, 7, 11, 64, 61, 67, 71, 192],
-        [73, 79, 83, 255, 13, 19, 29, 32, 89, 97, 101, 224],
-    ];
-    let expected = rows.concat();
-    let mut source_bytes = [0xa5u8; 60];
-    for (row, source_row) in rows.iter().zip(source_bytes.chunks_exact_mut(20)) {
-        source_row[..row.len()].copy_from_slice(row);
-    }
-    let initial_data = D3D11_SUBRESOURCE_DATA {
-        pSysMem: source_bytes.as_ptr().cast(),
-        SysMemPitch: 20,
-        SysMemSlicePitch: 0,
-    };
-    let desc = D3D11_TEXTURE2D_DESC {
-        Width: 5,
-        Height: 3,
-        MipLevels: 1,
-        ArraySize: 1,
-        Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-        SampleDesc: DXGI_SAMPLE_DESC {
-            Count: 1,
-            Quality: 0,
-        },
-        Usage: D3D11_USAGE_STAGING,
-        BindFlags: 0,
-        CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
-        MiscFlags: 0,
-    };
-    let mut staging_texture = None;
-    unsafe { device.CreateTexture2D(&desc, Some(&initial_data), Some(&mut staging_texture)) }
-        .context("creating initialized color readback staging texture")?;
-    let staging_texture = staging_texture.context("color readback staging texture missing")?;
-
-    for iteration in 0..3 {
-        unsafe { info_queue.ClearStoredMessages() };
-        let actual = readback_color_texture(&device_context, &staging_texture, bitmap_size)
-            .with_context(|| format!("reading color bitmap on iteration {iteration}"))?;
-        assert_eq!(actual, expected, "color bitmap on iteration {iteration}");
-
-        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-        unsafe { device_context.Map(&staging_texture, 0, D3D11_MAP_READ, 0, Some(&mut mapped)) }
-            .with_context(|| {
-                format!("remapping staging texture after color readback on iteration {iteration}")
-            })?;
-        let row_pitch = mapped.RowPitch as usize;
-        unsafe { device_context.Unmap(&staging_texture, 0) };
+fn directwrite_color_bounds_union_every_layer_at_the_recommended_mode() -> Result<()> {
+    let platform = DirectWriteTextSystem::new()?;
+    let font_id = platform.font_id(&Font {
+        family: "Segoe UI Emoji".into(),
+        ..Default::default()
+    })?;
+    let glyph_id = platform
+        .glyph_for_char(font_id, '😀')
+        .context("Segoe UI Emoji must contain the color fixture")?;
+    assert_ne!(glyph_id.0, 0);
+    let state = platform.state.read();
+    for (font_size, scale_factor, subpixel_x) in [(12.0, 1.0, 0), (32.0, 1.5, 1), (48.0, 2.0, 3)] {
+        let params = RenderGlyphParams {
+            font_id,
+            glyph_id,
+            font_size: px(font_size),
+            subpixel_variant: point(subpixel_x, 0),
+            scale_factor,
+            is_emoji: true,
+            subpixel_rendering: false,
+            dilation: 0,
+        };
+        let mut rendering_mode = DWRITE_RENDERING_MODE1::default();
+        let mut grid_fit_mode = DWRITE_GRID_FIT_MODE::default();
+        unsafe {
+            state.fonts[font_id.0]
+                .font_face
+                .GetRecommendedRenderingMode(
+                    font_size * scale_factor,
+                    96.0,
+                    96.0,
+                    None,
+                    false,
+                    DWRITE_OUTLINE_THRESHOLD_ANTIALIASED,
+                    DWRITE_MEASURING_MODE_NATURAL,
+                    None,
+                    &mut rendering_mode,
+                    &mut grid_fit_mode,
+                )?;
+        }
+        if rendering_mode == DWRITE_RENDERING_MODE1_OUTLINE {
+            rendering_mode = DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC;
+        }
         assert_eq!(
-            unsafe { info_queue.GetNumStoredMessagesAllowedByRetrievalFilter() },
-            0,
-            "native remap must not report an already-mapped resource on iteration {iteration}",
+            state.rendering_mode(&params)?,
+            (rendering_mode, grid_fit_mode)
         );
+        state.with_glyph_run(&params, |run, origin| {
+            assert_eq!(run.fontEmSize, font_size * scale_factor);
+            assert_eq!(
+                origin.X,
+                subpixel_x as f32 / open_gpui::SUBPIXEL_VARIANTS_X as f32,
+            );
+            assert_eq!(origin.Y, 0.0);
+        });
+        let layers = state.color_layers(&platform.components, &params)?;
         assert!(
-            row_pitch > rows[0].len(),
-            "native row pitch must exceed the copied color row width, got {row_pitch}",
+            !layers.is_empty(),
+            "the fixture must enumerate actual COLR layers",
         );
-    }
-
-    for invalid_size in [
-        size(DevicePixels(0), DevicePixels(3)),
-        size(DevicePixels(3), DevicePixels(0)),
-        size(DevicePixels(-1), DevicePixels(3)),
-        size(DevicePixels(3), DevicePixels(-1)),
-        size(DevicePixels(6), DevicePixels(3)),
-        size(DevicePixels(3), DevicePixels(4)),
-        size(DevicePixels(i32::MAX), DevicePixels(i32::MAX)),
-    ] {
-        assert!(
-            readback_color_texture(&device_context, &staging_texture, invalid_size).is_err(),
-            "invalid color readback dimensions {invalid_size:?} must be rejected",
+        let mut expected: Option<Bounds<DevicePixels>> = None;
+        for layer in layers {
+            let rect = unsafe {
+                layer
+                    .analysis
+                    .GetAlphaTextureBounds(DWRITE_TEXTURE_ALIASED_1x1)?
+            };
+            let layer_bounds = Bounds::from_corners(
+                point(DevicePixels(rect.left), DevicePixels(rect.top)),
+                point(DevicePixels(rect.right), DevicePixels(rect.bottom)),
+            );
+            if !layer_bounds.is_empty() {
+                expected = Some(expected.map_or(layer_bounds, |union| union.union(&layer_bounds)));
+            }
+        }
+        let expected = expected.context("at least one COLR layer must have ink")?;
+        let actual = platform.glyph_raster_bounds(&params)?;
+        assert_eq!(actual, expected);
+        let (raster_size, bytes) = platform.rasterize_glyph(&params, actual)?;
+        assert_eq!(raster_size, expected.size);
+        assert_eq!(
+            bytes.len(),
+            (raster_size.width.0 * raster_size.height.0) as usize * 4,
         );
+        assert!(bytes.chunks_exact(4).any(|pixel| pixel[3] > 0));
     }
-
-    let error = (|| -> Result<()> {
-        let _mapped = MappedColorReadback::new(&device_context, &staging_texture)?;
-        anyhow::bail!("forced mapped color readback failure")
-    })()
-    .expect_err("the post-map error control must fail");
-    assert_eq!(error.to_string(), "forced mapped color readback failure");
-    assert_eq!(
-        readback_color_texture(&device_context, &staging_texture, bitmap_size)?,
-        expected,
-    );
-    assert_eq!(
-        unsafe { info_queue.GetNumStoredMessagesAllowedByRetrievalFilter() },
-        0,
-        "a post-map error must release the staging texture",
-    );
-
-    let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
-        let _mapped = MappedColorReadback::new(&device_context, &staging_texture)?;
-        panic!("forced mapped color readback unwind")
-    }))
-    .expect_err("the mapped color readback control must unwind");
-    assert_eq!(
-        unwind.downcast_ref::<&str>(),
-        Some(&"forced mapped color readback unwind"),
-    );
-    assert_eq!(
-        readback_color_texture(&device_context, &staging_texture, bitmap_size)?,
-        expected,
-    );
-    assert_eq!(
-        unsafe { info_queue.GetNumStoredMessagesAllowedByRetrievalFilter() },
-        0,
-        "an unwind must release the staging texture",
-    );
-
     Ok(())
 }
 
 #[test]
-fn directwrite_color_emoji_rasterization_reads_back_identical_pixels() -> Result<()> {
-    let platform = DirectWriteTextSystem::new(None)?;
-    assert!(platform.state.read().gpu_state.is_none());
+fn a_glyph_without_colr_layers_keeps_the_monochrome_fallback() -> Result<()> {
+    let platform = DirectWriteTextSystem::new()?;
+    let font_id = platform.font_id(&open_gpui::font("Segoe UI"))?;
+    let glyph_id = platform
+        .glyph_for_char(font_id, 'm')
+        .context("Segoe UI must contain m")?;
+    let mut params = RenderGlyphParams {
+        font_id,
+        glyph_id,
+        font_size: px(24.0),
+        subpixel_variant: point(0, 0),
+        scale_factor: 1.5,
+        is_emoji: true,
+        subpixel_rendering: false,
+        dilation: 0,
+    };
+    let state = platform.state.read();
+    assert!(
+        state
+            .color_layers(&platform.components, &params)?
+            .is_empty()
+    );
+    let bounds = platform.glyph_raster_bounds(&params)?;
+    let (_, color) = platform.rasterize_glyph(&params, bounds)?;
+    params.is_emoji = false;
+    assert_eq!(platform.glyph_raster_bounds(&params)?, bounds);
+    let (_, monochrome) = platform.rasterize_glyph(&params, bounds)?;
+    assert!(monochrome.iter().any(|coverage| *coverage > 0));
+    assert_eq!(
+        color,
+        monochrome
+            .into_iter()
+            .flat_map(|coverage| [0, 0, 0, coverage])
+            .collect::<Vec<_>>(),
+    );
+    Ok(())
+}
+
+#[test]
+fn directwrite_color_emoji_rasterization_preserves_pixels_while_headless() -> Result<()> {
+    let platform = DirectWriteTextSystem::new()?;
     let font = Font {
         family: "Segoe UI Emoji".into(),
         ..Default::default()
@@ -186,20 +171,9 @@ fn directwrite_color_emoji_rasterization_reads_back_identical_pixels() -> Result
     let state = platform.state.read();
     let bounds = state.raster_bounds(&platform.components, &params)?;
     assert!(bounds.size.width.0 > 0 && bounds.size.height.0 > 0);
-    assert_eq!(
-        state
-            .rasterize_color(&platform.components, &params, bounds)
-            .unwrap_err()
-            .to_string(),
-        "cannot rasterize color glyphs while headless"
-    );
-    drop(state);
-    let devices = DirectXDevices::new()?;
-    platform.handle_gpu_lost(&devices)?;
-    let state = platform.state.read();
     let first = state
         .rasterize_color(&platform.components, &params, bounds)
-        .context("reading back the first DirectWrite color emoji")?;
+        .context("rasterizing the first headless DirectWrite color emoji")?;
     assert_eq!(
         first.len(),
         usize::try_from(bounds.size.width.0)? * usize::try_from(bounds.size.height.0)? * 4,
@@ -207,6 +181,15 @@ fn directwrite_color_emoji_rasterization_reads_back_identical_pixels() -> Result
     assert!(
         first.chunks_exact(4).any(|pixel| pixel[3] != 0),
         "the color emoji must contain visible BGRA pixels",
+    );
+    assert!(
+        first.chunks_exact(4).any(|pixel| pixel[3] > 0
+            && pixel[0].max(pixel[1]).max(pixel[2]) - pixel[0].min(pixel[1]).min(pixel[2]) > 32),
+        "the headless glyph must contain actual palette colors",
+    );
+    assert_eq!(
+        platform.rasterize_glyph(&params, bounds)?,
+        (bounds.size, first.clone()),
     );
 
     let padding = DevicePixels(4);
@@ -216,7 +199,7 @@ fn directwrite_color_emoji_rasterization_reads_back_identical_pixels() -> Result
     );
     let padded = state
         .rasterize_color(&platform.components, &params, padded_bounds)
-        .context("reading back a DirectWrite color emoji with transparent padding")?;
+        .context("rasterizing a DirectWrite color emoji with transparent padding")?;
     let padded_width = usize::try_from(padded_bounds.size.width.0)?;
     let padded_height = usize::try_from(padded_bounds.size.height.0)?;
     let padding = usize::try_from(padding.0)?;
@@ -233,6 +216,13 @@ fn directwrite_color_emoji_rasterization_reads_back_identical_pixels() -> Result
                     [0, 0, 0, 0],
                     "uncovered color glyph pixel at ({x}, {y}) must be transparent black",
                 );
+            } else {
+                let source = ((y - padding) * bounds.size.width.0 as usize + x - padding) * 4;
+                assert_eq!(
+                    pixel,
+                    &first[source..source + 4],
+                    "padding must preserve the glyph at ({x}, {y})",
+                );
             }
         }
     }
@@ -246,9 +236,9 @@ fn directwrite_color_emoji_rasterization_reads_back_identical_pixels() -> Result
         let repeated = state
             .rasterize_color(&platform.components, &params, repeated_bounds)
             .with_context(|| {
-                format!("reading back DirectWrite color emoji on iteration {iteration}")
+                format!("rasterizing headless DirectWrite color emoji on iteration {iteration}")
             })?;
-        assert_eq!(repeated_bounds.size, bounds.size);
+        assert_eq!(repeated_bounds, bounds);
         assert_eq!(
             repeated, first,
             "DirectWrite color emoji on iteration {iteration}"
@@ -256,8 +246,6 @@ fn directwrite_color_emoji_rasterization_reads_back_identical_pixels() -> Result
     }
 
     drop(state);
-    platform.release_gpu();
-    assert!(platform.state.read().gpu_state.is_none());
     assert_eq!(platform.font_id(&font)?, font_id);
     let reshaped = platform.layout_line(
         text,
@@ -270,18 +258,6 @@ fn directwrite_color_emoji_rasterization_reads_back_identical_pixels() -> Result
     assert_eq!(reshaped.width, shaped.width);
     assert_eq!(reshaped.runs[0].font_id, run.font_id);
     assert_eq!(reshaped.runs[0].glyphs[0].id, glyph.id);
-    assert_eq!(
-        platform
-            .state
-            .read()
-            .rasterize_color(&platform.components, &params, bounds)
-            .unwrap_err()
-            .to_string(),
-        "cannot rasterize color glyphs while headless"
-    );
-    drop(devices);
-    let devices = DirectXDevices::new()?;
-    platform.handle_gpu_lost(&devices)?;
     assert_eq!(
         platform
             .state

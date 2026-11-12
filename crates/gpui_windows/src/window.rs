@@ -180,9 +180,17 @@ impl WindowsNonClientPolicy {
         kind: &WindowKind,
         is_resizable: bool,
         is_minimizable: bool,
+        has_transient_owner: bool,
+        is_provisional: bool,
     ) -> (WINDOW_EX_STYLE, WINDOW_STYLE) {
         if matches!(kind, WindowKind::PopUp) {
-            return (WS_EX_TOOLWINDOW, WS_POPUP);
+            let mut extended_style = WS_EX_TOOLWINDOW;
+            // Standalone popups use the upstream topmost default. Owned and provisional
+            // popups keep their owner/reveal z-order authority, including temporary detach.
+            if !has_transient_owner && !is_provisional {
+                extended_style |= WS_EX_TOPMOST;
+            }
+            return (extended_style, WS_POPUP);
         }
 
         let mut style = if matches!(kind, WindowKind::Dialog) && matches!(self, Self::Undecorated) {
@@ -7965,6 +7973,8 @@ impl WindowsWindow {
             &params.kind,
             params.is_resizable,
             params.is_minimizable,
+            params.transient_for.is_some() || transient_owner.is_some(),
+            provisional_session.is_some(),
         );
         if !disable_direct_composition {
             dwexstyle |= WS_EX_NOREDIRECTIONBITMAP;
@@ -10425,7 +10435,7 @@ mod tests {
         Foundation::RECT,
         UI::WindowsAndMessaging::{
             WINDOW_EX_STYLE, WINDOW_STYLE, WS_CAPTION, WS_EX_DLGMODALFRAME, WS_EX_TOOLWINDOW,
-            WS_OVERLAPPEDWINDOW, WS_POPUP,
+            WS_EX_TOPMOST, WS_OVERLAPPEDWINDOW, WS_POPUP,
         },
     };
 
@@ -10503,14 +10513,16 @@ mod tests {
         assert_eq!(undecorated, WindowsNonClientPolicy::Undecorated);
         assert_eq!(popup, WindowsNonClientPolicy::Undecorated);
 
-        let (popup_ex_style, popup_style) = popup.creation_styles(&WindowKind::PopUp, true, true);
+        let (popup_ex_style, popup_style) =
+            popup.creation_styles(&WindowKind::PopUp, true, true, false, false);
         assert_eq!(popup_style, WS_POPUP);
-        assert_eq!(popup_ex_style, WS_EX_TOOLWINDOW);
+        assert_eq!(popup_ex_style, WS_EX_TOOLWINDOW | WS_EX_TOPMOST);
 
         for kind in [WindowKind::Normal, WindowKind::Floating] {
-            let (_, native_style) = native.creation_styles(&kind, true, true);
-            let (_, custom_style) = custom.creation_styles(&kind, true, true);
-            let (_, undecorated_style) = undecorated.creation_styles(&kind, true, true);
+            let (_, native_style) = native.creation_styles(&kind, true, true, false, false);
+            let (_, custom_style) = custom.creation_styles(&kind, true, true, false, false);
+            let (_, undecorated_style) =
+                undecorated.creation_styles(&kind, true, true, false, false);
             assert!(native_style.contains(WS_CAPTION));
             assert!(custom_style.contains(WS_CAPTION));
             assert!(undecorated_style.contains(WS_CAPTION));
@@ -10518,16 +10530,31 @@ mod tests {
         }
 
         let (dialog_ex_style, dialog_style) =
-            native.creation_styles(&WindowKind::Dialog, true, true);
+            native.creation_styles(&WindowKind::Dialog, true, true, false, false);
         assert!(dialog_style.contains(WS_CAPTION | WS_POPUP));
         assert!(dialog_ex_style.contains(WS_EX_DLGMODALFRAME));
 
         let (undecorated_dialog_ex_style, undecorated_dialog_style) =
-            undecorated.creation_styles(&WindowKind::Dialog, true, true);
+            undecorated.creation_styles(&WindowKind::Dialog, true, true, false, false);
         assert!(undecorated_dialog_style.contains(WS_POPUP));
         assert!(!undecorated_dialog_style.contains(WS_CAPTION));
         assert!(undecorated_dialog_style.contains(WS_POPUP));
         assert!(!undecorated_dialog_ex_style.contains(WS_EX_DLGMODALFRAME));
+    }
+
+    #[test]
+    fn owned_and_provisional_popups_preserve_their_z_order_profile() {
+        for (has_transient_owner, is_provisional) in [(true, false), (false, true), (true, true)] {
+            let (extended_style, style) = WindowsNonClientPolicy::Undecorated.creation_styles(
+                &WindowKind::PopUp,
+                true,
+                true,
+                has_transient_owner,
+                is_provisional,
+            );
+            assert_eq!(style, WS_POPUP);
+            assert_eq!(extended_style, WS_EX_TOOLWINDOW);
+        }
     }
 
     #[test]

@@ -1,61 +1,102 @@
-#![cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", test))]
+mod color_glyph_bitmap;
 
+#[cfg(target_os = "windows")]
 mod clipboard;
+#[cfg(target_os = "windows")]
 mod destination_list;
+#[cfg(target_os = "windows")]
 mod dialog;
+#[cfg(target_os = "windows")]
 mod direct_manipulation;
+#[cfg(target_os = "windows")]
 mod direct_write;
+#[cfg(target_os = "windows")]
 mod directx_atlas;
+#[cfg(target_os = "windows")]
 mod directx_devices;
+#[cfg(target_os = "windows")]
 mod directx_renderer;
+#[cfg(target_os = "windows")]
 mod dispatcher;
+#[cfg(target_os = "windows")]
 mod display;
+#[cfg(target_os = "windows")]
 mod events;
+#[cfg(target_os = "windows")]
 mod keyboard;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(all(target_os = "windows", any(test, feature = "test-support")))]
 mod native_test_foreground;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(all(target_os = "windows", any(test, feature = "test-support")))]
 mod native_test_harness;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(all(target_os = "windows", any(test, feature = "test-support")))]
 mod native_test_observation;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(all(target_os = "windows", any(test, feature = "test-support")))]
 mod native_test_pointer;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(all(target_os = "windows", any(test, feature = "test-support")))]
 mod native_test_scenario;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(all(target_os = "windows", any(test, feature = "test-support")))]
 mod native_test_window;
+#[cfg(target_os = "windows")]
 mod platform;
+#[cfg(target_os = "windows")]
 mod renderer;
+#[cfg(target_os = "windows")]
 mod system_notifications;
+#[cfg(target_os = "windows")]
 mod system_settings;
+#[cfg(target_os = "windows")]
 mod util;
+#[cfg(target_os = "windows")]
 mod vsync;
+#[cfg(target_os = "windows")]
 mod window;
+#[cfg(target_os = "windows")]
 mod wrapper;
 
+#[cfg(target_os = "windows")]
 pub(crate) use clipboard::*;
+#[cfg(target_os = "windows")]
 pub(crate) use destination_list::*;
+#[cfg(target_os = "windows")]
 pub(crate) use direct_write::*;
+#[cfg(target_os = "windows")]
 pub(crate) use directx_atlas::*;
+#[cfg(target_os = "windows")]
 pub(crate) use directx_devices::*;
+#[cfg(target_os = "windows")]
 pub(crate) use directx_renderer::*;
+#[cfg(target_os = "windows")]
 pub(crate) use dispatcher::*;
+#[cfg(target_os = "windows")]
 pub(crate) use display::*;
+#[cfg(target_os = "windows")]
 pub(crate) use events::*;
+#[cfg(target_os = "windows")]
 pub(crate) use keyboard::*;
+#[cfg(target_os = "windows")]
 pub(crate) use platform::*;
+#[cfg(target_os = "windows")]
 pub(crate) use renderer::{WindowsRendererSource, WindowsWindowRenderer};
+#[cfg(target_os = "windows")]
 pub(crate) use system_notifications::*;
+#[cfg(target_os = "windows")]
 pub(crate) use system_settings::*;
+#[cfg(target_os = "windows")]
 pub(crate) use util::*;
+#[cfg(target_os = "windows")]
 pub(crate) use vsync::*;
+#[cfg(target_os = "windows")]
 pub(crate) use window::*;
+#[cfg(target_os = "windows")]
 pub(crate) use wrapper::*;
 
+#[cfg(target_os = "windows")]
 pub use platform::WindowsPlatform;
+#[cfg(target_os = "windows")]
 pub use renderer::{WindowsRenderer, WindowsRendererFactory, WindowsRendererWindow};
 
-#[cfg(feature = "test-support")]
+#[cfg(all(target_os = "windows", feature = "test-support"))]
 #[doc(hidden)]
 pub use native_test_observation::{
     NativeWindowTestCaptureOwner, NativeWindowTestEvent, NativeWindowTestEventKind,
@@ -64,11 +105,11 @@ pub use native_test_observation::{
     NativeWindowTestObservationGuard, NativeWindowTestPoint, begin_native_window_test_observation,
 };
 
-#[cfg(feature = "test-support")]
+#[cfg(all(target_os = "windows", feature = "test-support"))]
 #[doc(hidden)]
 pub use native_test_scenario::native_test_confirm_scenario_behavior;
 
-#[cfg(feature = "test-support")]
+#[cfg(all(target_os = "windows", feature = "test-support"))]
 #[doc(hidden)]
 pub use native_test_harness::{
     NATIVE_TEST_INPUT_CANARY, NativeNoInputGenerationDriftGuard, NativeTestDisplay,
@@ -84,4 +125,5 @@ pub use native_test_harness::{
     native_test_window_rect,
 };
 
+#[cfg(target_os = "windows")]
 pub(crate) use windows::Win32::Foundation::HWND;

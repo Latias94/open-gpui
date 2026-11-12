@@ -55,7 +55,12 @@ fn native_windowing_startup_applies_modes_before_the_launch_callback() {
         let lifecycle = platform.lifecycle_test_probe.clone();
         assert!(!platform.is_windowed());
         assert!(platform.graphical_environment().is_none());
-        assert!(platform.direct_write_text_system.is_some());
+        assert!(
+            platform
+                .text_system()
+                .font_id(&font("Segoe UI Emoji"))
+                .is_ok()
+        );
         let mut app =
             Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
         assert!(
@@ -108,7 +113,7 @@ fn native_windowing_fixed_headless_refuses_attach_and_explicit_windowed_startup(
     discard_stale_quit_messages();
     let platform = Rc::new(WindowsPlatform::new_returning_for_test(true).unwrap());
     let hwnd = platform.handle;
-    assert!(platform.direct_write_text_system.is_none());
+    assert!(platform.text_system().all_font_names().is_empty());
     assert!(settle(platform.request_windowing(windowed())).is_err());
     assert!(settle(platform.request_windowing(WindowingRequest::Headless)).is_err());
     let mut app = Application::with_platform(platform.clone())
@@ -899,7 +904,6 @@ fn suspended_native_recovery(
     let generation = platform.inner.state.gpu_generation.get();
     let owner = platform.vsync_owner_live.borrow().as_ref().unwrap().clone();
     let recovered = platform.recovered_directx_devices.clone();
-    let text = Arc::downgrade(platform.direct_write_text_system.as_ref().unwrap());
     let windows = Arc::downgrade(&platform.raw_window_handles);
     let platform_hwnd: SafeHwnd = platform.handle.into();
     let validation = platform.inner.validation_number;
@@ -927,7 +931,6 @@ fn suspended_native_recovery(
             platform_hwnd.as_raw(),
             validation,
             &windows,
-            &text,
             &recovered,
             &owner,
             generation,
@@ -992,7 +995,6 @@ fn native_windowing_late_device_recovery_and_old_invalidation_cannot_cross_attac
         platform.handle,
         validation,
         &Arc::downgrade(&platform.raw_window_handles),
-        &Arc::downgrade(platform.direct_write_text_system.as_ref().unwrap()),
         &platform.recovered_directx_devices,
         &owner,
         new_generation,
