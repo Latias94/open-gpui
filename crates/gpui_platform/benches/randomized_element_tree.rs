@@ -1,4 +1,4 @@
-//! Frame cost of seeded element trees, including cached views and changing shares.
+//! Frame cost of seeded element trees, text panels, layout churn and scrolling.
 //!
 //! The `mixed` groups are the general benchmark: each iteration applies a fixed, seeded
 //! sequence of many kinds of change to a freshly built [`RandomizedElementTree`], one per
@@ -20,7 +20,7 @@
 //!
 //! Benchmarks don't check their output; the randomized tree's tests check that what these
 //! workloads render is correct, so a faster frame here still needs those tests to pass.
-//! Text-panel, layout-churn and scrolling workloads are outside this target's scope.
+//! The only assertions are one-time setup checks before timing.
 
 use std::{
     cell::RefCell,
@@ -28,6 +28,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use open_gpui::prelude::*;
 use open_gpui::{
     BenchAppContext, Context, Entity, Window,
     private::rand::{Rng as _, SeedableRng as _, rngs::StdRng},
@@ -907,6 +908,651 @@ fn changing_share(input: &ChangingShareInput, mut rng: StdRng, cx: &mut BenchApp
     });
 }
 
+fn sample_without_paths(family: &TreeFamily, rng: &mut StdRng) -> TreeInput {
+    let mut input = family.sample(rng);
+    input.config = input.config.with_paths(false);
+    input
+}
+
+#[open_gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "PathlessTree/full refresh", fps = 120)]
+fn pathless_full_refresh(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = &sample_without_paths(family, &mut rng);
+    measure_in_window("pathless full refresh", input, cx, |_, window, _| {
+        window.refresh()
+    });
+}
+
+#[open_gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "PathlessTree/element style", fps = 120)]
+fn pathless_element_style(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = &sample_without_paths(family, &mut rng);
+    measure_element_style("pathless element style", input, cx);
+}
+
+struct TextPanel {
+    index: usize,
+    value: u32,
+}
+
+impl Render for TextPanel {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let value = self.value;
+        open_gpui::div()
+            .id(open_gpui::ElementId::NamedInteger(
+                "text-panel".into(),
+                self.index as u64,
+            ))
+            .flex()
+            .flex_col()
+            .w(open_gpui::px(220.))
+            .h(open_gpui::px(192.))
+            .bg(open_gpui::rgb(0x181818))
+            .overflow_hidden()
+            .children((0..64).map(|label| {
+                open_gpui::div()
+                    .flex_shrink_0()
+                    .h(open_gpui::px(16.))
+                    .child(format!("Metric {label:02}: {value:06}"))
+            }))
+    }
+}
+
+struct TextPanelRoot {
+    panels: Vec<Entity<TextPanel>>,
+    font_family: open_gpui::SharedString,
+}
+
+impl TextPanelRoot {
+    fn new(panel_count: usize, font_family: &'static str, cx: &mut Context<Self>) -> Self {
+        Self {
+            panels: (0..panel_count)
+                .map(|index| cx.new(|_| TextPanel { index, value: 0 }))
+                .collect(),
+            font_family: font_family.into(),
+        }
+    }
+}
+
+impl Render for TextPanelRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        open_gpui::div()
+            .id("text-panels")
+            .flex()
+            .flex_wrap()
+            .font_family(self.font_family.clone())
+            .text_size(open_gpui::px(12.))
+            .text_color(open_gpui::rgb(0xffffff))
+            .child("0123456789")
+            .children(self.panels.iter().cloned())
+    }
+}
+
+fn text_shaping_available() -> bool {
+    if cfg!(all(
+        any(target_os = "linux", target_os = "freebsd"),
+        not(any(feature = "x11", feature = "wayland"))
+    )) {
+        eprintln!("text benchmarks require x11 or wayland for production text shaping");
+        false
+    } else if cfg!(all(target_os = "macos", not(feature = "font-kit"))) {
+        eprintln!("text benchmarks require font-kit on macOS for production text shaping");
+        false
+    } else if cfg!(target_os = "windows") {
+        eprintln!("text benchmarks are unavailable on Windows: headless platforms shape no text");
+        false
+    } else {
+        true
+    }
+}
+
+fn text_panel_counts() -> Vec<usize> {
+    if text_shaping_available() {
+        vec![8, 32, 96]
+    } else {
+        Vec::new()
+    }
+}
+
+#[open_gpui::bench(inputs = text_panel_counts(), input_name = "panels", group = "TextPanels/two updates", fps = 120)]
+fn text_panel_updates(panel_count: &usize, cx: &mut BenchAppContext) {
+    measure_text_panel_updates(*panel_count, "monospace", cx);
+}
+
+#[cfg(target_os = "macos")]
+const INSTALLED_FONT: &str = "Menlo";
+#[cfg(not(target_os = "macos"))]
+const INSTALLED_FONT: &str = "Noto Sans Mono";
+
+fn require_installed_font(cx: &BenchAppContext) {
+    let font = open_gpui::font(INSTALLED_FONT);
+    let text_system = cx.read(|cx| cx.text_system().clone());
+    let font_id = text_system.resolve_font(&font);
+    assert_eq!(
+        text_system.get_font_for_id(font_id).map(|font| font.family),
+        Some(font.family),
+        "the text benchmarks require {INSTALLED_FONT} to be installed"
+    );
+}
+
+#[open_gpui::bench(inputs = text_panel_counts(), input_name = "panels", group = "TextPanels/installed font two updates", fps = 120)]
+fn installed_font_panel_updates(panel_count: &usize, cx: &mut BenchAppContext) {
+    require_installed_font(cx);
+    measure_text_panel_updates(*panel_count, INSTALLED_FONT, cx);
+}
+
+fn measure_text_panel_updates(
+    panel_count: usize,
+    font_family: &'static str,
+    cx: &mut BenchAppContext,
+) {
+    let mut window = cx.add_empty_window();
+    let root = window.update(|window, cx| {
+        window.replace_root(cx, |_, cx| TextPanelRoot::new(panel_count, font_family, cx))
+    });
+    cx.run_until_idle();
+    window.update(|window, _| window.refresh());
+    cx.run_until_idle();
+    cx.bench_renderer(root, |root, _, cx| {
+        for index in [0, panel_count / 2] {
+            if let Some(panel) = root.panels.get(index) {
+                panel.update(cx, |panel, cx| {
+                    panel.value = (panel.value + 1) % 1_000_000;
+                    cx.notify();
+                });
+            }
+        }
+    });
+    window.update(|window, _| report_scene_stats("TextPanels", &panel_count.to_string(), window));
+    window.update(|window, cx| window.remove_window(cx));
+}
+
+struct PopulatedWindow(open_gpui::AsyncWindowContext);
+
+impl Drop for PopulatedWindow {
+    fn drop(&mut self) {
+        if let Err(error) = self.0.update(|window, cx| window.remove_window(cx)) {
+            eprintln!("failed to remove populated window: {error}");
+        }
+    }
+}
+
+fn populate(window: &mut Window, cx: &mut open_gpui::App, panel_count: usize) -> PopulatedWindow {
+    window.replace_root(cx, |_, cx| {
+        TextPanelRoot::new(panel_count, INSTALLED_FONT, cx)
+    });
+    PopulatedWindow(window.to_async(cx))
+}
+
+thread_local! {
+    static DESCRIBED_FIRST_POPULATED: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+}
+
+#[open_gpui::bench(inputs = text_panel_counts(), input_name = "panels", group = "TextPanels/first populated installed font", fps = 120)]
+fn first_populated_text_panels(panel_count: &usize, cx: &mut BenchAppContext) {
+    let panel_count = *panel_count;
+    require_installed_font(cx);
+
+    let describe = DESCRIBED_FIRST_POPULATED.with(|described| {
+        let mut described = described.borrow_mut();
+        if described.contains(&panel_count) {
+            false
+        } else {
+            described.push(panel_count);
+            true
+        }
+    });
+    if describe {
+        let before_window = open_gpui_bench_metrics::allocation_stats();
+        let mut window = cx.add_empty_window();
+        let before_population = open_gpui_bench_metrics::allocation_stats();
+        let populated = window.update(|window, cx| populate(window, cx, panel_count));
+        cx.run_until_idle();
+        let after_population = open_gpui_bench_metrics::allocation_stats();
+        match before_window.zip(before_population).zip(after_population) {
+            Some(((before, empty), after)) => eprintln!(
+                "first populated panels: {panel_count}, family {INSTALLED_FONT}; live heap before window {} B, empty window {} B, populated {} B; population delta {} B (process-wide estimates, not exclusive window ownership)",
+                before.live_bytes(),
+                empty.live_bytes(),
+                after.live_bytes(),
+                after.live_bytes() - empty.live_bytes(),
+            ),
+            None => eprintln!("first populated panels: {panel_count}, family {INSTALLED_FONT}"),
+        }
+        window.update(|window, _| {
+            report_scene_stats(
+                "TextPanels first populated",
+                &panel_count.to_string(),
+                window,
+            );
+        });
+        drop(populated);
+        cx.run_until_idle();
+    }
+
+    cx.bench_batched_task(
+        |cx| cx.add_empty_window(),
+        |window, _| {
+            let populated = window.update(|window, cx| populate(window, cx, panel_count));
+            open_gpui::Task::ready(populated)
+        },
+    );
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Churn {
+    Replace,
+    Remount,
+    Id,
+    Text,
+}
+
+impl fmt::Display for Churn {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Replace => "replace-8-of-96",
+            Self::Remount => "remount-48-of-96",
+            Self::Id => "id-and-anonymous-count",
+            Self::Text => "text-96",
+        })
+    }
+}
+
+struct ChurnPanel {
+    index: usize,
+    frame: usize,
+    workload: Churn,
+}
+
+impl Render for ChurnPanel {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let id = if self.workload == Churn::Id {
+            self.frame * 96 + self.index
+        } else {
+            self.index
+        };
+        let labels = if self.workload == Churn::Id {
+            56 + self.frame % 10
+        } else {
+            64
+        };
+        let value = if self.workload == Churn::Id {
+            0
+        } else {
+            self.frame % 1_000_000
+        };
+        open_gpui::div()
+            .id(open_gpui::ElementId::NamedInteger(
+                "churn-panel".into(),
+                id as u64,
+            ))
+            .flex()
+            .flex_col()
+            .w(open_gpui::px(220.))
+            .h(open_gpui::px(192.))
+            .bg(open_gpui::rgb(0x181818))
+            .overflow_hidden()
+            .children((0..labels).map(|label| {
+                open_gpui::div()
+                    .flex_shrink_0()
+                    .h(open_gpui::px(16.))
+                    .child(format!("Metric {label:02}: {value:06}"))
+            }))
+    }
+}
+
+struct ChurnRoot {
+    panels: Vec<Entity<ChurnPanel>>,
+    workload: Churn,
+    frame: usize,
+}
+
+impl ChurnRoot {
+    fn new(workload: Churn, cx: &mut Context<Self>) -> Self {
+        Self {
+            panels: (0..96)
+                .map(|index| {
+                    cx.new(|_| ChurnPanel {
+                        index,
+                        frame: 0,
+                        workload,
+                    })
+                })
+                .collect(),
+            workload,
+            frame: 0,
+        }
+    }
+
+    fn visible_panels(&self) -> usize {
+        if self.workload == Churn::Remount && self.frame % 2 == 1 {
+            48
+        } else {
+            96
+        }
+    }
+
+    fn advance(&mut self, cx: &mut Context<Self>) {
+        self.frame += 1;
+        match self.workload {
+            Churn::Replace => {
+                for offset in 0..8 {
+                    let index = ((self.frame - 1) * 8 + offset) % 96;
+                    let replacement = cx.new(|_| ChurnPanel {
+                        index,
+                        frame: self.frame,
+                        workload: self.workload,
+                    });
+                    if let Some(panel) = self.panels.get_mut(index) {
+                        *panel = replacement;
+                    }
+                }
+            }
+            Churn::Id | Churn::Text => {
+                for panel in &self.panels {
+                    panel.update(cx, |panel, cx| {
+                        panel.frame = self.frame;
+                        cx.notify();
+                    });
+                }
+            }
+            Churn::Remount => {}
+        }
+        cx.notify();
+    }
+}
+
+impl Render for ChurnRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        open_gpui::div()
+            .id("churn-root")
+            .flex()
+            .flex_wrap()
+            .font_family(INSTALLED_FONT)
+            .text_size(open_gpui::px(12.))
+            .text_color(open_gpui::rgb(0xffffff))
+            .child("0123456789")
+            .children(self.panels.iter().take(self.visible_panels()).cloned())
+    }
+}
+
+fn churn_workloads() -> Vec<Churn> {
+    if text_shaping_available() {
+        vec![Churn::Replace, Churn::Remount, Churn::Id, Churn::Text]
+    } else {
+        Vec::new()
+    }
+}
+
+thread_local! {
+    static HEAP_CHECKED_CHURN: RefCell<Vec<Churn>> = const { RefCell::new(Vec::new()) };
+}
+
+fn report_churn_heap(workload: Churn, cx: &mut BenchAppContext) {
+    let first = HEAP_CHECKED_CHURN.with(|checked| {
+        let mut checked = checked.borrow_mut();
+        let first = !checked.contains(&workload);
+        if first {
+            checked.push(workload);
+        }
+        first
+    });
+    if !first {
+        return;
+    }
+    let before_window = open_gpui_bench_metrics::allocation_stats();
+    let mut window = cx.add_empty_window();
+    let root =
+        window.update(|window, cx| window.replace_root(cx, |_, cx| ChurnRoot::new(workload, cx)));
+    cx.run_until_idle();
+    let mut checkpoints = Vec::with_capacity(4);
+    checkpoints.push((0, open_gpui_bench_metrics::allocation_stats()));
+    for frame in 1..=500 {
+        window.update(|_, cx| root.update(cx, |root, cx| root.advance(cx)));
+        cx.run_until_idle();
+        if [50, 200, 500].contains(&frame) {
+            checkpoints.push((frame, open_gpui_bench_metrics::allocation_stats()));
+        }
+    }
+    window.update(|window, cx| window.remove_window(cx));
+    drop(root);
+    cx.run_until_idle();
+    for (frame, stats) in checkpoints {
+        match before_window.zip(stats) {
+            Some((before, after)) => eprintln!(
+                "layout churn {workload}: frame {frame}, live heap {} B, window delta {} B (process-wide requested bytes)",
+                after.live_bytes(),
+                after.live_bytes() - before.live_bytes(),
+            ),
+            None => eprintln!("layout churn {workload}: frame {frame}, heap unavailable"),
+        }
+    }
+}
+
+#[open_gpui::bench(inputs = churn_workloads(), input_name = "workload", group = "LayoutChurn", fps = 120)]
+fn layout_churn(workload: &Churn, cx: &mut BenchAppContext) {
+    require_installed_font(cx);
+    report_churn_heap(*workload, cx);
+    let mut window = cx.add_empty_window();
+    let root =
+        window.update(|window, cx| window.replace_root(cx, |_, cx| ChurnRoot::new(*workload, cx)));
+    cx.run_until_idle();
+    cx.bench_renderer(root, |root, _, cx| root.advance(cx));
+    window.update(|window, cx| window.remove_window(cx));
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ScrollWorkload {
+    Text,
+    Virtual,
+    Nested,
+}
+
+impl fmt::Display for ScrollWorkload {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Text => "editor-like-text",
+            Self::Virtual => "uniform-list",
+            Self::Nested => "pane-with-static-siblings",
+        })
+    }
+}
+
+struct ScrollPane {
+    workload: ScrollWorkload,
+    handle: open_gpui::ScrollHandle,
+    list_handle: open_gpui::UniformListScrollHandle,
+    distance: f32,
+    direction: f32,
+}
+
+impl ScrollPane {
+    fn advance(&mut self, cx: &mut Context<Self>) {
+        if self.distance >= 6000.0 {
+            self.direction = -1.0;
+        } else if self.distance <= 600.0 {
+            self.direction = 1.0;
+        }
+        self.distance += self.direction * 12.0;
+        self.handle.set_offset(open_gpui::point(
+            open_gpui::px(0.0),
+            open_gpui::px(-self.distance),
+        ));
+        cx.notify();
+    }
+
+    fn row(index: usize) -> impl IntoElement {
+        open_gpui::div()
+            .flex()
+            .h(open_gpui::px(22.0))
+            .flex_shrink_0()
+            .child(
+                open_gpui::div()
+                    .w(open_gpui::px(64.0))
+                    .text_color(open_gpui::rgb(0x858585))
+                    .child(format!("{index:5}")),
+            )
+            .child(
+                open_gpui::div()
+                    .text_color(open_gpui::rgb(0xc586c0))
+                    .child("let "),
+            )
+            .child(
+                open_gpui::div()
+                    .text_color(open_gpui::rgb(0x9cdcfe))
+                    .child(format!("line_{index}")),
+            )
+            .child(
+                open_gpui::div()
+                    .text_color(open_gpui::rgb(0xd4d4d4))
+                    .child(" = document.visible_lines(viewport);"),
+            )
+    }
+}
+
+impl Render for ScrollPane {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let container = open_gpui::div()
+            .size_full()
+            .font_family(INSTALLED_FONT)
+            .text_size(open_gpui::px(14.0))
+            .bg(open_gpui::rgb(0x202020));
+        if self.workload == ScrollWorkload::Virtual {
+            container
+                .child(
+                    open_gpui::uniform_list(
+                        "scroll-rows",
+                        5000,
+                        cx.processor(|_, range: std::ops::Range<usize>, _, _| {
+                            range.map(Self::row).collect()
+                        }),
+                    )
+                    .size_full()
+                    .track_scroll(&self.list_handle),
+                )
+                .into_any_element()
+        } else {
+            container
+                .id("scroll-text")
+                .overflow_y_scroll()
+                .track_scroll(&self.handle)
+                .children((0..1000).map(Self::row))
+                .into_any_element()
+        }
+    }
+}
+
+struct ScrollStaticPanel {
+    status: bool,
+}
+
+impl Render for ScrollStaticPanel {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        open_gpui::div()
+            .size_full()
+            .bg(open_gpui::rgb(0x303030))
+            .text_color(open_gpui::rgb(0xcccccc))
+            .children((0..if self.status { 1 } else { 40 }).map(|index| {
+                open_gpui::div().h(open_gpui::px(22.0)).child(format!(
+                    "{} {index}",
+                    if self.status { "Status" } else { "File" }
+                ))
+            }))
+    }
+}
+
+struct ScrollRoot {
+    pane: Entity<ScrollPane>,
+    sidebar: Entity<ScrollStaticPanel>,
+    status: Entity<ScrollStaticPanel>,
+    nested: bool,
+}
+
+impl Render for ScrollRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        open_gpui::div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(
+                open_gpui::div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .when(self.nested, |element| {
+                        element.child(
+                            open_gpui::div()
+                                .w(open_gpui::px(220.0))
+                                .h_full()
+                                .child(self.sidebar.clone()),
+                        )
+                    })
+                    .child(
+                        open_gpui::div()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .overflow_hidden()
+                            .child(self.pane.clone()),
+                    ),
+            )
+            .when(self.nested, |element| {
+                element.child(
+                    open_gpui::div()
+                        .h(open_gpui::px(28.0))
+                        .child(self.status.clone()),
+                )
+            })
+    }
+}
+
+fn scroll_workloads() -> Vec<ScrollWorkload> {
+    if text_shaping_available() {
+        vec![
+            ScrollWorkload::Text,
+            ScrollWorkload::Virtual,
+            ScrollWorkload::Nested,
+        ]
+    } else {
+        Vec::new()
+    }
+}
+
+#[open_gpui::bench(inputs = scroll_workloads(), input_name = "workload", group = "Scroll", fps = 360)]
+fn scroll(workload: &ScrollWorkload, cx: &mut BenchAppContext) {
+    require_installed_font(cx);
+    let mut window = cx.add_empty_window();
+    let pane = window.update(|window, cx| {
+        let pane = cx.new(|_| {
+            let list_handle = open_gpui::UniformListScrollHandle::new();
+            let handle = if *workload == ScrollWorkload::Virtual {
+                list_handle.base_handle()
+            } else {
+                open_gpui::ScrollHandle::new()
+            };
+            ScrollPane {
+                workload: *workload,
+                handle,
+                list_handle,
+                distance: 600.0,
+                direction: 1.0,
+            }
+        });
+        window.replace_root(cx, |_, cx| ScrollRoot {
+            pane: pane.clone(),
+            sidebar: cx.new(|_| ScrollStaticPanel { status: false }),
+            status: cx.new(|_| ScrollStaticPanel { status: true }),
+            nested: *workload == ScrollWorkload::Nested,
+        });
+        pane
+    });
+    cx.run_until_idle();
+    for _ in 0..8 {
+        window.update(|_, cx| pane.update(cx, |pane, cx| pane.advance(cx)));
+        cx.run_until_idle();
+    }
+    cx.bench_renderer(pane, |pane, _, cx| pane.advance(cx));
+    window.update(|window, cx| window.remove_window(cx));
+}
+
 open_gpui::bench_group!(
     name = benches;
     config = criterion::Criterion::default()
@@ -929,7 +1575,14 @@ open_gpui::bench_group!(
     reorder,
     hover,
     mixed,
+    pathless_full_refresh,
+    pathless_element_style,
     changing_share,
+    text_panel_updates,
+    installed_font_panel_updates,
+    first_populated_text_panels,
+    layout_churn,
+    scroll,
     family_summary
 );
 open_gpui::bench_main!(benches);

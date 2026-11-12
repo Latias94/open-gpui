@@ -109,6 +109,7 @@ fn randomized_element_ids_are_unique_and_stable() {
         RandomizedChildMutation::Bounds,
         RandomizedChildMutation::Clipping,
         RandomizedChildMutation::Visibility,
+        RandomizedChildMutation::Text,
     ] {
         tree.mutate_random_child(mutation);
         assert_eq!(tree.snapshot().element_ids(), initial_ids);
@@ -134,6 +135,37 @@ fn randomized_element_ids_are_unique_and_stable() {
         remaining_ids.len()
     );
     assert!(remaining_ids.iter().all(|id| inserted_id_set.contains(id)));
+}
+
+#[test]
+fn child_text_mutations_preserve_ids_and_snapshot_state() {
+    let initial = RandomizedElementTree::new(0, 1).snapshot();
+    let mut observed_labels = BTreeSet::new();
+    for label in 0..LABELS.len() {
+        let mut snapshot = initial.clone();
+        snapshot.children[0].style.label = label;
+        let mut tree = RandomizedElementTree::from_snapshot(snapshot.clone());
+        let mut repeated = RandomizedElementTree::from_snapshot(snapshot.clone());
+        assert_eq!(tree.snapshot(), snapshot);
+
+        let mutation =
+            tree.apply_mutation_without_notification(RandomizedElementTreeMutationKind::ChildText);
+        let repeated_mutation = repeated
+            .apply_mutation_without_notification(RandomizedElementTreeMutationKind::ChildText);
+        assert_eq!(mutation.mutation, repeated_mutation.mutation);
+        assert_eq!(
+            mutation.mutation,
+            RandomizedElementTreeMutation::ChildText { element_id: 0 }
+        );
+        let after = tree.snapshot();
+        assert_eq!(after, repeated.snapshot());
+        assert_eq!(after.element_ids(), snapshot.element_ids());
+        let after_label = after.children[0].style.label;
+        assert_ne!(after_label, label);
+        assert!(after_label < LABELS.len());
+        observed_labels.insert(after_label);
+    }
+    assert_eq!(observed_labels, (0..LABELS.len()).collect());
 }
 
 #[crate::test]

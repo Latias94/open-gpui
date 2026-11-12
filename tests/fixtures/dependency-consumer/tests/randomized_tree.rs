@@ -182,7 +182,7 @@ fn downstream_seeded_mutations_replay_and_reconstruction_keeps_next_element_id()
 }
 
 #[test]
-fn downstream_mutation_inventory_exposes_all_sixteen_workload_controls() {
+fn downstream_mutation_inventory_exposes_all_seventeen_workload_controls() {
     use RandomizedElementTreeMutationKind::*;
 
     assert_eq!(
@@ -200,6 +200,7 @@ fn downstream_mutation_inventory_exposes_all_sixteen_workload_controls() {
             ChildBounds,
             ChildClipping,
             ChildVisibility,
+            ChildText,
             Reorder,
             Insert,
             Remove,

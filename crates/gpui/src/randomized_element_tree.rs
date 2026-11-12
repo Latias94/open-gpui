@@ -65,6 +65,7 @@ pub struct RandomizedElementTreeConfig {
     animation_density: f64,
     cached_views: bool,
     hover_styles: bool,
+    paths: bool,
 }
 
 impl RandomizedElementTreeConfig {
@@ -79,6 +80,7 @@ impl RandomizedElementTreeConfig {
             animation_density: 0.0,
             cached_views: false,
             hover_styles: false,
+            paths: true,
         }
     }
 
@@ -99,6 +101,12 @@ impl RandomizedElementTreeConfig {
     /// Off by default, so workloads that never move the pointer don't pay for them.
     pub fn with_hover_styles(mut self, hover_styles: bool) -> Self {
         self.hover_styles = hover_styles;
+        self
+    }
+
+    /// Enables vector paths while keeping the same canvas and layout when disabled.
+    pub fn with_paths(mut self, paths: bool) -> Self {
+        self.paths = paths;
         self
     }
 
@@ -304,6 +312,7 @@ pub struct RandomizedElementTreeSnapshot {
     next_element_id: u64,
     cached_views: bool,
     hover_styles: bool,
+    paths: bool,
     paths_by_element_id: HashMap<u64, Vec<usize>>,
 }
 
@@ -405,6 +414,9 @@ pub enum RandomizedElementTreeMutationKind {
     ChildClipping,
     /// Toggle visibility on a seeded random descendant.
     ChildVisibility,
+    /// Change a seeded random descendant's text, adding text to one that had none or
+    /// removing it from one that didn't always have it.
+    ChildText,
     /// Reorder a seeded random descendant among its siblings.
     Reorder,
     /// Insert a generated descendant below a seeded random parent.
@@ -419,7 +431,7 @@ pub enum RandomizedElementTreeMutationKind {
 
 impl RandomizedElementTreeMutationKind {
     /// Every supported mutation kind, suitable for parameterized tests and benchmarks.
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::RootColor,
         Self::RootOpacity,
         Self::RootBorder,
@@ -432,6 +444,7 @@ impl RandomizedElementTreeMutationKind {
         Self::ChildBounds,
         Self::ChildClipping,
         Self::ChildVisibility,
+        Self::ChildText,
         Self::Reorder,
         Self::Insert,
         Self::Remove,
@@ -481,6 +494,11 @@ pub enum RandomizedElementTreeMutation {
     },
     /// Toggled a descendant's visibility.
     ChildVisibility {
+        /// The stable ID of the mutated element.
+        element_id: u64,
+    },
+    /// Changed a descendant's text.
+    ChildText {
         /// The stable ID of the mutated element.
         element_id: u64,
     },
@@ -592,6 +610,7 @@ impl RandomizedElementTree {
             next_element_id: config.element_count as u64,
             cached_views: config.cached_views,
             hover_styles: config.hover_styles,
+            paths: config.paths,
             paths_by_element_id: HashMap::default(),
         };
         snapshot.rebuild_element_paths();
@@ -795,6 +814,9 @@ impl RandomizedElementTree {
             RandomizedElementTreeMutationKind::ChildVisibility => {
                 self.mutate_random_child(RandomizedChildMutation::Visibility)
             }
+            RandomizedElementTreeMutationKind::ChildText => {
+                self.mutate_random_child(RandomizedChildMutation::Text)
+            }
             RandomizedElementTreeMutationKind::Reorder => self.reorder_child(),
             RandomizedElementTreeMutationKind::Insert => self.insert_child_internal(),
             RandomizedElementTreeMutationKind::Remove => self
@@ -990,6 +1012,11 @@ impl RandomizedElementTree {
                 node.style.visible = !node.style.visible;
                 RandomizedElementTreeMutation::ChildVisibility { element_id }
             }
+            RandomizedChildMutation::Text => {
+                node.style.label =
+                    (node.style.label + self.rng.random_range(1..LABELS.len())) % LABELS.len();
+                RandomizedElementTreeMutation::ChildText { element_id }
+            }
         };
         AppliedRandomizedElementTreeMutation {
             mutation,
@@ -1137,6 +1164,7 @@ impl Render for RandomizedElementTree {
                     &mut work_counters,
                     snapshot.cached_views,
                     snapshot.hover_styles,
+                    snapshot.paths,
                 )
             }))
             .map(|element| {
@@ -1179,6 +1207,7 @@ impl Render for RandomizedElementEntity {
                     &mut work_counters,
                     snapshot.cached_views,
                     snapshot.hover_styles,
+                    snapshot.paths,
                 )
             })
             .unwrap_or_else(|| div().into_any_element())
@@ -1277,7 +1306,15 @@ struct RandomizedElementStyle {
     visible: bool,
     vertical: bool,
     wrap: bool,
+    label: usize,
 }
+
+const LABELS: [&str; 4] = [
+    "Retained glyphs: abc Ω",
+    "Retained glyphs: abc Ω, now with enough words that narrow parents wrap them",
+    "Ω",
+    "",
+];
 
 impl RandomizedElementStyle {
     fn random_root(rng: &mut StdRng) -> Self {
@@ -1295,6 +1332,7 @@ impl RandomizedElementStyle {
             visible: true,
             vertical: rng.random_bool(0.5),
             wrap: rng.random_bool(0.7),
+            label: 0,
         }
     }
 
@@ -1313,6 +1351,7 @@ impl RandomizedElementStyle {
             visible: rng.random_bool(0.9),
             vertical: rng.random_bool(0.5),
             wrap: rng.random_bool(0.4),
+            label: 0,
         }
     }
 
@@ -1331,6 +1370,7 @@ enum RandomizedChildMutation {
     Bounds,
     Clipping,
     Visibility,
+    Text,
 }
 
 #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
@@ -1341,6 +1381,7 @@ fn render_node(
     work_counters: &mut RandomizedElementTreeWorkCounters,
     cached_views: bool,
     hover_styles: bool,
+    paths: bool,
 ) -> AnyElement {
     if node.is_entity
         && let Some(entity) = entities.get(&node.id)
@@ -1362,6 +1403,7 @@ fn render_node(
         work_counters,
         cached_views,
         hover_styles,
+        paths,
     )
 }
 
@@ -1373,6 +1415,7 @@ fn render_node_body(
     work_counters: &mut RandomizedElementTreeWorkCounters,
     cached_views: bool,
     hover_styles: bool,
+    paths: bool,
 ) -> AnyElement {
     work_counters.record_element_render(node.features.handler_count());
     let style = &node.style;
@@ -1444,8 +1487,10 @@ fn render_node_body(
                     ),
             )
         })
-        .when(node.id % 4 == 1, |element| {
-            element.underline().child("Retained glyphs: abc Ω")
+        .when(node.id % 4 == 1 || style.label != 0, |element| {
+            element
+                .underline()
+                .child(LABELS[style.label % LABELS.len()])
         })
         .child({
             let color = style.border_color;
@@ -1454,6 +1499,9 @@ fn render_node_body(
             crate::canvas(
                 |_, _, _| (),
                 move |bounds, (), window, _| {
+                    if !paths {
+                        return;
+                    }
                     for index in 0..6 {
                         let mut path = if index % 2 == 0 {
                             crate::PathBuilder::fill()
@@ -1485,6 +1533,7 @@ fn render_node_body(
                     work_counters,
                     cached_views,
                     hover_styles,
+                    paths,
                 )
             } else {
                 render_node_body(
@@ -1494,6 +1543,7 @@ fn render_node_body(
                     work_counters,
                     cached_views,
                     hover_styles,
+                    paths,
                 )
             }
         }))

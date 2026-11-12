@@ -44,6 +44,9 @@ mod elements;
 mod executor;
 mod platform_scheduler;
 pub(crate) use platform_scheduler::PlatformScheduler;
+#[cfg(feature = "bench-support")]
+#[path = "../benches/support/scene.rs"]
+pub mod bench_scene;
 mod geometry;
 mod gestures;
 mod global;

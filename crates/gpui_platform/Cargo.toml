@@ -39,6 +39,27 @@ name = "randomized_element_tree"
 harness = false
 required-features = ["bench-support"]
 
+[[bench]]
+name = "inspector_render"
+harness = false
+required-features = ["bench-support"]
+
+[[bench]]
+name = "primitives"
+harness = false
+required-features = ["bench-support"]
+
+[[bench]]
+name = "atlas_upload"
+harness = false
+required-features = ["bench-support"]
+
+[[bench]]
+name = "focus_cleanup"
+path = "../gpui/benches/focus_cleanup.rs"
+harness = false
+required-features = ["bench-support"]
+
 [features]
 inspector = ["open_gpui/inspector"]
 default = []

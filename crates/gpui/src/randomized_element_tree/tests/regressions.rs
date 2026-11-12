@@ -94,6 +94,7 @@ fn assert_requested_mutation(
                 | (Kind::ChildBounds, Mutation::ChildBounds { .. })
                 | (Kind::ChildClipping, Mutation::ChildClipping { .. })
                 | (Kind::ChildVisibility, Mutation::ChildVisibility { .. })
+                | (Kind::ChildText, Mutation::ChildText { .. })
                 | (Kind::Reorder, Mutation::Reordered { .. })
                 | (Kind::Insert, Mutation::Inserted { .. })
                 | (Kind::Remove | Kind::RemoveLeaf, Mutation::Removed { .. })
