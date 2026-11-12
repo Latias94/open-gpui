@@ -4,7 +4,8 @@ use core_foundation::{
     },
     base::{CFRelease, TCFType, kCFAllocatorDefault},
     dictionary::{
-        CFDictionaryCreate, kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks,
+        CFDictionary, CFDictionaryCreate, kCFTypeDictionaryKeyCallBacks,
+        kCFTypeDictionaryValueCallBacks,
     },
     number::CFNumber,
     string::CFString,
@@ -13,14 +14,17 @@ use core_foundation_sys::locale::CFLocaleCopyPreferredLanguages;
 use core_text::{
     font::{CTFont, cascade_list_for_languages},
     font_descriptor::{
-        CTFontDescriptor, CTFontDescriptorCreateWithAttributes, kCTFontCascadeListAttribute,
-        kCTFontFeatureSettingsAttribute, kCTFontSlantTrait, kCTFontSymbolicTrait,
+        CTFontDescriptor, CTFontDescriptorCreateWithAttributes, TraitAccessors,
+        kCTFontCascadeListAttribute, kCTFontFamilyNameAttribute, kCTFontFeatureSettingsAttribute,
+        kCTFontItalicTrait, kCTFontSlantTrait, kCTFontSymbolicTrait, kCTFontTraitsAttribute,
         kCTFontWeightTrait, kCTFontWidthTrait,
     },
 };
 use font_kit::{
-    family_handle::FamilyHandle, font::Font as FontKitFont, properties::Properties,
-    source::SystemSource, sources::mem::MemSource,
+    family_handle::FamilyHandle,
+    font::Font as FontKitFont,
+    properties::{Properties, Style},
+    sources::mem::MemSource,
 };
 use objc2_core_text::{kCTFontOpenTypeFeatureTag, kCTFontOpenTypeFeatureValue};
 use open_gpui::{FontFallbacks, FontFeatures};
@@ -30,7 +34,6 @@ pub fn apply_features_and_fallbacks(
     features: &FontFeatures,
     fallbacks: Option<&FontFallbacks>,
     memory_source: &MemSource,
-    system_source: &SystemSource,
 ) -> anyhow::Result<()> {
     unsafe {
         let mut keys = vec![kCTFontFeatureSettingsAttribute];
@@ -39,12 +42,7 @@ pub fn apply_features_and_fallbacks(
             && !fallbacks.fallback_list().is_empty()
         {
             keys.push(kCTFontCascadeListAttribute);
-            values.push(generate_fallback_array(
-                fallbacks,
-                font,
-                memory_source,
-                system_source,
-            ));
+            values.push(generate_fallback_array(fallbacks, font, memory_source));
         }
         let attrs = CFDictionaryCreate(
             kCFAllocatorDefault,
@@ -113,30 +111,50 @@ fn generate_fallback_array(
     fallbacks: &FontFallbacks,
     font: &FontKitFont,
     memory_source: &MemSource,
-    system_source: &SystemSource,
 ) -> CFMutableArrayRef {
     unsafe {
+        let native_font = font.native_font();
+        let italic = native_font.symbolic_traits() & kCTFontItalicTrait != 0;
+        let traits = CFDictionary::from_CFType_pairs(&[
+            (
+                CFString::wrap_under_get_rule(kCTFontWeightTrait),
+                CFNumber::from(native_font.all_traits().normalized_weight()).as_CFType(),
+            ),
+            (
+                CFString::wrap_under_get_rule(kCTFontSlantTrait),
+                CFNumber::from(if italic { 1.0 } else { 0.0 }).as_CFType(),
+            ),
+        ]);
+        let properties = Properties {
+            style: if italic { Style::Italic } else { Style::Normal },
+            weight: font.properties().weight,
+            stretch: Default::default(),
+        };
         let fallback_array = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
-        let properties = font.properties();
         for family in fallbacks.fallback_list() {
             let family = open_gpui::font_name_with_fallbacks(family, ".AppleSystemUIFont");
-            let fallback = memory_source
+            let descriptor = memory_source
                 .select_family_by_name(family)
                 .ok()
                 .and_then(|family| select_fallback_from_family(family, &properties))
-                .or_else(|| {
-                    system_source
-                        .select_family_by_name(family)
-                        .ok()
-                        .and_then(|family| select_fallback_from_family(family, &properties))
+                .map(|font| font.native_font().copy_descriptor())
+                .unwrap_or_else(|| {
+                    let attributes = CFDictionary::from_CFType_pairs(&[
+                        (
+                            CFString::wrap_under_get_rule(kCTFontFamilyNameAttribute),
+                            CFString::new(family).as_CFType(),
+                        ),
+                        (
+                            CFString::wrap_under_get_rule(kCTFontTraitsAttribute),
+                            traits.as_CFType(),
+                        ),
+                    ]);
+                    core_text::font_descriptor::new_from_attributes(&attributes)
                 });
-            if let Some(fallback) = fallback {
-                let descriptor = fallback.native_font().copy_descriptor();
-                CFArrayAppendValue(fallback_array, descriptor.as_concrete_TypeRef() as _);
-            }
+            CFArrayAppendValue(fallback_array, descriptor.as_concrete_TypeRef() as _);
         }
 
-        append_system_fallbacks(fallback_array, &font.native_font());
+        append_system_fallbacks(fallback_array, &native_font);
         fallback_array
     }
 }
@@ -184,6 +202,7 @@ pub(crate) fn font_has_valid_traits(font: &FontKitFont) -> bool {
     valid
 }
 
+/// Matches retained private faces without letting width override weight or style.
 fn select_fallback_from_family(
     family: FamilyHandle,
     properties: &Properties,
@@ -201,7 +220,9 @@ fn select_fallback_from_family(
         if !font_has_valid_traits(&font) {
             continue;
         }
-        candidates.push(font.properties());
+        let mut candidate = font.properties();
+        candidate.stretch = Default::default();
+        candidates.push(candidate);
         fonts.push(font);
     }
     let index = font_kit::matching::find_best_match(&candidates, properties).ok()?;

@@ -343,13 +343,7 @@ impl AppleTextSystemState {
             if !postscript_names_seen.insert(postscript_name) {
                 continue;
             }
-            apply_features_and_fallbacks(
-                &mut font,
-                features,
-                fallbacks,
-                &self.memory_source,
-                &self.system_source,
-            )?;
+            apply_features_and_fallbacks(&mut font, features, fallbacks, &self.memory_source)?;
             font_ids.push(self.id_for_native_font(font.native_font()));
         }
         Ok(font_ids)
