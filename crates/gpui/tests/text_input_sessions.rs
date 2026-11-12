@@ -1023,7 +1023,8 @@ fn platform_session_forwards_utf16_ranges_and_batched_selection_geometry(cx: &mu
             field.point_queries,
             [local.origin + point(px(4.0), px(6.0))]
         );
-        assert_eq!(field.native_selection_updates, [3..5]);
+        assert_eq!(field.native_selection_updates.len(), 1);
+        assert_eq!(field.native_selection_updates[0], 3..5);
         assert_eq!(field.range_queries, [1..3, 3..5, 1..3, 1..6]);
         assert_eq!(
             field.replacements,
