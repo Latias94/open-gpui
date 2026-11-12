@@ -123,6 +123,31 @@ fn warp_hollow_border_strips_match_full_quad_under_projected_rounded_clip() {
         .expect("WARP strips must preserve the unsplit border's pixels");
 }
 
+#[test]
+fn warp_fractional_clip_preserves_pixel_centers_for_quads_paths_and_sprites() {
+    atlas_render_tests::warp_fractional_clip_preserves_pixel_centers_for_quads_paths_and_sprites()
+        .expect("WARP quads, analytic paths and sprites must preserve fractional clip coverage");
+}
+
+#[test]
+fn warp_rounded_clip_depth_preserves_path_and_translucent_corners() {
+    atlas_render_tests::warp_rounded_clip_depth_preserves_path_and_translucent_corners().expect(
+        "WARP opaque depth and rounded fallback must preserve background, path and translucent pixels",
+    );
+}
+
+#[test]
+fn warp_transformed_path_gradient_and_pattern_match_local_quad() {
+    atlas_render_tests::warp_transformed_path_gradient_and_pattern_match_local_quad()
+        .expect("WARP path gradients and patterns must retain local paint coordinates");
+}
+
+#[test]
+fn warp_tiny_image_bounds_preserve_full_and_clipped_uvs() {
+    atlas_render_tests::warp_tiny_image_bounds_preserve_full_and_clipped_uvs()
+        .expect("WARP tiny enlarged images must preserve original UVs under asymmetric clipping");
+}
+
 #[derive(Clone, Copy, Debug)]
 struct NativeAssetPaint {
     window_id: WindowId,

@@ -7,8 +7,8 @@
 use criterion::Criterion;
 use open_gpui::{
     AtlasTextureId, AtlasTextureInstanceId, AtlasTextureKind, AtlasTile, BenchAppContext,
-    BenchWindowContext, Bounds, Context, DevicePixels, Entity, Primitive, PrimitiveBatch,
-    Scene, Task, TileId, VisualContext as _, WindowActivationTerminal, point, profiler, px,
+    BenchWindowContext, Bounds, Context, DevicePixels, Entity, Primitive, PrimitiveBatch, Scene,
+    Task, TileId, VisualContext as _, WindowActivationTerminal, point, profiler, px,
     randomized_element_tree::{
         RandomizedElementTree, RandomizedElementTreeBounds, RandomizedElementTreeMutation,
         RandomizedElementTreeMutationKind, RandomizedElementTreeSnapshot,

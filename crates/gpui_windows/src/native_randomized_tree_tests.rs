@@ -267,7 +267,11 @@ fn assert_tree_scene_pixels(
             .try_visual_bounds()
             .expect("actual shadow raster bounds")
     }));
-    occupied.extend(scene.paths.iter().map(|primitive| primitive.bounds));
+    occupied.extend(scene.paths.iter().map(|path| {
+        Primitive::Path(path.clone())
+            .try_visual_bounds()
+            .expect("actual path raster bounds")
+    }));
     occupied.extend(scene.underlines.iter().map(|primitive| primitive.bounds));
     occupied.extend(
         scene
