@@ -10,6 +10,35 @@ execution: code
 
 # Zed GPUI Upstream Sync - Plan
 
+## November 12 macOS Reconciliation
+
+The owner requests a complete Mac/Apple review and authorizes synchronization of confirmed
+new gaps. The [bounded inventory](../imports/zed-gpui-upstream-sync-candidates.md#november-12-macos-reconciliation)
+fixes Open GPUI `fa9a4fd9a5223c79528e2506d90c6f16456bf2ac` and Zed
+`78f5d7446c55f6c1aa9b66e8111f6b3f4625ebb0`, including inherited omissions before the
+November 5 target and directly affected shared text/window mechanisms. Use disjoint native
+input, window/sheet, Apple frame diagnostics, font/text and Div ownership, with shared App/
+Window integration and serial native qualification owned by the main thread. Keep the existing
+checkout and target directory. The owner subsequently authorizes local Conventional Commits;
+branch creation and remote publication remain outside this request.
+
+Port complete official mechanisms through current native ingress, accepted-candidate,
+display-snapshot and retirement owners. Keep explicit owner selection for Dialog sheets,
+ordinary primary-display centering consumers, private font descriptors and retained atlas
+lifetimes. The [qualification](../verification.md#macos-source-reconciliation-on-november-12)
+records failures and final results separately from native physical-input, display timing and
+older-OS qualification. Shared BOM and PATH defects in both fixed trees remain recorded
+findings rather than being mislabeled as missing upstream ports.
+
+The bounded reconciliation is implemented through
+`3691fb44a677c6f9a32baf829e1b08b07fa8b422`, with separate fallback-font and shared-allocation
+commits recorded in the inventory. Final qualification includes 1806/1806 Core/Apple/Mac library
+tests, the independently locked consumer, native shader compilation, correctness Clippy and
+repeated real AppKit sheet runs. All six worker threads are finished and closed. Separate
+concurrent layer-retirement edits remain uncommitted and are included only in the stated native
+worktree qualification. Shared BOM/PATH defects, physical input, older macOS and numerical
+performance/energy budgets retain their explicit remaining scope.
+
 ## November 5 Continuation
 
 The owner has resumed maintenance in `F:/SourceCodes/Rust/open-gpui`, whose inspected baseline is

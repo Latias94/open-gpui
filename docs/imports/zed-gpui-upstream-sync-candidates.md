@@ -28,6 +28,68 @@ The November continuation applies the
 Record retained differences and their consumer/verification basis here; an unimplemented
 official mechanism remains queued until it receives an explicit disposition.
 
+## November 12 macOS Reconciliation
+
+This continuation compares committed Open GPUI
+`fa9a4fd9a5223c79528e2506d90c6f16456bf2ac` with fixed Zed
+`78f5d7446c55f6c1aa9b66e8111f6b3f4625ebb0` in `repo-ref/zed`. The separately observed
+remote HEAD is `8a5cf7e23a7ce5797bb020a4b7be2ef1b7dc8f79`; it does not advance this target.
+Both histories are complete rather than shallow. The review includes the content anchor
+`6e9465a4288c332208643892e23b9d35d7be5c79`, historical target
+`635026fabc38440fce5e1767d125026a17b12012`, final source reconciliation, and the three
+November 12 native fixes already present at the fork checkpoint. The exact original Zed
+checkout remains unknown.
+
+Five initial review lanes cover AppKit windows/displays, native input/clipboard, Metal/frame
+sources, fonts/dispatch/Darwin, and platform services/manifests. A sixth implementation lane
+owns the newly identified Div optimization. This is a Mac/Apple reconciliation with directly
+affected shared owners, not another claim of whole-framework source or API parity.
+
+| Mechanism | Official source | Reconciliation and owning verification |
+| --- | --- | --- |
+| Unavailable general/find pasteboards | `47c46191f4` | Adopt nullable native return types, optional platform owners, absent reads and skipped writes. Retained metadata, image and external-path behavior stays intact. |
+| Native titlebar visibility and rendered focus query | `ba06cc5191` | Add the complete native-container visibility policy and public facade. `FocusHandle::is_rendered` reads the accepted dispatch tree, including deferred-candidate refusal. Existing fullscreen-failure transparency restoration is already present and is retained. |
+| Active-window placement | `64ef8026c7` | Capture bounds/display in the existing update stack, synchronize before bounds/display observers, and inherit only when no explicit bounds/display supersedes it. Preserve rollback/unwind custody and no-native-window hosted surfaces. The existing two-argument `WindowBounds::centered` remains for ordinary native and independent consumers; `centered_on_display` supplies the official explicit-display behavior without rewriting those consumers. |
+| Text shaping and glyph hot paths | `22580c6e69`, `ddb90e5e89` | Avoid cache-hit text conversion, unnecessary decoration capacity/background work and per-glyph Mac window locking; share default empty font features. Preserve font generations, frame-cache rollback, native font identity and `split_at`. |
+| Div interactivity allocation and moves | `4ce4b7b567` | Use official arena/heap out-of-line construction through the existing App arena scope, retaining call-site reporting and nested-draw/unwind ownership. |
+| App/platform/window/frame-source diagnostics | `3d42ca7c09` | Carry the framework snapshot and complete Mac/Apple read-only getters through current owners. Checked-out windows are reported by identity; diagnostic reads must not consume pending wake or frame signals. Zed CLI/socket dispatch remains outside the framework closure. |
+| App-owned custom titlebar dragging | `23bb2fc135` | An inherited omission, already present in the historical target. Separate `app_owns_titlebar_drag` from `is_movable`, preserving native dragging by default and system tiling controls. Use the final reintroduced hook rather than the reverted `c8554b46e7` change. |
+| Fallback font weight/style | `61ad9ebfcd` | The fork's additional stretch-first matching diverges from the official native weight/slant selection. Reconcile that policy while retaining private font descriptors and existing installation/retained-face behavior. |
+| Explicit-owner native Dialog sheets | `bd2b0de231e2` | Child-window ordering alone does not preserve the native modal sheet mechanism. Reconcile begin/end through exact explicit owners and existing presentation/retirement; do not restore implicit `mainWindow` owner discovery. |
+| Mac test-support propagation and fallback warning | `52b2418110`, `759bacff37` | Restore Apple screenshot support as a Mac dev-dependency, without enabling production test features by default; retain the official warning when a graphical platform lacks font-kit. |
+
+The [November 12 qualification](../verification.md#macos-source-reconciliation-on-november-12)
+owns actual results, original failures and remaining platform limits. Implementation and
+qualification of these findings do not silently advance the November 5 whole-framework cycle.
+
+The implementation checkpoint is `3691fb44a677c6f9a32baf829e1b08b07fa8b422`, following
+`e820a593e9cded3673e1e6a60ca7ea10dbb76e6f` for native fallback selection and
+`49c4b64b502e78fdf0e1802855f951ad007bf1db` for shared allocation improvements. The complete
+Core/Apple/Mac library cohort passes 1806/1806, and the real AppKit sheet probe passes repeated
+process runs. Native runs include separate uncommitted layer-retirement changes in the shared
+worktree; their contribution and the forced-close quiescence diagnostic remain explicit in the
+qualification. Complete `WindowOptions` and `WindowParams` literals must initialize the new
+`app_owns_titlebar_drag` field; `false` preserves native titlebar dragging.
+
+Existing source mechanisms were verified rather than counted as new ports: typed objc2
+AppKit/input/capture, Backspace/Delete and Spanish-ISO equivalents, IME composition, inactive
+hover and physical-button synthetic-drag termination, external-drag source reentry, traffic-light
+hitboxes/fullscreen transitions, simple fullscreen, restoration, topology/refresh-rate fallback,
+M5 CAMetalDisplayLink drawable custody, low-power pacing, offscreen screenshots, shader ABI,
+source-over/Display P3, successful atlas publication, CoreText identity, dispatch/App Nap,
+Keychain status/add-only behavior and owned Darwin descriptors/reaping.
+
+The shared Metal atlas intentionally retains a published region until its texture has no keys
+or leases. This supersedes the old immediate tile-space-reclamation interpretation of
+`0d8a4d4292`: the existing retained-Scene/readback consumers require that lifetime. A keeper key
+can delay space reuse. Immediate upstream deallocation is not safe to copy over this contract;
+allocation/reuse costs have not been measured here.
+
+Two separately evidenced native defects also exist at the fixed upstream target: leading-BOM
+CoreText source-index mapping (`b26491f570` does not fully solve it), and explicit child `PATH`
+lookup falling back through `posix_spawnp` after failed resolution (`d1f500edf1`). They are shared
+defects, not omitted upstream fixes, and remain outside this source-adoption patch.
+
 ## Accepted Candidates
 
 | Upstream commit | Owning unit | Upstream intent | Open GPUI mapping | Test source |
@@ -54,7 +116,7 @@ official mechanism remains queued until it receives an explicit disposition.
 |---|---|---|
 | `35eaeb94a7` | Already covered | Wayland app-id first-commit behavior is already present locally. |
 | `7c3160b7bf` | Already covered | Wayland startup activation token handling is already present locally. |
-| `0d8a4d4292` | Already covered | Atlas tile-space cleanup is already present locally. |
+| `0d8a4d4292` | July coverage; retained-atlas successor | Key cleanup is present. Current published-region reuse follows the retained texture/lease contract described in the November 12 reconciliation, rather than immediate upstream deallocation. |
 | `34cd17ff5e` | Implemented and qualified at `b42295d0e53` | The July classification was incorrect: the complete builders were absent at `f6f3d98d156`. The randomized-tree unit restores the official `BoxShadow` construction, blur, spread and inset builders consumed by its tree. |
 | `c899d5b590` | Already covered | `Rgba::alpha` is already present locally. |
 | `03a8544040` | Implemented: November 6 successor | The July classification was incorrect: Middle was absent in the inspected fork. The complete Unicode wrapping/truncation successor now adds the public style route and exact run redistribution; its qualification is linked below. |

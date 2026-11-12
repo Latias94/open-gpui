@@ -37,6 +37,175 @@ The gate runs:
 On Windows, `xtask verify` sets `CARGO_BUILD_JOBS=1` only on the two DevTools all-features child
 processes. It does not mutate the parent shell environment.
 
+## macOS Source Reconciliation On November 12
+
+This native Apple Silicon continuation starts at Open GPUI
+`fa9a4fd9a5223c79528e2506d90c6f16456bf2ac` and compares fixed Zed
+`78f5d7446c55f6c1aa9b66e8111f6b3f4625ebb0`. The
+[inventory](imports/zed-gpui-upstream-sync-candidates.md#november-12-macos-reconciliation)
+records source dispositions, the separately observed remote HEAD, inherited gaps and retained
+differences. It does not replace the previous fixed-cycle source or foreign-compilation records.
+The host is macOS 27.0 on Apple Silicon, Rust 1.99.1 and SDK 26.5 with the installed Metal
+toolchain. All Cargo work in this checkout is serialized, with two build jobs and one nextest
+test thread, using the existing target directory. This does not qualify the declared Rust 1.93
+floor or an older macOS runtime.
+
+The original native test command, without explicitly selecting `test-support`, fails to compile
+Mac's screenshot trait implementation: `MetalRenderer::render_to_image` is unavailable. Mac's
+conditional dev-dependency omitted the Apple `test-support` feature. The corrected manifest
+restores the official dependency placement rather than changing default production features.
+
+Explicitly adding `test-support` establishes a pre-port baseline: **160/161** Apple/Mac library
+tests pass (`f240a4c0-c5e9-4b4c-89ef-1b4074cf0617`). This includes actual native Metal uploads,
+lease/preflight/readback, offscreen screenshots and surface-instance indexing. The failing
+`installing_fallback_rebuilds_the_cascade_with_the_installed_face` expects NotoEmoji, while native
+CoreText selects AppleColorEmoji. A private Noto Sans Hebrew fixture preserves the installation/
+cascade/source-index assertions; a separate emoji control follows the actual native CoreText
+selection rather than imposing a font preference the platform does not promise.
+
+Initial shared-window regression development also preserves its actual failures: the first
+attempt does not compile because it uses a nonexistent Window observer method and private scale
+storage. The next run is **4/6**, with a resize observer registered before initial activation
+has drained, and a synchronous draw incorrectly used as a deferred-submission-refusal oracle.
+The corrected controls register after initial native work, use the public Context observer,
+compare cached/native state through TestWindow geometry, and exercise original deferred
+submission completion. The corrected six shared-window regressions pass **6/6**
+(`325ece9f-a0f8-4f51-ae06-be6c22776c73`), including a secondary display while the active Window
+is checked out, observer-time placement, legacy/explicit centering, stale cached/native
+diagnostics, deferred refused/submitted focus membership and independent titlebar-drag policy.
+
+The first combined affected cohort passes **402/403**
+(`eacf57f3-9433-49c7-b837-9edd74a4dbe6`). The remaining Hebrew fixture assertion compares
+FontIds despite configured native-font identity; it must verify the selected actual face and
+glyph without collapsing distinct configured handles. The native Metal/atlas, Mac state/input,
+shared text/cache, Div/arena, focus and deferred controls in that run otherwise pass. The
+production `open-gpui-platform` library compiles with `font-kit,screen-capture`, including actual
+precompiled Metal shader generation through SDK 26.5. The subsequent all-target runtime-shader
+check catches four integration errors in the new process-main-thread probe: untyped `c_void`
+receiver, a missing MainThreadOnly import, and two unsafe AppKit superview calls. These are
+probe integration errors, not a successful native Dialog qualification. Final results follow.
+
+The corrected affected cohort passes **406/406**
+(`8f5f86fd-d774-4ea4-8e20-f9a2ef826bd1`), without explicitly enabling `test-support` in the
+command. The conditional Mac dev-dependency now supplies the screenshot API correctly.
+The independently locked ordinary consumer compiles all targets with `mac-screen-capture`
+and runtime shaders, including its independently selected objc2 0.6.5, Core Foundation 0.10.1
+and updated image/ICU dependencies. Only the Mac package's existing serde_json dependency
+edge is added to the root, consumer and current smoke-Web locks; dependencies are not upgraded.
+The old hello-Web 0.1 lock is already stale and is not rewritten by this Mac continuation.
+
+Independent review catches two placement adaptations before completion: nested stack restoration
+must preserve ancestor facts changed by an inner update, and placement must read display/bounds
+from the same committed WindowPlatformFacts before the separate display observer arrives.
+The corrections preserve RAII identity/order/provenance and add normal/unwind and observer-time
+controls. A broader Core run then passes **1638/1639**
+(`aa01cab4-117c-4ed8-b14a-0d0e0756beb9`), exposing the existing unavailable-display contract:
+the backend must receive `None`, with fallback bounds/capabilities from the same snapshot.
+Keep that native parameter contract while inheriting a valid active display; do not weaken the
+existing regression. Its complete corrected rerun is recorded below.
+
+The first actual sheet probe fails before launch because it constructs the base NSApplication
+singleton before Platform::run can create GPUIApplication. Moving that query after native
+startup fixes the ordering. The next attempt incorrectly asserts the exact class name;
+AppKit legitimately uses NSKVONotifying_GPUIApplication. The probe now checks native inheritance
+instead. These original failures and the bounded-process controls do not qualify sheet behavior.
+Independent review also catches the middle-sheet retirement case with a still-live explicit
+root owner; restoration must use the existing presentation path after native teardown.
+
+The existing xtask executable initially rejects the already-adopted reqwest source because it
+predates the current source policy. Rebuilding xtask from this checkout restores the real gate:
+import-boundary, public-API-tier, document-link and release-document checks all pass.
+
+After the placement corrections, the complete Core/Apple/Mac library run passes **1806/1806**
+with no skipped cases (`a9e552dc-42db-41a4-a21a-8b0d97a9fa40`):
+
+```sh
+CARGO_BUILD_JOBS=2 cargo nextest run --locked -p open-gpui -p open-gpui-apple -p open-gpui-macos --features font-kit,runtime_shaders,screen-capture --lib --test-threads=1 --no-fail-fast --status-level fail
+```
+
+The production Core library also compiles for `wasm32-unknown-unknown` with default features
+disabled. This is a compile qualification of the shared API/ownership changes, not browser
+execution. The existing deprecated `usize`/atomic calls, unused support helpers and large debug
+unwind-table linker warning remain outside this patch; no new warning suppression is added.
+
+All-target Core/Apple/Mac correctness Clippy passes with the same feature selection. An initial
+stricter `-D clippy::suspicious` run additionally rejects the unchanged
+`tests/text_input_sessions.rs:1026` single-element `[3..5]` expected-value array under Rust 1.99.
+Keep that unrelated test intact and record the stricter result as failed; the required
+`-D clippy::correctness` gate passes. Ordinary warnings remain visible in the command log.
+Formatting and whitespace checks pass.
+
+The native process probe establishes real parent/nested-sheet input blocking before its first
+close wait. AppKit reports no sheet close button and `performClose:` issues no delegate query;
+that selector is an invalid sheet-close trigger on this host. The corrected probe invokes the
+native `close` selector and retains its original Core/native retirement assertions. The
+unrelated-main-window control and actual submitted-frame waits retain separate runtime results.
+
+Another concurrent checkout is observed replacing the un-hashed example executable in the
+shared target directory: a later invocation resolves to a Rust 1.95 probe from
+`/private/tmp/dockspace-gpui-adapter-validation/open-gpui`, without this continuation's sheet mode.
+Subsequent builds still reuse the caller's target, but immediately copy the completed executable
+to a task-owned temporary path before execution. No other process, checkout or build output is
+deleted or stopped. Failed pre-pin runtime attempts are not treated as final qualification.
+
+The final native sheet probe passes, with four retained successful process logs in
+`/tmp/open-gpui-sheet-worker-20261112/` (`sheet-04.log`, `sheet-05.log`, `sheet-06.log` and
+`sheet-final.log`). The final instrumented run exits successfully and confirms an unrelated main
+window does not replace the explicit owner; parent input is blocked while the sheet receives
+AppKit-dispatched mouse events. Nested sheets release and restore that blocking correctly.
+Both native-close and Core-removal paths reattach a surviving sheet when only its intermediate
+native parent retires; retirement of its actual explicit owner releases the modal relationship.
+Native sheet lists and Core window registration are empty after final cleanup. The hidden
+dialog first submits a nonempty candidate, then its activation ticket reaches
+`Terminal(Activated)` and it attaches to the explicit owner. The earlier hidden-activation
+attempts returned `Terminal(Rejected)` because the probe requested activation before admission;
+a main-queue marker does not establish that prerequisite. Native titlebar-container visibility
+and complete App/platform/window/frame-source diagnostic JSON are also exercised.
+
+The forced native `close` controls still emit the existing "native macOS window reached close
+before presentation quiescence was acknowledged" diagnostic. Their passing sheet/registry
+cleanup assertions do not qualify pre-close renderer quiescence. These runs also include
+concurrent, separately owned, uncommitted changes disabling native layer backing and using an
+ordinary NSView layer after renderer retirement. Those hunks and the new `native_layer_shutdown`
+example are deliberately excluded from this continuation's commits; native results qualify
+that combined worktree, not the committed patch in isolation. Physical input, fullscreen pixel
+behavior, actual M5 frame rate, energy consumption, older macOS and persistent Keychain behavior
+remain unexecuted or unmeasured here.
+
+To reproduce the sheet probe in a macOS GUI session while preserving the built executable from
+another checkout sharing target, build and immediately copy it before launching:
+
+```python
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+
+env = os.environ.copy()
+env["CARGO_BUILD_JOBS"] = "2"
+subprocess.run([
+    "cargo", "build", "--locked", "-p", "open-gpui-macos",
+    "--example", "native_windowing",
+    "--features", "font-kit,runtime_shaders,screen-capture",
+], env=env, check=True)
+with tempfile.TemporaryDirectory(prefix="open-gpui-macos-sheet-") as directory:
+    probe = Path(directory) / "native_windowing"
+    shutil.copy2("target/debug/examples/native_windowing", probe)
+    subprocess.run([str(probe), "sheet"], check=True, timeout=45)
+```
+
+The final example-specific `-D clippy::correctness` rerun, `cargo fmt --all -- --check` and
+whitespace checks also pass after the probe corrections. The three implementation commits are
+`e820a593e9cded3673e1e6a60ca7ea10dbb76e6f` (native fallback weight/style),
+`49c4b64b502e78fdf0e1802855f951ad007bf1db` (shared text/Div allocation) and
+`3691fb44a677c6f9a32baf829e1b08b07fa8b422` (window controls, placement, diagnostics,
+pasteboards and modal sheets). The last commit marks the new `app_owns_titlebar_drag` field on
+`WindowOptions` and `WindowParams` as a source compatibility change for complete struct literals.
+The two shared upstream defects, leading-BOM source-index mapping and failed child-PATH lookup
+falling back to the parent environment, remain follow-up correctness work rather than missing
+official ports.
+
 ## Fixed-Cycle Source-Adoption Exit
 
 On November 11, the bounded disposition audit reconciles the concrete named framework mechanisms
