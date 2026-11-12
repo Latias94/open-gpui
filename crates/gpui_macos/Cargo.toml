@@ -35,6 +35,12 @@ path = "examples/native_termination.rs"
 harness = false
 test = false
 
+[[example]]
+name = "native_layer_shutdown"
+path = "examples/native_layer_shutdown.rs"
+harness = false
+test = false
+
 [features]
 default = ["open_gpui/default"]
 test-support = ["open_gpui/test-support", "open_gpui_apple/test-support"]

@@ -2,7 +2,7 @@
 //! `cargo run -p open-gpui-macos --example native_windowing -- <mode>`.
 //!
 //! Run each mode in a fresh process: `default`, `windowed`, `headless`, `accessory`, `direct`,
-//! `activity`, `sheet`. The activity mode exercises the real headless platform acquisition/drop path.
+//! `activity`, `sheet`, `native-close`. The activity mode exercises the real headless platform acquisition/drop path.
 //! The first four enter the real GPUIApplication run loop and launch delegate. `direct` only
 //! checks stored policy and native resource refusal without launching the application. Neither
 //! path creates a Core App or qualifies Core retirement, external event pumping, or Dock pixels.
@@ -11,6 +11,7 @@
 //! The separate `sheet` mode creates a Core App and checks explicit-owner modal sheets, nested
 //! presentation, retirement, hidden creation, submitted scenes, titlebar visibility and debug JSON.
 //! Its input controls use AppKit event dispatch; physical input and fullscreen pixels remain manual.
+//! `native-close` checks exact renderer-shutdown receipts and repeated/reentrant native closes.
 
 #[cfg(target_os = "macos")]
 fn main() {
@@ -40,7 +41,8 @@ mod macos {
         ActivationPolicy, App, Application, AsyncApp, Bounds, Context, Empty, GraphicalEnvironment,
         IntoElement, MouseButton, Platform, PlatformWindow, Render, Result, Task, Window,
         WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowId, WindowKind,
-        WindowOptions, WindowParams, WindowingRequest, div, point, prelude::*, px, rgb, size,
+        WindowOptions, WindowParams, WindowPresentationShutdownTicket, WindowingRequest, div,
+        point, prelude::*, px, rgb, size,
     };
     use open_gpui_macos::MacPlatform;
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -999,12 +1001,89 @@ mod macos {
         assert!(cx.update(|cx| cx.windows().is_empty()));
     }
 
+    async fn exercise_native_close(platform: &Rc<MacPlatform>) {
+        let window = open_native_window(platform);
+        let raw = window
+            .window_handle()
+            .expect("the live native window handle");
+        let RawWindowHandle::AppKit(raw) = raw.as_raw() else {
+            panic!("macOS must expose an AppKit view");
+        };
+        // SAFETY: The live platform window owns this view and its NSWindow.
+        let view =
+            unsafe { Retained::retain(raw.ns_view.cast::<objc2_app_kit::NSView>().as_ptr()) }
+                .expect("the platform window owns its native view");
+        let native = view
+            .window()
+            .expect("the native view belongs to its window");
+        let layer: Retained<AnyObject> = unsafe { objc2::msg_send![&*view, makeBackingLayer] };
+        let metal: objc2::runtime::Bool =
+            unsafe { objc2::msg_send![&*layer, isKindOfClass: objc2::class!(CAMetalLayer)] };
+        assert!(
+            metal.as_bool(),
+            "the live renderer must supply its Metal layer"
+        );
+        drop(layer);
+        native.makeKeyAndOrderFront(None);
+        drain_main_queue(platform).await;
+        native.contentView().unwrap().setWantsLayer(true);
+
+        // Preparation only claims the authority; the native close must perform its effects.
+        let ticket = WindowPresentationShutdownTicket::new(WindowId::from(1), 1);
+        let shutdown = window.prepare_presentation_shutdown(ticket.clone());
+        assert!(!shutdown.snapshot().quiesced());
+        let callbacks = Rc::new(Cell::new(0));
+        window.on_close(Box::new({
+            let native = native.clone();
+            let ticket = ticket.clone();
+            let callbacks = callbacks.clone();
+            move || {
+                let snapshot = ticket.snapshot();
+                assert!(snapshot.quiesced() && snapshot.native_terminal());
+                assert!(!snapshot.protocol_violation());
+                callbacks.set(callbacks.get() + 1);
+                // A native callback may synchronously request the same close again.
+                native.close();
+            }
+        }));
+        native.close();
+        wait_for_native(
+            platform,
+            || shutdown.snapshot().native_terminal() && callbacks.get() == 1,
+            "native close must quiesce the exact renderer before one terminal callback",
+        )
+        .await;
+        for _ in 0..2 {
+            native.close();
+        }
+        let snapshot = shutdown.snapshot();
+        assert!(snapshot.quiesced() && snapshot.native_terminal());
+        assert!(!snapshot.protocol_violation());
+        assert_eq!(callbacks.get(), 1);
+        drop(window);
+        drain_main_queue(platform).await;
+        view.setNeedsLayout(true);
+        view.layoutSubtreeIfNeeded();
+        view.setNeedsDisplay(true);
+        view.displayIfNeeded();
+        let layer: Retained<AnyObject> = unsafe { objc2::msg_send![&*view, makeBackingLayer] };
+        let metal: objc2::runtime::Bool =
+            unsafe { objc2::msg_send![&*layer, isKindOfClass: objc2::class!(CAMetalLayer)] };
+        assert!(
+            !metal.as_bool(),
+            "retired native close must not restore a Metal surface"
+        );
+        println!(
+            "native close gate passed: quiesced, terminal, no protocol violation, callback exactly once"
+        );
+    }
+
     pub(super) fn run() {
         let _main_thread =
             MainThreadMarker::new().expect("native windowing must run on the process main thread");
         let mode = std::env::args().nth(1).unwrap_or_else(|| "default".into());
-        if mode == "sheet" {
-            struct SheetLog;
+        if mode == "sheet" || mode == "native-close" {
+            struct SheetLog(std::sync::atomic::AtomicUsize);
             impl log::Log for SheetLog {
                 fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
                     metadata.target().starts_with("open_gpui_macos::window")
@@ -1012,11 +1091,15 @@ mod macos {
                 fn log(&self, record: &log::Record<'_>) {
                     if self.enabled(record.metadata()) {
                         eprintln!("SHEET native: {}", record.args());
+                        if record.level() == log::Level::Error {
+                            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
                     }
                 }
                 fn flush(&self) {}
             }
-            log::set_logger(&SheetLog).unwrap();
+            static NATIVE_LOG: SheetLog = SheetLog(std::sync::atomic::AtomicUsize::new(0));
+            log::set_logger(&NATIVE_LOG).unwrap();
             log::set_max_level(log::LevelFilter::Debug);
             let platform = Rc::new(MacPlatform::new(false));
             Application::with_platform(platform.clone()).run(move |cx| {
@@ -1028,8 +1111,13 @@ mod macos {
                     unsafe { objc2::msg_send![&*app, isKindOfClass: gpui_class] };
                 assert!(is_gpui.as_bool(), "the running app must inherit GPUIApplication");
                 cx.spawn(async move |cx| {
-                    exercise_sheets(&platform, cx).await;
-                    println!("native windowing sheet gate passed; physical input and fullscreen pixels remain manual");
+                    if mode == "sheet" {
+                        exercise_sheets(&platform, cx).await;
+                        println!("native windowing sheet gate passed; physical input and fullscreen pixels remain manual");
+                    } else {
+                        exercise_native_close(&platform).await;
+                    }
+                    assert_eq!(NATIVE_LOG.0.load(std::sync::atomic::Ordering::Relaxed), 0, "native close must not violate the renderer shutdown protocol");
                     stop_application(&app);
                 }).detach();
             });

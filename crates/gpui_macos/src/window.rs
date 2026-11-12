@@ -32,6 +32,7 @@ use open_gpui::{
 mod deferred_frame;
 mod file_drag;
 mod hover;
+mod native_close;
 mod pointer_button;
 mod sheet;
 mod simple_fullscreen;
@@ -723,6 +724,7 @@ unsafe fn build_window_class(name: &CStr, superclass: &AnyClass) -> *const AnyCl
     unsafe {
         let mut decl = ClassBuilder::new(name, superclass).unwrap();
         decl.add_ivar::<*mut c_void>(WINDOW_STATE_IVAR);
+        decl.add_ivar::<*mut c_void>(native_close::OWNER_IVAR);
         decl.add_method(sel!(dealloc), dealloc_window as extern "C" fn(_, Sel));
 
         decl.add_method(
@@ -3434,7 +3436,6 @@ impl MacWindow {
                         .cast_mut()
                         .cast(),
                 );
-            let _: () = msg_send![native_window, setDelegate: native_window];
             (*native_view)
                 .class()
                 .instance_variable(WINDOW_STATE_IVAR)
@@ -3445,6 +3446,8 @@ impl MacWindow {
                         .cast_mut()
                         .cast(),
                 );
+            native_close::install(&*native_window, construction_guard.window);
+            let _: () = msg_send![native_window, setDelegate: native_window];
             (&*native_window.cast::<NSWindow>()).setRestorable(true);
 
             if let Some(title) = titlebar
@@ -4498,45 +4501,7 @@ impl PlatformWindow for MacWindow {
         let deferred_frame = self.0.lock().deferred_frame.take();
         deferred_frame::complete(deferred_frame, PlatformWindowPresentOutcome::Rejected);
         PreparedPlatformPresentationShutdown::new(shutdown, move |shutdown| {
-            let native_view = {
-                let Some(mut state) = window_state.try_lock() else {
-                    return PlatformPresentationShutdownOutcome::Rejected;
-                };
-
-                if shutdown.snapshot().window_id() != state.handle.window_id() {
-                    return PlatformPresentationShutdownOutcome::Rejected;
-                }
-
-                if state.renderer.is_quiesced_for(shutdown) {
-                    return PlatformPresentationShutdownOutcome::Quiesced;
-                }
-                if !state.renderer.reserve_surface_quiescence(shutdown) {
-                    return PlatformPresentationShutdownOutcome::Rejected;
-                }
-
-                state.stop_display_link();
-                state.request_frame_callback = None;
-                state.native_view
-            };
-
-            // AppKit may synchronously ask the view to make its backing layer. That callback
-            // needs the same window-state mutex, so no Objective-C message is sent while it is
-            // held.
-            unsafe {
-                let _: () = msg_send![native_view.as_ptr(), setLayer: ptr::null_mut::<AnyObject>()];
-            }
-
-            let Some(mut state) = window_state.try_lock() else {
-                return PlatformPresentationShutdownOutcome::Rejected;
-            };
-            if shutdown.snapshot().window_id() != state.handle.window_id() {
-                return PlatformPresentationShutdownOutcome::Rejected;
-            }
-            if state.renderer.finish_surface_quiescence(shutdown) {
-                PlatformPresentationShutdownOutcome::Quiesced
-            } else {
-                PlatformPresentationShutdownOutcome::Rejected
-            }
+            quiesce_presentation_surface(&window_state, shutdown)
         })
     }
 
@@ -5879,6 +5844,7 @@ extern "C" fn can_become_active_window(this: &AnyObject, _: Sel) -> Bool {
 
 extern "C" fn dealloc_window(this: &AnyObject, _: Sel) {
     unsafe {
+        native_close::drop_owner(this);
         drop_window_state(this);
         let superclass = window_callback_superclass(this);
         let _: () = msg_send![super(this, superclass), dealloc];
@@ -6784,7 +6750,60 @@ extern "C" fn window_should_close(this: &AnyObject, _: Sel, _: *mut AnyObject) -
 }
 
 extern "C" fn close_window(this: &AnyObject, _: Sel) {
-    let window_state = unsafe { get_window_state(this) };
+    unsafe { native_close::request(this) }
+}
+
+fn quiesce_presentation_surface(
+    window_state: &Arc<Mutex<MacWindowState>>,
+    shutdown: &WindowPresentationShutdownTicket,
+) -> PlatformPresentationShutdownOutcome {
+    let (native_view, deferred_frame) = {
+        let Some(mut state) = window_state.try_lock() else {
+            return PlatformPresentationShutdownOutcome::Rejected;
+        };
+        if shutdown.snapshot().window_id() != state.handle.window_id() {
+            return PlatformPresentationShutdownOutcome::Rejected;
+        }
+        if state.renderer.is_quiesced_for(shutdown) {
+            return PlatformPresentationShutdownOutcome::Quiesced;
+        }
+        if !state.renderer.reserve_surface_quiescence(shutdown) {
+            return PlatformPresentationShutdownOutcome::Rejected;
+        }
+        let native_view = unsafe { Retained::retain(state.native_view.as_ptr()) }
+            .expect("presentation shutdown retains its native view");
+        state.stop_display_link();
+        state.request_frame_callback = None;
+        (native_view, state.deferred_frame.take())
+    };
+    deferred_frame::complete(deferred_frame, PlatformWindowPresentOutcome::Rejected);
+
+    // AppKit may synchronously ask the view to make its backing layer. That callback
+    // needs the same window-state mutex, so no Objective-C message is sent while it is
+    // held.
+    unsafe {
+        let _: () = msg_send![&*native_view, setWantsLayer: Bool::NO];
+        let _: () = msg_send![&*native_view, setLayer: ptr::null_mut::<AnyObject>()];
+    }
+
+    let Some(mut state) = window_state.try_lock() else {
+        return PlatformPresentationShutdownOutcome::Rejected;
+    };
+    if shutdown.snapshot().window_id() != state.handle.window_id() {
+        return PlatformPresentationShutdownOutcome::Rejected;
+    }
+    if state.renderer.finish_surface_quiescence(shutdown) {
+        PlatformPresentationShutdownOutcome::Quiesced
+    } else {
+        PlatformPresentationShutdownOutcome::Rejected
+    }
+}
+
+fn finish_native_close(
+    window_state: &Arc<Mutex<MacWindowState>>,
+    this: &AnyObject,
+    shutdown: &WindowPresentationShutdownTicket,
+) -> bool {
     unsafe {
         let (
             event_callback,
@@ -6798,15 +6817,20 @@ extern "C" fn close_window(this: &AnyObject, _: Sel) {
             blurred_view,
             close_callback,
         ) = {
-            let mut lock = window_state.as_ref().lock();
-            let shutdown = lock.presentation_shutdown_authority.lock().ticket();
+            let Some(mut lock) = window_state.try_lock() else {
+                return false;
+            };
+            if !lock.renderer.is_quiesced_for(shutdown) {
+                return false;
+            }
             if !shutdown.acknowledge_native_terminal() {
                 let snapshot = shutdown.snapshot();
                 log::error!(
-                    "native macOS window reached close before presentation quiescence was acknowledged for window {:?}, generation {}",
+                    "native macOS window could not acknowledge terminal after presentation quiescence for window {:?}, generation {}",
                     snapshot.window_id(),
                     snapshot.generation(),
                 );
+                return false;
             }
             let (
                 event_callback,
@@ -6840,7 +6864,7 @@ extern "C" fn close_window(this: &AnyObject, _: Sel) {
         release_simple_fullscreen_presentation_options(simple_fullscreen_state);
         drop(accesskit_adapter);
         drop(blurred_view);
-        let _sheets = sheet::detach_related(&window_state);
+        let _sheets = sheet::detach_related(window_state);
         detach_native_transient_relationships(this as *const AnyObject as *mut AnyObject);
         if let Some(callback) = close_callback {
             callback();
@@ -6849,12 +6873,25 @@ extern "C" fn close_window(this: &AnyObject, _: Sel) {
         let superclass = window_callback_superclass(this);
         let _: () = msg_send![super(this, superclass), close];
     }
+    true
 }
 
 extern "C" fn make_backing_layer(this: &AnyObject, _: Sel) -> *mut AnyObject {
-    let window_state = unsafe { get_window_state(this) };
-    let window_state = window_state.as_ref().lock();
-    window_state.renderer.layer_ptr() as *mut AnyObject
+    let layer = {
+        let window_state = unsafe { get_window_state(this) };
+        let window_state = window_state.as_ref().lock();
+        if window_state.is_closed() {
+            ptr::null_mut()
+        } else {
+            window_state.renderer.layer_ptr() as *mut AnyObject
+        }
+    };
+    if !layer.is_null() {
+        return layer;
+    }
+    // A layer-backed ancestor can still require a backing layer during native retirement.
+    // Use NSView's ordinary layer after the renderer retires; never recreate its Metal surface.
+    unsafe { msg_send![super(this, class!(NSView)), makeBackingLayer] }
 }
 
 extern "C" fn view_did_change_backing_properties(this: &AnyObject, _: Sel) {
