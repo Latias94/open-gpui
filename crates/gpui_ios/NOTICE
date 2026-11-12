@@ -1,0 +1,20 @@
+Open GPUI iOS backend
+
+Derived from the Apache-2.0 GPUI iOS backend in Zed:
+https://github.com/zed-industries/zed/tree/78f5d7446c55f6c1aa9b66e8111f6b3f4625ebb0/crates/gpui_ios
+
+Source tree: 78f5d7446c55f6c1aa9b66e8111f6b3f4625ebb0
+Latest upstream iOS change in that tree:
+fdcb1981103408e63fff5ef47c8ae2f9995262ad (Low Power Mode frame pacing).
+The subsequent selected rendering target is 6ceb6fee8738274589b59139df27efc191ec2231.
+The official comparison between those targets changes no gpui_ios files.
+
+The original source, examples, Info.plist and native text-input tests retain
+their Apache-2.0 license. LICENSE-APACHE contains the complete regular-file
+license text, replacing the upstream repository-relative symlink.
+
+Open GPUI adaptations use extracted open_gpui_* dependency aliases, the shared
+Apple renderer, native callback leases and command ingress, exact presentation
+shutdown tickets, coherent window geometry, demand-driven frame scheduling and
+scoped UIKit idle-sleep inhibition. The simulator packager is a Python
+replacement for the upstream Bash helper.

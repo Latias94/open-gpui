@@ -2250,8 +2250,8 @@ dependencies = [
  "libc",
  "log",
  "rustversion",
- "windows-link 0.1.3",
- "windows-result 0.3.4",
+ "windows-link 0.2.1",
+ "windows-result 0.4.1",
 ]
 
 [[package]]
@@ -2666,7 +2666,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.58.0",
+ "windows-core 0.62.2",
 ]
 
 [[package]]
@@ -3089,8 +3089,7 @@ dependencies = [
 [[package]]
 name = "khronos-egl"
 version = "6.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6aae1df220ece3c0ada96b8153459b67eebe9ae9212258bb0134ae60416fdf76"
+source = "git+https://github.com/zed-industries/khronos-egl?rev=42214b36347b108fd9630ca6254b96dde59e04fe#42214b36347b108fd9630ca6254b96dde59e04fe"
 dependencies = [
  "libc",
  "libloading",
@@ -4117,6 +4116,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-ui-kit"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d87d638e33c06f577498cbcc50491496a3ed4246998a7fbba7ccb98b1e7eab22"
+dependencies = [
+ "bitflags 2.13.2",
+ "block2 0.6.2",
+ "objc2 0.6.5",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "objc2-quartz-core 0.3.2",
+]
+
+[[package]]
 name = "objc2-uniform-type-identifiers"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4372,6 +4385,7 @@ dependencies = [
  "open-gpui-path",
  "open-gpui-platform",
  "open-gpui-reqwest-client",
+ "open-gpui-tokio",
  "open-gpui-tracing",
  "open-gpui-ui-components",
  "open-gpui-util",
@@ -4483,6 +4497,29 @@ dependencies = [
  "rustls",
  "rustls-platform-verifier",
  "webpki-roots",
+]
+
+[[package]]
+name = "open-gpui-ios"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "block2 0.6.2",
+ "dispatch2",
+ "futures",
+ "image",
+ "log",
+ "objc2 0.6.5",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "objc2-metal 0.3.2",
+ "objc2-quartz-core 0.3.2",
+ "objc2-ui-kit",
+ "open-gpui",
+ "open-gpui-apple",
+ "parking_lot",
+ "raw-window-handle",
+ "uuid",
 ]
 
 [[package]]
@@ -4623,6 +4660,7 @@ dependencies = [
  "console_error_panic_hook",
  "open-gpui",
  "open-gpui-apple",
+ "open-gpui-ios",
  "open-gpui-linux",
  "open-gpui-macos",
  "open-gpui-web",
@@ -4724,6 +4762,16 @@ dependencies = [
  "open-gpui-tracing",
  "rayon",
  "tracing",
+]
+
+[[package]]
+name = "open-gpui-tokio"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "open-gpui",
+ "open-gpui-core-util",
+ "tokio",
 ]
 
 [[package]]
@@ -6820,7 +6868,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.6",
  "windows-sys 0.61.2",

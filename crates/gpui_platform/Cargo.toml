@@ -40,12 +40,13 @@ harness = false
 required-features = ["bench-support"]
 
 [features]
+inspector = ["open_gpui/inspector"]
 default = []
 font-kit = ["open_gpui_macos/font-kit", "open_gpui_apple/font-kit"]
-test-support = ["open_gpui/test-support", "open_gpui_macos/test-support", "open_gpui_apple/test-support", "open_gpui_windows/test-support", "open_gpui_linux/test-support", "dep:open_gpui_wgpu", "open_gpui_wgpu?/test-support"]
-bench-support = ["open_gpui/bench-support", "open_gpui_macos/bench-support", "open_gpui_apple/bench-support", "open_gpui_windows/bench-support", "open_gpui_linux/bench-support", "dep:open_gpui_wgpu", "open_gpui_wgpu?/bench-support"]
+test-support = ["open_gpui/test-support", "open_gpui_macos/test-support", "open_gpui_apple/test-support", "open_gpui_ios/test-support", "open_gpui_windows/test-support", "open_gpui_linux/test-support", "dep:open_gpui_wgpu", "open_gpui_wgpu?/test-support"]
+bench-support = ["open_gpui/bench-support", "open_gpui_macos/bench-support", "open_gpui_apple/bench-support", "open_gpui_ios/bench-support", "open_gpui_windows/bench-support", "open_gpui_linux/bench-support", "dep:open_gpui_wgpu", "open_gpui_wgpu?/bench-support"]
 screen-capture = ["open_gpui/screen-capture", "open_gpui_macos/screen-capture", "open_gpui_windows/screen-capture", "open_gpui_linux/screen-capture"]
-runtime_shaders = ["open_gpui_macos/runtime_shaders", "open_gpui_apple/runtime_shaders"]
+runtime_shaders = ["open_gpui_macos/runtime_shaders", "open_gpui_apple/runtime_shaders", "open_gpui_ios/runtime_shaders"]
 wayland = ["open_gpui_linux/wayland"]
 x11 = ["open_gpui_linux/x11"]
 web-multithreaded = ["open_gpui_web/multithreaded"]
@@ -54,19 +55,18 @@ web-multithreaded = ["open_gpui_web/multithreaded"]
 anyhow.workspace = true
 open_gpui.workspace = true
 
-[dev-dependencies]
-criterion.workspace = true
-open_gpui_bench_metrics.workspace = true
-
 [target.'cfg(target_os = "macos")'.dependencies]
 open_gpui_macos.workspace = true
 open_gpui_apple.workspace = true
+
+[target.'cfg(target_os = "ios")'.dependencies]
+open_gpui_ios.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 open_gpui_windows.workspace = true
 open_gpui = { workspace = true, features = ["windows-manifest"] }
 
-[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+[target.'cfg(all(any(target_os = "linux", target_os = "freebsd"), not(target_env = "ohos")))'.dependencies]
 open_gpui_linux.workspace = true
 open_gpui_wgpu = { workspace = true, optional = true }
 
@@ -79,6 +79,10 @@ wasm-bindgen.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 async-channel.workspace = true
+criterion.workspace = true
 env_logger.workspace = true
 futures.workspace = true
+log.workspace = true
+rand.workspace = true
+open_gpui_bench_metrics.workspace = true
 open_gpui_reqwest_client.workspace = true

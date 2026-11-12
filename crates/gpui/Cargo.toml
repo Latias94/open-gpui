@@ -13,6 +13,7 @@ license.workspace = true
 keywords = ["desktop", "gui", "immediate"]
 categories = ["gui"]
 autoexamples = false
+autobenches = false
 
 
 [lints]
@@ -174,7 +175,6 @@ open_gpui_collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 open_gpui_core_util = { workspace = true }
 lyon_extra = "1.1.0"
-proptest = { workspace = true }
 rand.workspace = true
 open_gpui_scheduler = { workspace = true, features = ["test-support"] }
 syn.workspace = true
@@ -182,6 +182,7 @@ trybuild.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 open_gpui_http_client = { workspace = true, features = ["test-support"] }
+proptest.workspace = true
 
 [build-dependencies]
 embed-resource = { version = "3.0.11", optional = true }

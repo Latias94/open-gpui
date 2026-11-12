@@ -4,6 +4,7 @@ resolver = "2"
 [patch.crates-io]
 async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
 calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
+khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42214b36347b108fd9630ca6254b96dde59e04fe" }
 
 [package]
 name = "open-gpui-dependency-consumer"
@@ -57,6 +58,7 @@ tracy-client = { version = "0.18", optional = true, default-features = false }
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 async-process = "2.5.0"
 smol = "2.0"
+open_gpui_tokio = { package = "open-gpui-tokio", path = "../../../crates/gpui_tokio" }
 open_gpui_github_releases = { package = "open-gpui-github-releases", path = "../../../crates/github_releases" }
 open_gpui_reqwest_client = { package = "open-gpui-reqwest-client", path = "../../../crates/reqwest_client" }
 reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "33bc764aa15ff7b200bf7c93bd96e24878d53e14", package = "zed-reqwest", version = "0.12.15-zed", default-features = false }

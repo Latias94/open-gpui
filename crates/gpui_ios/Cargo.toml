@@ -1,0 +1,72 @@
+[package]
+name = "open-gpui-ios"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme = "README.md"
+description = "UIKit platform backend for Open GPUI, with native text input and Metal rendering."
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/gpui_ios.rs"
+crate-type = ["staticlib", "rlib"]
+doctest = false
+
+[[example]]
+name = "ios"
+path = "examples/ios.rs"
+test = false
+bench = false
+
+[[example]]
+name = "native_windowing"
+path = "examples/native_windowing.rs"
+required-features = ["test-support"]
+test = false
+bench = false
+
+[[test]]
+name = "text_input"
+path = "tests/text_input.rs"
+harness = false
+
+[features]
+default = []
+test-support = ["open_gpui/test-support", "open_gpui_apple/test-support"]
+bench-support = ["open_gpui/bench-support", "open_gpui_apple/bench-support"]
+runtime_shaders = ["open_gpui_apple/runtime_shaders"]
+
+[dependencies]
+open_gpui.workspace = true
+
+[target.'cfg(target_os = "ios")'.dependencies]
+anyhow.workspace = true
+block2.workspace = true
+dispatch2.workspace = true
+futures.workspace = true
+image.workspace = true
+log.workspace = true
+open_gpui_apple = { workspace = true, features = ["font-kit"] }
+objc2.workspace = true
+objc2-foundation = { workspace = true, features = ["NSThread", "NSOperation", "NSUserActivity", "block2"] }
+objc2-ui-kit.workspace = true
+objc2-metal.workspace = true
+objc2-quartz-core = { workspace = true, features = ["CADisplayLink"] }
+objc2-core-foundation = { workspace = true, default-features = true }
+parking_lot.workspace = true
+raw-window-handle = "0.6"
+uuid = { workspace = true, features = ["v5"] }
+
+[target.'cfg(target_os = "ios")'.dev-dependencies]
+open_gpui = { workspace = true, features = ["test-support"] }
+open_gpui_apple = { workspace = true, features = ["test-support"] }
+open_gpui_platform.workspace = true
+objc2-ui-kit = { workspace = true, features = ["UIConversationContext"] }
+slotmap.workspace = true

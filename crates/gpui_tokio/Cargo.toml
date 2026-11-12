@@ -1,0 +1,30 @@
+[package]
+name = "open-gpui-tokio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme = "README.md"
+publish.workspace = true
+description = "Optional Tokio runtime bridge for Open GPUI applications."
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/gpui_tokio.rs"
+doctest = false
+test = false
+
+[dependencies]
+anyhow.workspace = true
+open_gpui.workspace = true
+open_gpui_core_util.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "time"] }
+
+[dev-dependencies]
+open_gpui = { workspace = true, features = ["test-support"] }

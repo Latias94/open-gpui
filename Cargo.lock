@@ -2507,7 +2507,7 @@ dependencies = [
  "log",
  "rustversion",
  "windows-link 0.1.3",
- "windows-result 0.3.4",
+ "windows-result 0.4.1",
 ]
 
 [[package]]
@@ -3385,8 +3385,7 @@ dependencies = [
 [[package]]
 name = "khronos-egl"
 version = "6.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6aae1df220ece3c0ada96b8153459b67eebe9ae9212258bb0134ae60416fdf76"
+source = "git+https://github.com/zed-industries/khronos-egl?rev=42214b36347b108fd9630ca6254b96dde59e04fe#42214b36347b108fd9630ca6254b96dde59e04fe"
 dependencies = [
  "libc",
  "libloading",
@@ -4437,6 +4436,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-ui-kit"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d87d638e33c06f577498cbcc50491496a3ed4246998a7fbba7ccb98b1e7eab22"
+dependencies = [
+ "bitflags 2.13.0",
+ "block2 0.6.2",
+ "objc2 0.6.4",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "objc2-quartz-core 0.3.2",
+]
+
+[[package]]
 name = "objc2-uniform-type-identifiers"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4870,6 +4883,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "open-gpui-ios"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "block2 0.6.2",
+ "dispatch2",
+ "futures",
+ "image",
+ "log",
+ "objc2 0.6.4",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "objc2-metal 0.3.2",
+ "objc2-quartz-core 0.3.2",
+ "objc2-ui-kit",
+ "open-gpui",
+ "open-gpui-apple",
+ "open-gpui-platform",
+ "parking_lot",
+ "raw-window-handle",
+ "slotmap",
+ "uuid",
+]
+
+[[package]]
 name = "open-gpui-linux"
 version = "0.2.0"
 dependencies = [
@@ -5012,15 +5050,18 @@ dependencies = [
  "criterion",
  "env_logger",
  "futures",
+ "log",
  "open-gpui",
  "open-gpui-apple",
  "open-gpui-bench-metrics",
+ "open-gpui-ios",
  "open-gpui-linux",
  "open-gpui-macos",
  "open-gpui-reqwest-client",
  "open-gpui-web",
  "open-gpui-wgpu",
  "open-gpui-windows",
+ "rand 0.9.4",
  "wasm-bindgen",
 ]
 
@@ -5134,6 +5175,16 @@ dependencies = [
  "rand 0.9.4",
  "rayon",
  "tracing",
+]
+
+[[package]]
+name = "open-gpui-tokio"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "open-gpui",
+ "open-gpui-core-util",
+ "tokio",
 ]
 
 [[package]]

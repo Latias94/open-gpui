@@ -10,12 +10,14 @@ members = [
     "crates/open-gpui-command",
     "crates/gpui",
     "crates/gpui_apple",
+    "crates/gpui_ios",
     "crates/gpui_docking",
     "crates/gpui_linux",
     "crates/gpui_macos",
     "crates/gpui_macros",
     "crates/gpui_platform",
     "crates/gpui_shared_string",
+    "crates/gpui_tokio",
     "crates/gpui_util",
     "crates/gpui_web",
     "crates/gpui_wgpu",
@@ -80,6 +82,7 @@ open_gpui_ui_components = { package = "open-gpui-ui-components", version = "0.2.
 open_gpui_ui_core = { package = "open-gpui-ui-core", version = "0.2.0", path = "crates/ui_core" }
 open_gpui_http_client = { package = "open-gpui-http-client", version = "0.2.0", path = "crates/http_client" }
 open_gpui_http_client_tls = { package = "open-gpui-http-client-tls", version = "0.2.0", path = "crates/http_client_tls" }
+open_gpui_ios = { package = "open-gpui-ios", version = "0.2.0", path = "crates/gpui_ios", default-features = false }
 open_gpui_linux = { package = "open-gpui-linux", version = "0.2.0", path = "crates/gpui_linux", default-features = false }
 open_gpui_log = { package = "open-gpui-log", version = "0.2.0", path = "crates/zlog" }
 open_gpui_macos = { package = "open-gpui-macos", version = "0.2.0", path = "crates/gpui_macos", default-features = false }
@@ -93,6 +96,7 @@ open_gpui_reqwest_client = { package = "open-gpui-reqwest-client", version = "0.
 open_gpui_resource = { package = "open-gpui-resource", version = "0.2.0", path = "crates/resource" }
 open_gpui_scheduler = { package = "open-gpui-scheduler", version = "0.2.0", path = "crates/scheduler" }
 open_gpui_shared_string = { package = "open-gpui-shared-string", version = "0.2.0", path = "crates/gpui_shared_string" }
+open_gpui_tokio = { package = "open-gpui-tokio", version = "0.2.0", path = "crates/gpui_tokio" }
 open_gpui_sum_tree = { package = "open-gpui-sum-tree", version = "0.2.0", path = "crates/sum_tree" }
 open_gpui_tracing = { package = "open-gpui-tracing", version = "0.2.0", path = "crates/ztracing" }
 open_gpui_tracing_macro = { package = "open-gpui-tracing-macro", version = "0.2.0", path = "crates/ztracing_macro" }
@@ -168,6 +172,40 @@ log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 mach2 = "0.5"
 nix = "0.29"
 objc2 = "0.6"
+objc2-ui-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "block2",
+    "objc2-quartz-core",
+    "objc2-core-foundation",
+    "NSText",
+    "UIApplication",
+    "UICommand",
+    "UICornerConfiguration",
+    "UICornerRadius",
+    "UIEvent",
+    "UIGeometry",
+    "UIGestureRecognizer",
+    "UIPanGestureRecognizer",
+    "UIScreenEdgePanGestureRecognizer",
+    "UIInterface",
+    "UIOpenURLContext",
+    "UIPasteboard",
+    "UIResponder",
+    "UIScene",
+    "UISceneConfiguration",
+    "UISceneDefinitions",
+    "UISceneOptions",
+    "UISceneSession",
+    "UIScreen",
+    "UITextInput",
+    "UITextInputTraits",
+    "UITouch",
+    "UITraitCollection",
+    "UIView",
+    "UIViewController",
+    "UIWindow",
+    "UIWindowScene",
+] }
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSGraphics"] }
 objc2-core-foundation = "0.3"
 objc2-core-graphics = "0.3"
@@ -321,3 +359,4 @@ unwrap_used = "warn"
 [patch.crates-io]
 async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
 calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
+khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42214b36347b108fd9630ca6254b96dde59e04fe" }

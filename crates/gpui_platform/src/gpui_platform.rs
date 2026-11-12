@@ -5,6 +5,9 @@ pub use open_gpui::Platform;
 
 use std::rc::Rc;
 
+#[cfg(target_os = "ios")]
+pub use open_gpui_ios::{IosPlatform, StatusBarContentStyle, ios::set_status_bar_style};
+
 #[cfg(target_family = "wasm")]
 pub use open_gpui_web::{CanvasFontFallback, WebBackendPreference, WebPlatformOptions};
 
@@ -41,7 +44,10 @@ pub fn headless() -> open_gpui::Application {
 /// `open_gpui_linux::linux_platform_with_startup` and pass it to
 /// [`open_gpui::Application::with_platform`]. This factory does not adopt a Host descriptor
 /// from `WAYLAND_SOCKET` or mutate the running Host's environment.
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(all(
+    any(target_os = "linux", target_os = "freebsd"),
+    not(target_env = "ohos")
+))]
 pub fn linux(allowed_modes: open_gpui::WindowingModes) -> open_gpui::Application {
     open_gpui::Application::with_platform(open_gpui_linux::linux_platform(allowed_modes))
 }
@@ -71,6 +77,11 @@ pub fn web_init() {
 
 /// Returns the default [`Platform`] for the current OS.
 pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
+    #[cfg(target_os = "ios")]
+    {
+        open_gpui_ios::current_platform(headless)
+    }
+
     #[cfg(target_os = "macos")]
     {
         Rc::new(open_gpui_macos::MacPlatform::new(headless))
@@ -84,7 +95,18 @@ pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
         )
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(target_env = "ohos")]
+    {
+        let _ = headless;
+        panic!(
+            "open_gpui_platform does not select an OpenHarmony backend; inject a platform with open_gpui::Application::with_platform"
+        )
+    }
+
+    #[cfg(all(
+        any(target_os = "linux", target_os = "freebsd"),
+        not(target_env = "ohos")
+    ))]
     {
         open_gpui_linux::current_platform(headless)
     }
@@ -123,14 +145,17 @@ pub fn current_headless_renderer()
         )))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
     {
         open_gpui_wgpu::WgpuHeadlessRenderer::new().map(|renderer| {
             Some(Box::new(renderer) as Box<dyn open_gpui::PlatformHeadlessRenderer>)
         })
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(
+        target_os = "macos",
+        all(target_os = "linux", not(target_env = "ohos"))
+    )))]
     {
         Ok(None)
     }
@@ -139,7 +164,10 @@ pub fn current_headless_renderer()
 #[cfg(all(
     test,
     any(feature = "test-support", feature = "bench-support"),
-    not(any(target_os = "macos", target_os = "linux"))
+    not(any(
+        target_os = "macos",
+        all(target_os = "linux", not(target_env = "ohos"))
+    ))
 ))]
 mod headless_facade_tests {
     #[test]
@@ -149,7 +177,7 @@ mod headless_facade_tests {
     }
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, target_os = "macos", feature = "test-support"))]
 mod tests {
     use super::*;
     use open_gpui::{AppContext, Empty, VisualTestAppContext};
