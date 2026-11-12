@@ -11,8 +11,21 @@ use smol_str::SmolStr;
 /// A shared string is an immutable string that can be cheaply cloned in GPUI
 /// tasks. Essentially an abstraction over an `Arc<str>` and `&'static str`,
 /// currently backed by a [`SmolStr`].
-#[derive(Eq, PartialEq, PartialOrd, Ord, Hash, Clone)]
+#[derive(Eq, PartialOrd, Ord, Clone)]
 pub struct SharedString(SmolStr);
+
+impl PartialEq for SharedString {
+    fn eq(&self, other: &Self) -> bool {
+        let (this, other_str) = (self.as_str(), other.as_str());
+        (this.as_ptr() == other_str.as_ptr() && this.len() == other_str.len()) || self.0 == other.0
+    }
+}
+
+impl std::hash::Hash for SharedString {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
 
 impl std::ops::Deref for SharedString {
     type Target = str;
@@ -206,5 +219,39 @@ impl<'de> Deserialize<'de> for SharedString {
         D: serde::Deserializer<'de>,
     {
         SmolStr::deserialize(deserializer).map(SharedString)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn static_shared_and_independently_allocated_strings_keep_content_identity() {
+        const TEXT: &str = "a shared string long enough to require heap storage when copied";
+        let static_text = SharedString::new_static(TEXT);
+        let owned = SharedString::from(TEXT.to_owned());
+        let cloned = owned.clone();
+        let separate = SharedString::from(TEXT.to_owned());
+        assert_eq!(static_text.as_ptr(), TEXT.as_ptr());
+        assert_eq!(owned.as_ptr(), cloned.as_ptr());
+        assert_ne!(owned.as_ptr(), separate.as_ptr());
+
+        let mut map = HashMap::new();
+        map.insert(static_text.clone(), 1);
+        for value in [static_text, owned, cloned, separate] {
+            assert_eq!(value.as_str(), TEXT);
+            assert_eq!(map.get(&value), Some(&1));
+            assert_eq!(
+                value.cmp(&SharedString::new_static(TEXT)),
+                std::cmp::Ordering::Equal
+            );
+        }
+        assert_eq!(map.get(TEXT), Some(&1));
+        assert_ne!(
+            SharedString::new_static("same"),
+            SharedString::new_static("same prefix")
+        );
     }
 }
