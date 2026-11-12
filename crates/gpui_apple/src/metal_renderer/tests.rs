@@ -22,10 +22,10 @@ use std::borrow::Cow;
 struct MonochromeFixture {
     order: u32,
     pad: u32,
+    tile: AtlasTile,
     bounds: Bounds<ScaledPixels>,
     clip: ClipEnvelope,
     color: Hsla,
-    tile: AtlasTile,
     transform: PrimitiveTransform,
 }
 
@@ -33,13 +33,65 @@ struct MonochromeFixture {
 struct PolychromeFixture {
     order: u32,
     pad: u32,
+    tile: AtlasTile,
     grayscale: PaddedBool32,
     opacity: f32,
     bounds: Bounds<ScaledPixels>,
     clip: ClipEnvelope,
     corner_radii: Corners<ScaledPixels>,
-    tile: AtlasTile,
     transform: PrimitiveTransform,
+}
+
+#[test]
+fn sprite_fixtures_match_production_layouts() {
+    assert_eq!(
+        [
+            mem::size_of::<MonochromeFixture>(),
+            mem::align_of::<MonochromeFixture>(),
+            mem::offset_of!(MonochromeFixture, order),
+            mem::offset_of!(MonochromeFixture, pad),
+            mem::offset_of!(MonochromeFixture, tile),
+            mem::offset_of!(MonochromeFixture, bounds),
+            mem::offset_of!(MonochromeFixture, clip),
+            mem::offset_of!(MonochromeFixture, color),
+        ],
+        [
+            mem::size_of::<MonochromeSprite>(),
+            mem::align_of::<MonochromeSprite>(),
+            mem::offset_of!(MonochromeSprite, order),
+            mem::offset_of!(MonochromeSprite, pad),
+            mem::offset_of!(MonochromeSprite, tile),
+            mem::offset_of!(MonochromeSprite, bounds),
+            mem::offset_of!(MonochromeSprite, clip),
+            mem::offset_of!(MonochromeSprite, color),
+        ],
+    );
+    assert_eq!(
+        [
+            mem::size_of::<PolychromeFixture>(),
+            mem::align_of::<PolychromeFixture>(),
+            mem::offset_of!(PolychromeFixture, order),
+            mem::offset_of!(PolychromeFixture, pad),
+            mem::offset_of!(PolychromeFixture, tile),
+            mem::offset_of!(PolychromeFixture, grayscale),
+            mem::offset_of!(PolychromeFixture, opacity),
+            mem::offset_of!(PolychromeFixture, bounds),
+            mem::offset_of!(PolychromeFixture, clip),
+            mem::offset_of!(PolychromeFixture, corner_radii),
+        ],
+        [
+            mem::size_of::<PolychromeSprite>(),
+            mem::align_of::<PolychromeSprite>(),
+            mem::offset_of!(PolychromeSprite, order),
+            mem::offset_of!(PolychromeSprite, pad),
+            mem::offset_of!(PolychromeSprite, tile),
+            mem::offset_of!(PolychromeSprite, grayscale),
+            mem::offset_of!(PolychromeSprite, opacity),
+            mem::offset_of!(PolychromeSprite, bounds),
+            mem::offset_of!(PolychromeSprite, clip),
+            mem::offset_of!(PolychromeSprite, corner_radii),
+        ],
+    );
 }
 
 fn mixed_scene(monochrome: AtlasTile, polychrome: AtlasTile, monochrome_first: bool) -> Scene {
@@ -50,21 +102,21 @@ fn mixed_scene(monochrome: AtlasTile, polychrome: AtlasTile, monochrome_first: b
     let monochrome = MonochromeFixture {
         order: u32::from(!monochrome_first),
         pad: 0,
+        tile: monochrome,
         bounds,
         clip: ClipEnvelope::default(),
         color: Hsla::default(),
-        tile: monochrome,
         transform: PrimitiveTransform::IDENTITY,
     };
     let polychrome = PolychromeFixture {
         order: u32::from(monochrome_first),
         pad: 0,
+        tile: polychrome,
         grayscale: false.into(),
         opacity: 1.0,
         bounds,
         clip: ClipEnvelope::default(),
         corner_radii: Corners::default(),
-        tile: polychrome,
         transform: PrimitiveTransform::IDENTITY,
     };
     let mut scene = Scene::default();
@@ -192,7 +244,7 @@ fn preflight_receipt_pins_actual_mixed_textures_after_key_removal() -> Result<()
                 .unwrap();
             assert!(ptr::eq(&**texture, &*resident));
             let channels = if tile == monochrome { 1 } else { 4 };
-            let mut bytes = vec![0; 3 * 2 * channels];
+            let mut bytes = vec![0_u8; 3 * 2 * channels];
             // SAFETY: The preflight pins this exact tile and the destination has all six texels at the correct stride.
             unsafe {
                 texture.getBytes_bytesPerRow_fromRegion_mipmapLevel(

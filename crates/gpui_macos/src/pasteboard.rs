@@ -62,32 +62,19 @@ impl Pasteboard {
                 reason = "Preserve the existing file-copy pasteboard format"
             )]
             let filenames = self.inner.propertyListForType(NSFilenamesPboardType);
-            if let Some(filenames) = filenames
-                .as_ref()
-                .and_then(|filenames| filenames.downcast_ref::<NSArray>())
+            if let Some(paths) = filenames
+                .as_deref()
+                .and_then(external_paths_from_property_list)
             {
-                let mut paths = SmallVec::new();
-                for file in filenames {
-                    if let Some(file) = file.downcast_ref::<NSString>() {
-                        let path = file.UTF8String();
-                        if path.is_null() {
-                            continue;
-                        }
-                        let path = CStr::from_ptr(path).to_string_lossy().into_owned();
-                        paths.push(PathBuf::from(path));
-                    }
-                }
-                if !paths.is_empty() {
-                    let mut entries = vec![ClipboardEntry::ExternalPaths(ExternalPaths(paths))];
+                let mut entries = vec![ClipboardEntry::ExternalPaths(paths)];
 
-                    // Also include the string representation so text editors can
-                    // paste the path as text.
-                    if let Some(string_item) = self.read_string_from_pasteboard() {
-                        entries.push(string_item);
-                    }
-
-                    return Some(ClipboardItem { entries });
+                // Also include the string representation so text editors can
+                // paste the path as text.
+                if let Some(string_item) = self.read_string_from_pasteboard() {
+                    entries.push(string_item);
                 }
+
+                return Some(ClipboardItem { entries });
             }
 
             // Next, check for a plain string.
@@ -229,6 +216,28 @@ impl Pasteboard {
         self.inner
             .setData_forType(Some(&bytes), UTType::from(image.format).inner());
     }
+}
+
+fn external_paths_from_property_list(
+    property_list: &objc2::runtime::AnyObject,
+) -> Option<ExternalPaths> {
+    let filenames = property_list.downcast_ref::<NSArray>()?;
+    let mut paths = SmallVec::new();
+    for file in filenames {
+        let Some(file) = file.downcast_ref::<NSString>() else {
+            continue;
+        };
+        let path = file.UTF8String();
+        if path.is_null() {
+            continue;
+        }
+        // SAFETY: NSString owns the null-terminated UTF-8 representation until the next mutation.
+        let path = unsafe { CStr::from_ptr(path) }
+            .to_string_lossy()
+            .into_owned();
+        paths.push(PathBuf::from(path));
+    }
+    (!paths.is_empty()).then_some(ExternalPaths(paths))
 }
 
 impl From<ImageFormat> for UTType {
@@ -590,7 +599,6 @@ mod tests {
     fn test_read_file_property_list_types() {
         autoreleasepool(|_| {
             let pasteboard = Pasteboard::unique();
-            let fallback = ClipboardItem::new_string("fallback text".into());
             let path = NSString::from_str("/test.txt");
             let non_string = NSData::with_bytes(b"not a path");
             let empty_paths = NSArray::<NSString>::from_slice(&[]);
@@ -598,32 +606,44 @@ mod tests {
             let mixed_paths = NSArray::<AnyObject>::from_slice(&[&*non_string, &*path]);
             let property_lists: [&AnyObject; 3] = [&path, &empty_paths, &non_string_paths];
 
-            // SAFETY: NSString, NSData and these NSArray values are valid property lists.
-            unsafe {
-                for property_list in property_lists {
-                    pasteboard.write(fallback.clone());
-                    assert!(
-                        pasteboard
-                            .inner
-                            .setPropertyList_forType(property_list, NSFilenamesPboardType)
-                    );
-                    assert_eq!(pasteboard.read(), Some(fallback.clone()));
-                }
+            // AppKit canonicalizes file paths while writing NSFilenamesPboardType. Malformed
+            // members cannot be written through that API, so exercise their decoder directly.
+            for property_list in property_lists {
+                assert_eq!(external_paths_from_property_list(property_list), None);
+            }
+            let expected_paths = ExternalPaths(vec![PathBuf::from("/test.txt")].into());
+            assert_eq!(
+                external_paths_from_property_list(&mixed_paths),
+                Some(expected_paths.clone())
+            );
 
-                pasteboard.write(ClipboardItem { entries: vec![] });
+            let fallback = ClipboardItem::new_string("fallback text".into());
+            pasteboard.write(fallback.clone());
+            // SAFETY: An empty array is a valid file-list property and preserves plain text.
+            unsafe {
                 assert!(
                     pasteboard
                         .inner
-                        .setPropertyList_forType(&mixed_paths, NSFilenamesPboardType)
+                        .setPropertyList_forType(&empty_paths, NSFilenamesPboardType)
+                );
+            }
+            assert_eq!(pasteboard.read(), Some(fallback));
+
+            let valid_paths = NSArray::from_slice(&[&*path]);
+            // SAFETY: The file-list property contains only NSString paths, as AppKit requires.
+            unsafe {
+                pasteboard.inner.clearContents();
+                assert!(
+                    pasteboard
+                        .inner
+                        .setPropertyList_forType(&valid_paths, NSFilenamesPboardType)
                 );
             }
 
             assert_eq!(
                 pasteboard.read(),
                 Some(ClipboardItem {
-                    entries: vec![ClipboardEntry::ExternalPaths(ExternalPaths(
-                        vec![PathBuf::from("/test.txt")].into(),
-                    ))],
+                    entries: vec![ClipboardEntry::ExternalPaths(expected_paths)],
                 })
             );
         });

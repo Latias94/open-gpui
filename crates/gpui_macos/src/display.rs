@@ -350,14 +350,15 @@ pub(crate) mod tests {
             Err(MacDisplayTopologyFailure::InvalidCandidate(_))
         ));
 
-        let primary = display(1, -1_920.0, -240.0, 1.0, 1_920.0);
-        let secondary = display(2, 0.0, 0.0, 2.0, 1_880.0);
+        let primary = display(1_u128 << 64, -1_920.0, -240.0, 1.0, 1_920.0);
+        let secondary = display(2_u128 << 64, 0.0, 0.0, 2.0, 1_880.0);
         assert!(matches!(
             MacDisplayTopologyCandidate::try_new(smallvec![
                 row(1, primary, true),
                 row(1, secondary, false),
             ]),
-            Err(MacDisplayTopologyFailure::InvalidCandidate(_))
+            Err(MacDisplayTopologyFailure::InvalidCandidate(message))
+                if message.as_ref() == "display topology contains duplicate native display identities"
         ));
         let duplicated_screen = MacDisplayObservation {
             screen_identity: 1,
@@ -368,7 +369,8 @@ pub(crate) mod tests {
                 row(1, primary, true),
                 duplicated_screen
             ]),
-            Err(MacDisplayTopologyFailure::InvalidCandidate(_))
+            Err(MacDisplayTopologyFailure::InvalidCandidate(message))
+                if message.as_ref() == "display topology contains duplicate NSScreen objects"
         ));
         assert!(matches!(
             MacDisplayTopologyCandidate::try_new(smallvec![
@@ -378,7 +380,19 @@ pub(crate) mod tests {
             Err(MacDisplayTopologyFailure::InvalidCandidate(_))
         ));
 
-        let invalid_scale = display(3, 1_920.0, 0.0, f32::NAN, 1_920.0);
+        let colliding_uuid = display((1_u128 << 64) | 1, 1_920.0, 0.0, 1.0, 1_920.0);
+        assert_ne!(primary.uuid().unwrap(), colliding_uuid.uuid().unwrap());
+        assert_eq!(primary.id(), colliding_uuid.id());
+        assert!(matches!(
+            MacDisplayTopologyCandidate::try_new(smallvec![
+                row(1, primary, true),
+                row(2, colliding_uuid, false),
+            ]),
+            Err(MacDisplayTopologyFailure::InvalidCandidate(message))
+                if message.starts_with("display topology contains duplicate identity")
+        ));
+
+        let invalid_scale = display(3_u128 << 64, 1_920.0, 0.0, f32::NAN, 1_920.0);
         assert!(matches!(
             MacDisplayTopologyCandidate::try_new(smallvec![row(3, invalid_scale, true)]),
             Err(MacDisplayTopologyFailure::InvalidCandidate(_))
@@ -387,8 +401,8 @@ pub(crate) mod tests {
 
     #[test]
     fn candidate_is_order_independent_and_preserves_signed_origins() {
-        let primary = display(1, 0.0, 0.0, 2.0, 1_880.0);
-        let secondary = display(2, -1_920.0, -1_080.0, 1.0, 1_920.0);
+        let primary = display(1_u128 << 64, 0.0, 0.0, 2.0, 1_880.0);
+        let secondary = display(2_u128 << 64, -1_920.0, -1_080.0, 1.0, 1_920.0);
         let forward = MacDisplayTopologyCandidate::try_new(smallvec![
             row(1, primary, true),
             row(2, secondary, false),
@@ -401,13 +415,17 @@ pub(crate) mod tests {
         .unwrap();
 
         assert_eq!(forward, reverse);
-        assert_eq!(forward.displays[0].bounds().origin.y, px(-1_080.0));
+        let snapshot = MacDisplayTopologySnapshot::new(1, forward);
+        assert_eq!(
+            snapshot.display(secondary.id()).unwrap().bounds().origin.y,
+            px(-1_080.0)
+        );
     }
 
     #[test]
     fn callback_validation_rejects_reused_native_identity_with_new_provenance() {
-        let primary = display(1, 0.0, 0.0, 2.0, 1_880.0);
-        let secondary = display(2, 1_920.0, 0.0, 1.0, 1_920.0);
+        let primary = display(1_u128 << 64, 0.0, 0.0, 2.0, 1_880.0);
+        let secondary = display(2_u128 << 64, 1_920.0, 0.0, 1.0, 1_920.0);
         let snapshot = MacDisplayTopologySnapshot::new(1, candidate(primary, secondary));
 
         assert_eq!(
@@ -416,16 +434,19 @@ pub(crate) mod tests {
                 .unwrap(),
             1
         );
-        let replacement = display(3, 1_920.0, 0.0, 1.0, 1_920.0);
-        assert!(matches!(
-            snapshot.validate_native_observation(row(2, replacement, false)),
-            Err(MacDisplayTopologyFailure::SnapshotChanged(1))
-        ));
+        for provenance in [3_u128 << 64, (2_u128 << 64) | 1] {
+            let replacement = display(provenance, 1_920.0, 0.0, 1.0, 1_920.0);
+            assert_ne!(replacement.uuid().unwrap(), secondary.uuid().unwrap());
+            assert!(matches!(
+                snapshot.validate_native_observation(row(2, replacement, false)),
+                Err(MacDisplayTopologyFailure::SnapshotChanged(1))
+            ));
+        }
     }
 
     #[test]
     fn test_rows_never_publish_null_screen_identity() {
-        let primary = display(1, 0.0, 0.0, 2.0, 1_880.0);
+        let primary = display(1_u128 << 64, 0.0, 0.0, 2.0, 1_880.0);
         let row = MacDisplayObservation {
             screen_identity: 0,
             native_display_id: 1,

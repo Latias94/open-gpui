@@ -608,10 +608,9 @@ mod tests {
         MacDisplayTopologyUnavailable, notify_display_topology_listener,
     };
     use crate::display::{
-        MacDisplay, MacDisplayTopologyCandidate, display_id_from_uuid,
-        native::MacDisplayObservation,
+        MacDisplay, MacDisplayTopologyCandidate, native::MacDisplayObservation, tests::display,
     };
-    use open_gpui::{Bounds, PlatformDisplay, point, px, size};
+    use open_gpui::PlatformDisplay;
     use smallvec::smallvec;
     use std::{
         panic,
@@ -621,29 +620,6 @@ mod tests {
         },
         time::Duration,
     };
-    use uuid::Uuid;
-
-    fn display(
-        provenance: u128,
-        origin_x: f32,
-        origin_y: f32,
-        scale_factor: f32,
-        visible_width: f32,
-    ) -> MacDisplay {
-        let uuid = Uuid::from_u128(provenance);
-        let bounds = Bounds::new(
-            point(px(origin_x), px(origin_y)),
-            size(px(1_920.0), px(1_080.0)),
-        );
-        MacDisplay {
-            display_id: display_id_from_uuid(uuid),
-            uuid,
-            scale_factor,
-            bounds,
-            visible_bounds: Bounds::new(bounds.origin, size(px(visible_width), px(1_040.0))),
-            refresh_interval: None,
-        }
-    }
 
     fn row(native_display_id: u32, display: MacDisplay, is_primary: bool) -> MacDisplayObservation {
         MacDisplayObservation {
@@ -692,8 +668,8 @@ mod tests {
 
     #[test]
     fn failed_refresh_retains_the_previous_complete_generation() {
-        let primary = display(1, 0.0, 0.0, 2.0, 1_880.0);
-        let secondary = display(2, -1_920.0, 0.0, 1.0, 1_920.0);
+        let primary = display(1_u128 << 64, 0.0, 0.0, 2.0, 1_880.0);
+        let secondary = display(2_u128 << 64, -1_920.0, 0.0, 1.0, 1_920.0);
         let mut authority =
             MacDisplayTopologyAuthority::from_initial_candidate(Ok(candidate(primary, secondary)));
 
@@ -713,8 +689,8 @@ mod tests {
 
     #[test]
     fn single_notification_recovers_after_one_transient_failure_via_retry() {
-        let primary = display(1, 0.0, 0.0, 2.0, 1_880.0);
-        let secondary = display(2, 1_920.0, 0.0, 1.0, 1_920.0);
+        let primary = display(1_u128 << 64, 0.0, 0.0, 2.0, 1_880.0);
+        let secondary = display(2_u128 << 64, 1_920.0, 0.0, 1.0, 1_920.0);
         let stable = candidate(primary, secondary);
         let mut authority = MacDisplayTopologyAuthority::from_initial_candidate(Ok(stable.clone()));
 
@@ -753,8 +729,8 @@ mod tests {
 
     #[test]
     fn changed_publication_cancels_the_retry_chain() {
-        let primary = display(1, 0.0, 0.0, 2.0, 1_880.0);
-        let secondary = display(2, 1_920.0, 0.0, 1.0, 1_920.0);
+        let primary = display(1_u128 << 64, 0.0, 0.0, 2.0, 1_880.0);
+        let secondary = display(2_u128 << 64, 1_920.0, 0.0, 1.0, 1_920.0);
         let mut authority =
             MacDisplayTopologyAuthority::from_initial_candidate(Ok(candidate(primary, secondary)));
         let request = authority.request_refresh();
@@ -769,7 +745,7 @@ mod tests {
             other => panic!("expected a queued retry, got {other:?}"),
         };
         let retry_request_epoch = authority.begin_retry(retry.retry_epoch()).unwrap();
-        let moved_secondary = display(2, 2_000.0, 0.0, 1.0, 2_000.0);
+        let moved_secondary = display(2_u128 << 64, 2_000.0, 0.0, 1.0, 1_920.0);
 
         assert!(matches!(
             authority.finish_refresh(retry_request_epoch, Ok(candidate(primary, moved_secondary))),
@@ -786,8 +762,8 @@ mod tests {
 
     #[test]
     fn consecutive_failures_cap_backoff_without_stopping_retries() {
-        let primary = display(1, 0.0, 0.0, 2.0, 1_880.0);
-        let secondary = display(2, 1_920.0, 0.0, 1.0, 1_920.0);
+        let primary = display(1_u128 << 64, 0.0, 0.0, 2.0, 1_880.0);
+        let secondary = display(2_u128 << 64, 1_920.0, 0.0, 1.0, 1_920.0);
         let mut authority =
             MacDisplayTopologyAuthority::from_initial_candidate(Ok(candidate(primary, secondary)));
         let request = authority.request_refresh();
@@ -833,8 +809,8 @@ mod tests {
 
     #[test]
     fn newer_notification_cancels_the_queued_retry_epoch() {
-        let primary = display(1, 0.0, 0.0, 2.0, 1_880.0);
-        let secondary = display(2, 1_920.0, 0.0, 1.0, 1_920.0);
+        let primary = display(1_u128 << 64, 0.0, 0.0, 2.0, 1_880.0);
+        let secondary = display(2_u128 << 64, 1_920.0, 0.0, 1.0, 1_920.0);
         let stable = candidate(primary, secondary);
         let mut authority = MacDisplayTopologyAuthority::from_initial_candidate(Ok(stable.clone()));
         let first = authority.request_refresh();
@@ -866,8 +842,8 @@ mod tests {
 
     #[test]
     fn complete_candidate_recovers_from_initial_failure_as_generation_one() {
-        let primary = display(1, 0.0, 0.0, 2.0, 1_880.0);
-        let secondary = display(2, 1_920.0, 0.0, 1.0, 1_920.0);
+        let primary = display(1_u128 << 64, 0.0, 0.0, 2.0, 1_880.0);
+        let secondary = display(2_u128 << 64, 1_920.0, 0.0, 1.0, 1_920.0);
         let mut authority = MacDisplayTopologyAuthority::from_initial_candidate(Err(
             MacDisplayTopologyFailure::NativeCollection("initial failure".into()),
         ));
@@ -884,8 +860,8 @@ mod tests {
 
     #[test]
     fn refresh_requests_coalesce_and_only_the_latest_epoch_can_publish() {
-        let primary = display(1, 0.0, 0.0, 2.0, 1_880.0);
-        let secondary = display(2, 1_920.0, 0.0, 1.0, 1_920.0);
+        let primary = display(1_u128 << 64, 0.0, 0.0, 2.0, 1_880.0);
+        let secondary = display(2_u128 << 64, 1_920.0, 0.0, 1.0, 1_920.0);
         let initial = candidate(primary, secondary);
         let mut authority =
             MacDisplayTopologyAuthority::from_initial_candidate(Ok(initial.clone()));
@@ -913,12 +889,12 @@ mod tests {
 
     #[test]
     fn scale_work_area_provenance_and_native_id_reuse_publish_new_generations() {
-        let primary = display(1, 0.0, 0.0, 2.0, 1_880.0);
-        let secondary = display(2, 1_920.0, 0.0, 1.0, 1_920.0);
+        let primary = display(1_u128 << 64, 0.0, 0.0, 2.0, 1_880.0);
+        let secondary = display(2_u128 << 64, 1_920.0, 0.0, 1.0, 1_920.0);
         let mut authority =
             MacDisplayTopologyAuthority::from_initial_candidate(Ok(candidate(primary, secondary)));
 
-        let changed_scale = display(2, 1_920.0, 0.0, 1.5, 1_920.0);
+        let changed_scale = display(2_u128 << 64, 1_920.0, 0.0, 1.5, 1_920.0);
         assert!(matches!(
             refresh(&mut authority, Ok(candidate(primary, changed_scale))),
             MacDisplayTopologyRefresh::Published {
@@ -927,13 +903,13 @@ mod tests {
             }
         ));
 
-        let changed_work_area = display(2, 1_920.0, 0.0, 1.5, 1_800.0);
+        let changed_work_area = display(2_u128 << 64, 1_920.0, 0.0, 1.5, 1_800.0);
         assert!(matches!(
             refresh(&mut authority, Ok(candidate(primary, changed_work_area))),
             MacDisplayTopologyRefresh::Published { generation: 3, .. }
         ));
 
-        let replacement = display(3, 1_920.0, 0.0, 1.5, 1_800.0);
+        let replacement = display(3_u128 << 64, 1_920.0, 0.0, 1.5, 1_800.0);
         let replacement_candidate = MacDisplayTopologyCandidate::try_new(smallvec![
             row(1, primary, true),
             row(2, replacement, false),
@@ -954,8 +930,8 @@ mod tests {
 
     #[test]
     fn unchanged_refresh_preserves_generation_and_immutable_lookup() {
-        let primary = display(1, 0.0, 0.0, 2.0, 1_880.0);
-        let secondary = display(2, 1_920.0, 0.0, 1.0, 1_920.0);
+        let primary = display(1_u128 << 64, 0.0, 0.0, 2.0, 1_880.0);
+        let secondary = display(2_u128 << 64, 1_920.0, 0.0, 1.0, 1_920.0);
         let initial = candidate(primary, secondary);
         let mut authority =
             MacDisplayTopologyAuthority::from_initial_candidate(Ok(initial.clone()));
@@ -979,8 +955,8 @@ mod tests {
 
     #[test]
     fn refresh_rate_changes_publish_without_mutating_retained_display_facts() {
-        let primary = display(1, 0.0, 0.0, 2.0, 1_880.0);
-        let secondary = display(2, 1_920.0, 0.0, 1.0, 1_920.0);
+        let primary = display(1_u128 << 64, 0.0, 0.0, 2.0, 1_880.0);
+        let secondary = display(2_u128 << 64, 1_920.0, 0.0, 1.0, 1_920.0);
         let mut authority =
             MacDisplayTopologyAuthority::from_initial_candidate(Ok(candidate(primary, secondary)));
         let retained = authority.retained_snapshot().unwrap();
@@ -1022,8 +998,8 @@ mod tests {
 
     #[test]
     fn app_display_notification_precedes_window_jobs_and_waits_for_complete_publication() {
-        let primary = display(1, 0.0, 0.0, 2.0, 1_880.0);
-        let secondary = display(2, 1_920.0, 0.0, 1.0, 1_920.0);
+        let primary = display(1_u128 << 64, 0.0, 0.0, 2.0, 1_880.0);
+        let secondary = display(2_u128 << 64, 1_920.0, 0.0, 1.0, 1_920.0);
         let handle = MacDisplayTopologyHandle::from_authority(
             MacDisplayTopologyAuthority::from_initial_candidate(Ok(candidate(primary, secondary))),
         );
@@ -1089,8 +1065,8 @@ mod tests {
 
     #[test]
     fn publication_listener_observes_registration_and_unchanged_refresh() {
-        let primary = display(1, 0.0, 0.0, 2.0, 1_880.0);
-        let secondary = display(2, 1_920.0, 0.0, 1.0, 1_920.0);
+        let primary = display(1_u128 << 64, 0.0, 0.0, 2.0, 1_880.0);
+        let secondary = display(2_u128 << 64, 1_920.0, 0.0, 1.0, 1_920.0);
         let initial = candidate(primary, secondary);
         let handle = MacDisplayTopologyHandle::from_authority(
             MacDisplayTopologyAuthority::from_initial_candidate(Ok(initial.clone())),

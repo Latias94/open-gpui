@@ -22,22 +22,6 @@ fn native_conversion_preserves_named_appearances_and_official_fallbacks() {
                 (NSAppearanceNameDarkAqua, WindowAppearance::Dark),
                 (NSAppearanceNameVibrantLight, WindowAppearance::VibrantLight),
                 (NSAppearanceNameVibrantDark, WindowAppearance::VibrantDark),
-                (
-                    NSAppearanceNameAccessibilityHighContrastAqua,
-                    WindowAppearance::Light,
-                ),
-                (
-                    NSAppearanceNameAccessibilityHighContrastDarkAqua,
-                    WindowAppearance::Light,
-                ),
-                (
-                    NSAppearanceNameAccessibilityHighContrastVibrantLight,
-                    WindowAppearance::Light,
-                ),
-                (
-                    NSAppearanceNameAccessibilityHighContrastVibrantDark,
-                    WindowAppearance::Light,
-                ),
             ]
         };
         for (name, expected) in cases {
@@ -46,6 +30,46 @@ fn native_conversion_preserves_named_appearances_and_official_fallbacks() {
             assert_eq!(
                 window_appearance_from_native(Some(&appearance)),
                 expected,
+                "{name:?}"
+            );
+        }
+    });
+}
+
+#[test]
+fn accessibility_appearance_aliases_preserve_color_when_available() {
+    objc2::rc::autoreleasepool(|_| {
+        let cases = unsafe {
+            [
+                (
+                    NSAppearanceNameAccessibilityHighContrastAqua,
+                    WindowAppearance::Light,
+                ),
+                (
+                    NSAppearanceNameAccessibilityHighContrastDarkAqua,
+                    WindowAppearance::Dark,
+                ),
+                (
+                    NSAppearanceNameAccessibilityHighContrastVibrantLight,
+                    WindowAppearance::VibrantLight,
+                ),
+                (
+                    NSAppearanceNameAccessibilityHighContrastVibrantDark,
+                    WindowAppearance::VibrantDark,
+                ),
+            ]
+        };
+        for (name, expected) in cases {
+            // AppKit documents these as matching-only names that can return nil. Newer
+            // releases also accept them as aliases; an alias must retain its color semantics.
+            let appearance = NSAppearance::appearanceNamed(name);
+            assert_eq!(
+                window_appearance_from_native(appearance.as_deref()),
+                if appearance.is_some() {
+                    expected
+                } else {
+                    WindowAppearance::Light
+                },
                 "{name:?}"
             );
         }
