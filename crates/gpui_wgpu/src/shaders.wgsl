@@ -1623,6 +1623,9 @@ struct PolySpriteVarying {
     @location(0) tile_position: vec2<f32>,
     @location(1) @interpolate(flat) sprite_id: u32,
     @location(2) local_position: vec2<f32>,
+    @location(3) @interpolate(flat) opacity: f32,
+    @location(4) @interpolate(flat) clip_bounds: vec4<f32>,
+    @location(5) @interpolate(flat) clip_range: vec2<u32>,
 }
 
 @vertex
@@ -1634,14 +1637,27 @@ fn vs_poly_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
     var out = PolySpriteVarying();
     out.position = to_device_position_impl(clipped.position);
     out.tile_position = to_tile_position(clipped.unit_vertex, sprite.tile);
-    out.sprite_id = instance_id | select(SIMPLE_PRIMITIVE_FLAG, 0u, has_rounded_corners(sprite.corner_radii));
+    let simple = !has_rounded_corners(sprite.corner_radii) && sprite.grayscale == 0u && sprite.pad == 0u;
+    out.sprite_id = instance_id | select(0u, SIMPLE_PRIMITIVE_FLAG, simple);
     out.local_position = clipped.local_position;
+    out.opacity = sprite.opacity;
+    out.clip_bounds = vec4<f32>(sprite.clip.conservative_bounds.origin, sprite.clip.conservative_bounds.size);
+    out.clip_range = vec2<u32>(sprite.clip.first_clip, sprite.clip.clip_count);
     return out;
 }
 
 @fragment
 fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
-    let sprite = load_poly_sprite(input.sprite_id & ~SIMPLE_PRIMITIVE_FLAG);
+    if ((input.sprite_id & SIMPLE_PRIMITIVE_FLAG) != 0u) {
+        let sample = textureSample(t_sprite, s_sprite, input.tile_position);
+        let clip = ClipEnvelope(Bounds(input.clip_bounds.xy, input.clip_bounds.zw), input.clip_range.x, input.clip_range.y);
+        if (!clip_envelope_contains(input.position.xy, clip)) {
+            return vec4<f32>(0.0);
+        }
+        return blend_scene_color(srgb_to_scene(sample), input.opacity);
+    }
+
+    let sprite = load_poly_sprite(input.sprite_id);
     let dimensions = vec2<f32>(textureDimensions(t_sprite));
     var position = input.tile_position;
     if ((sprite.pad & 16u) != 0u) {
@@ -1675,7 +1691,7 @@ fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
         sample = srgb_to_scene(sample);
     }
     var coverage = 1.0;
-    if ((input.sprite_id & SIMPLE_PRIMITIVE_FLAG) == 0u) {
+    if (has_rounded_corners(sprite.corner_radii)) {
         coverage = saturate(0.5 - quad_sdf(input.local_position, sprite.bounds, sprite.corner_radii));
     }
 

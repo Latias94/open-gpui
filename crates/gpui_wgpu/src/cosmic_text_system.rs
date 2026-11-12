@@ -206,7 +206,7 @@ impl PlatformTextSystem for CosmicTextSystem {
             .faces()
             .filter_map(|face| face.families.first().map(|family| family.0.clone()))
             .collect_vec();
-        result.sort();
+        result.sort_unstable();
         result.dedup();
         result
     }
@@ -872,7 +872,10 @@ impl CosmicTextSystemState {
 
             let shaped_glyph = ShapedGlyph {
                 id: GlyphId(glyph.glyph_id as u32),
-                position: point(glyph.x.into(), glyph.y.into()),
+                position: point(
+                    (glyph.x + glyph.x_offset * f32::from(font_size)).into(),
+                    (glyph.y - glyph.y_offset * f32::from(font_size)).into(),
+                ),
                 index: glyph.start,
                 is_emoji,
             };

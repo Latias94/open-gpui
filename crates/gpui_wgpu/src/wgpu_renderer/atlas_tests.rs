@@ -740,6 +740,71 @@ fn cropped_image_preserves_uv_corners_clip_transform_and_removed_tile_lease() ->
 }
 
 #[test]
+fn ordinary_image_fast_path_preserves_opacity_exact_clips_and_scene_color() -> anyhow::Result<()> {
+    let mut renderer = WgpuHeadlessRenderer::new()?;
+    with_unleased_window_scene(
+        &mut renderer,
+        WindowFixture::images(vec![color_image(16, 16, [128, 128, 128, 128])]),
+        |scene, scale_factor, renderer| {
+            assert_eq!(scene.polychrome_sprites.len(), 1);
+            let sprite = scene.polychrome_sprites[0];
+            assert_eq!(sprite.pad, 0);
+            assert_eq!(sprite.corner_radii, Corners::default());
+            assert!(!sprite.grayscale.as_bool());
+            assert!(scene.clip_shapes().iter().any(|clip| {
+                clip.radii_x != Corners::default() || clip.radii_y != Corners::default()
+            }));
+            let target_size = render_size(scale_factor, 32.0, 32.0);
+            for packed in [false, true] {
+                for color_space in [
+                    WgpuSceneColorSpace::SrgbEncoded,
+                    WgpuSceneColorSpace::LinearSrgb,
+                ] {
+                    renderer.core = WgpuRendererCore::from_device_with_color_space(
+                        &renderer.context.adapter,
+                        renderer.context.device.clone(),
+                        renderer.context.queue.clone(),
+                        renderer.core.atlas.clone(),
+                        renderer.core.target_format,
+                        wgpu::CompositeAlphaMode::Opaque,
+                        packed,
+                        color_space,
+                    )?;
+                    for opacity in [0.0, 0.35, 1.0] {
+                        let mut ordinary = scene.clone();
+                        ordinary.polychrome_sprites[0].opacity = opacity;
+                        let mut grayscale = ordinary.clone();
+                        grayscale.polychrome_sprites[0].grayscale = true.into();
+                        let actual = renderer.render_scene_to_image(&ordinary, target_size)?;
+                        let expected = renderer.render_scene_to_image(&grayscale, target_size)?;
+                        for (pixel, expected) in actual.pixels().zip(expected.pixels()) {
+                            assert!(
+                                pixel
+                                    .0
+                                    .into_iter()
+                                    .zip(expected.0)
+                                    .all(|(a, b)| a.abs_diff(b) <= 1),
+                                "packed={packed}, color_space={color_space:?}, opacity={opacity}: {pixel:?} != {expected:?}"
+                            );
+                        }
+                        assert_eq!(pixel_at(&actual, scale_factor, 4.0, 4.0), [0, 0, 0, 255]);
+                        let center = pixel_at(&actual, scale_factor, 12.0, 12.0);
+                        assert_eq!(center[3], 255);
+                        if opacity == 0.0 {
+                            assert_eq!(center, [0, 0, 0, 255]);
+                        } else {
+                            assert!(center[0] > 0 && center[0] < 128);
+                        }
+                        renderer.check_gpu_errors()?;
+                    }
+                }
+            }
+            Ok(())
+        },
+    )
+}
+
+#[test]
 fn opaque_rect_clip_keeps_pixel_centers_below_fractional_edges_with_both_transports()
 -> anyhow::Result<()> {
     let mut renderer = WgpuHeadlessRenderer::new()?;

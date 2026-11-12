@@ -27,6 +27,29 @@ fn layout(platform: &CosmicTextSystem, text: &str) -> Result<LineLayout> {
 }
 
 #[test]
+fn combining_marks_are_positioned_over_their_base() -> Result<()> {
+    let platform = platform()?;
+    let layout = layout(&platform, "v\u{0304}v")?;
+    let glyphs = layout
+        .runs
+        .iter()
+        .flat_map(|run| run.glyphs.iter())
+        .collect::<Vec<_>>();
+    assert_eq!(glyphs.len(), 3);
+    let base = glyphs[0].position;
+    let mark = glyphs[1].position;
+    let next = glyphs[2].position;
+    assert!(mark.x > base.x);
+    assert!(
+        mark.x < next.x,
+        "combining mark positioned after its base: mark.x={:?}, next.x={:?}",
+        mark.x,
+        next.x
+    );
+    Ok(())
+}
+
+#[test]
 fn public_shape_text_preserves_newlines_and_mixed_direction_paragraphs() -> Result<()> {
     let text_system = WindowTextSystem::new(Arc::new(TextSystem::new(Arc::new(platform()?))));
     let source: SharedString = "first line\nא\u{001c}A".into();
