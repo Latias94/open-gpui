@@ -88,7 +88,18 @@ allocation/reuse costs have not been measured here.
 Two separately evidenced native defects also exist at the fixed upstream target: leading-BOM
 CoreText source-index mapping (`b26491f570` does not fully solve it), and explicit child `PATH`
 lookup falling back through `posix_spawnp` after failed resolution (`d1f500edf1`). They are shared
-defects, not omitted upstream fixes, and remain outside this source-adoption patch.
+defects rather than omitted upstream fixes. The owner subsequently authorizes both corrections
+and the pending native layer-retirement fix. The
+[follow-up qualification](../verification.md#macos-follow-up-correctness-and-native-retirement)
+records their native regressions, preserved official mechanisms and additional exact-ticket
+native-close correction. The follow-up code checkpoint is
+`9dc411c483dba3ac4ac05d4e02fa4b1d1c5d4d91`, including the adopted layer-retirement changes.
+The earlier source-adoption results above retain their original scope.
+
+The [maintenance handoff](../plans/2026-11-12-framework-maintenance-handoff.md) owns subsequent
+development navigation. Regular development compares the affected official owner and relevant
+fix/follow-up history before implementation and reviews its final behavior against that pin
+before committing; dedicated refresh cycles retain explicit source selection.
 
 ## Accepted Candidates
 

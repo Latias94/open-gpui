@@ -39,6 +39,16 @@ concurrent layer-retirement edits remain uncommitted and are included only in th
 worktree qualification. Shared BOM/PATH defects, physical input, older macOS and numerical
 performance/energy budgets retain their explicit remaining scope.
 
+The owner then authorizes the
+[follow-up correctness and native-retirement work](../verification.md#macos-follow-up-correctness-and-native-retirement):
+fix shared BOM source mapping, explicit child-PATH resolution, late AppKit backing layers and
+renderer quiescence before native close. These corrections extend the implementation checkpoint
+above through `9dc411c483dba3ac4ac05d4e02fa4b1d1c5d4d91`, with final Apple/Mac 175/175,
+Darwin 35/35 and actual native close/sheet/layer controls. This does not claim unexecuted
+platform or performance scope. Subsequent framework work uses
+the [maintenance handoff](2026-11-12-framework-maintenance-handoff.md), including the owner's
+requirement to compare the affected official Zed GPUI implementation regularly during development.
+
 ## November 5 Continuation
 
 The owner has resumed maintenance in `F:/SourceCodes/Rust/open-gpui`, whose inspected baseline is

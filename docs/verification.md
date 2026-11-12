@@ -206,6 +206,119 @@ The two shared upstream defects, leading-BOM source-index mapping and failed chi
 falling back to the parent environment, remain follow-up correctness work rather than missing
 official ports.
 
+## macOS Follow-Up Correctness And Native Retirement
+
+The owner requests fixes and local commits for the remaining native defects after `bb343e49`,
+including the separately owned pending layer-retirement edits, and selects the
+[framework maintenance handoff](plans/2026-11-12-framework-maintenance-handoff.md) for subsequent
+development. The fixed official reference remains Zed
+`78f5d7446c55f6c1aa9b66e8111f6b3f4625ebb0`. Reinspection confirms its CoreText BOM
+conversion and failed child-PATH fallback have the same defects. Its ordinary native close has
+no exact presentation-shutdown ticket; preserving this fork's renderer-before-native-terminal
+contract requires an additional native-close adaptation.
+
+The Darwin regressions first run **6/9**, with three failures
+(`d06815cc-5063-4c43-b709-a85071537fc9`): an explicit empty/unmatched child PATH executes the
+parent's echo instead of returning NotFound, and empty/relative PATH entries fail to find a
+temporary executable in the child's working directory. The production fix keeps original argv0,
+absolute/explicit relative programs, environment CString validation and absent-child-PATH
+behavior. It anchors relative entries in the child's directory and returns ENOENT after an
+explicit PATH miss. Rechecking official which usage also catches its supported `~/...`
+expansion, which is retained with the existing home-directory provider and a real native-process
+test; no process-global HOME/PATH is changed. That intermediate complete Darwin cohort passes **32/32**
+(`5f447d35-53d5-4740-8dea-434161969a52`):
+
+```sh
+CARGO_BUILD_JOBS=2 cargo nextest run --locked -p open-gpui-util --lib -E 'test(command::darwin::tests::)' --test-threads=1 --no-fail-fast --status-level fail
+```
+
+Further independent review catches an errno compatibility issue in that intermediate all-miss
+mapping: a non-executable file must return EACCES/PermissionDenied, not ENOENT/NotFound. The
+additional native errno selection runs **3/4**, with that exact failure
+(`dd20f810-d725-47f6-a2ba-8b0ff85bbcb1`). The final search passes absolute candidates to the
+existing `posix_spawnp` call in PATH order, preserves EACCES while continuing past missing or
+inaccessible candidates, and stops on the first success or other native error. It keeps the
+original no-child-PATH lookup and avoids a separate executable/permission checker. The child
+environment and file actions remain the existing owners.
+
+The final full Darwin cohort passes **35/35**
+(`0f38e0ad-4650-43af-9270-52d32eb4eddc`), including the original process/reaper/stdio/SIGPIPE
+controls, explicit miss, relative/empty/tilde entries, preserved argv0, permission denial and a
+later valid candidate after denial. No second process owner or new dependency is introduced.
+
+All six new CoreText source-index regressions fail before the production correction. They cover
+a BOM in the same or separate font run, repeated BOMs, multibyte UTF-8 and UTF-16 surrogate
+pairs, embedded BOM run boundaries, original length and the metrics of BOM-only font runs.
+CFString conversion can remove one leading BOM from each run. The correction records the
+actual removed UTF-16 positions and maps native glyph indices back to the original text before
+the existing UTF-8 conversion. Native shaping, first nonempty-run size, ligature isolation and
+font metrics remain unchanged; ordinary text allocates no offset storage.
+
+The first corrected Apple/Mac aggregate is **173/175**
+(`aafe95e6-c336-41be-b910-193ca77a5578`): source indices and glyphs are corrected, but two
+emoji assertions incorrectly require the same configured FontId across differently sized runs.
+The final oracle retains glyph/index/emoji and metrics assertions while comparing native
+PostScript identity, traits and backing font tables. The six BOM cases then pass **6/6**
+(`5b38d5c5-6391-493a-90b8-0a36d77f3ace`), followed by the complete Apple/Mac libraries
+passing **175/175**, with no skipped cases (`047a9280-3ecf-4d18-8e79-10f8876a64f3`):
+
+```sh
+CARGO_BUILD_JOBS=2 cargo nextest run --locked -p open-gpui-apple -p open-gpui-macos --features font-kit,runtime_shaders,screen-capture --lib --test-threads=1 --no-fail-fast --status-level fail
+```
+
+Independent native review identifies the previously recorded forced-close diagnostic as a real
+protocol defect: acknowledging native terminal before renderer quiescence permanently poisons
+that exact ticket. Native close now shares the prepared-shutdown quiescence operation, detaches
+the view outside the state mutex and drains submitted Metal work before terminal publication.
+A native-owned close gate prevents repeated/reentrant cleanup and retains the exact native
+window, state and ticket for foreground retry after a rejected attempt. It also handles the
+existing dispose path, which marks state closed before its native close tail. Late backing-layer
+requests use an ordinary NSView layer and cannot restore a retired Metal surface.
+
+The native probes build in the existing target, then run task-owned copies. Before the shared
+close correction, normal layer retirement, ancestor-backed retirement, submitted resize and
+their combination all pass. The final `native-close` mode checks that preparation alone has
+not quiesced the renderer, invokes raw native close, and observes the exact original ticket as
+`quiesced && native_terminal && !protocol_violation` before its one callback. That callback
+reenters close, and two later close calls leave its count at one. The complete sheet mode also
+passes with no native error log, superseding the earlier forced-close protocol limitation for
+these trajectories. The final ancestor-backed/submitted-resize layer mode passes and additionally
+checks the actual layer after retirement-tail layout/display remains non-Metal. Initial probe
+compilation fails because a typed `NSView::makeBackingLayer` getter is feature-gated; the probe
+uses the already available Objective-C selector with a retained return value instead of expanding
+production feature selection. No renderer/native error suppression is introduced. A forced
+first-attempt state-lock contention retry is source-reviewed rather than directly injected.
+
+The previous strict suspicious-Clippy failure is addressed by expressing the single native
+selection update as separate count and range assertions. The original public text-input test
+passes **1/1** (`6252daaf-9d22-4004-a285-d923f191abfe`); it still checks one exact `3..5`
+selection update and all existing UTF-16/geometry behavior.
+
+The subsequent all-target strict run exposes three additional existing single-range fixtures.
+Their click ranges use a one-element iterator and their list assertion checks count and exact
+range separately. All four affected existing Core cases pass **4/4**
+(`aa8ea19d-45e3-4e6c-a16f-082b17b171b8`). The final all-target Core/Apple/Mac/util Clippy
+passes both `-D clippy::correctness` and `-D clippy::suspicious`, without suppressing either
+category. The independently locked consumer again compiles all targets with
+`mac-screen-capture,open_gpui_platform/runtime_shaders`, reusing the checkout target. Formatting
+and whitespace checks pass. These scoped results do not repeat or relabel the earlier 1806-case
+Core/Apple/Mac run as a new aggregate execution.
+
+The final local code checkpoint is `9dc411c483dba3ac4ac05d4e02fa4b1d1c5d4d91`, containing
+`353971ac` (BOM mapping), `158d558d` (native close and pending layer retirement), `3d764fa9`
+and `7a412b38` (single-range fixtures), and `9dc411c4` (child PATH/native errno). Independent
+reviews close the BOM, native-close and final Darwin P1/P2 scope. The pending Mac layer example
+and production hunks are now included in the native-close commit rather than excluded worktree
+contributions. The previous process logs and failed aggregates remain historical evidence.
+
+Reproduce native close and sheet modes with the earlier copy-after-build recipe, passing
+`native-close` or `sheet` to the pinned `native_windowing` executable. Build the
+`native_layer_shutdown` example with the same features and run each of its four combinations
+of no arguments, `--ancestor-backed`, `--exercise-window` and both flags in a fresh process.
+The last combination proves a newer actual submitted frame before normal Core retirement and
+post-terminal AppKit layout. Physical input, older OS, performance/energy and other platform
+qualifications retain the previous explicit limits; a passing process is not their substitute.
+
 ## Fixed-Cycle Source-Adoption Exit
 
 On November 11, the bounded disposition audit reconciles the concrete named framework mechanisms

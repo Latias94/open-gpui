@@ -7,7 +7,7 @@ plans and qualification records retain their exact scope.
 The engine development path is recorded separately in Nara:
 `docs/plans/2026-11-12-nara-ui-integration-handoff.md`.
 
-## Repository And Published Baseline
+## Recorded Windows Publication
 
 ```text
 checkout: F:/SourceCodes/Rust/open-gpui
@@ -25,15 +25,67 @@ The former maintenance branch was also published. This is not new full-platform 
 qualification and does not complete canonical docking U4–U9.
 
 Do not assume this one publication authorizes later pushes. Inspect live Git status, instructions
-and concurrent work before editing. Keep `repo-ref/` read-only. Coordinate Cargo with the Nara
-session: one invocation at a time, `CARGO_BUILD_JOBS=1`, Rust `1.95.0`, shared
-`F:/SourceCodes/Rust/nara/target`, no clean. The documented framework compiler floor and foreign
-platform claims keep their own verification.
+and concurrent work before editing. Keep `repo-ref/` read-only. In the recorded Windows/Nara
+environment, coordinate Cargo with that session: one invocation at a time,
+`CARGO_BUILD_JOBS=1`, Rust `1.95.0`, shared `F:/SourceCodes/Rust/nara/target`, no clean.
+Those paths and that toolchain describe the Windows qualification environment. Reuse the active
+checkout's configured target on other hosts. The documented framework compiler floor and
+foreign platform claims keep their own verification.
+
+## November 12 macOS Continuation
+
+The subsequent Mac/Apple maintenance runs in `/Users/frankorz/codes/rust/open-gpui` on `main`.
+The owner authorizes local fixes and Conventional Commits; this continuation does not publish
+them. Its native host is Apple Silicon, macOS 27.0, Rust 1.99.1 and SDK 26.5. Cargo runs serially
+with `CARGO_BUILD_JOBS=2`, one nextest test thread and the existing checkout target. A separate
+checkout can replace an example executable in that shared target: copy a completed native
+probe to a task-owned temporary path immediately after building and run that copy.
+
+The [Mac source reconciliation](../imports/zed-gpui-upstream-sync-candidates.md#november-12-macos-reconciliation)
+fixes Zed `78f5d7446c55f6c1aa9b66e8111f6b3f4625ebb0`, includes inherited omissions, and
+records retained atlas, candidate, font and explicit native-owner contracts. The original
+ports are `e820a593` (fallback font weight/style), `49c4b64b` (text/Div allocation) and
+`3691fb44` (window controls, active-display placement, diagnostics, nullable pasteboards and
+modal Dialog sheets), with source/qualification records at `bb343e49`.
+
+Consumers using complete `WindowOptions` or `WindowParams` literals must initialize
+`app_owns_titlebar_drag`; `false` preserves native titlebar dragging. The existing two-argument
+`WindowBounds::centered` remains available; `centered_on_display` adds explicit display selection.
+The `debug_state` JSON is diagnostic and has no stable application-data schema.
+
+The [native qualification](../verification.md#macos-source-reconciliation-on-november-12)
+records 1806/1806 Core/Apple/Mac library cases, the independently locked consumer, actual Metal
+shader compilation and repeated real AppKit sheet runs. Read its combined-worktree and
+forced-close limits with the
+[follow-up correctness and retirement record](../verification.md#macos-follow-up-correctness-and-native-retirement)
+before claiming a committed baseline. Follow-up commits `353971ac` and `158d558d` respectively
+restore BOM source indices and complete renderer-before-native-close ordering, including the
+previously pending native layer fixes. The complete Apple/Mac libraries then pass 175/175 with
+no skips, and real native close/reentrant close, modal sheets and submitted-resize retirement
+pass without the former shutdown-protocol diagnostic. The isolated selection-assertion cleanup
+is `3d764fa9`, followed by the three related fixtures at `7a412b38`; they preserve their public
+text-input, pointer/text and list regressions while enabling stricter Clippy. Darwin PATH and
+native errno correction is `9dc411c4`, with its complete 35/35 native process cohort. Final
+Core/Apple/Mac/util all-target correctness and suspicious Clippy, independently locked consumer,
+formatting and document gates pass. All four continuation workers are finished and closed.
+
+The resulting local code checkpoint is `9dc411c483dba3ac4ac05d4e02fa4b1d1c5d4d91`.
+The remote main separately observed during this continuation is
+`625173c944fb32555293446405f346db7c8b17cf`; the local tracking ref was
+`2cc8ff10304ba905ccf0d664595f3bc93c34b170`. These are distinct observations, not a fetched
+or merged reconciliation. This continuation has not pushed its local commits. Inspect the live
+remote and coordinate any later publication before choosing a consumer's next source pin.
+
+Physical input, fullscreen pixels, older macOS, actual M5 frame timing, energy and persistent
+Keychain behavior retain their separate qualification. A macOS pass does not replace Windows,
+Linux, browser, engine-consumer or compiler-floor evidence.
 
 ## Upstream Maintenance
 
-The fixed comparison target is Zed `635026fabc38440fce5e1767d125026a17b12012`.
-Do not silently replace that pin with a moving remote HEAD or claim monorepo/API parity.
+The earlier whole-framework comparison target is Zed
+`635026fabc38440fce5e1767d125026a17b12012`; the later Mac/Apple cycle explicitly selects
+`78f5d7446c55f6c1aa9b66e8111f6b3f4625ebb0`. Keep each cycle's source and executed scope
+distinct. Do not silently replace either pin with a moving remote HEAD or claim monorepo/API parity.
 Read these existing owners before beginning another refresh:
 
 - [Upstream sync skill](../../.agents/skills/open-gpui-upstream-sync/SKILL.md).
@@ -48,6 +100,15 @@ consumers. A retained difference needs a concrete contract, source evidence and 
 Trust unchanged official mechanisms; spend qualification on changed integration and ownership.
 The extracted repository has its own history: a guessed cross-repository merge-base is not
 provenance.
+
+The owner requires regular comparison with official Zed GPUI during ongoing development, not
+only during a dedicated sync cycle. Before changing a framework owner, read the corresponding
+official implementation and relevant fix/follow-up history at the recorded pin. Before committing
+the unit, compare its final behavior and regression scenarios again. Reuse complete official
+mechanisms, then adapt the fork's concrete candidate, resource and native-lifecycle contracts;
+record a material difference and its reason in the existing owner/evidence documents. Observe a
+new upstream revision separately and select a new comparison pin explicitly when starting its
+adoption cycle.
 
 ## Consumers And Interface Pressure
 
@@ -135,7 +196,8 @@ files are background inputs; current source and matching native measurements are
 
 ## First Maintenance Session
 
-1. Verify the current checkout/remote pin and read the current-state/verification sources.
+1. Verify the current checkout, local commits and remote pin; read this handoff's Mac continuation
+   with the current-state/verification sources. Choose the actual host's serialized Cargo setup.
 2. Obtain the final Nara/Jellyflow integration result and any concrete framework reproductions.
 3. Choose one complete consumer-driven interface or measured cost. Keep scope independent from
    engine document/compiler work and unfinished node-library defects.
