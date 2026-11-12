@@ -81,6 +81,7 @@ mod macos {
                     titlebar: Some(Default::default()),
                     kind: WindowKind::Normal,
                     is_movable: true,
+                    app_owns_titlebar_drag: false,
                     is_resizable: true,
                     is_minimizable: true,
                     accepts_pointer_input: true,

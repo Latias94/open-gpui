@@ -28,6 +28,7 @@ fn params() -> WindowParams {
         titlebar: None,
         kind: WindowKind::Normal,
         is_movable: true,
+        app_owns_titlebar_drag: false,
         is_resizable: true,
         is_minimizable: true,
         accepts_pointer_input: true,

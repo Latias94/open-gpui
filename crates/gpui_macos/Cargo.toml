@@ -125,17 +125,14 @@ objc2-user-notifications = { version = "0.3", default-features = false, features
 parking_lot.workspace = true
 raw-window-handle = "0.6"
 semver.workspace = true
+serde_json.workspace = true
 smallvec.workspace = true
 strum.workspace = true
 open_gpui_util.workspace = true
 uuid.workspace = true
 
-# When this crate is itself being tested (cargo test -p gpui_macos), its own
-# cfg(test) flag enables impls of test-only traits like PlatformHeadlessRenderer
-# and PlatformWindow::render_to_image. Those traits/methods only exist in gpui
-# when gpui's `test-support` feature is on, so we have to turn that feature on
-# as a dev-dependency. The `cfg(test)` flag of a dependent crate doesn't
-# propagate to its dependencies, but dev-dependencies do, so this is the
-# correct way to enable the feature exactly when needed.
+# This crate's cfg(test) enables APIs from both Core and the shared renderer.
+# Dependencies do not inherit cfg(test), so enable their test-only APIs here.
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 open_gpui = { workspace = true, features = ["test-support"] }
+open_gpui_apple = { workspace = true, features = ["test-support"] }

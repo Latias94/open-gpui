@@ -4621,6 +4621,7 @@ dependencies = [
  "parking_lot",
  "raw-window-handle",
  "semver",
+ "serde_json",
  "smallvec",
  "strum",
  "uuid",

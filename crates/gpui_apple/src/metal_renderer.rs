@@ -547,6 +547,16 @@ impl MetalRenderer {
         };
     }
 
+    /// Returns whether a Metal display link owns drawable delivery.
+    pub fn is_display_link_attached(&self) -> bool {
+        matches!(self.display_link_mode, DisplayLinkMode::Attached { .. })
+    }
+
+    /// Returns the current transaction presentation mode without changing the layer.
+    pub fn presents_with_transaction(&self) -> bool {
+        self.presents_with_transaction
+    }
+
     pub fn set_presents_with_transaction(&mut self, presents_with_transaction: bool) {
         if self.presentation_shutdown.is_some() {
             return;

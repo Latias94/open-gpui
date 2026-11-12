@@ -209,6 +209,15 @@ impl FocusHandle {
         self.id.contains(other.id, window)
     }
 
+    /// Returns whether this handle belongs to the most recently accepted frame's dispatch tree.
+    pub fn is_rendered(&self, window: &Window) -> bool {
+        window
+            .rendered_frame
+            .dispatch_tree
+            .focusable_node_id(self.id)
+            .is_some()
+    }
+
     /// Dispatch an action on the element that rendered this focus handle
     pub fn dispatch_action(&self, action: &dyn Action, window: &mut Window, cx: &mut App) {
         if let Some(node_id) = window

@@ -26,10 +26,10 @@ use objc2::{
 use objc2_app_kit::{
     NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSAppearanceNameVibrantDark,
     NSAppearanceNameVibrantLight, NSApplication, NSApplicationActivationPolicy,
-    NSApplicationTerminateReply, NSControlStateValueOn, NSCursor, NSDocumentController, NSEvent,
-    NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSModalResponseOK, NSOpenPanel,
-    NSSavePanel, NSScroller, NSScrollerStyle, NSWorkspace, NSWorkspaceDidWakeNotification,
-    NSWorkspaceWillSleepNotification,
+    NSApplicationOcclusionState, NSApplicationTerminateReply, NSControlStateValueOn, NSCursor,
+    NSDocumentController, NSEvent, NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse,
+    NSModalResponseOK, NSOpenPanel, NSSavePanel, NSScroller, NSScrollerStyle, NSWorkspace,
+    NSWorkspaceDidWakeNotification, NSWorkspaceWillSleepNotification,
 };
 use objc2_foundation::{
     NSActivityOptions, NSArray, NSBundle, NSError, NSInteger, NSNotificationCenter, NSNumber,
@@ -37,8 +37,8 @@ use objc2_foundation::{
 };
 use open_gpui::{
     Action, ActivationPolicy, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem,
-    DisplayId, ForegroundExecutor, GraphicalEnvironment, KeyContext, Keymap, Menu, MenuItem,
-    MouseButton, NativeAppNotificationHandler, NavigationDirection, OsMenu, OwnedMenu,
+    CursorStyle, DisplayId, ForegroundExecutor, GraphicalEnvironment, KeyContext, Keymap, Menu,
+    MenuItem, MouseButton, NativeAppNotificationHandler, NavigationDirection, OsMenu, OwnedMenu,
     PathPromptOptions, Platform, PlatformDisplay, PlatformDisplaySnapshot, PlatformFocusedWindow,
     PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformViewportCapabilities, PlatformWindow, PlatformWindowActivationSupport,
@@ -69,6 +69,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
+use strum::IntoEnumIterator as _;
 
 mod termination;
 
@@ -207,8 +208,8 @@ pub(crate) struct MacPlatformState {
     headless: bool,
     activation_policy: ActivationPolicy,
     application_created: bool,
-    general_pasteboard: Pasteboard,
-    find_pasteboard: Pasteboard,
+    general_pasteboard: Option<Pasteboard>,
+    find_pasteboard: Option<Pasteboard>,
     reopen: Option<Box<dyn FnMut()>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
     on_displays_changed: Option<Box<dyn FnMut()>>,
@@ -261,7 +262,14 @@ impl MacPlatform {
         let text_system = Arc::new(crate::AppleTextSystem::new());
 
         #[cfg(not(feature = "font-kit"))]
-        let text_system = Arc::new(open_gpui::NoopTextSystem::new());
+        let text_system = {
+            if !headless {
+                log::warn!(
+                    "open-gpui-macos was compiled without the `font-kit` feature, so no text will be rendered."
+                );
+            }
+            Arc::new(open_gpui::NoopTextSystem::new())
+        };
 
         let keyboard_layout = MacKeyboardLayout::new();
         let keyboard_mapper = Rc::new(MacKeyboardMapper::new(keyboard_layout.id()));
@@ -1358,6 +1366,32 @@ impl Platform for MacPlatform {
         self.0.lock().validate_menu_command = Some(callback);
     }
 
+    fn debug_state(&self) -> serde_json::Value {
+        let app: Retained<NSApplication> = unsafe { msg_send![APP_CLASS, sharedApplication] };
+        let key_window_number = app.keyWindow().map(|window| window.windowNumber());
+        let main_window_number = app.mainWindow().map(|window| window.windowNumber());
+        let current_cursor = NSCursor::currentCursor();
+        let current_cursor_style = CursorStyle::iter().find(|style| {
+            // SAFETY: MacPlatform and AppKit's cursor getters are confined to the main thread.
+            let cursor = unsafe { crate::window::native_cursor(*style) };
+            ptr::eq(
+                cursor,
+                Retained::as_ptr(&current_cursor).cast::<AnyObject>(),
+            )
+        });
+        serde_json::json!({
+            "current_cursor_style": current_cursor_style,
+            "app_is_active": app.isActive(),
+            "app_is_hidden": app.isHidden(),
+            "app_occlusion_state_visible": app
+                .occlusionState()
+                .contains(NSApplicationOcclusionState::Visible),
+            "key_window_number": key_window_number,
+            "main_window_number": main_window_number,
+            "low_power_mode": NSProcessInfo::processInfo().isLowPowerModeEnabled(),
+        })
+    }
+
     fn on_thermal_state_change(&self, callback: NativeAppNotificationHandler) {
         let observer = ProcessInfoObserver::thermal(callback);
         let previous = self.0.lock().thermal_observer.replace(observer);
@@ -1482,22 +1516,26 @@ impl Platform for MacPlatform {
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         let state = self.0.lock();
-        state.general_pasteboard.read()
+        state.general_pasteboard.as_ref()?.read()
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
         let state = self.0.lock();
-        state.general_pasteboard.write(item);
+        if let Some(pasteboard) = &state.general_pasteboard {
+            pasteboard.write(item);
+        }
     }
 
     fn read_from_find_pasteboard(&self) -> Option<ClipboardItem> {
         let state = self.0.lock();
-        state.find_pasteboard.read()
+        state.find_pasteboard.as_ref()?.read()
     }
 
     fn write_to_find_pasteboard(&self, item: ClipboardItem) {
         let state = self.0.lock();
-        state.find_pasteboard.write(item);
+        if let Some(pasteboard) = &state.find_pasteboard {
+            pasteboard.write(item);
+        }
     }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {

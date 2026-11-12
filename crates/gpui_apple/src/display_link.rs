@@ -103,6 +103,11 @@ impl MetalFrameSource {
     pub fn set_paused(&self, paused: bool) {
         self.link.setPaused(paused);
     }
+
+    /// Returns whether the native link is paused without changing its frame demand.
+    pub fn is_paused(&self) -> bool {
+        self.link.isPaused()
+    }
 }
 
 impl Drop for MetalFrameSource {
@@ -143,6 +148,19 @@ impl MetalFrames {
 
     pub fn is_attached(&self) -> bool {
         self.state.borrow().is_attached()
+    }
+
+    /// Returns the native pause state, or `None` while no source can be observed.
+    pub fn is_paused(&self) -> Option<bool> {
+        self.source
+            .try_borrow()
+            .ok()
+            .and_then(|source| source.as_ref().map(MetalFrameSource::is_paused))
+    }
+
+    /// Returns whether a frame was requested since the current update began, without consuming it.
+    pub fn is_woken(&self) -> bool {
+        self.state.borrow().is_woken()
     }
 
     pub fn is_current(&self, generation: MetalFrameGeneration) -> bool {
@@ -218,6 +236,51 @@ impl MetalFrames {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn diagnostic_reads_preserve_pending_requests_and_wakes() {
+        let frames = MetalFrames::default();
+        let generation = frames.state.borrow_mut().attach();
+        let signal_at = PlatformFrameSignal::capture(Instant::now);
+        frames.request_frame(RequestFrameOptions {
+            require_presentation: true,
+            force_render: true,
+            signal_at,
+            signal_source: FrameRequestSource::LocalSchedule,
+        });
+        for _ in 0..2 {
+            assert!(frames.is_attached());
+            assert!(frames.is_current(generation));
+            assert!(frames.is_woken());
+            assert_eq!(frames.is_paused(), None);
+        }
+        let options = frames.begin_frame(generation, None).unwrap();
+        assert!(options.require_presentation);
+        assert!(options.force_render);
+        assert_eq!(options.signal_at, signal_at);
+        if signal_at.is_some() {
+            assert_eq!(options.signal_source, FrameRequestSource::LocalSchedule);
+        }
+        assert!(!frames.is_woken());
+
+        frames.wake();
+        for _ in 0..2 {
+            assert!(frames.is_woken());
+            assert_eq!(frames.is_paused(), None);
+        }
+        assert!(!frames.end_frame(generation, false));
+        let next = frames.begin_frame(generation, None).unwrap();
+        assert!(!next.require_presentation);
+        assert!(!next.force_render);
+        assert!(!frames.is_woken());
+        assert!(frames.end_frame(generation, false));
+
+        frames.stop();
+        assert!(!frames.is_attached());
+        assert!(!frames.is_current(generation));
+        assert!(!frames.is_woken());
+        assert_eq!(frames.is_paused(), None);
+    }
 
     #[test]
     fn pending_requests_keep_requirements_and_the_earliest_signal_pair() {

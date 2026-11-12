@@ -144,6 +144,7 @@ fn params(surface: &HostedSurface) -> WindowParams {
         titlebar: options.titlebar,
         kind: options.kind,
         is_movable: options.is_movable,
+        app_owns_titlebar_drag: options.app_owns_titlebar_drag,
         is_resizable: options.is_resizable,
         is_minimizable: options.is_minimizable,
         accepts_pointer_input: options.accepts_pointer_input,

@@ -11,6 +11,10 @@ impl MacWindowVisibilityObserver {
         self.last_visibility.is_some()
     }
 
+    pub(super) fn last_reported_visibility(&self) -> Option<WindowVisibility> {
+        self.last_visibility
+    }
+
     pub(super) fn set(
         &mut self,
         visibility: WindowVisibility,

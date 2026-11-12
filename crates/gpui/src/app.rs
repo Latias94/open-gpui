@@ -58,8 +58,9 @@ use crate::{
     Priority, PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
     Subscription, SvgRenderer, SystemNotification, SystemNotificationResponse, Task,
-    TextRenderingMode, TextSystem, ThermalState, Window, WindowAppearance, WindowButtonLayout,
-    WindowHandle, WindowId, WindowInvalidator, WindowKind, WindowParams, WindowTransientOwner,
+    TextRenderingMode, TextSystem, ThermalState, Window, WindowAppearance, WindowBounds,
+    WindowButtonLayout, WindowHandle, WindowId, WindowInvalidator, WindowKind, WindowParams,
+    WindowTransientOwner,
     asset_cache::CachedLoad,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
@@ -104,6 +105,8 @@ mod system_notification_tests;
 mod test_app;
 #[cfg(any(test, feature = "test-support"))]
 mod test_context;
+#[cfg(test)]
+mod upstream_window_tests;
 #[cfg(any(test, feature = "test-support"))]
 mod visual_test_context;
 #[cfg(test)]
@@ -902,7 +905,7 @@ pub struct App {
     pub(crate) name: Option<&'static str>,
     pub(crate) text_rendering_mode: Rc<Cell<TextRenderingMode>>,
 
-    pub(crate) window_update_stack: Vec<WindowId>,
+    pub(crate) window_update_stack: Vec<WindowUpdateEntry>,
     window_update_provenance: WindowUpdateProvenance,
     pub(crate) mode: GpuiMode,
     pub(crate) cursor_hide_mode: CursorHideMode,
@@ -962,6 +965,23 @@ impl Drop for AppUpdateTransaction<'_> {
         if !self.finished {
             self.app.pending_updates = self.pending_updates_before;
             self.app.flushing_effects = self.flushing_effects_before;
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct WindowUpdateEntry {
+    window_id: WindowId,
+    bounds: WindowBounds,
+    display_id: Option<DisplayId>,
+}
+
+impl WindowUpdateEntry {
+    fn new(window: &Window) -> Self {
+        Self {
+            window_id: window.handle.window_id(),
+            bounds: window.window_bounds(),
+            display_id: window.platform_facts().display_id,
         }
     }
 }
@@ -1761,6 +1781,40 @@ impl App {
         self.platform.active_window()
     }
 
+    /// Returns the display containing the window currently focused at the platform level.
+    pub fn active_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        let (display_id, _) = self.active_window_placement()?;
+        self.find_display(display_id?)
+    }
+
+    pub(crate) fn active_window_placement(&self) -> Option<(Option<DisplayId>, WindowBounds)> {
+        let window_id = self.active_window()?.window_id();
+        if !self.windows.contains_key(window_id) {
+            return None;
+        }
+        if let Some(entry) = self
+            .window_update_stack
+            .iter()
+            .rev()
+            .find(|entry| entry.window_id == window_id)
+        {
+            return Some((entry.display_id, entry.bounds));
+        }
+        let window = self.windows.get(window_id)?.as_ref()?;
+        Some((window.platform_facts().display_id, window.window_bounds()))
+    }
+
+    pub(crate) fn sync_window_update_entry(&mut self, window: &Window) {
+        if let Some(entry) = self
+            .window_update_stack
+            .iter_mut()
+            .rev()
+            .find(|entry| entry.window_id == window.handle.window_id())
+        {
+            *entry = WindowUpdateEntry::new(window);
+        }
+    }
+
     /// Returns whether a mouse button is currently pressed when the platform can report it.
     pub fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {
         self.platform.mouse_button_is_pressed(button)
@@ -1932,7 +1986,9 @@ impl App {
                         ));
                     }
                     let root_view = reservation
-                        .with_update_scope(|cx| build_root_view(rollback.window_mut(), cx));
+                        .with_update_scope(WindowUpdateEntry::new(rollback.window_mut()), |cx| {
+                            build_root_view(rollback.window_mut(), cx)
+                        });
                     reservation
                         .validate()
                         .map_err(WindowOpenError::from_reservation)?;
@@ -2063,6 +2119,53 @@ impl App {
     /// display variables. The returned environment has no consumed activation token.
     pub fn graphical_environment(&self) -> Option<GraphicalEnvironment> {
         self.platform.graphical_environment()
+    }
+
+    /// Returns a diagnostic snapshot of app, display, and window state.
+    ///
+    /// The layout is unstable and varies by platform; do not parse it for application logic.
+    /// A window being updated is listed by ID only.
+    pub fn debug_state(&self) -> serde_json::Value {
+        let display_snapshot = self.display_snapshot();
+        let displays = display_snapshot
+            .displays()
+            .into_iter()
+            .map(|display| {
+                serde_json::json!({
+                    "id": u64::from(display.id()),
+                    "uuid": display.uuid().ok().map(|uuid| uuid.to_string()),
+                    "bounds": display.bounds(),
+                    "visible_bounds": display.visible_bounds(),
+                    "refresh_interval_seconds": display.refresh_interval().map(|interval| interval.as_secs_f64()),
+                })
+            })
+            .collect::<Vec<_>>();
+        let windows = self
+            .windows
+            .iter()
+            .map(|(window_id, window)| match window {
+                Some(window) => window.debug_state(),
+                None => serde_json::json!({ "id": window_id.as_u64(), "updating": true }),
+            })
+            .collect::<Vec<_>>();
+        serde_json::json!({
+            "compositor": self.platform.compositor_name(),
+            "thermal_state": format!("{:?}", self.platform.thermal_state()),
+            "power_mode": {
+                "cached": format!("{:?}", self.power_mode),
+                "platform": format!("{:?}", self.platform.power_mode()),
+            },
+            "window_appearance": format!("{:?}", self.platform.window_appearance()),
+            "cursor_visible": self.platform.is_cursor_visible(),
+            "active_window_id": self.platform.active_window().map(|handle| handle.window_id().as_u64()),
+            "window_stack": self.platform.window_stack().map(|stack| {
+                stack.into_iter().map(|handle| handle.window_id().as_u64()).collect::<Vec<_>>()
+            }),
+            "primary_display_id": display_snapshot.primary_display().map(|display| u64::from(display.id())),
+            "displays": displays,
+            "windows": windows,
+            "platform": self.platform.debug_state(),
+        })
     }
 
     /// Hide the application at the platform level.
@@ -3915,7 +4018,7 @@ impl AppContext for App {
             cx.push_effect(Effect::EntityCreated {
                 entity: handle.into_any(),
                 tid: TypeId::of::<T>(),
-                window: cx.window_update_stack.last().cloned(),
+                window: cx.window_update_stack.last().map(|entry| entry.window_id),
             });
 
             cx.entities.insert(slot, entity)
@@ -4901,7 +5004,13 @@ mod test {
         let result = catch_unwind(AssertUnwindSafe(|| {
             first
                 .update(cx, |_, _, app| -> () {
-                    assert_eq!(app.window_update_stack, [first.window_id()]);
+                    assert_eq!(
+                        app.window_update_stack
+                            .iter()
+                            .map(|entry| entry.window_id)
+                            .collect::<Vec<_>>(),
+                        [first.window_id()]
+                    );
                     let nested = catch_unwind(AssertUnwindSafe(|| {
                         app.update_window_id(second.window_id(), |_, _, _| -> () {
                             panic!("injected nested window update panic")
@@ -4909,7 +5018,10 @@ mod test {
                     }));
                     assert!(nested.is_err());
                     assert_eq!(
-                        app.window_update_stack,
+                        app.window_update_stack
+                            .iter()
+                            .map(|entry| entry.window_id)
+                            .collect::<Vec<_>>(),
                         [first.window_id()],
                         "the nested transaction must restore the exact parent stack"
                     );

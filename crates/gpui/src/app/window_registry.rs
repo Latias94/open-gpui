@@ -9,7 +9,9 @@ use crate::{
     window::WindowInteractionAuthority,
 };
 
-use super::{App, AppCell, Effect, QuitMode, native_captured_drag::WindowUpdateProvenance};
+use super::{
+    App, AppCell, Effect, QuitMode, WindowUpdateEntry, native_captured_drag::WindowUpdateProvenance,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub(super) enum WindowReservationError {
@@ -98,8 +100,13 @@ impl ReservedWindow<'_> {
         self.interaction_authority.clone()
     }
 
-    pub(super) fn with_update_scope<R>(&mut self, update: impl FnOnce(&mut App) -> R) -> R {
-        WindowUpdateStackScope::new(&mut *self.app, self.id).run(update)
+    pub(super) fn with_update_scope<R>(
+        &mut self,
+        entry: WindowUpdateEntry,
+        update: impl FnOnce(&mut App) -> R,
+    ) -> R {
+        debug_assert_eq!(entry.window_id, self.id);
+        WindowUpdateStackScope::new(&mut *self.app, entry).run(update)
     }
 
     pub(super) fn validate(&self) -> Result<(), WindowReservationError> {
@@ -207,14 +214,14 @@ fn rollback_reserved(app: &mut App, id: WindowId) {
 
 struct WindowUpdateStackScope<'a> {
     app: &'a mut App,
-    previous_stack: Vec<WindowId>,
+    previous_stack: Vec<WindowUpdateEntry>,
     previous_provenance: WindowUpdateProvenance,
 }
 
 impl<'a> WindowUpdateStackScope<'a> {
-    fn new(app: &'a mut App, id: WindowId) -> Self {
+    fn new(app: &'a mut App, entry: WindowUpdateEntry) -> Self {
         let previous_stack = app.window_update_stack.clone();
-        app.window_update_stack.push(id);
+        app.window_update_stack.push(entry);
         let previous_provenance = std::mem::replace(
             &mut app.window_update_provenance,
             WindowUpdateProvenance::Ordinary,
@@ -233,9 +240,18 @@ impl<'a> WindowUpdateStackScope<'a> {
 
 impl Drop for WindowUpdateStackScope<'_> {
     fn drop(&mut self) {
-        self.app.window_update_stack = std::mem::take(&mut self.previous_stack);
+        restore_update_stack(self.app, std::mem::take(&mut self.previous_stack));
         self.app.window_update_provenance = self.previous_provenance;
     }
+}
+
+fn restore_update_stack(app: &mut App, mut previous: Vec<WindowUpdateEntry>) {
+    for (ancestor, current) in previous.iter_mut().zip(&app.window_update_stack) {
+        if ancestor.window_id == current.window_id {
+            *ancestor = *current;
+        }
+    }
+    app.window_update_stack = previous;
 }
 
 pub(super) struct WindowUpdateTransaction<'a> {
@@ -243,7 +259,7 @@ pub(super) struct WindowUpdateTransaction<'a> {
     id: WindowId,
     root_view: AnyView,
     window: Option<Box<Window>>,
-    previous_stack: Option<Vec<WindowId>>,
+    previous_stack: Option<Vec<WindowUpdateEntry>>,
     previous_provenance: Option<WindowUpdateProvenance>,
 }
 
@@ -256,7 +272,8 @@ impl<'a> WindowUpdateTransaction<'a> {
         let root_view = app.windows.get(id)?.as_ref()?.root.clone()?;
         let window = app.windows.get_mut(id)?.take()?;
         let previous_stack = app.window_update_stack.clone();
-        app.window_update_stack.push(window.handle.id);
+        app.window_update_stack
+            .push(WindowUpdateEntry::new(&window));
         let previous_provenance = std::mem::replace(&mut app.window_update_provenance, provenance);
         Some(Self {
             app,
@@ -308,7 +325,7 @@ impl<'a> WindowUpdateTransaction<'a> {
 
     fn restore_stack(&mut self) {
         if let Some(previous_stack) = self.previous_stack.take() {
-            self.app.window_update_stack = previous_stack;
+            restore_update_stack(self.app, previous_stack);
         }
         if let Some(previous_provenance) = self.previous_provenance.take() {
             self.app.window_update_provenance = previous_provenance;

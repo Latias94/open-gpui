@@ -2189,15 +2189,10 @@ pub(crate) struct ElementStateBox {
     pub(crate) type_name: &'static str,
 }
 
-fn default_bounds(display: Option<&dyn PlatformDisplay>, cx: &mut App) -> WindowBounds {
-    // TODO, BUG: if you open a window with the currently active window
-    // on the stack, this will erroneously fallback to `None`
-    //
-    // TODO these should be the initial window bounds not considering maximized/fullscreen
-    let active_window_bounds = cx
-        .active_window()
-        .and_then(|w| w.update(cx, |_, window, _| window.window_bounds()).ok());
-
+fn default_bounds(
+    active_window_bounds: Option<WindowBounds>,
+    display: Option<&dyn PlatformDisplay>,
+) -> WindowBounds {
     const CASCADE_OFFSET: f32 = 25.0;
 
     let default_placement = || Bounds::new(point(px(0.), px(0.)), DEFAULT_WINDOW_SIZE);
@@ -2277,6 +2272,7 @@ impl Window {
             transient_for,
             kind,
             is_movable,
+            app_owns_titlebar_drag,
             inactive_frame_interval,
             low_power_frame_interval,
             thermal_frame_interval,
@@ -2363,6 +2359,14 @@ impl Window {
         }
 
         let display_snapshot = cx.display_snapshot();
+        let active_window_placement = matches!(target, WindowOpenTarget::Platform)
+            .then(|| cx.active_window_placement())
+            .flatten();
+        let display_id = display_id.or_else(|| {
+            active_window_placement
+                .filter(|_| window_bounds.is_none())
+                .and_then(|(display_id, _)| display_id)
+        });
         let requested_display_id = display_id;
         let resolved_display =
             display_id.and_then(|display_id| display_snapshot.find_display(display_id));
@@ -2370,15 +2374,23 @@ impl Window {
         let default_bounds_display =
             resolved_display.or_else(|| display_snapshot.primary_display());
         if let Some(requested_display_id) = requested_display_id
-            && display_id.is_none()
+            && display_snapshot
+                .find_display(requested_display_id)
+                .is_none()
         {
             log::warn!(
                 "requested display {} is unavailable; opening the window on the default display",
                 u64::from(requested_display_id)
             );
         }
-        let window_bounds =
-            window_bounds.unwrap_or_else(|| default_bounds(default_bounds_display.as_deref(), cx));
+        let active_window_bounds = active_window_placement
+            .filter(|(active_display_id, _)| {
+                *active_display_id == default_bounds_display.as_ref().map(|display| display.id())
+            })
+            .map(|(_, bounds)| bounds);
+        let window_bounds = window_bounds.unwrap_or_else(|| {
+            default_bounds(active_window_bounds, default_bounds_display.as_deref())
+        });
         let window_kind = kind.clone();
         let window_capabilities = match target {
             WindowOpenTarget::Platform => {
@@ -2427,6 +2439,7 @@ impl Window {
                 titlebar,
                 kind,
                 is_movable,
+                app_owns_titlebar_drag,
                 is_resizable,
                 is_minimizable,
                 accepts_pointer_input,
@@ -5751,6 +5764,63 @@ impl Window {
         self.platform_facts.window_bounds
     }
 
+    /// This window's portion of [`App::debug_state`], including cached and current native values.
+    pub(crate) fn debug_state(&self) -> serde_json::Value {
+        let platform_window = &self.platform_window;
+        serde_json::json!({
+            "id": self.handle.window_id().as_u64(),
+            "title": platform_window.get_title(),
+            "bounds": platform_window.bounds(),
+            "window_bounds": format!("{:?}", platform_window.window_bounds()),
+            "content_size": platform_window.content_size(),
+            "viewport_size": self.viewport_size,
+            "scale_factor": {
+                "cached": self.scale_factor,
+                "platform": platform_window.scale_factor(),
+            },
+            "display_id": {
+                "cached": self.display_id.map(u64::from),
+                "platform": platform_window.display().map(|display| u64::from(display.id())),
+            },
+            "active": {
+                "cached": self.active.get(),
+                "platform": platform_window.is_active(),
+            },
+            "hovered": {
+                "cached": self.hovered.get(),
+                "platform": platform_window.is_hovered(),
+            },
+            "visibility": {
+                "cached": format!("{:?}", self.visibility),
+                "platform": format!("{:?}", platform_window.visibility()),
+            },
+            "appearance": {
+                "cached": format!("{:?}", self.appearance),
+                "platform": format!("{:?}", platform_window.appearance()),
+            },
+            "is_fullscreen": platform_window.is_fullscreen(),
+            "is_maximized": platform_window.is_maximized(),
+            "mouse_position": {
+                "cached": self.mouse_position,
+                "platform": platform_window.mouse_position(),
+            },
+            "modifiers": {
+                "cached": self.modifiers,
+                "platform": platform_window.modifiers(),
+            },
+            "cursor_style": self.rendered_frame.cursor_style(self),
+            "frame": {
+                "dirty": self.invalidator.is_dirty(),
+                "needs_present": self.needs_present.get(),
+                "refreshing": self.refreshing,
+                "next_frame_callbacks": self.next_frame_callbacks.borrow().len(),
+                "deferred_candidate": self.deferred_candidate.is_some(),
+            },
+            "gpu": platform_window.gpu_specs(),
+            "platform": platform_window.debug_state(),
+        })
+    }
+
     /// Return the `WindowBounds` excluding insets (Wayland and X11)
     pub fn inner_window_bounds(&self) -> WindowBounds {
         self.platform_facts.inner_window_bounds
@@ -6211,6 +6281,7 @@ impl Window {
     }
 
     fn notify_bounds_observers(&mut self, cx: &mut App) {
+        cx.sync_window_update_entry(self);
         self.bounds_observers
             .clone()
             .retain(&(), |callback| callback(self, cx));
@@ -7134,6 +7205,12 @@ impl Window {
     #[cfg(target_os = "macos")]
     pub fn set_traffic_light_position(&self, position: Point<Pixels>) {
         self.platform_window.set_traffic_light_position(position);
+    }
+
+    /// Shows or hides the native macOS titlebar, including the traffic light buttons.
+    #[cfg(target_os = "macos")]
+    pub fn set_native_titlebar_visibility(&self, visible: bool) {
+        self.platform_window.set_native_titlebar_visibility(visible);
     }
 
     /// Sets the application identifier.

@@ -2,12 +2,15 @@
 //! `cargo run -p open-gpui-macos --example native_windowing -- <mode>`.
 //!
 //! Run each mode in a fresh process: `default`, `windowed`, `headless`, `accessory`, `direct`,
-//! `activity`. The activity mode exercises the real headless platform acquisition/drop path.
+//! `activity`, `sheet`. The activity mode exercises the real headless platform acquisition/drop path.
 //! The first four enter the real GPUIApplication run loop and launch delegate. `direct` only
 //! checks stored policy and native resource refusal without launching the application. Neither
 //! path creates a Core App or qualifies Core retirement, external event pumping, or Dock pixels.
 //! `headless` selects Accessory on a switchable platform. Fixed-headless refusal is checked without
 //! entering its separate CFRunLoop. This probe stops AppKit directly and does not qualify quit.
+//! The separate `sheet` mode creates a Core App and checks explicit-owner modal sheets, nested
+//! presentation, retirement, hidden creation, submitted scenes, titlebar visibility and debug JSON.
+//! Its input controls use AppKit event dispatch; physical input and fullscreen pixels remain manual.
 
 #[cfg(target_os = "macos")]
 fn main() {
@@ -28,18 +31,19 @@ mod macos {
         channel::oneshot,
         future::{Either, select},
     };
-    use objc2::{MainThreadMarker, rc::Retained, runtime::AnyObject};
-    use objc2_app_kit::{NSApplicationActivationPolicy, NSWindow};
+    use objc2::{MainThreadMarker, MainThreadOnly as _, rc::Retained, runtime::AnyObject};
+    use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSWindow, NSWindowButton};
     use objc2_foundation::{
         NSDate, NSNotification, NSNotificationCenter, NSPoint, NSRunLoop, NSString,
     };
     use open_gpui::{
-        ActivationPolicy, Bounds, Empty, GraphicalEnvironment, Platform, PlatformWindow, Result,
-        Task, WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowId, WindowKind,
-        WindowParams, WindowingRequest, point, px, size,
+        ActivationPolicy, App, Application, AsyncApp, Bounds, Context, Empty, GraphicalEnvironment,
+        IntoElement, MouseButton, Platform, PlatformWindow, Render, Result, Task, Window,
+        WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowId, WindowKind,
+        WindowOptions, WindowParams, WindowingRequest, div, point, prelude::*, px, rgb, size,
     };
     use open_gpui_macos::MacPlatform;
-    use raw_window_handle::RawWindowHandle;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use std::{
         cell::Cell,
         pin::pin,
@@ -198,6 +202,7 @@ mod macos {
                         titlebar: Some(Default::default()),
                         kind: WindowKind::Normal,
                         is_movable: true,
+                        app_owns_titlebar_drag: false,
                         is_resizable: true,
                         is_minimizable: true,
                         accepts_pointer_input: true,
@@ -482,10 +487,554 @@ mod macos {
         }
     }
 
+    struct SheetProbe(Rc<Cell<usize>>);
+
+    impl Render for SheetProbe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let clicks = self.0.clone();
+            div()
+                .size_full()
+                .bg(rgb(0x345678))
+                .on_mouse_down(MouseButton::Left, move |_, _, _| {
+                    clicks.set(clicks.get() + 1);
+                })
+        }
+    }
+
+    fn open_sheet_probe(
+        cx: &mut App,
+        options: WindowOptions,
+    ) -> (
+        WindowHandle<SheetProbe>,
+        Retained<NSWindow>,
+        Rc<Cell<usize>>,
+    ) {
+        let clicks = Rc::new(Cell::new(0));
+        let mut native_window = None;
+        let handle = cx
+            .open_window(options, |window, cx| {
+                let handle = HasWindowHandle::window_handle(window).unwrap();
+                let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+                    panic!("macOS must expose an AppKit view");
+                };
+                let native: Retained<NSWindow> = unsafe {
+                    objc2::msg_send![handle.ns_view.cast::<AnyObject>().as_ptr(), window]
+                };
+                assert!(!native.isVisible(), "root construction must stay hidden");
+                assert!(native.sheetParent().is_none());
+                assert!(native.parentWindow().is_none());
+                native_window = Some(native);
+                cx.new(|_| SheetProbe(clicks.clone()))
+            })
+            .expect("Core window creation requires a macOS GUI session and Metal device");
+        (handle, native_window.unwrap(), clicks)
+    }
+
+    async fn wait_for_scene(
+        platform: &MacPlatform,
+        cx: &mut AsyncApp,
+        window: WindowHandle<SheetProbe>,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        wait_for_native(
+            platform,
+            || {
+                let facts = window.update(cx, |_, window, _| window.presentation_facts());
+                let submitted = facts.as_ref().is_ok_and(|facts| {
+                    facts.native_visible
+                        && facts.present_submitted_generation.is_some()
+                        && facts.non_empty_presented_generation.is_some()
+                });
+                if !submitted && Instant::now() >= deadline {
+                    eprintln!(
+                        "SHEET scene timeout: window={:?}, facts={facts:?}",
+                        window.window_id()
+                    );
+                }
+                submitted
+            },
+            "a visible probe must submit a non-empty scene through the original frame journal",
+        )
+        .await;
+    }
+
+    fn assert_sheet(parent: &NSWindow, child: &NSWindow) {
+        assert!(child.isSheet() && child.isVisible());
+        assert!(
+            child
+                .sheetParent()
+                .is_some_and(|actual| std::ptr::eq(&*actual, parent))
+        );
+        assert!(
+            parent
+                .attachedSheet()
+                .is_some_and(|actual| std::ptr::eq(&*actual, child))
+        );
+        assert_eq!(parent.sheets().len(), 1);
+    }
+
+    fn send_native_click(window: &NSWindow) {
+        let app = NSApplication::sharedApplication(window.mtm());
+        let bounds = window.contentView().unwrap().bounds();
+        for event_type in [1usize, 2usize] {
+            let event: Retained<objc2_app_kit::NSEvent> = unsafe {
+                objc2::msg_send![objc2::class!(NSEvent),
+                    mouseEventWithType: event_type,
+                    location: NSPoint::new(bounds.size.width / 2.0, bounds.size.height / 2.0),
+                    modifierFlags: 0usize,
+                    timestamp: 0.0f64,
+                    windowNumber: window.windowNumber(),
+                    context: None::<&AnyObject>,
+                    eventNumber: event_type as isize,
+                    clickCount: 1isize,
+                    pressure: if event_type == 1 { 1.0f32 } else { 0.0f32 }
+                ]
+            };
+            app.sendEvent(&event);
+        }
+    }
+
+    async fn exercise_sheets(platform: &Rc<MacPlatform>, cx: &mut AsyncApp) {
+        eprintln!("SHEET stage=owner-main-control");
+        platform.activate(true);
+        let (owner, native_owner, owner_clicks) =
+            cx.update(|cx| open_sheet_probe(cx, WindowOptions::default()));
+        wait_for_scene(platform, cx, owner).await;
+        send_native_click(&native_owner);
+        drain_main_queue(platform).await;
+        assert_eq!(
+            owner_clicks.get(),
+            1,
+            "the parent input control must be live"
+        );
+
+        let (unrelated, native_unrelated, unrelated_clicks) = cx.update(|cx| {
+            open_sheet_probe(
+                cx,
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        point(px(420.0), px(80.0)),
+                        size(px(320.0), px(240.0)),
+                    ))),
+                    ..Default::default()
+                },
+            )
+        });
+        wait_for_scene(platform, cx, unrelated).await;
+        assert!(native_unrelated.attachedSheet().is_none());
+        // Establish the main-window control independently of asynchronous OS activation.
+        native_unrelated.makeMainWindow();
+        let app = NSApplication::sharedApplication(native_unrelated.mtm());
+        eprintln!(
+            "SHEET main control: active={}, can_main={}, is_main={}, target={}, main={:?}, key={:?}",
+            app.isActive(),
+            native_unrelated.canBecomeMainWindow(),
+            native_unrelated.isMainWindow(),
+            native_unrelated.windowNumber(),
+            app.mainWindow().map(|window| window.windowNumber()),
+            app.keyWindow().map(|window| window.windowNumber()),
+        );
+        let main_deadline = Instant::now() + Duration::from_secs(5);
+        wait_for_native(
+            platform,
+            || {
+                let is_main = native_unrelated.isMainWindow();
+                if !is_main && Instant::now() >= main_deadline {
+                    eprintln!(
+                        "SHEET main control timeout: active={}, can_main={}, target={}, main={:?}, key={:?}",
+                        app.isActive(), native_unrelated.canBecomeMainWindow(),
+                        native_unrelated.windowNumber(), app.mainWindow().map(|window| window.windowNumber()),
+                        app.keyWindow().map(|window| window.windowNumber()),
+                    );
+                }
+                is_main
+            },
+            "unrelated main-window control",
+        )
+        .await;
+        eprintln!("SHEET stage=explicit-owner-modal-nested-close");
+        let (dialog, native_dialog, dialog_clicks) = cx.update(|cx| {
+            let owner = cx.transient_window_owner(owner.into()).unwrap();
+            open_sheet_probe(
+                cx,
+                WindowOptions {
+                    kind: WindowKind::Dialog,
+                    transient_for: Some(owner),
+                    ..Default::default()
+                },
+            )
+        });
+        wait_for_scene(platform, cx, dialog).await;
+        assert_sheet(&native_owner, &native_dialog);
+        assert!(
+            native_unrelated.attachedSheet().is_none(),
+            "mainWindow cannot replace the explicit owner"
+        );
+        send_native_click(&native_dialog);
+        send_native_click(&native_owner);
+        drain_main_queue(platform).await;
+        assert_eq!(
+            dialog_clicks.get(),
+            1,
+            "the sheet must receive native input"
+        );
+        assert_eq!(
+            owner_clicks.get(),
+            1,
+            "the modal sheet must block its parent"
+        );
+
+        let (nested, native_nested, _) = cx.update(|cx| {
+            let owner = cx.transient_window_owner(owner.into()).unwrap();
+            open_sheet_probe(
+                cx,
+                WindowOptions {
+                    kind: WindowKind::Dialog,
+                    transient_for: Some(owner),
+                    ..Default::default()
+                },
+            )
+        });
+        wait_for_scene(platform, cx, nested).await;
+        assert_sheet(&native_owner, &native_dialog);
+        assert_sheet(&native_dialog, &native_nested);
+        let _nested_activation = nested
+            .update(cx, |_, window, _| window.activate_window())
+            .unwrap();
+        drain_main_queue(platform).await;
+        assert_sheet(&native_dialog, &native_nested);
+        send_native_click(&native_dialog);
+        drain_main_queue(platform).await;
+        assert_eq!(
+            dialog_clicks.get(),
+            1,
+            "a nested sheet must block its parent sheet"
+        );
+
+        let close_deadline = Instant::now() + Duration::from_secs(5);
+        // AppKit sheets have no close button, so performClose: does not reach native close.
+        // Send close directly to exercise terminal native cleanup and Core close ingress.
+        native_nested.close();
+        wait_for_native(
+            platform,
+            || {
+                let sheet_parent_none = native_nested.sheetParent().is_none();
+                let not_visible = !native_nested.isVisible();
+                let core_retired = !cx.update(|cx| cx.windows().contains(&nested.into()));
+                let closed = sheet_parent_none && not_visible && core_retired;
+                if !closed && Instant::now() >= close_deadline {
+                    eprintln!(
+                        "NATIVE SHEET CLOSE timeout after close selector: sheet_parent_none={sheet_parent_none}, not_visible={not_visible}, core_retired={core_retired}, sheet_parent_window_number={:?}",
+                        native_nested.sheetParent().map(|parent| parent.windowNumber()),
+                    );
+                }
+                closed
+            },
+            "native sheet close must retire only the child",
+        )
+        .await;
+        assert_sheet(&native_owner, &native_dialog);
+        send_native_click(&native_dialog);
+        drain_main_queue(platform).await;
+        assert_eq!(
+            dialog_clicks.get(),
+            2,
+            "ending a nested sheet must restore parent input"
+        );
+
+        eprintln!("SHEET stage=owner-retirement-and-transient-controls");
+        owner
+            .update(cx, |_, window, cx| window.remove_window(cx))
+            .unwrap();
+        wait_for_native(
+            platform,
+            || {
+                !native_owner.isVisible()
+                    && native_dialog.sheetParent().is_none()
+                    && native_dialog.isVisible()
+            },
+            "owner retirement must detach a committed sheet without closing its Core window",
+        )
+        .await;
+        assert!(cx.update(|cx| cx.windows().contains(&dialog.into())));
+        assert!(native_owner.sheets().is_empty());
+        let _standalone_activation = dialog
+            .update(cx, |_, window, _| window.activate_window())
+            .unwrap();
+        drain_main_queue(platform).await;
+        assert!(native_dialog.sheetParent().is_none());
+        assert!(native_unrelated.attachedSheet().is_none());
+        dialog
+            .update(cx, |_, window, cx| window.remove_window(cx))
+            .unwrap();
+        wait_for_native(
+            platform,
+            || !native_dialog.isVisible(),
+            "standalone dialog retirement",
+        )
+        .await;
+
+        let (standalone, native_standalone, _) = cx.update(|cx| {
+            open_sheet_probe(
+                cx,
+                WindowOptions {
+                    kind: WindowKind::Dialog,
+                    ..Default::default()
+                },
+            )
+        });
+        wait_for_scene(platform, cx, standalone).await;
+        assert!(!native_standalone.isSheet() && native_standalone.sheetParent().is_none());
+        standalone
+            .update(cx, |_, window, cx| window.remove_window(cx))
+            .unwrap();
+
+        let (ordinary, native_ordinary, _) = cx.update(|cx| {
+            let owner = cx.transient_window_owner(unrelated.into()).unwrap();
+            open_sheet_probe(
+                cx,
+                WindowOptions {
+                    transient_for: Some(owner),
+                    ..Default::default()
+                },
+            )
+        });
+        wait_for_scene(platform, cx, ordinary).await;
+        assert!(!native_ordinary.isSheet() && native_ordinary.sheetParent().is_none());
+        assert!(
+            native_ordinary
+                .parentWindow()
+                .is_some_and(|parent| std::ptr::eq(&*parent, &*native_unrelated))
+        );
+        ordinary
+            .update(cx, |_, window, cx| window.remove_window(cx))
+            .unwrap();
+        drain_main_queue(platform).await;
+
+        for (child_owned_by_parent, native_close) in [(false, true), (false, false), (true, false)]
+        {
+            eprintln!(
+                "SHEET stage=parent-retirement explicit_owner_is_parent={child_owned_by_parent} native_close={native_close}"
+            );
+            let (parent, native_parent, _) = cx.update(|cx| {
+                let owner = cx.transient_window_owner(unrelated.into()).unwrap();
+                open_sheet_probe(
+                    cx,
+                    WindowOptions {
+                        kind: WindowKind::Dialog,
+                        transient_for: Some(owner),
+                        ..Default::default()
+                    },
+                )
+            });
+            wait_for_scene(platform, cx, parent).await;
+            let (child, native_child, child_clicks) = cx.update(|cx| {
+                let owner = cx
+                    .transient_window_owner(if child_owned_by_parent {
+                        parent.into()
+                    } else {
+                        unrelated.into()
+                    })
+                    .unwrap();
+                open_sheet_probe(
+                    cx,
+                    WindowOptions {
+                        kind: WindowKind::Dialog,
+                        transient_for: Some(owner),
+                        ..Default::default()
+                    },
+                )
+            });
+            wait_for_scene(platform, cx, child).await;
+            assert_sheet(&native_unrelated, &native_parent);
+            assert_sheet(&native_parent, &native_child);
+            if native_close {
+                native_parent.close();
+            } else {
+                parent
+                    .update(cx, |_, window, cx| window.remove_window(cx))
+                    .unwrap();
+            }
+            wait_for_native(
+                platform,
+                || {
+                    !native_parent.isVisible()
+                        && native_child.isVisible()
+                        && if child_owned_by_parent {
+                            native_child.sheetParent().is_none()
+                        } else {
+                            native_child
+                                .sheetParent()
+                                .is_some_and(|parent| std::ptr::eq(&*parent, &*native_unrelated))
+                        }
+                        && !cx.update(|cx| cx.windows().contains(&parent.into()))
+                },
+                "a retiring sheet parent must preserve the surviving dialog's exact explicit owner",
+            )
+            .await;
+            assert!(cx.update(|cx| cx.windows().contains(&child.into())));
+            assert!(native_parent.sheets().is_empty());
+            if child_owned_by_parent {
+                assert!(!native_child.isSheet());
+                assert!(native_child.parentWindow().is_none());
+                assert!(native_unrelated.sheets().is_empty());
+            } else {
+                assert_sheet(&native_unrelated, &native_child);
+            }
+            let clicks_before = unrelated_clicks.get();
+            send_native_click(&native_child);
+            send_native_click(&native_unrelated);
+            drain_main_queue(platform).await;
+            assert_eq!(
+                child_clicks.get(),
+                1,
+                "the surviving dialog must accept input"
+            );
+            assert_eq!(
+                unrelated_clicks.get(),
+                clicks_before + usize::from(child_owned_by_parent),
+                "only retiring the explicit owner may release modal blocking"
+            );
+            child
+                .update(cx, |_, window, cx| window.remove_window(cx))
+                .unwrap();
+            wait_for_native(
+                platform,
+                || native_unrelated.sheets().is_empty() && !native_child.isVisible(),
+                "the surviving dialog must retire without orphan sheets",
+            )
+            .await;
+            let clicks_before = unrelated_clicks.get();
+            send_native_click(&native_unrelated);
+            drain_main_queue(platform).await;
+            assert_eq!(unrelated_clicks.get(), clicks_before + 1);
+        }
+
+        eprintln!("SHEET stage=hidden-submission-and-activation");
+        let (hidden, native_hidden, _) = cx.update(|cx| {
+            let owner = cx.transient_window_owner(unrelated.into()).unwrap();
+            open_sheet_probe(
+                cx,
+                WindowOptions {
+                    kind: WindowKind::Dialog,
+                    transient_for: Some(owner),
+                    show: false,
+                    ..Default::default()
+                },
+            )
+        });
+        drain_main_queue(platform).await;
+        assert!(!native_hidden.isVisible() && native_hidden.sheetParent().is_none());
+        assert!(native_unrelated.attachedSheet().is_none());
+        // Activation admission requires the first candidate to have committed. A main-queue
+        // marker alone does not establish renderer submission for a newly created hidden window.
+        wait_for_native(
+            platform,
+            || {
+                hidden
+                    .update(cx, |_, window, _| window.presentation_facts())
+                    .is_ok_and(|facts| {
+                        !facts.native_visible && facts.non_empty_presented_generation.is_some()
+                    })
+            },
+            "the hidden dialog must submit its first candidate before activation",
+        )
+        .await;
+        let hidden_activation = hidden
+            .update(cx, |_, window, _| window.activate_window())
+            .unwrap();
+        drain_main_queue(platform).await;
+        eprintln!(
+            "SHEET hidden activation: ticket={:?}, visible={}, sheet_parent={:?}, owner_visible={}, owner_active_space={}",
+            hidden_activation.snapshot(),
+            native_hidden.isVisible(),
+            native_hidden
+                .sheetParent()
+                .map(|window| window.windowNumber()),
+            native_unrelated.isVisible(),
+            native_unrelated.isOnActiveSpace(),
+        );
+        wait_for_scene(platform, cx, hidden).await;
+        assert_sheet(&native_unrelated, &native_hidden);
+        hidden
+            .update(cx, |_, window, cx| window.remove_window(cx))
+            .unwrap();
+        wait_for_native(
+            platform,
+            || native_unrelated.sheets().is_empty(),
+            "hidden-then-activated sheet cleanup",
+        )
+        .await;
+
+        eprintln!("SHEET stage=titlebar-and-debug-json");
+        let close = native_unrelated
+            .standardWindowButton(NSWindowButton::CloseButton)
+            .unwrap();
+        let titlebar = unsafe { close.superview().and_then(|view| view.superview()) }.unwrap();
+        for visible in [false, true] {
+            unrelated
+                .update(cx, |_, window, _| {
+                    window.set_native_titlebar_visibility(visible)
+                })
+                .unwrap();
+            assert_eq!(titlebar.isHidden(), !visible);
+        }
+        let debug = cx.update(|cx| cx.debug_state());
+        let window_debug = debug["windows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|window| window["id"].as_u64() == Some(unrelated.window_id().as_u64()))
+            .unwrap();
+        assert!(window_debug["platform"]["frame_source"].is_object());
+        assert!(window_debug["platform"]["renderer"].is_object());
+        assert_eq!(
+            window_debug["platform"]["window_number"].as_i64(),
+            Some(native_unrelated.windowNumber() as i64)
+        );
+        unrelated
+            .update(cx, |_, window, cx| window.remove_window(cx))
+            .unwrap();
+        drain_main_queue(platform).await;
+        assert!(cx.update(|cx| cx.windows().is_empty()));
+    }
+
     pub(super) fn run() {
         let _main_thread =
             MainThreadMarker::new().expect("native windowing must run on the process main thread");
         let mode = std::env::args().nth(1).unwrap_or_else(|| "default".into());
+        if mode == "sheet" {
+            struct SheetLog;
+            impl log::Log for SheetLog {
+                fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+                    metadata.target().starts_with("open_gpui_macos::window")
+                }
+                fn log(&self, record: &log::Record<'_>) {
+                    if self.enabled(record.metadata()) {
+                        eprintln!("SHEET native: {}", record.args());
+                    }
+                }
+                fn flush(&self) {}
+            }
+            log::set_logger(&SheetLog).unwrap();
+            log::set_max_level(log::LevelFilter::Debug);
+            let platform = Rc::new(MacPlatform::new(false));
+            Application::with_platform(platform.clone()).run(move |cx| {
+                // Platform::run creates GPUIApplication and installs its native platform ivars.
+                let app: Retained<AnyObject> =
+                    unsafe { objc2::msg_send![objc2::class!(NSApplication), sharedApplication] };
+                let gpui_class = objc2::runtime::AnyClass::get(c"GPUIApplication").unwrap();
+                let is_gpui: objc2::runtime::Bool =
+                    unsafe { objc2::msg_send![&*app, isKindOfClass: gpui_class] };
+                assert!(is_gpui.as_bool(), "the running app must inherit GPUIApplication");
+                cx.spawn(async move |cx| {
+                    exercise_sheets(&platform, cx).await;
+                    println!("native windowing sheet gate passed; physical input and fullscreen pixels remain manual");
+                    stop_application(&app);
+                }).detach();
+            });
+            return;
+        }
         if mode == "activity" {
             let (guard, abandoned_task) = objc2::rc::autoreleasepool(|_| {
                 let platform = MacPlatform::new(true);

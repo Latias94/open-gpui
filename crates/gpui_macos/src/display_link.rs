@@ -374,6 +374,15 @@ impl WindowFrameSource {
         self.registration.is_some()
     }
 
+    /// Returns the current subscription without consuming a pending frame signal.
+    pub fn debug_state(&self) -> serde_json::Value {
+        serde_json::json!({
+            "kind": "CVDisplayLink",
+            "attached": self.registration.is_some(),
+            "display_id": self.registration.map(|(display_id, _)| display_id),
+        })
+    }
+
     pub fn take_signal(&self) -> Option<(Instant, FrameRequestSource)> {
         self.signal.take()
     }

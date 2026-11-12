@@ -3928,6 +3928,11 @@ pub trait Platform: 'static {
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
 
+    /// Platform-specific diagnostic state, for [`App::debug_state`].
+    fn debug_state(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
+
     fn thermal_state(&self) -> ThermalState;
     fn on_thermal_state_change(&self, callback: NativeAppNotificationHandler);
     fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>>;
@@ -6116,6 +6121,11 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn set_title(&mut self, title: &str);
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance);
     fn is_fullscreen(&self) -> bool;
+
+    /// Platform-specific diagnostic state, for [`App::debug_state`].
+    fn debug_state(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
     /// Requests one backend frame callback without requiring native visibility.
     ///
     /// Preserve a supplied captured timestamp and its source together. A backend supplying
@@ -6232,6 +6242,8 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
     #[cfg(target_os = "macos")]
     fn set_traffic_light_position(&self, _position: Point<Pixels>) {}
+    #[cfg(target_os = "macos")]
+    fn set_native_titlebar_visibility(&self, _visible: bool) {}
     fn show_character_palette(&self) {}
     fn titlebar_double_click(&self) {}
     fn on_move_tab_to_new_window(&self, _callback: Box<dyn Fn()>) {}
@@ -8178,6 +8190,11 @@ pub struct WindowOptions {
     /// Whether the window should be movable by the user
     pub is_movable: bool,
 
+    /// Whether the application draws its own titlebar and starts dragging with
+    /// [`Window::start_window_move`], independently of the system's movable-window policy.
+    /// Only affects macOS; leave false to use AppKit's native titlebar dragging.
+    pub app_owns_titlebar_drag: bool,
+
     /// The minimum frame interval while inactive without sustained high-rate input.
     ///
     /// Defaults to approximately 30 fps. Set to `None` to disable this limit.
@@ -8206,8 +8223,8 @@ pub struct WindowOptions {
     /// platform, the window is click-through and route resolution may target the window beneath it.
     pub accepts_pointer_input: bool,
 
-    /// The display to create the window on, if this is None,
-    /// the window will be created on the main display
+    /// The display to create the window on. Without explicit bounds or a display, use the
+    /// active window's display, falling back to the primary display when unavailable.
     pub display_id: Option<DisplayId>,
 
     /// The appearance of the window background.
@@ -8261,6 +8278,9 @@ pub struct WindowParams {
     /// Whether the window should be movable by the user
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     pub is_movable: bool,
+
+    /// Whether the application owns custom titlebar dragging on macOS.
+    pub app_owns_titlebar_drag: bool,
 
     /// Whether the window should be resizable by the user
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
@@ -8328,9 +8348,18 @@ impl WindowBounds {
         }
     }
 
-    /// Creates a new window bounds that centers the window on the screen.
+    /// Creates window bounds centered on the primary display.
     pub fn centered(size: Size<Pixels>, cx: &App) -> Self {
-        WindowBounds::Windowed(Bounds::centered(None, size, cx))
+        Self::centered_on_display(None, size, cx)
+    }
+
+    /// Creates window bounds centered on the given display, or the primary display if absent.
+    pub fn centered_on_display(
+        display_id: Option<DisplayId>,
+        size: Size<Pixels>,
+        cx: &App,
+    ) -> Self {
+        WindowBounds::Windowed(Bounds::centered(display_id, size, cx))
     }
 }
 
@@ -8350,6 +8379,7 @@ impl Default for WindowOptions {
             transient_for: None,
             kind: WindowKind::Normal,
             is_movable: true,
+            app_owns_titlebar_drag: false,
             inactive_frame_interval: Some(Duration::from_micros(33_333)),
             low_power_frame_interval: Some(Duration::from_micros(33_333)),
             thermal_frame_interval: Some(Duration::from_micros(16_667)),
@@ -8573,7 +8603,9 @@ impl From<&str> for PromptButton {
 }
 
 /// The style of the cursor (pointer)
-#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Copy, Clone, Default, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, EnumIter,
+)]
 pub enum CursorStyle {
     /// The default cursor
     #[default]

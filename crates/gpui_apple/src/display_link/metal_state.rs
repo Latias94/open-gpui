@@ -30,6 +30,10 @@ impl MetalFrameState {
         self.attached
     }
 
+    pub(crate) fn is_woken(&self) -> bool {
+        self.woken
+    }
+
     pub(crate) fn is_current(&self, generation: MetalFrameGeneration) -> bool {
         self.attached && generation.0 == self.generation
     }
@@ -73,9 +77,12 @@ mod tests {
         assert!(!state.end_frame(generation, true));
         assert!(state.begin_frame(generation));
         state.wake();
+        assert!(state.is_woken());
+        assert!(state.is_woken());
         assert!(!state.end_frame(generation, false));
         state.wake();
         assert!(state.begin_frame(generation));
+        assert!(!state.is_woken());
         assert!(state.end_frame(generation, false));
         assert!(state.begin_frame(generation));
         assert!(state.end_frame(generation, false));
@@ -89,6 +96,7 @@ mod tests {
         assert!(!state.begin_frame(first));
         state.retire();
         assert!(!state.is_attached());
+        assert!(!state.is_woken());
         assert!(!state.is_current(first));
         assert!(!state.begin_frame(first));
         assert!(!state.end_frame(first, false));

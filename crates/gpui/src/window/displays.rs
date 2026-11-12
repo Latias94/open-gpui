@@ -12,6 +12,7 @@ impl Window {
     }
 
     pub(crate) fn notify_display_observers(&mut self, cx: &mut App) {
+        cx.sync_window_update_entry(self);
         self.display_observers
             .clone()
             .retain(&(), |callback| callback(self, cx));

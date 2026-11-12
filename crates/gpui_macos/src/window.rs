@@ -33,12 +33,14 @@ mod deferred_frame;
 mod file_drag;
 mod hover;
 mod pointer_button;
+mod sheet;
 mod simple_fullscreen;
 mod visibility;
 
 use deferred_frame::MacDeferredFrame;
 use file_drag::MacExternalDrag;
 use pointer_button::{MacPointerButton, MacPointerInput};
+use sheet::MacSheetSession;
 use simple_fullscreen::{SimpleFullscreenState, release_simple_fullscreen_presentation_options};
 use visibility::MacWindowVisibilityObserver;
 
@@ -556,6 +558,11 @@ unsafe fn build_classes() {
             );
 
             decl.add_method(
+                sel!(_opaqueRectForWindowMoveWhenInTitlebar),
+                opaque_rect_for_window_move_when_in_titlebar as extern "C" fn(_, Sel) -> NSRect,
+            );
+
+            decl.add_method(
                 sel!(characterIndexForPoint:),
                 character_index_for_point as extern "C" fn(_, Sel, NSPoint) -> NSUInteger,
             );
@@ -871,6 +878,7 @@ enum MacWindowCreationState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct MacInitialPresentation {
     show: bool,
+    dialog: bool,
     allows_automatic_window_tabbing: bool,
     state: MacWindowCreationState,
     mapped: bool,
@@ -1743,6 +1751,7 @@ struct MacWindowState {
     external_drag: Option<Rc<MacExternalDrag>>,
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
+    native_titlebar_visible: bool,
     traffic_light_frames: Option<TrafficLightFrames>,
     pre_fullscreen_traffic_light_frames: Option<TrafficLightFrames>,
     transparent_titlebar: bool,
@@ -1758,6 +1767,7 @@ struct MacWindowState {
     file_drop_sequence: Option<NSInteger>,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
+    app_owns_titlebar_drag: bool,
     display_topology: MacDisplayTopologyHandle,
     display_topology_subscription: Option<MacDisplayTopologySubscription>,
     observation_commit: MacWindowObservationCommitCoordinator,
@@ -1780,6 +1790,7 @@ struct MacWindowState {
     accesskit_adapter: Option<accesskit_macos::SubclassingAdapter>,
     creation_facts: WindowCreationFacts,
     initial_presentation: MacInitialPresentation,
+    sheet_session: Option<Rc<MacSheetSession>>,
     transient_ordering_in_progress: bool,
     attempted_window_draw: bool,
     interaction_quiesced: Arc<AtomicBool>,
@@ -1845,6 +1856,10 @@ impl MacWindowState {
     }
 
     fn move_traffic_light(&mut self) {
+        if !self.native_titlebar_visible {
+            self.update_native_titlebar_visibility();
+        }
+
         if let Some(traffic_light_position) = self.traffic_light_position {
             if self
                 .native_window()
@@ -1905,6 +1920,21 @@ impl MacWindowState {
                 buttons.minimize.updateTrackingAreas();
                 buttons.zoom.updateTrackingAreas();
             }
+        }
+    }
+
+    fn update_native_titlebar_visibility(&self) {
+        if self.is_closed() {
+            return;
+        }
+        let Some(close_button) = self
+            .native_window()
+            .standardWindowButton(NSWindowButton::CloseButton)
+        else {
+            return;
+        };
+        if let Some(titlebar_container) = Self::titlebar_container(&close_button) {
+            titlebar_container.setHidden(!self.native_titlebar_visible);
         }
     }
 
@@ -3078,11 +3108,13 @@ impl MacWindow {
         release_simple_fullscreen_presentation_options(simple_fullscreen_state);
         drop(accesskit_adapter);
         drop(blurred_view);
+        let sheets = sheet::detach_related(&self.0);
         unsafe {
             detach_native_transient_relationships(window);
         }
 
         if synchronously {
+            let _sheets = sheets;
             unsafe {
                 let window = &*window;
                 let superclass = window_callback_superclass(window);
@@ -3092,6 +3124,7 @@ impl MacWindow {
         } else {
             foreground_executor
                 .spawn(async move {
+                    let _sheets = sheets;
                     unsafe {
                         let _: () = msg_send![window, close];
                         let _: *mut AnyObject = msg_send![window, autorelease];
@@ -3108,6 +3141,7 @@ impl MacWindow {
             titlebar,
             kind,
             is_movable,
+            app_owns_titlebar_drag,
             is_resizable,
             is_minimizable,
             accepts_pointer_input,
@@ -3176,6 +3210,7 @@ impl MacWindow {
             let allows_automatic_window_tabbing = tabbing_identifier.is_some();
             let initial_presentation = MacInitialPresentation {
                 show,
+                dialog: kind == WindowKind::Dialog,
                 allows_automatic_window_tabbing,
                 state: creation.state,
                 mapped: false,
@@ -3328,6 +3363,7 @@ impl MacWindow {
                     traffic_light_position: titlebar
                         .as_ref()
                         .and_then(|titlebar| titlebar.traffic_light_position),
+                    native_titlebar_visible: true,
                     traffic_light_frames: None,
                     pre_fullscreen_traffic_light_frames: None,
                     transparent_titlebar: titlebar
@@ -3338,6 +3374,7 @@ impl MacWindow {
                     do_command_handled: None,
                     file_drop_sequence: None,
                     first_mouse: false,
+                    app_owns_titlebar_drag,
                     display_topology,
                     display_topology_subscription: None,
                     observation_commit: MacWindowObservationCommitCoordinator::default(),
@@ -3373,6 +3410,7 @@ impl MacWindow {
                     topmost: creation.topmost,
                     taskbar_visible: creation.taskbar_visible,
                     initial_presentation,
+                    sheet_session: None,
                     transient_ordering_in_progress: false,
                     attempted_window_draw: false,
                     interaction_quiesced: Arc::new(AtomicBool::new(false)),
@@ -4120,6 +4158,21 @@ fn complete_mac_initial_presentation(
         return true;
     }
 
+    match sheet::present(window_state, activate) {
+        Ok(Some(true)) => return true,
+        Ok(None) => {}
+        result => {
+            if let Err(error) = result {
+                log::debug!("cannot present macOS dialog sheet: {error}");
+            }
+            let mut state = window_state.lock();
+            if !state.is_closed() && state.native_window == native_window {
+                state.initial_presentation.completed = false;
+            }
+            return false;
+        }
+    }
+
     let presentation_transaction = match MacTransientPresentationTransaction::begin(
         window_state,
         native_window,
@@ -4219,6 +4272,15 @@ fn activate_mac_window(window_state: &Arc<Mutex<MacWindowState>>) -> bool {
         )
     };
 
+    match sheet::present(window_state, true) {
+        Ok(Some(presented)) => return presented,
+        Ok(None) => {}
+        Err(error) => {
+            log::debug!("cannot activate macOS dialog sheet: {error}");
+            return false;
+        }
+    }
+
     let activation_transaction = match MacTransientPresentationTransaction::begin(
         window_state,
         window,
@@ -4239,7 +4301,7 @@ fn activate_mac_window(window_state: &Arc<Mutex<MacWindowState>>) -> bool {
 fn reorder_mac_transient_after_native_activation(
     window_state: &Arc<Mutex<MacWindowState>>,
 ) -> bool {
-    let (handle, native_window, transient_for, window_registry, ordering_in_progress) = {
+    let (handle, native_window, transient_for, window_registry, ordering_in_progress, is_sheet) = {
         let state = window_state.lock();
         (
             state.handle,
@@ -4247,9 +4309,10 @@ fn reorder_mac_transient_after_native_activation(
             state.creation_facts.transient_for,
             state.window_registry.clone(),
             state.transient_ordering_in_progress,
+            state.sheet_session.is_some(),
         )
     };
-    if transient_for.is_none() || ordering_in_progress {
+    if transient_for.is_none() || ordering_in_progress || is_sheet {
         return true;
     }
     let transaction = match MacTransientPresentationTransaction::begin(
@@ -4812,6 +4875,15 @@ impl PlatformWindow for MacWindow {
                 );
             }
         }
+    }
+
+    fn set_native_titlebar_visibility(&self, visible: bool) {
+        let mut state = self.0.lock();
+        if state.is_closed() {
+            return;
+        }
+        state.native_titlebar_visible = visible;
+        state.update_native_titlebar_visibility();
     }
 
     fn set_traffic_light_position(&self, position: Point<Pixels>) {
@@ -5445,6 +5517,62 @@ impl PlatformWindow for MacWindow {
         None
     }
 
+    fn debug_state(&self) -> serde_json::Value {
+        let state = self.0.lock();
+        let window = state.native_window();
+        let screen = window.screen();
+        let frame = window.frame();
+        let layer = state.renderer.layer().map(|layer| {
+            let drawable_size = layer.drawableSize();
+            serde_json::json!({
+                "drawable_size": [drawable_size.width, drawable_size.height],
+                "contents_scale": layer.contentsScale(),
+            })
+        });
+        serde_json::json!({
+            "window_number": window.windowNumber(),
+            "occlusion_state_visible": window
+                .occlusionState()
+                .contains(NSWindowOcclusionState::Visible),
+            "is_visible": window.isVisible(),
+            "is_key_window": window.isKeyWindow(),
+            "is_main_window": window.isMainWindow(),
+            "is_miniaturized": window.isMiniaturized(),
+            "is_on_active_space": window.isOnActiveSpace(),
+            "screen_display_id": screen.as_deref().and_then(display_id_for_screen),
+            "frame": [frame.origin.x, frame.origin.y, frame.size.width, frame.size.height],
+            "backing_scale_factor": window.backingScaleFactor(),
+            "frame_source": match &state.frame_source {
+                FrameSource::Metal(frames) => serde_json::json!({
+                    "kind": "CAMetalDisplayLink",
+                    "attached": frames.is_attached(),
+                    "paused": frames.is_paused(),
+                    "woken": frames.is_woken(),
+                }),
+                FrameSource::DisplayLink(Some(source)) => source.debug_state(),
+                FrameSource::DisplayLink(None) => serde_json::json!({
+                    "kind": "CVDisplayLink",
+                    "attached": false,
+                }),
+            },
+            "renderer": {
+                "display_link_attached": state.renderer.is_display_link_attached(),
+                "presents_with_transaction": state.renderer.presents_with_transaction(),
+                "layer": layer,
+            },
+            "request_frame_callback_installed": state.request_frame_callback.is_some(),
+            "last_reported_visibility": state
+                .visibility_observer
+                .last_reported_visibility()
+                .map(|visibility| format!("{visibility:?}")),
+            "activated_at_least_once": state.activated_least_once,
+            "cursor": {
+                "cached_style": state.cursor_style,
+                "cached_visible": state.cursor_visible.load(Ordering::Relaxed),
+            },
+        })
+    }
+
     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
         let executor = self.0.lock().foreground_executor.clone();
         executor
@@ -5782,17 +5910,12 @@ fn add_mouse_tracking_area(native_view: &NSView) {
     native_view.addTrackingArea(&tracking_area);
 }
 
-extern "C" fn reset_cursor_rects(this: &AnyObject, _: Sel) {
-    // SAFETY: AppKit invokes cursor-rect updates on the main thread for GPUIView instances,
-    // whose WINDOW_STATE_IVAR is initialized when the view is created. The cursor registered
-    // below is a valid NSCursor.
+/// # Safety
+///
+/// Must be called on the AppKit main thread.
+pub(crate) unsafe fn native_cursor(style: CursorStyle) -> *mut AnyObject {
     unsafe {
-        let _: () = msg_send![super(this, class!(NSView)), resetCursorRects];
-
-        let window_state = get_window_state(this);
-        let cursor_style = window_state.lock().cursor_style;
-
-        let cursor: *mut AnyObject = match cursor_style {
+        match style {
             CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
             CursorStyle::IBeam => msg_send![class!(NSCursor), IBeamCursor],
             CursorStyle::Crosshair => msg_send![class!(NSCursor), crosshairCursor],
@@ -5826,7 +5949,21 @@ extern "C" fn reset_cursor_rects(this: &AnyObject, _: Sel) {
             CursorStyle::DragLink => msg_send![class!(NSCursor), dragLinkCursor],
             CursorStyle::DragCopy => msg_send![class!(NSCursor), dragCopyCursor],
             CursorStyle::ContextualMenu => msg_send![class!(NSCursor), contextualMenuCursor],
-        };
+        }
+    }
+}
+
+extern "C" fn reset_cursor_rects(this: &AnyObject, _: Sel) {
+    // SAFETY: AppKit invokes cursor-rect updates on the main thread for GPUIView instances,
+    // whose WINDOW_STATE_IVAR is initialized when the view is created. The cursor registered
+    // below is a valid NSCursor.
+    unsafe {
+        let _: () = msg_send![super(this, class!(NSView)), resetCursorRects];
+
+        let window_state = get_window_state(this);
+        let cursor_style = window_state.lock().cursor_style;
+
+        let cursor = native_cursor(cursor_style);
 
         let bounds: NSRect = msg_send![this, bounds];
         let _: () = msg_send![this, addCursorRect: bounds, cursor: cursor];
@@ -6261,6 +6398,13 @@ extern "C" fn window_did_change_occlusion_state(this: &AnyObject, _: Sel, _: *mu
 }
 
 extern "C" fn window_did_resize(this: &AnyObject, selector: Sel, _: *mut AnyObject) {
+    let window_state = unsafe { get_window_state(this) };
+    {
+        let state = window_state.lock();
+        if !state.native_titlebar_visible {
+            state.update_native_titlebar_visibility();
+        }
+    }
     window_state_observation_did_change(this, selector);
 }
 
@@ -6368,6 +6512,10 @@ extern "C" fn window_fullscreen_transition_did_finish(
             | MacFullscreenTransitionTerminal::FailedToExit => {
                 lock.restore_traffic_light();
             }
+        }
+
+        if !lock.native_titlebar_visible {
+            lock.update_native_titlebar_visibility();
         }
 
         let kind = MacWindowObservationEvent::Fullscreen(terminal);
@@ -6636,6 +6784,7 @@ extern "C" fn window_should_close(this: &AnyObject, _: Sel, _: *mut AnyObject) -
 }
 
 extern "C" fn close_window(this: &AnyObject, _: Sel) {
+    let window_state = unsafe { get_window_state(this) };
     unsafe {
         let (
             event_callback,
@@ -6649,7 +6798,6 @@ extern "C" fn close_window(this: &AnyObject, _: Sel) {
             blurred_view,
             close_callback,
         ) = {
-            let window_state = get_window_state(this);
             let mut lock = window_state.as_ref().lock();
             let shutdown = lock.presentation_shutdown_authority.lock().ticket();
             if !shutdown.acknowledge_native_terminal() {
@@ -6692,6 +6840,7 @@ extern "C" fn close_window(this: &AnyObject, _: Sel) {
         release_simple_fullscreen_presentation_options(simple_fullscreen_state);
         drop(accesskit_adapter);
         drop(blurred_view);
+        let _sheets = sheet::detach_related(&window_state);
         detach_native_transient_relationships(this as *const AnyObject as *mut AnyObject);
         if let Some(callback) = close_callback {
             callback();
@@ -7052,6 +7201,16 @@ extern "C" fn accepts_first_mouse(this: &AnyObject, _: Sel, _: *mut AnyObject) -
     }
     lock.first_mouse = macos_click_can_activate(lock.activation_policy);
     Bool::YES
+}
+
+extern "C" fn opaque_rect_for_window_move_when_in_titlebar(this: &AnyObject, _: Sel) -> NSRect {
+    let window_state = unsafe { get_window_state(this) };
+    let app_owns_titlebar_drag = window_state.lock().app_owns_titlebar_drag;
+    if app_owns_titlebar_drag {
+        unsafe { msg_send![this, bounds] }
+    } else {
+        NSRect::ZERO
+    }
 }
 
 extern "C" fn character_index_for_point(this: &AnyObject, _: Sel, position: NSPoint) -> NSUInteger {
@@ -8440,6 +8599,7 @@ mod creation_projection_tests {
     fn initial_presentation_tracks_automatic_tabbing() {
         let regular = MacInitialPresentation {
             show: true,
+            dialog: false,
             allows_automatic_window_tabbing: false,
             state: MacWindowCreationState::Windowed,
             mapped: false,
