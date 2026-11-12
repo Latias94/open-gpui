@@ -27,6 +27,24 @@ name = "window_shadow"
 path = "../gpui/examples/window_shadow.rs"
 
 [[example]]
+name = "a11y"
+path = "../gpui/examples/a11y.rs"
+
+[[example]]
+name = "window"
+path = "../gpui/examples/window.rs"
+
+[[example]]
+name = "window_positioning"
+path = "../gpui/examples/window_positioning.rs"
+
+[[example]]
+name = "testing"
+path = "../gpui/examples/testing.rs"
+test = true
+required-features = ["test-support"]
+
+[[example]]
 name = "system_notifications"
 path = "examples/system_notifications.rs"
 

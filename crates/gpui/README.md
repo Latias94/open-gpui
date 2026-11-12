@@ -9,13 +9,33 @@ Open GPUI is still in active development and is pre-1.0. There will often be bre
 
 ```toml
 open_gpui = { package = "open-gpui", version = "0.2.0" }
-open_gpui_platform = { package = "open-gpui-platform", version = "0.2.0" }
+open_gpui_platform = { package = "open-gpui-platform", version = "0.2.0", features = ["font-kit", "wayland", "x11"] }
 ```
 
 - [Ownership and data flow](src/_ownership_and_data_flow.rs)
 - [Accessibility](src/_accessibility.rs)
 
 Everything in Open GPUI starts with an `Application`. You can create one with `open_gpui_platform::application()`, and kick off your application by passing a callback to `Application::run()`. Inside this callback, you can create a new window with `App::open_window()`, and register your first root view.
+
+```rust,no_run
+use open_gpui::App;
+
+fn main() {
+    open_gpui_platform::application().run(|_cx: &mut App| {});
+}
+```
+
+### Platform Features
+
+The `open-gpui-platform` features above provide a cross-platform desktop default. For a
+single-platform application, select only the features that its backend needs:
+
+- **macOS:** Enable `font-kit` for glyph rendering. Metal rendering is always available, but
+  without `font-kit` the platform uses a placeholder text system that renders no glyphs.
+- **Linux / FreeBSD:** Enable `wayland`, `x11`, or both for desktop windows. These features
+  also select the renderer and text system.
+- **Windows:** No platform features are required. Windowing uses Win32 and text uses
+  DirectWrite; `font-kit` has no effect on this backend.
 
 An existing application may instead supply platform and renderer services. `App::open_surface`
 opens a host-driven logical root without creating a native window, while retaining ordinary

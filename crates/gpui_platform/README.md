@@ -32,7 +32,7 @@ fn main() {
 
 ## What This Crate Owns
 
-- Target-specific backend selection for macOS, Windows, Linux/FreeBSD, and WebAssembly.
+- Target-specific backend selection for macOS, Windows, Linux/FreeBSD, iOS, and WebAssembly.
 - Feature forwarding for backend options such as `font-kit`, `screen-capture`, `wayland`, `x11`, `runtime_shaders`, and `web-multithreaded`.
 - Stable single-threaded web runtime selection, plus optional multithreaded web support through the `web-multithreaded` feature.
 - A small application-facing import surface so examples and applications do not need to choose backend crates manually.
@@ -42,6 +42,11 @@ fn main() {
 This crate does not own rendering primitives, window layout policy, component APIs, docking behavior, or backend-specific platform services. Those live in `open-gpui`, `open-gpui-wgpu`, `open-gpui-ui-components`, `open-gpui-docking`, and the platform backend crates.
 
 Backend capabilities remain runtime facts. Enabling a cargo feature does not guarantee that the active operating system, browser, compositor, or GPU supports a capability such as platform viewport windows, screen capture, or WebGPU.
+
+iOS uses the UIKit backend and shared Apple renderer. Its simulator entry point, native
+text-input probe and execution limits are documented in [Open GPUI iOS](../gpui_ios/README.md).
+OpenHarmony is excluded from Linux backend selection; applications on that target inject
+their own backend with `Application::with_platform`.
 
 For a native application entry point, see `examples/smoke-native`. For a common docking setup built
 through the selector, see `examples/docking-minimal`. Web backend work should use
