@@ -1,5 +1,48 @@
 # Zed GPUI Import
 
+## November 13 Framework Closure Completion
+
+The completion cycle selects Zed `6ceb6fee8738274589b59139df27efc191ec2231` and
+reconstructs applicable history from the content-verified anchor
+`6e9465a4288c332208643892e23b9d35d7be5c79`. The
+[per-commit ledger](zed-gpui-commit-reconciliation-2026-11-12.md) records 564 unique
+full upstream SHAs, their surviving mechanisms, retained fork contracts and local
+implementation/verification owners. Its scope includes inherited omissions rather
+than assuming an earlier selected comparison pin was a complete import.
+
+The independent Apache-2.0 `gpui_ios` and `gpui_tokio` owners are now selected as
+`open-gpui-ios` and `open-gpui-tokio`. Their complete license texts and source
+provenance are retained in the package READMEs and notices. UIKit uses the shared
+Apple renderer and Core's ordered native ingress, input-handler leases, activation
+requests and exact shutdown tickets. The optional Tokio bridge retains the official
+owned/borrowed runtime, cancellation, JoinError and background-shutdown behavior.
+Neither package introduces an engine or Zed product owner.
+
+Official `19c69782eb3c1d99b79878d82efa935d565910f9` requires the MIT/Apache-2.0
+`zed-industries/khronos-egl` revision
+`42214b36347b108fd9630ca6254b96dde59e04fe`. The package remains version 6.0.0;
+registry 6.0.0 is not behaviorally equivalent. A failed EGL call accompanied by
+`EGL_SUCCESS` now returns `Error::Unreported` instead of unwrapping `None`; genuine
+native errors and successful calls retain their behavior. WGPU's selected Linux/
+FreeBSD GLES initialization and surface paths use this binding. Browser WebGL
+does not execute native EGL; Windows WGL and Windows ANGLE are separate paths.
+
+The workspace, independent platform consumer, both Web-example roots and new iOS
+platform-consumer root explicitly declare the same EGL patch. Cargo does not export
+root patches through library dependencies, so applications selecting native GLES
+must declare it themselves. Core-only test-support, hot-reload and arena-Miri roots
+have no EGL dependency and do not need an unused patch. Existing independently
+locked registry versions are preserved while adding the selected owners and source
+correction. The ignored legacy hello-Web lock is regenerated locally and is not a
+published dependency artifact.
+
+The [EGL fixture](../../tests/fixtures/egl-errors/README.md) records exact source and
+license comparison, real dynamic-binding fault injection, positive controls and the
+registry negative control. This proves binding error handling on the host, not a
+Linux compositor, Windows ANGLE driver or physical-device run. The
+[verification record](../verification.md#november-13-framework-closure-completion)
+and ledger matrix own executed commands, local commits and remaining platform scope.
+
 **Date**: 2026-06-06
 **Source**: `repo-ref/zed`
 **Decision**: ADR 0001

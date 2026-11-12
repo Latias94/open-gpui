@@ -46,7 +46,7 @@ flowchart TD
 
 | Fork | Current source | Reverse dependency evidence | Public candidate | Risk | Recommendation |
 | --- | --- | --- | --- | --- | --- |
-| Required fixed-target sources | The current import record and candidate queue own exact reqwest, calloop, async-process and async-tar revisions; WGPU uses its qualified gfx-rs revision. | Actual roots and resolved dependency graphs are qualified per complete mechanism. | Registry alternatives remain candidates when they preserve required behavior. | Source-specific | Follow ADR 0001; do not retain historical exclusions or remove behavior merely to reduce fork count. |
+| Required fixed-target sources | The current import record and candidate queue own exact reqwest, calloop, async-process, async-tar and khronos-egl revisions; WGPU uses its qualified gfx-rs revision. | Actual roots and resolved dependency graphs are qualified per complete mechanism. EGL's failed-call/EGL_SUCCESS case has real dynamic-binding positive and negative controls. | Registry alternatives remain candidates when they preserve required behavior. | Source-specific | Follow ADR 0001; do not retain historical exclusions or remove behavior merely to reduce fork count. |
 
 ## Evidence Commands
 

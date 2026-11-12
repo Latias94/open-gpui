@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- Optional `open-gpui-tokio` bridges Tokio futures into GPUI tasks with application-owned or caller-provided runtimes and task-drop cancellation. Optional `open-gpui-ios` supplies the UIKit application backend through `open-gpui-platform`, using the shared Apple renderer. The [Tokio](crates/gpui_tokio/README.md#verification) and [iOS](crates/gpui_ios/README.md#validation) READMEs record integration and current verification limits.
+- `App::on_app_lifecycle` and `App::on_memory_warning` expose mobile scene and memory-pressure subscriptions through the ordered native ingress. Retain the returned subscriptions; desktop platforms emit neither event. `PlatformInputHandler::focus_id` exposes the handler's original focus identity to backend adapters.
+- Additive Window/test APIs include `Window::touch_prediction_enabled`, scale-factor simulation, accepted-frame quad/underline inspection and passive image-cache/atlas queries. The test platform now retains owned menu snapshots for `App::get_menus`. `ElementId` accepts `u64`, `ImageFormat::extension` returns canonical file extensions, and `hsla` / `opaque_grey` support constant construction. See the [migration guide](docs/ui/migration-v0.3.md#additive-window-and-test-apis) for feature gates and observation limits.
+
 - `WgpuSceneRenderer::new_with_color_space` explicitly selects `LinearSrgb` recording for application-owned linear-light composition. The existing constructor and native renderer preserve their sRGB-numeric default. Imported transfer/alpha meaning and host submission ownership are unchanged; this does not select HDR or display mapping.
 
 - `Scene::retain_atlas_textures` lets an external renderer retain delivered Scene resources while waiting for its own target and encoder. It preserves renderer-local atlas residency; exact candidate admission and GPU recording completion retain their existing contracts.
@@ -80,7 +84,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Web text input uses a textarea mirror with UTF-16 selection, composition, bounded editable context and per-handler `TextInputConfiguration`. `Window` exposes content/selection notifications, virtual-keyboard requests, visual viewport bounds and `WindowInsets`. Configuration and text-session effects publish with accepted frames; native commands execute after the App borrow is released. The mirror retires with its window.
 - Breaking: exhaustive matches on `PlatformWindowCommand` and native callback diagnostic operation enums must handle the new text-session variants. Backend implementors that use `PlatformInputHandlerSlot` should delegate `take_input_handler_for_frame` to `take_for_frame`, preserving a checked-out handler during refused redraws. New `InputHandler`, `EntityInputHandler` and optional platform methods have default implementations.
 
-- `open-gpui-apple` owns the shared Apple dispatcher, Metal renderer/atlas, CoreText/OpenType, Keychain and process services. CoreVideo surfaces are available on macOS/iOS; this shared substrate does not add an iOS application backend. macOS window options expose the official opt-in Display P3 color space.
+- `open-gpui-apple` owns the shared Apple dispatcher, Metal renderer/atlas, CoreText/OpenType, Keychain and process services. CoreVideo surfaces are available on macOS/iOS; the separate `open-gpui-ios` package owns UIKit application integration. macOS window options expose the official opt-in Display P3 color space.
 
 - Windows forwards Restart Manager session shutdown from application windows to the platform quit callback. Completed shutdown flushes logs and exits; asynchronous shutdown retains the official best-effort quit fallback.
 
@@ -106,6 +110,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Optional native debug hot reload follows the official GPUI/Subsecond 0.7.10 mechanism: build/process-matched patches, foreground application, window refresh, and typed, stateless and stored erased View render boundaries. Run with `dx serve --hot-patch`; compatible render-body edits preserve existing model state. Release/WebAssembly transport exclusion, failed loads, required restarts and disconnects remain explicit. The independently locked native consumer provides an actual edit/build/apply and Submitted-scene pixel acceptance procedure, including the required upstream dx x64 jump-stub backport for the qualified Windows tool.
 
 ### Breaking Changes and Migration Notes
+
+- `Element` now requires `'static + Sized` and supplies `IntoElement` through `impl<T: Element> IntoElement for T`. Delete explicit or derived `IntoElement` implementations on types that also implement `Element`; they conflict with the blanket implementation. Keep conversions for component builders that do not implement `Element`, and keep `IntoElement` in scope for its extension methods.
+- Complete Linux/FreeBSD `GraphicalEnvironment` literals must supply `current_desktop` or use `..Default::default()`. `desktop_environment()` reports a nonempty UTF-8 `XDG_CURRENT_DESKTOP` value, preserving colon-separated names; `apply_to` leaves that child variable unchanged. Update string comparisons from `"Headless"` to `"headless"` for both compositor-guessing APIs.
+- Exhaustive `ClickEvent::{Mouse, Keyboard}` matches must also handle `Touch(TouchClickEvent)`, whose payload carries `position`, `tap_count` and `long_press`. Use `is_secondary()` when handling both mouse right clicks and touch long presses; `is_right_click()` remains mouse-specific.
+- Exhaustive `NativeCallbackKind` diagnostic matches must handle `AppLifecycle` and `MemoryWarning`. Custom platforms can retain the default no-op lifecycle hooks when they have no corresponding native events.
 
 - Full `WebPlatformOptions` literals must provide `canvas_font_fallback` or use `..Default::default()`. Select `CanvasFontFallback::Disabled` to retain loaded-font-only rendering.
 

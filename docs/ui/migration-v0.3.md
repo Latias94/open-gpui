@@ -4,6 +4,89 @@ Open GPUI v0.3 is an intentionally breaking, pre-release architecture release. S
 APIs are removed; explicitly adopted official migration aliases retain their upstream contract.
 This guide records each migration in the implementation unit that introduces it.
 
+## Blanket Element Conversion
+
+`Element` now requires `'static + Sized` and no longer requires a separate `IntoElement`
+implementation. The blanket `impl<T: Element> IntoElement for T` returns the element itself.
+Remove any explicit `impl IntoElement for CustomElement` or `IntoElement` derive on a type
+that also implements `Element`; either would overlap with the blanket implementation.
+Keep the existing layout, prepaint and paint implementation.
+
+Keep `IntoElement` implementations and derives on component builders that do not implement
+`Element`, including `RenderOnce` components. Import `IntoElement` where its methods are
+called; implementing `Element` alone does not bring those extension methods into scope.
+`Element::into_any` and `IntoElement::into_any_element` remain the erasure paths. Re-erasing
+an `AnyElement` preserves its existing wrapper and concrete element identity.
+
+## Graphical Environment Snapshots
+
+On Linux and FreeBSD, complete `GraphicalEnvironment` literals now supply
+`current_desktop: Option<OsString>`. Use `None` for an unspecified desktop or
+`..GraphicalEnvironment::default()` for omitted fields. `detect()` reads
+`XDG_CURRENT_DESKTOP`; `desktop_environment()` returns its nonempty UTF-8 value unchanged,
+including colon-separated names such as `ubuntu:GNOME`. It returns `None` on other platforms.
+`apply_to` still changes only display connection variables, leaving the child's desktop
+identity and activation token unchanged.
+
+Both `GraphicalEnvironment::guess_compositor()` and the free `guess_compositor()` helper
+now report `"headless"` in lowercase. Update comparisons, snapshots and serialized expectations
+that previously required `"Headless"`. The graphical spellings remain `"Wayland"` and `"X11"`.
+
+## Touch Click Values
+
+Add `ClickEvent::Touch(event)` to exhaustive matches. `TouchClickEvent` contains a
+window-coordinate `position`, a consecutive `tap_count` and a `long_press` flag. Existing
+`on_click` and `on_aux_click` callback types remain `TargetedEvent<ClickEvent>`.
+
+For a touch value, `position()` and `click_count()` read the payload, `modifiers()` is empty
+and `mouse_position()` returns `None`. `standard_click()` accepts taps and excludes long
+presses. Use `is_secondary()` when a predicate should include both a mouse right click and
+a touch long press; `is_right_click()` and `is_middle_click()` remain mouse-specific.
+The current portable recognizer still delivers taps as synthesized mouse presses and releases;
+the new enum variant does not switch that producer to direct touch-click delivery.
+
+## Additive Window And Test APIs
+
+The following APIs extend existing owners:
+
+| API | Availability and contract |
+| --- | --- |
+| `Window::touch_prediction_enabled()` | Ordinary public getter for the existing prediction policy; reading it does not request a frame. |
+| `Window::set_scale_factor`, `TestAppWindow::simulate_scale_factor_change`, `VisualTestContext::simulate_scale_factor_change`, `TestAppContext::simulate_window_scale_factor_change` | Test support; use a finite positive factor. Simulation retains logical bounds, updates physical geometry and follows resize ingress. `Window::set_scale_factor` requires a test platform window. |
+| `Window::painted_quads`, `painted_underlines`, `rendered_scene` | Test support; `rendered_scene` also remains available with `bench-support`. Painted snapshots exclude late-invalidated scopes and retain transforms and exact clips; resolve clip envelopes through the rendered scene. Accepted-frame inspection does not establish GPU submission or native presentation. |
+| `ImageSource::is_asset_cached`, `Image::is_asset_cached`, `Window::has_image_atlas_entry` | Test support. Asset queries include loading entries without initiating work; custom/render sources report false. Atlas membership is window-local and requires every frame of a nonempty image. |
+| `App::set_menus` / `App::get_menus` on the test platform | Existing public methods now retain independent owned snapshots, including nested actions, flags and system menus. Replacement and clearing affect subsequent reads without mutating earlier snapshots. |
+| `ElementId::from(u64)`, `ImageFormat::extension`, constant `hsla` / `opaque_grey` | Ordinary public helpers; no test feature is required. |
+
+`debug_selector` closures run only in GPUI's own tests or debug builds with `test-support`.
+In release builds the builder remains callable but does not evaluate the closure or record
+selectors, even when test support is enabled.
+
+## Optional iOS And Tokio Packages
+
+`open-gpui-ios` is registered in the workspace and selected by `open-gpui-platform` on iOS.
+It owns UIKit application/window/input lifecycle and consumes the shared Apple renderer.
+`App::on_app_lifecycle` reports `Active`, `Inactive`, `Background`, `Foreground` and
+`Disconnected`; `App::on_memory_warning` allows releasing expendable caches. Retain their
+returned subscriptions. Notifications follow ordered native App ingress and wait for an
+active App borrow to end. Desktop platforms emit neither event. Save important state
+incrementally because background termination need not deliver quit or disconnection.
+Backend adapters can read the original focus identity with `PlatformInputHandler::focus_id`.
+Exhaustive `NativeCallbackKind` matches also handle `AppLifecycle` and `MemoryWarning`.
+Custom platforms inherit no-op notification hooks.
+
+`open-gpui-tokio` is an optional application dependency; call `init` to create an App-owned
+runtime or `init_from_handle` to borrow the application's existing runtime. Keep a borrowed
+runtime running. Dropping a returned GPUI task aborts its Tokio task; `spawn` preserves nested
+application results and `spawn_result` returns `anyhow::Result`, preserving application errors
+and wrapping join errors.
+
+The [iOS README](../../crates/gpui_ios/README.md#validation) records target/native
+qualification; the [Tokio README](../../crates/gpui_tokio/README.md#verification) records the
+seven passing public bridge tests and remaining verification scope. Exact upstream provenance,
+platform mapping and current execution evidence remain in the
+[refresh ledger](../imports/zed-gpui-commit-reconciliation-2026-11-12.md#platform-and-functional-unit-verification-matrix).
+
 ## Native File Drag And Window Exit
 
 Attach a lazy native payload with `on_drag(value, constructor).external_drag_payload(resolver)`

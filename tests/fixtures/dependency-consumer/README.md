@@ -1788,12 +1788,21 @@ platform must select the same source in its own workspace root:
 ```toml
 [patch.crates-io]
 calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
+khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42214b36347b108fd9630ca6254b96dde59e04fe" }
 ```
 
 This fixture declares that patch and independently locks the Git revision. The direct Linux
 dependency and calloop-wayland-source must resolve to the same calloop source; matching
 package names or compatible version numbers do not make their Rust types interchangeable.
-The ordinary and browser example roots each declare their own patch.
+The ordinary and browser example roots each declare their own patches. Native GLES also
+requires the EGL correction above: failed calls with `EGL_SUCCESS` must return
+`Error::Unreported` rather than panic. This is separate from calloop's Rust type identity;
+the [dynamic binding fixture](../egl-errors/README.md) owns its positive and negative controls.
+
+The `tokio_bridge` target uses the independently locked `open-gpui-tokio` package through
+`bench_platform`, ordinary `Application::run_embedded` and `Tokio::spawn`, so real worker completion
+do not depend on root-workspace feature unification or private globals. Package bridge
+tests retain the more detailed cancellation, JoinError and owned/borrowed-runtime cases.
 
 The `windowing` target consumes `WindowingRequest`, the host's `GraphicalEnvironment`, application
 `ActivationPolicy`, `Application::with_windowing`, and the App/Platform mode-request and environment

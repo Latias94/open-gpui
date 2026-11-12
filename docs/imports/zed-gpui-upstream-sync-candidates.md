@@ -28,7 +28,60 @@ The November continuation applies the
 Record retained differences and their consumer/verification basis here; an unimplemented
 official mechanism remains queued until it receives an explicit disposition.
 
+## November 13 Framework Closure Completion
+
+The owner explicitly extends the task from the recent queue to all applicable
+GPUI framework behavior at fixed Zed
+`6ceb6fee8738274589b59139df27efc191ec2231`, including inherited omissions and
+new independent platform/support owners. The local starting checkpoint is
+`a0e5a818e0a3628114e37362bc57a0bc240e66c0`; the content-verified source anchor
+is `6e9465a4288c332208643892e23b9d35d7be5c79`. The reference checkout remains
+read-only at `78f5d7446c55f6c1aa9b66e8111f6b3f4625ebb0`, with the six later
+official rendering patches and final product-only patch accounted separately.
+Observed remote `4dff6f8eef9548d297073845fecb6c41de9f4c36` does not change the pin.
+
+The [canonical ledger](zed-gpui-commit-reconciliation-2026-11-12.md) contains
+**564 unique full upstream SHAs**: 557 historical closure/root/toolchain entries,
+six renderer changes and one outside-framework product change. Independent
+source lanes inspect Core, every selected platform/renderer, shared support and
+the 149 root-manifest/toolchain slices. The final set comparison has zero
+omissions, extras, duplicates or title mismatches. Each official SHA has one
+canonical row; mechanism groups connect it to local commits and platform gates.
+The per-row source disposition and executed platform qualification remain separate.
+
+The current source completes the previous eleven queued commits and ordinary
+WGPU sprite fast branch, then corrects inherited keymap precedence/continuation,
+Div drag-over/debug-selector, Window pointer/cache/test/menu/scale/paint APIs,
+mobile touch/lifecycle vocabulary, hidden Mac activation, Windows caption/IME/
+ordinary PopUp/process Job, benchmark workloads and dependency gaps. List's
+review additionally finds two vertical-inset defects shared with the fixed
+upstream: item-bound queries and scrollbar/reveal limits now include the same
+insets as real layout, with a failing-before-fix rendering regression.
+
+Complete independent Apache `gpui_ios` and `gpui_tokio` owners are now selected.
+UIKit uses shared Apple rendering and existing Core leases/native FIFO/exact
+shutdown custody. Tokio retains upstream ownership, cancellation and JoinError
+semantics. OHOS routing excludes the desktop Linux backend and directs ordinary
+consumers to explicit platform injection; this does not add an OHOS backend.
+
+Official EGL revision `42214b36347b108fd9630ca6254b96dde59e04fe` fixes failed
+calls reporting `EGL_SUCCESS`; the exact source is selected in applicable root
+patches/locks. Real dynamic-binding positive controls pass and the unchanged
+consumer reproduces the registry panic. The [import record](zed-gpui-import.md)
+owns license/source boundaries and application-root patch requirements.
+
+The [qualification](../verification.md#november-13-framework-closure-completion)
+owns actual commands, failures and reruns. Local implementation commits and
+other-platform follow-up map through the ledger matrix. Source reconciliation
+does not claim bit-for-bit monorepo parity, physical-device/input execution or
+numeric performance improvement. This continuation is committed locally and
+does not authorize a push or a moving-target refresh.
+
 ## November 12 Rendering Successor
+
+The later [framework closure completion](#november-13-framework-closure-completion)
+supersedes this section's outstanding WGPU optimization and eleven queued units.
+The historical receipts and failures below retain their original revision scope.
 
 The owner explicitly authorizes the next rendering refresh after the Mac reconciliation and
 its correctness follow-ups. This cycle fixes Open GPUI
@@ -82,6 +135,11 @@ The atomic implementation/API migration is committed at
 Apple/Mac/WGPU cohort passes 296/296; neither count substitutes for the pending platform gates.
 
 ## November 12 Windows Completeness Audit
+
+The later [564-commit reconstruction](zed-gpui-commit-reconciliation-2026-11-12.md)
+expands this 25-commit audit back to the content-verified import anchor. Its
+current implementation and platform matrix supersede the queue below; the
+earlier audit is retained as the finding that initiated those successor units.
 
 This read-only source review fixes Open GPUI
 `b76bf77db75588a75db90148b3ebe7a4269d8f53` and the actual `repo-ref/zed` tree

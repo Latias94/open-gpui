@@ -10,6 +10,37 @@ execution: code
 
 # Zed GPUI Upstream Sync - Plan
 
+## November 13 Framework Closure Completion
+
+The owner selects all applicable framework updates at the existing fixed Zed
+`6ceb6fee8738274589b59139df27efc191ec2231`, including omissions inherited before
+the earlier selected comparison pins. The
+[candidate successor](../imports/zed-gpui-upstream-sync-candidates.md#november-13-framework-closure-completion)
+and [564-row ledger](../imports/zed-gpui-commit-reconciliation-2026-11-12.md)
+replace the recent-only queue as the current scope. Keep each complete official
+SHA once, with an evidenced source disposition, current owner, local commit and
+platform-specific verification path. Record baseline source checkpoints as such;
+they are not fabricated original port commits.
+
+The main thread integrates disjoint Core/List/tab, Windows/Cosmic/WGPU, Linux,
+benchmark, iOS, Tokio/support and source-audit lanes, runs Cargo serially, repairs
+actual integration failures and obtains independent re-review. The source scope
+includes the complete new independent iOS/Tokio owners and the EGL dependency
+correction, while retaining candidate admission, exact clips/transforms, resource
+leases, native ingress and renderer-before-native retirement contracts. Zed editor
+and engine domain owners remain outside the imported framework closure.
+
+Close implementation only after affected regressions, public and independently
+locked consumers, target checks, formatting, Clippy and existing import/API/docs
+gates pass. Preserve negative controls and original failures. Native platform,
+physical input, foreign OS, compiler-floor and numerical benchmark claims require
+their own explicit receipts; place unexecuted commands/scenarios in the ledger's
+platform matrix rather than silently declaring them green. The
+[verification record](../verification.md#november-13-framework-closure-completion)
+owns current results. Produce precise local Conventional Commits without pushing
+or resetting unrelated work. The maintenance handoff points subsequent development
+to this fixed, reviewable source/verification boundary.
+
 ## November 12 Rendering Successor
 
 The owner authorizes implementing the six rendering commits in the

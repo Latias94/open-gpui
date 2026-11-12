@@ -1,5 +1,279 @@
 # Verification
 
+## November 13 Framework Closure Completion
+
+This continuation starts at local `a0e5a818e0a3628114e37362bc57a0bc240e66c0`,
+keeps Zed `6ceb6fee8738274589b59139df27efc191ec2231` fixed, and audits inherited
+history from the content-verified import anchor. The
+[564-row ledger](imports/zed-gpui-commit-reconciliation-2026-11-12.md) owns each
+full official SHA, source disposition and local implementation/foreign-platform
+mapping. The reference checkout remains read-only. Newer remote HEAD observations
+do not advance this target. No publication is authorized by this continuation.
+
+The host is Apple Silicon/macOS 27.0, stable Rust 1.99.1 and Xcode SDK 26.5.
+Cargo is serialized with two jobs and nextest with one test thread, reusing the
+checkout target. CoreGraphics reports zero active displays; headless Metal/WGPU
+execution does not qualify AppKit visible-window behavior. The iOS simulator is
+a separate UIKit runner, not evidence of a physical iOS device.
+
+The initial WGPU/text cohort is **9/10**: shader/ordinary-image controls pass,
+while the combining-mark test reproduces the old missing glyph offset. After the
+offset fix and integration repairs, the expanded focused cohort passes
+**111/111** (`eda96ec4-eec7-425d-b9a0-ec43792b2298`). Earlier Core compilation
+failures from removed redundant IntoElement imports and the missing image-cache
+facade, and an intermediate **92/96** fixture run, precede that pass. Four fixture
+corrections preserve the original assertions: a 16-KiB element arena replaces the
+undersized arena, and Window probes avoid updating an already-borrowed root entity.
+
+The complete affected nextest cohort runs **3598 tests across 87 binaries**:
+**3595 pass, 3 fail** (`e8eae75e-66db-4bfb-a813-7d4bc0e583bd`, 176.443 seconds).
+The failures are retained here with their fixes:
+
+- `headless_app_reconstruction_releases_the_text_system_used_by_rendered_controls`:
+  ordinary wrapping no longer acquires the truncation wrapper after the official
+  lazy-acquisition optimization. The fixture now requests real truncation and
+  retains the nonempty cache and final weak-owner-release assertions.
+- `public_prompt_query_tracks_only_window_rendered_prompts`: the answer uses the
+  official `OK` label, preserving native-versus-window prompt assertions.
+- `command_palette_controller_preflights_keymap_dispatch_with_query`: the expected
+  shortcut uses the TestPlatform's actual OS rather than hardcoded Windows labels.
+  Explicit Windows projection tests retain their own expectations.
+
+All three corrected cases pass **3/3**
+(`32722f8c-3da4-41e9-8e5a-a931dd4ef6de`). This is a targeted repair receipt,
+separate from a final combined cohort.
+
+```sh
+CARGO_BUILD_JOBS=2 cargo nextest run --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-windows -p open-gpui-apple -p open-gpui-macos -p open-gpui-tokio -p open-gpui-ui-core -p open-gpui-ui-components --features test-support,bench-support,runtime_shaders,screen-capture --test-threads=1 --no-fail-fast --status-level fail
+CARGO_BUILD_JOBS=2 cargo nextest run --locked -p open-gpui -p open-gpui-ui-components --features test-support,bench-support --test-threads=1 --no-fail-fast --status-level fail -E 'test(headless_app_reconstruction_releases_the_text_system_used_by_rendered_controls) | test(public_prompt_query_tracks_only_window_rendered_prompts) | test(command_palette_controller_preflights_keymap_dispatch_with_query)'
+```
+
+SharedString's package-owner part passes **3/3**
+(`3617aa39-45b0-4245-9530-d2d1b0160d7d`) at `1660391a`; its Core static-text
+entry belongs to the later Core integration. Tokio's seven real public bridge
+tests pass in both the focused and complete affected cohorts. Core lifecycle,
+menu, scale, accepted-scene/clip, image membership, keymap, tab/List and portable
+CPU color-bitmap regressions also execute in those cohorts. Portable bitmap
+arithmetic is not Windows DirectWrite/font/GPU qualification.
+
+The platform benchmark all-target check passes with independent `bench-support`
+and production native factories. A first attempt catches a test-only visual
+module without its `test-support` gate; the corrected benchmark-only check passes.
+ChildText's full 17-mutation state/render chain is subsequently reconciled and
+needs the final affected benchmark rerun. Python fixture-path controls pass **5/5**
+on the host; Windows process cleanup remains a separately recorded native limit.
+
+```sh
+CARGO_BUILD_JOBS=2 cargo check --locked -p open-gpui-platform --features bench-support,font-kit,inspector,runtime_shaders --benches
+/opt/homebrew/bin/python3.13 -m unittest discover -s scripts -p 'test_compare_benchmarks.py'
+```
+
+iOS/Core/shared-Apple/selector **all-target, all-feature simulator compilation
+passes** with `IPHONEOS_DEPLOYMENT_TARGET=15.0`. Earlier attempts catch missing
+Metal protocol imports, ordinary example dev-dependencies and a raw-window-handle
+UFCS call; all are repaired before this pass. Independent source re-review closes
+the activation, interaction-quiescence, idle/in-flight composition cleanup,
+demand scheduling and exact renderer-before-native-retirement findings. Native
+probe execution, independent consumer, device target and physical input retain
+their own results below; compilation alone grants none of those claims.
+
+```sh
+IPHONEOS_DEPLOYMENT_TARGET=15.0 CARGO_BUILD_JOBS=2 cargo check --locked -p open-gpui-ios -p open-gpui-platform --target aarch64-apple-ios-sim --all-targets --all-features
+```
+
+EGL's real dynamic-binding fixture uses the exact official patched source and
+native mock symbols through its production loader. Official tests pass **8/8**;
+the public dynamic consumer passes **3/3**, covering failed/EGL_SUCCESS,
+preserved genuine errors and successful/no-error-query controls. Identical test
+source against registry 6.0.0 passes **2/3** and reproduces `unwrap(None)` in
+`Instance::initialize`. The other two controls continue to pass. This is an
+executed host binding regression and negative control, not native driver or
+compositor execution. Exact rebuild commands and ABI/source/license evidence are
+in the [fixture record](../tests/fixtures/egl-errors/README.md).
+
+The EGL Git pin is selected in the root and applicable independent roots. An
+initial offline independent-lock refresh proposes unrelated registry downgrades;
+only this lane's resolver edits are replaced and the online targeted refresh
+preserves all pre-existing selected package versions. New UIKit/iOS/Tokio owners
+and their required dependency entries are added. The legacy ignored hello-Web
+lock starts at the old 0.1/WGPU-29 graph and is regenerated locally; it is not a
+tracked or published lock artifact.
+
+Current Windows cross-compilation uses the actual downloaded MSVC headers,
+libraries and LLVM tools through cargo-xwin. The earlier missing-stdlib-header
+result describes the previous attempt, not the current sysroot. No fake native
+dependency, system-header replacement or forced target cfg is used. FXC, real
+DirectWrite COLR fonts, WARP, IME/caption/PopUp behavior and process Job tests
+still require Windows execution even when Rust cross-compilation passes.
+
+The final combined cohort adds the iOS portable controls and registered platform
+examples: **3615/3615 pass** across 93 binaries
+(`a5c5f0e9-7fcf-45bc-b489-5393662e1e27`, 125.510 seconds). Three pre-existing
+platform tests requiring the AppKit process main thread remain ignored:
+`test_foreground_tasks_run_with_run_until_parked`,
+`test_advance_clock_triggers_delayed_tasks` and
+`test_window_spawn_uses_test_dispatcher`. Read the actual test declarations
+when selecting a main-thread/native runner; one Rust test worker is not the
+process main thread. The earlier failures above are not erased by this pass.
+
+The List review's two additional inset findings are reproduced together before
+the fix: **0/1** (`0a846f67-8dfa-48ee-8952-46b805ec3d3b`) reports item y=0 and
+scroll range=0 against actual y=10/range=20. Item queries now include top insets,
+and the range includes both insets while retaining frozen drag heights. The same
+test, including bring-into-view reaching -20, passes in the final combined run.
+Independent re-review closes both findings. The 17-way ChildText chain and
+Windows/iOS native-ownership changes also receive independent source receipts.
+
+```sh
+CARGO_BUILD_JOBS=2 cargo nextest run --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-windows -p open-gpui-apple -p open-gpui-macos -p open-gpui-tokio -p open-gpui-ios -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-platform --features test-support,bench-support,runtime_shaders,screen-capture --test-threads=1 --no-fail-fast --status-level fail
+```
+
+Workspace all-target compilation passes. The first new independently locked
+Tokio fixture incorrectly imports `HeadlessAppContext` without `test-support`;
+the E0432 is a real public-boundary check. The fixture now reuses `bench_platform`
+and ordinary `Application::run_embedded` rather than enabling test support.
+Independent all-target compilation passes with the ordinary feature graph.
+
+```sh
+CARGO_BUILD_JOBS=2 cargo check --locked --workspace --all-targets --features open-gpui-apple/runtime_shaders
+CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target cargo check --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-targets --features bench-support,wgpu-renderer,mac-screen-capture,open_gpui_platform/runtime_shaders
+```
+
+The real Windows sysroot check first uses GNU-driver Clang and fails in
+aws-lc-sys HRSS vector operators/MSVC intrinsic headers. The unchanged production
+graph then passes with cargo-xwin's default MSVC-driver `clang-cl`. This checks
+all targets of Core/WGPU/Windows/platform/util/Tokio, including new CPU-COLR and
+Job/native fixtures and the manifest resource source. Cross-host build-script
+cfg does not execute FXC; no shader/native Windows result follows.
+
+```sh
+PATH=/opt/homebrew/opt/llvm/bin:$PATH CARGO_BUILD_JOBS=2 cargo xwin check --cross-compiler clang-cl --locked --target x86_64-pc-windows-msvc -p open-gpui -p open-gpui-wgpu -p open-gpui-windows -p open-gpui-platform -p open-gpui-util -p open-gpui-tokio --all-targets --features test-support,bench-support,runtime_shaders,screen-capture
+```
+
+The independent public cohort passes **8/8**, with no skips
+(`a7159fe9-15dd-487b-9d4f-061cb549ce2b`). It covers ordinary custom Element
+conversion/erasure, u64 and touch-prediction APIs, desktop environment consumers
+and a real Tokio task through ordinary embedded App ownership. The independent
+test-support consumer additionally passes **4/4**
+(`ed818b17-de1f-47f1-a1d3-84e2df3d3b7e`) with `bench-support`, and its
+`--no-default-features --all-targets` compilation passes.
+
+Production wasm compilation and the registered a11y example compile on nightly.
+The first a11y check exposes native Criterion/Rayon dev-dependencies in the
+platform package; restricting native benchmark/log/random dependencies to native
+targets fixes the actual public example graph. Final platform/Cosmic benchmark
+compilation passes after the ChildText chain completion. No browser execution or
+numerical benchmark result follows from these checks.
+
+```sh
+CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --test custom_element --test core_window_api --test tokio_bridge --test windowing --features bench-support,wgpu-renderer,mac-screen-capture,open_gpui_platform/runtime_shaders --test-threads=1 --no-fail-fast --status-level fail
+CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target cargo nextest run --locked --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --features bench-support --test public_api --test-threads=1 --no-fail-fast --status-level fail
+CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target cargo check --locked --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --no-default-features --all-targets
+CARGO_BUILD_JOBS=2 cargo +nightly check --locked -p open-gpui-web --lib --target wasm32-unknown-unknown
+CARGO_BUILD_JOBS=2 cargo +nightly check --locked -p open-gpui-platform --example a11y --target wasm32-unknown-unknown
+```
+
+The real Rust **1.93.0** host all-target check passes in 132.180 seconds, and
+iOS/platform simulator all-target/all-feature compilation passes on that same
+compiler in 104.546 seconds. This verifies the actual declared floor rather than
+inferring it from the newer upstream toolchain. The iOS independently locked
+consumer resolves and passes `--locked` compilation; device-target production
+library/all-feature compilation also passes. Device execution remains untested.
+
+```sh
+CARGO_BUILD_JOBS=2 cargo +1.93.0 check --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-apple -p open-gpui-macos -p open-gpui-platform -p open-gpui-tokio --all-targets --features test-support,bench-support,runtime_shaders,screen-capture
+IPHONEOS_DEPLOYMENT_TARGET=15.0 CARGO_BUILD_JOBS=2 cargo +1.93.0 check --locked -p open-gpui-ios -p open-gpui-platform --target aarch64-apple-ios-sim --all-targets --all-features
+IPHONEOS_DEPLOYMENT_TARGET=15.0 CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target cargo check --locked --manifest-path crates/gpui_ios/tests/consumer/Cargo.toml --target aarch64-apple-ios-sim
+IPHONEOS_DEPLOYMENT_TARGET=15.0 CARGO_BUILD_JOBS=2 cargo check --locked -p open-gpui-ios -p open-gpui-platform --target aarch64-apple-ios --lib --all-features
+```
+
+The native iOS probe is built/packaged/codesigned with the repository's Python
+helper and run on **iPhone 17/iOS 26.3**. Initial native execution catches a
+fixture leasing `InteractionProbe` through `WindowHandle::update` while its
+activation observer updates the same entity. Three window-only operations now
+use `AsyncApp::update_window`. The next run catches actual key ownership
+surviving `UIWindow::resignKeyWindow`. Revocation closes eligibility first and
+synchronously hides/restores original visibility, retaining the same native
+view/controller/Metal owner. Hidden/Visible notifications remain ordered in
+the original native ingress; they are observable, not silently coalesced.
+
+Both idle and in-flight composition paths then pass. A final layer property
+control confirms `CAMetalLayer` accepts 1x1 but ignores a zero drawable-size
+request. Removing that ineffective setter/metadata assertion preserves real
+retirement checks: no Metal device, no revival after layout, no next drawable,
+detached native objects and one terminal callback. This is a fixture-oracle
+correction established by a positive property control, not a discarded resource
+failure. Independent narrow re-review closes the final production/oracle changes.
+
+The corrected native run at **2026-11-13 01:39:02 +08:00** prints
+`IOS NATIVE WINDOWING OK`. It executes exact-generation public activation,
+both composition cleanup paths, inert native presentation with a newer drawable,
+six pixel controls, real submitted-resize extent, overlapping/off-thread idle
+guards and renderer-before-native retirement. The simulator launcher returns
+zero even for an application panic; qualification requires that explicit marker
+and checks the complete output. A UIKit unbalanced-appearance-transition warning
+remains in the successful run; its cause and physical-device/input behavior
+retain separate follow-up. No physical software/hardware IME or device energy
+claim is made.
+
+```sh
+CARGO_BUILD_JOBS=2 python3 crates/gpui_ios/examples/ios/build_simulator.py --example native_windowing --features test-support --locked
+xcrun simctl install 2BC46CFB-D8A9-4405-ABCB-E4E468C5EED4 target/gpui-ios-example/GPUIIosExample.app
+xcrun simctl launch --console-pty 2BC46CFB-D8A9-4405-ABCB-E4E468C5EED4 dev.open-gpui.ios-example
+```
+
+Host affected and simulator iOS/platform all-target strict Clippy pass both
+`-D clippy::correctness` and `-D clippy::suspicious`. Initial passes catch an
+existing test helper loaded through two modules and a new image-cache fixture's
+non-Send Arc capture; the fixture now uses its canonical module and an atomic
+counter respectively. A missing atomic Ordering import during the latter repair
+is corrected before the final pass. Existing advisory warnings remain.
+
+The post-Clippy fixture selection passes **38/38**
+(`646e1b16-42f2-4c78-8bf8-762a1d65138c`), including the cache counter and
+component primitive controls. The imported standalone UIKit text protocol harness
+is built with `cargo test --no-run` and actually executes on the simulator's
+process main thread through `simctl spawn`, printing
+`UIKit text input native protocol smoke test passed`. The unbundled harness emits
+a CFBundleDevelopmentRegion warning; the packaged application has its own valid
+string plist entry. This protocol smoke does not qualify real hardware keyboards.
+
+Five benchmark targets complete Criterion `--test` smoke using their production
+headless/native factories: focus cleanup; primitive Scene and paint; closed
+inspector; Metal atlas hit/upload pixel validation; and pathless tree, text-panel,
+layout-churn and scrolling workloads. Each benchmark crate is built in the dev
+profile with only its own `debug_assertions` disabled to pass the release-mode
+fixture guard; dependencies remain unoptimized and production debug assertions
+remain enabled. `BENCH_MEASUREMENT=wall-time` disables performance counters.
+These are execution/oracle checks, not benchmark measurements.
+
+The original 500-frame layout-churn heap diagnostic exceeds the first 55-second
+smoke limit. Repeating the unchanged workload with a 300-second process bound
+completes in **93.465 seconds**; the selected scrolling smoke completes in 1.899
+seconds. The bounded wrapper does not prevent normal progress updates. No setup
+loop is shortened and no numerical performance comparison is claimed.
+
+```sh
+CARGO_BUILD_JOBS=2 cargo rustc --locked -p open-gpui-platform --profile dev --features bench-support,font-kit,inspector,runtime_shaders --bench focus_cleanup --message-format=json-render-diagnostics -- -C debug-assertions=no
+# Repeat the same build with primitives, inspector_render, atlas_upload and randomized_element_tree.
+# Run the Cargo-reported executable with an exact case filter, --test and --noplot:
+BENCH_MEASUREMENT=wall-time target/debug/deps/REPORTED-BENCH-EXECUTABLE '^EXACT-CASE$' --test --noplot
+```
+
+Root and both changed independent-consumer formatting checks pass. Existing
+`scan-import-boundary`, `scan-public-api --check`, `scan-doc-links`,
+`verify-release-docs` and `dependency-health` pass. The first release-doc check
+requires the exact old exhaustive `ClickEvent::{Mouse, Keyboard}` symbol in the
+changelog; the release-facing migration now names it. No scanner is broadened
+or replaced to make these checks pass.
+
+The source implementation checkpoint is
+`138c6ef22c4ce8bdacad800bd1ae2cebd2cf0c44`. The
+[ledger's local SHA map](imports/zed-gpui-commit-reconciliation-2026-11-12.md#local-implementation-revision-map)
+records all eight current implementation commits and their exact official slices.
+This cycle remains local with no push. The platform matrix records remaining
+foreign/native/performance work alongside its actual command or scenario.
+
 During upstream synchronization, trust unchanged official implementations and their existing
 upstream coverage. Use affected compilation, public-consumer checks and focused regressions for
 fork changes and integration seams. Broader suites and platform/compiler matrices require an

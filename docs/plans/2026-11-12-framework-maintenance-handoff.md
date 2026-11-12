@@ -9,6 +9,11 @@ The engine development path is recorded separately in Nara:
 
 ## Scope And Next Deliverable
 
+The subsequent [November 13 closure completion](#november-13-framework-closure-completion)
+is the current framework-maintenance continuation. Its fixed source ledger and platform
+matrix supersede the older recent-only queue and preserve every earlier qualification's
+revision scope. Read that continuation before choosing the next consumer pin or task.
+
 Independent framework maintenance can begin from the published baseline and qualified engine
 consumer. Completing Nara's Editor or game UI selection is not a prerequisite for that session.
 This roadmap covers reusable UI runtime, platform, rendering, control behavior and performance
@@ -154,6 +159,93 @@ the test-only migration corrections are owned by the
 [Windows qualification](../verification.md#windows-follow-up-qualification). Read that record
 before treating the earlier cross-compilation limit as the current Windows result. AppKit GUI
 close/sheet/resize and forced-close contention still need their owning Mac runner.
+
+## November 13 Framework Closure Completion
+
+The owner expands maintenance to all applicable GPUI behavior at fixed Zed
+`6ceb6fee8738274589b59139df27efc191ec2231`, starting locally from
+`a0e5a818e0a3628114e37362bc57a0bc240e66c0`. The
+[canonical ledger](../imports/zed-gpui-commit-reconciliation-2026-11-12.md) records
+564 unique full upstream commits reconstructed from the content-verified import
+anchor, including root/toolchain history, inherited omissions and the later
+renderer patches. Each SHA has one row with source evidence and disposition.
+Its [platform matrix](../imports/zed-gpui-commit-reconciliation-2026-11-12.md#platform-and-functional-unit-verification-matrix)
+maps official groups to local implementation commits, executed gates and exact
+other-platform follow-up. A baseline source checkpoint is identified as a
+checkpoint, rather than presented as a fabricated original adoption commit.
+
+The source successor completes List padding/borders and its cache/autoscroll
+seams, batched tab navigation, lazy text wrappers/shared identity, Cosmic mark
+offsets/sorting, the WGPU ordinary-image fragment fast path and Windows CPU COLR.
+The broader audit also reconciles keymap NoAction/continuation precedence,
+Div drag-over/debug selectors, Window pointer/test/cache/scene/menu APIs,
+mobile touch/lifecycle vocabulary, hidden Mac activation, Windows disabled
+caption/shared-IME/ordinary PopUp behavior, Job activity queries, full benchmark
+workloads/tooling and the EGL error-handling dependency correction. Two additional
+List vertical-inset defects found in both trees are repaired with a real
+failing-before-fix rendering/reveal regression.
+
+Complete Apache `open-gpui-ios` and optional `open-gpui-tokio` owners are selected.
+iOS reuses shared Apple rendering, ordered native ingress, callback/input leases,
+public activation requests and exact renderer-before-native shutdown tickets.
+Tokio preserves upstream owned/borrowed runtime, task-drop cancellation and
+JoinError behavior. These owners and the OHOS explicit-injection guard extend
+framework scope without importing a Zed product or engine domain owner. Application
+roots selecting native GLES must carry the documented official EGL patch because
+library dependencies cannot export root Cargo patches.
+
+The local code checkpoint is `138c6ef22c4ce8bdacad800bd1ae2cebd2cf0c44`.
+Its reviewed implementation commits are:
+
+| Local commit | Scope |
+| --- | --- |
+| `1660391ab1fbdd99a21336ef5e74bb9191ee80a6` | SharedString identity equality |
+| `300c05d28a7b50ec90c296850aad01224e7bb0a4` | Core APIs, blanket elements, List/tab/keymap/text and public migrations |
+| `4f8299386f8143cd0ff8fc3f5f1e21eef555f74a` | Windows CPU COLR, caption/IME/PopUp and Job activity |
+| `d99e96a50714022d9dfb25b04763cf249654a714` | WGPU sprite fast path and Cosmic offsets/sorting/corpus |
+| `69b5338ad1c2488e5d8052a0d6487df584b15e80` | Wayland callback time, hidden AppKit activation and Windows resources |
+| `ca5f3abf148c1c9234ef4f09876da55b0956bd86` | Complete UIKit/Tokio owners, consumers, OHOS routing and EGL pin |
+| `10878654b465c4f2f4e4fd4781f712952439b79e` | Complete benchmark workloads, ChildText and serial comparison tool |
+| `138c6ef22c4ce8bdacad800bd1ae2cebd2cf0c44` | Ordinary runnable examples and factory guidance |
+
+The [current verification](../verification.md#november-13-framework-closure-completion)
+records final **3615/3615** affected tests, three existing ignored AppKit main-thread
+cases, **8/8** independent public controls, **4/4** test-support consumer controls,
+feature-off compilation, workspace/independent all-target checks, real-sysroot
+Windows cross-compilation, production/a11y wasm, real Rust 1.93 host/simulator and
+strict host/iOS Clippy. The iPhone 17/iOS 26.3 native probe prints its required
+success marker after real pixel, activation, two composition-cleanup, resized
+submission, idle-guard and exact-retirement checks. Native UIKit protocol smoke
+also passes. Initial failures and repairs remain recorded, including key ownership
+surviving resignKeyWindow and CAMetalLayer ignoring a zero size request. Both
+require actual native semantics rather than a synthetic cached fact.
+
+All five benchmark targets complete bounded Criterion test smoke with production
+native factories. The unoptimized 500-frame layout-churn diagnostic completes in
+93.465 seconds after an initial 55-second timeout; this is workload completion,
+not a baseline/candidate timing result. Exact-shape/shared resource regressions,
+source review and existing format/import/API/docs/release/dependency-health gates
+pass. Full upstream/local SHA and platform mappings live in the ledger; the
+hand-off does not replace that evidence or grant foreign native qualification.
+
+Next development should first close the platform matrix on owning runners:
+AppKit hidden activation/close/sheet/submitted resize with an active display;
+Windows native DirectWrite COLR, caption/IME/PopUp, Job and embedded/runtime-shader
+WARP controls; Linux X11/Wayland/GLES/profiler switching; browser WebGPU/WebGL and
+physical input; iOS device lifecycle/rotation/IME/Universal Links and GPU retirement.
+Keep compile, headless GPU, simulator, real native window and physical-input
+results distinct. A later performance task should use the complete benchmark
+workloads with one fixed baseline/candidate pair, the same font/device/feature
+selection and recorded measurement environment before choosing a renderer rewrite.
+
+The [migration guide](../ui/migration-v0.3.md#blanket-element-conversion), release
+inventory and new package READMEs cover blanket Element conversion, complete
+GraphicalEnvironment literals/lowercase headless, exhaustive touch/diagnostic
+matches and optional platform/runtime adoption. Preserve the fork's accepted
+candidate, exact clip, resource lease and native retirement contracts when comparing
+future official changes. This continuation authorizes local Conventional Commits;
+it does not push. Inspect live local/remote state before a later pull, merge or
+publication. Do not move the fixed target just because upstream HEAD advanced.
 
 ## Upstream Maintenance
 
