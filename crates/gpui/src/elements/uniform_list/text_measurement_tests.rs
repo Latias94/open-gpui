@@ -68,7 +68,8 @@ fn unknown_uniform_list_width_measures_truncating_rows_at_max_content(cx: &mut T
                                 layouts.borrow_mut().clear();
                                 ranges.borrow_mut().clear();
                                 let measured = list.measure_item(width, window, cx);
-                                assert_eq!(ranges.borrow().as_slice(), &[999..1_000]);
+                                assert_eq!(ranges.borrow().len(), 1);
+                                assert_eq!(ranges.borrow()[0], 999..1_000);
                                 assert_eq!(layouts.borrow().len(), 1);
                                 let layout = &layouts.borrow()[0];
                                 if width.is_none() {

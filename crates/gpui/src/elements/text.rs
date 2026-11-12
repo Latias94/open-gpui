@@ -1952,7 +1952,7 @@ mod tests {
             let activations = self.activations.clone();
             div().size_full().child(
                 InteractiveText::new("presentation-clickable-text", StyledText::new("click"))
-                    .on_click(vec![0..5], move |_, _, _| {
+                    .on_click(std::iter::once(0..5).collect(), move |_, _, _| {
                         activations.set(activations.get() + 1)
                     })
                     .with_subtree_presentation(self.presentation),

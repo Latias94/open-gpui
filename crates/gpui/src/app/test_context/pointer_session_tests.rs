@@ -323,7 +323,7 @@ impl Render for InteractiveTextCancelProbe {
         let activations = self.activations.clone();
         div().child(
             InteractiveText::new("interactive-text-cancel-probe", StyledText::new("click"))
-                .on_click(vec![0..5], move |_, _, _| {
+                .on_click(std::iter::once(0..5).collect(), move |_, _, _| {
                     activations.set(activations.get() + 1)
                 }),
         )
