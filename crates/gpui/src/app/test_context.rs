@@ -1199,6 +1199,14 @@ impl TestAppContext {
         self.test_platform.reject_next_window_initial_presentation();
     }
 
+    /// Selects the next TestPlatform window's renderer outcome before its first draw.
+    ///
+    /// A rejected first presentation exercises construction rollback while the
+    /// original native window remains available for ordered renderer retirement.
+    pub fn set_next_window_present_outcome(&self, outcome: PlatformWindowPresentOutcome) {
+        self.test_platform.set_next_window_present_outcome(outcome);
+    }
+
     /// Makes the next TestPlatform window synchronously close during its hidden first present.
     pub fn close_next_window_during_initial_presentation(&self) {
         self.test_platform

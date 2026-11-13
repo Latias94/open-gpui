@@ -53,6 +53,8 @@ pub(crate) struct TestPlatform {
     window_creation_capabilities_override: RefCell<Option<PlatformWindowCreationCapabilities>>,
     window_mutation_capabilities_override: RefCell<Option<PlatformWindowMutationCapabilities>>,
     next_window_map_error: RefCell<Option<String>>,
+    #[cfg(any(test, feature = "test-support"))]
+    next_window_present_outcome: Cell<Option<crate::PlatformWindowPresentOutcome>>,
     last_created_window: RefCell<Option<TestWindow>>,
     next_window_close_during_map: RefCell<bool>,
     next_window_creation_show_fact: RefCell<Option<bool>>,
@@ -285,6 +287,8 @@ impl TestPlatform {
             window_creation_capabilities_override: RefCell::new(None),
             window_mutation_capabilities_override: RefCell::new(None),
             next_window_map_error: RefCell::new(None),
+            #[cfg(any(test, feature = "test-support"))]
+            next_window_present_outcome: Cell::new(None),
             last_created_window: RefCell::new(None),
             next_window_close_during_map: RefCell::new(false),
             next_window_creation_show_fact: RefCell::new(None),
@@ -511,6 +515,14 @@ impl TestPlatform {
                 PlatformWindowCommandOutcome::Rejected,
                 PlatformWindowCommandOutcome::Rejected,
             ]));
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn set_next_window_present_outcome(
+        &self,
+        outcome: crate::PlatformWindowPresentOutcome,
+    ) {
+        self.next_window_present_outcome.set(Some(outcome));
     }
 
     pub(crate) fn close_next_window_during_initial_presentation(&self) {
@@ -1320,6 +1332,10 @@ impl Platform for TestPlatform {
                 .replace(false),
             self.next_window_defer_frame_requests.replace(false),
         );
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(outcome) = self.next_window_present_outcome.take() {
+            window.set_present_outcome(outcome);
+        }
         self.last_created_window
             .borrow_mut()
             .replace(window.clone());

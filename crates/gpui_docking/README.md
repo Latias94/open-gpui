@@ -5,6 +5,72 @@
 Use this crate when an application needs IDE-style tab stacks, split panes, floating panels, and
 optional platform viewport windows.
 
+## Shared Dockspace Session
+
+The `adapter` module integrates the renderer-neutral `dockspace` session directly.
+It requires Rust 1.95. One `adapter::DockSurface` owns one supplied
+`DockspaceSession`; each `DockPane` retains a distinct application `AnyView`.
+Views may share a document, while their local editor state stays independent.
+`DockRegion` combines disjoint logical surfaces inside one physical Window and
+one original exact frame ticket. A deferred renderer does not retain the session's
+affine update lease or block another Window.
+
+Before issuing synchronous semantic intent, `is_update_pending` reports whether
+an original prepared GPUI candidate still owns that update. Native ingress and
+terminal output observations wait for its acceptance or withdrawal. A sibling
+that reaches prepaint meanwhile retains visual content without publishing new
+docking input facts, then wakes when the update becomes available.
+
+Use `adapter::DockSurface::new` for local logical surfaces, or `new_managed` with
+`open_native_root` for managed native roots and core-issued native effects. The
+two input producers are separate configurations. Native close policy supports
+allow, veto and defer; `begin_native_shutdown` drains the exact workspace group.
+Inspect `take_native_reports` and `native_is_quiescent` for original submission,
+failure and retirement observations. Application document/history and final
+engine rendering remain outside the docking owner.
+
+Pane content stays `SubtreePresentation::Inert` until its matching original
+Submitted artifact is admitted. Candidate acceptance alone does not enable its
+pointer, focus, IME or accessibility channels. Native capture packets and later
+platform facts share one FIFO, and cancellation retains its original drag
+generation through dispatch.
+
+`open_native_root` returns `NativeOpenFailure`, preserving any `root_binding`
+error together with the original `WindowOpenError` and retirement ticket. Custom
+root builders using `bind_native_root` pass their original detailed-open error
+to `retain_native_root_open_failure` so the bridge can retain rollback
+authority until real retirement. Root registration is preflighted before append;
+an appended attempt remains under the same session's recovery owner.
+
+The [dockspace editor example](../../examples/dockspace-editor/src/main.rs)
+contains real retained Views. Its `--smoke-native` mode exercises native child
+creation, submitted content, relocation, retirement and an isolated sibling.
+Current CPU tests and native/compiler limits are recorded in the
+[implementation evidence](../../docs/knowledge/engineering/verification/editor-framework-evolution-20261113.md).
+Desktop hover, independent OS capture and mixed-DPI placement require their actual
+platform facts; no ordinary local mouse event supplies those capabilities.
+
+`adapter::persistence::DockWorkspaceDocument` stores the core's public document and
+durable external pane-key history, including closed occurrences. Restore validates
+all identities before any host factory runs. The one-way legacy v2/v3 migrators
+require an explicit `LegacyTopologyMigration::RelativeWeights` choice and retain
+their non-equivalent size/topology contracts in a provenance receipt. Runtime
+entities, window handles and frame proofs are never persisted.
+
+Once a session belongs to `DockSurface`, call `capture_document` with validated
+host hints to save its committed document. A borrowed host or unaccepted update
+returns `DockPersistenceError::Busy` without advancing the save generation.
+Accepted outputs waiting on a renderer do not block capture. Resolve closed
+historical identities with `item_id_for_external_key`, then use `open_pane` to
+register a distinct retained View and open that occurrence atomically. A rejected
+placement, duplicate entity or busy update publishes neither operation.
+
+[ADR 0034](../../docs/adr/0034-shared-dockspace-session-integration.md) selects this
+shared-session architecture. The incumbent root/prelude facade described below
+remains available during qualification; no workspace should use both semantic
+runtimes. Full native-input qualification and facade/caller migration precede
+removal of the displaced implementation.
+
 ## Public API Tiers
 
 The crate root and `open_gpui_docking::prelude` contain the common application API: `DockSurface`, `DockSurfaceBuilder`, durable layout and placement data, panel registry/catalog types, policy types, and typed facade outcomes. The root intentionally does not re-export raw graph, action, host, workspace, runtime-handle, or raw layout-node types.

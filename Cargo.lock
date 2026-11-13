@@ -4837,6 +4837,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "open-gpui-dockspace-editor"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "open-gpui",
+ "open-gpui-docking",
+ "open-gpui-platform",
+]
+
+[[package]]
 name = "open-gpui-font-kit"
 version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -2,8 +2,16 @@ use open_gpui::{
     App, AppContext as _, Context, IntoElement, ParentElement as _, Render, Styled as _, Window,
     WindowOptions, canvas, div, fill, px, rgb,
 };
-use open_gpui_docking::prelude::{
-    DockPanelPlacement, DockSurface, DockSurfacePrimaryWindowOpenOutcome,
+use open_gpui_docking::adapter::{
+    DockPane, DockSurface, GpuiDockspaceConfig,
+    dockspace::{
+        model::{
+            DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, ItemId,
+            RootId, SurfaceId,
+        },
+        policy::DockPolicy,
+        runtime::DockspaceSession,
+    },
 };
 use open_gpui_ui_components::button::{Button, ButtonVariant};
 
@@ -45,25 +53,32 @@ impl Render for PreviewPanel {
 
 fn main() {
     open_gpui_platform::application().run(|cx: &mut App| {
-        let surface = DockSurface::builder("preview")
-            .panel_placements([DockPanelPlacement::center("preview").selected()])
-            .panel_factory("preview", "Texture preview", |cx| {
-                cx.new(|_| PreviewPanel {
-                    extent: taffy::Size {
-                        width: 320.0,
-                        height: 180.0,
-                    },
-                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                    highlighted: false,
-                })
-                .into()
-            })
-            .build(cx)
-            .expect("preview dock layout should validate");
-        match surface.open_primary_window(WindowOptions::default(), cx) {
-            DockSurfacePrimaryWindowOpenOutcome::Opened(_) => {}
-            outcome => panic!("failed to open preview window: {outcome:?}"),
-        }
+        let surface_id = SurfaceId::new(1);
+        let item = ItemId::new(1);
+        let view = cx.new(|_| PreviewPanel {
+            extent: taffy::Size {
+                width: 320.0,
+                height: 180.0,
+            },
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            highlighted: false,
+        });
+        let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+            surface_id,
+            DockspaceRootLayout::new(RootId::new(1), DockspaceNode::central_tabs([item])),
+        )])
+        .expect("preview dock layout should validate");
+        let surface = DockSurface::new_managed(
+            DockspaceSession::from_layout(layout, DockPolicy::default())
+                .expect("the preview owns one shared docking session"),
+            [DockPane::new(item, "Texture preview", view)],
+            GpuiDockspaceConfig::default(),
+            cx,
+        )
+        .expect("retained preview content should mount");
+        surface
+            .open_native_root(surface_id, true, WindowOptions::default(), cx)
+            .expect("the preview native root should open");
         cx.activate(true);
     });
 }

@@ -82,7 +82,9 @@ lock and run the locked all-features gate below; no allocator source patch or co
 conversion is introduced.
 
 The source composes a GPUI `Render` view, a semantic button activation handler, custom canvas
-painting, and a `DockSurface` panel factory. Taffy's size type supplies the preview dimensions;
+painting, and one retained View mounted through `adapter::DockSurface` and the
+shared `DockspaceSession`. Its original managed native root supplies GPUI's actual
+window/submission owners without enabling test support. Taffy's size type supplies the preview dimensions;
 WGPU's texture format type supplies the preview label. It adds no document or history model.
 
 The platform dependency enables `x11` and `wayland` on Linux and FreeBSD, and `font-kit` on macOS.

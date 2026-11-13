@@ -1,6 +1,6 @@
 # ADR 0033: Docking Kernel Transaction Architecture
 
-**Status**: Accepted
+**Status**: Superseded for the semantic kernel choice by [ADR 0034](0034-shared-dockspace-session-integration.md). Existing physical contracts and migration qualification remain in force until their production owners are replaced.
 **Date**: 2026-08-21
 
 ## Context

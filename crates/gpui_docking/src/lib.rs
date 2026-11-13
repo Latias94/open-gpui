@@ -99,6 +99,7 @@
 
 mod accessibility_scene;
 mod action;
+pub mod adapter;
 pub mod advanced;
 #[cfg(feature = "test-support")]
 #[doc(hidden)]

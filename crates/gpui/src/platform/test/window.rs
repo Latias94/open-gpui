@@ -16,10 +16,11 @@ use crate::{
     RequestFrameOptions, Scene, Size, TestPlatform, TextInputConfiguration, TextInputStateChange,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
     WindowCreationFacts, WindowInsets, WindowMutationDomain, WindowMutationRequest, WindowParams,
-    WindowPlacementState, WindowPlatformFacts, WindowPresentationShutdownTicket,
-    WindowProvisionalPlacementNativeFacts, WindowProvisionalPlacementOutcome,
-    WindowProvisionalPlacementRequest, WindowProvisionalRevealNativeFacts,
-    WindowProvisionalRevealZOrder, WindowProvisionalSession, WindowVisibility,
+    WindowPhysicalPlacementRequest, WindowPlacementState, WindowPlatformFacts,
+    WindowPresentationShutdownTicket, WindowProvisionalPlacementNativeFacts,
+    WindowProvisionalPlacementOutcome, WindowProvisionalPlacementRequest,
+    WindowProvisionalRevealNativeFacts, WindowProvisionalRevealZOrder, WindowProvisionalSession,
+    WindowVisibility,
 };
 #[cfg(test)]
 use crate::{
@@ -1920,6 +1921,16 @@ impl PlatformWindow for TestWindow {
 
     fn physical_geometry(&self) -> Option<PlatformWindowPhysicalGeometry> {
         test_physical_geometry(&self.0.lock())
+    }
+
+    fn physical_placement_for_outer_bounds(
+        &self,
+        bounds: Bounds<DevicePixels>,
+    ) -> Option<WindowPhysicalPlacementRequest> {
+        // TestWindow has no native decorations. This conversion prepares a
+        // request; physical observations still come from the mutation owner.
+        let display = test_display_observation(&self.0.lock())?;
+        WindowPhysicalPlacementRequest::try_new_for_display(bounds, bounds.origin, display)
     }
 
     fn native_pointer_physical_frame(&self) -> Option<PlatformNativePointerPhysicalFrame> {

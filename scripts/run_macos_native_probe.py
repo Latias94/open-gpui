@@ -24,6 +24,7 @@ def success_marker(executable, arguments):
             "native-close": "native close gate passed",
         }.get(mode, f"native windowing {mode} gate passed")
     return {
+        "open-gpui-dockspace-editor": "DOCKSPACE NATIVE SMOKE OK:",
         "native_layer_shutdown": "NATIVE LAYER SHUTDOWN OK:",
         "native_window_appearance": (
             "native application appearance, inheritance, callback, and cleanup probe passed"
@@ -119,7 +120,7 @@ def main():
         arguments = arguments[1:]
     marker = success_marker(executable.name, arguments)
     if marker is None:
-        parser.error("expected one of the four open-gpui-macos native examples")
+        parser.error("expected a supported Open-GPUI native probe executable")
 
     output = Path(tempfile.mkdtemp(prefix="open-gpui-macos-probe-"))
     app = output / "GPUIProbe.app"
