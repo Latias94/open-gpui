@@ -643,3 +643,30 @@ Nara target directory. Historical Mac Session **0/12** remains an actual origina
 Host Open failure; NaraFS's unsupported exact-spelling/local-identity guarantees
 were not bypassed. Windows DX12/Vulkan execution, graph gestures, physical input
 and Editor-default selection remain separate follow-up.
+
+## Shared native Root continuation follow-up
+
+Reviewing dockspace's newer native-window helpers exposed a production-adapter
+retirement defect at Open-GPUI `76e2c6463944ddfaba00ae71676d14d3741dfc12`.
+Two logical placements in one physical Root produce two continuation pairs with
+the same predecessor/successor window. Moving the physical callback entry while
+processing the first pair made the second pair skip its placement-retirement
+notification. The bridge now records each distinct predecessor independently
+of physical callback movement and deduplicates pending retirement notifications.
+
+The new shared-Root regression fails against the original implementation with
+one reported predecessor instead of two. After the correction, the full shared
+adapter cohort passes **47/47**, nextest run
+`e5e9f1d8-9a15-4e3b-80ae-1dcff77748b1`, with 1,476 incumbent tests outside the
+filter. Independent review finds no confirmed P1/P2. Adding explicit notification
+cardinality and nonempty late-callback assertions retains **47/47**, run
+`18bf55e2-4e6d-4f01-89d8-f78431f5e5ae`. The regression also checks callback identity, the surviving anchor,
+repeated report delivery, late predecessor callbacks, and quiescence of both
+placements while the physical window remains live. Its intermediate fixture
+needed to drain and consume the original queued stale callback before claiming
+quiescence; this did not change production retirement requirements.
+
+The production dependency remains dockspace `46da973b`; inspecting a newer local
+source does not update its immutable pin or qualify its uncommitted changes.
+These are deterministic GPUI test-renderer results, not new physical-input or
+native-renderer qualification. No native probe was launched for this follow-up.

@@ -17,8 +17,8 @@ use open_gpui::{
 
 use super::{NativeBridge, NativeBridgeError, NativeCloseDecision, NativeReport, NativeTransport};
 
-fn session() -> DockspaceSession {
-    let layout = DockspaceLayout::new([1, 2].map(|value| {
+fn layout() -> DockspaceLayout {
+    DockspaceLayout::new([1, 2].map(|value| {
         DockspaceSurfaceLayout::new(
             SurfaceId::new(value),
             DockspaceRootLayout::new(
@@ -27,8 +27,11 @@ fn session() -> DockspaceSession {
             ),
         )
     }))
-    .unwrap();
-    DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap()
+    .unwrap()
+}
+
+fn session() -> DockspaceSession {
+    DockspaceSession::from_layout(layout(), DockPolicy::default()).unwrap()
 }
 
 fn commit(session: &mut DockspaceSession) -> HostFrameReport {
@@ -124,6 +127,143 @@ fn missing_native_hover_is_unknown_and_an_unmatched_sample_cannot_prove_desktop(
         super::input::native_hover(&desktop, None, resolve),
         NativePointerHover::Unknown
     );
+}
+
+#[open_gpui::test]
+fn shared_root_continuation_retires_each_placement_once(cx: &mut TestAppContext) {
+    use dockspace::{
+        geometry::{LogicalSize, PhysicalPoint, PhysicalRect, ScaleFactor},
+        runtime::{NativeSurfacePlacement, NativeWindowFacts, NativeWorkAreaRoster},
+    };
+
+    let (mut session, mut bridge, original, window) = cx.update(|cx| {
+        let mut session = session();
+        let mut bridge = NativeBridge::enable(
+            &mut session,
+            NativeTransport::new(|_| {}),
+            NativeHostCapabilities::none_supported()
+                .with(NativeHostCapability::AuthoritativeInventory),
+            None,
+        )
+        .unwrap();
+        session
+            .register_native_root(SurfaceId::new(1), HostWindowToken::new(1))
+            .unwrap();
+        let registered = commit(&mut session);
+        let original = registered.native_bindings()[0].window();
+        let window: AnyWindowHandle = cx
+            .open_window_detailed(WindowOptions::default(), |_, cx| cx.new(|_| Empty))
+            .unwrap()
+            .into();
+        bridge.bind_window(original, window, true, cx).unwrap();
+        bridge.collect(&mut session).unwrap();
+        commit(&mut session);
+        (session, bridge, original, window)
+    });
+    session
+        .report_managed_native_snapshot(
+            [(
+                original,
+                NativeWindowFacts::live()
+                    .with_content_bounds(PhysicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap())
+                    .with_native_scale_factor(ScaleFactor::new(1.0).unwrap())
+                    .with_presentation_scale_factor(ScaleFactor::new(1.0).unwrap()),
+            )],
+            NativeWorkAreaRoster::Unknown,
+        )
+        .unwrap();
+    commit(&mut session);
+    let placements = [1_u32, 2].map(|id| {
+        let x = f64::from(id - 1) * 400.0;
+        NativeSurfacePlacement::new(
+            SurfaceId::new(u64::from(id)),
+            LogicalSize::new(400.0, 600.0).unwrap(),
+            PhysicalPoint::new(x, 0.0).unwrap(),
+            ScaleFactor::new(1.0).unwrap(),
+            PhysicalRect::new(x, 0.0, 400.0, 600.0).unwrap(),
+        )
+    });
+    let mut frame = session
+        .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+        .unwrap();
+    frame
+        .set_native_surface_placements(original, &placements)
+        .unwrap();
+    frame
+        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+        .unwrap();
+    let mut composed = frame.commit().unwrap();
+    bridge.accept_report(&mut composed);
+    bridge.take_reports();
+    let reset = session.prepare_layout_reset(layout()).unwrap();
+    let mut frame = session
+        .begin_native_layout_reset_frame(&reset, |_| NativeReceiverAnswer::Unknown)
+        .unwrap();
+    frame
+        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+        .unwrap();
+    let mut report = frame.commit().unwrap();
+    let pairs = report.native_root_continuations().to_vec();
+    assert_eq!(pairs.len(), 2);
+    let successor = pairs[0].successor().window();
+    assert!(
+        pairs
+            .iter()
+            .all(|pair| pair.predecessor().window() == original)
+    );
+    assert!(
+        pairs
+            .iter()
+            .all(|pair| pair.successor().window() == successor)
+    );
+    bridge.accept_report(&mut report);
+    let retired: Vec<_> = bridge
+        .take_reports()
+        .into_iter()
+        .filter_map(|report| match report {
+            NativeReport::RetirePlacement(binding) => Some(binding),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(retired.len(), 2);
+    assert_eq!(
+        retired
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>(),
+        pairs.iter().map(|pair| pair.predecessor()).collect()
+    );
+    assert_eq!(
+        bridge.binding_for_window(window.window_id()),
+        Some(successor)
+    );
+    assert_eq!(bridge.anchor, Some(successor));
+    assert!(bridge.callbacks(original).is_none());
+    let callbacks = bridge.callbacks(successor).unwrap();
+    assert_eq!(callbacks.binding(), successor);
+    assert_eq!(callbacks.window_id(), Some(window.window_id()));
+    bridge.accept_report(&mut report);
+    assert!(bridge.take_reports().is_empty());
+    bridge.collect(&mut session).unwrap();
+    commit(&mut session);
+    assert!(bridge.transport.is_empty());
+    let late = bridge.take_reports();
+    assert!(!late.is_empty());
+    assert!(
+        late.iter().all(|report| matches!(report,
+            NativeReport::StaleCallback(binding) if *binding == original)),
+        "{late:?}"
+    );
+    assert!(!session.has_pending_native_input());
+    for pair in pairs {
+        bridge
+            .quiesce_binding(&mut session, pair.predecessor())
+            .unwrap();
+        commit(&mut session);
+        assert!(!session.recognizes_native_binding(pair.predecessor()));
+        assert!(session.is_current_native_binding(pair.successor()));
+    }
+    assert!(bridge.retired_placements.is_empty());
+    cx.update(|cx| assert!(cx.windows().contains(&window)));
 }
 
 #[open_gpui::test]

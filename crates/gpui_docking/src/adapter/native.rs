@@ -308,15 +308,17 @@ impl NativeBridge {
                 if self.anchor == Some(before.window()) {
                     self.anchor = Some(after.window());
                 }
-                self.retired_placements.insert(before);
+            }
+            if self.retired_placements.insert(before) {
                 self.reports
                     .push_back(NativeReport::RetirePlacement(before));
             }
         }
         for binding in report.native_placement_detachments() {
-            self.retired_placements.insert(*binding);
-            self.reports
-                .push_back(NativeReport::RetirePlacement(*binding));
+            if self.retired_placements.insert(*binding) {
+                self.reports
+                    .push_back(NativeReport::RetirePlacement(*binding));
+            }
         }
         for binding in report.native_admissions() {
             self.reports.push_back(NativeReport::Admitted(*binding));
