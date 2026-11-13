@@ -269,6 +269,19 @@ fn qualify_fields(cdp: &mut CdpClient) -> Result<(), String> {
             "switching back to A lost B's model text: {restored}"
         ));
     }
+    for cycle in 0..12 {
+        command(cdp, 2)?;
+        edited(cdp, "repeated field B recovery", 1, body, end..end)?;
+        command(cdp, 1)?;
+        let restored = edited(cdp, "repeated field A recovery", 0, PROGRAMMATIC, 1..3)?;
+        if restored["model"]["fields"][0]["counts"] != before["model"]["fields"][0]["counts"]
+            || restored["model"]["fields"][1]["editableText"] != body
+        {
+            return Err(format!(
+                "focus round trip {cycle} changed retained input state: {restored}"
+            ));
+        }
+    }
     Ok(())
 }
 

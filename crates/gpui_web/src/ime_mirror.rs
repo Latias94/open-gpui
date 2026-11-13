@@ -17,7 +17,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use open_gpui::{Autocapitalize, TextInputAction, TextInputConfiguration};
+use open_gpui::{Autocapitalize, PlatformInputHandler, TextInputAction, TextInputConfiguration};
 use wasm_bindgen::JsCast;
 
 use crate::window::WebWindowInner;
@@ -302,7 +302,23 @@ impl ImeMirror {
             let window = Rc::clone(window);
             move || {
                 window.ime_mirror.sync_scheduled.set(false);
-                sync(&window);
+                if window.is_composing.get() {
+                    return;
+                }
+                // Releasing a checkout can publish another accepted handler. Keep
+                // all model queries and DOM writes within one callback lease.
+                let synchronized_focus = window.with_input_handler(|handler| {
+                    let focus = handler.focus_id();
+                    sync(&window, Some(handler));
+                    focus
+                });
+                if synchronized_focus.is_none() {
+                    sync(&window, None);
+                }
+                let current_focus = window.with_input_handler(|handler| handler.focus_id());
+                if current_focus != synchronized_focus {
+                    Self::schedule_sync(&window);
+                }
             }
         });
         window
@@ -335,10 +351,7 @@ impl ImeMirror {
         /// changed independently (caret moved by tap or keybinding, remote
         /// edit inside the window) or the selection drifted too close to
         /// the window's edge to give the IME context.
-        fn sync(window: &WebWindowInner) {
-            if window.is_composing.get() {
-                return;
-            }
+        fn sync(window: &WebWindowInner, handler: Option<&mut PlatformInputHandler>) {
             let mirror = &window.ime_mirror;
             // A live element selection that differs from the stored baseline
             // while the value still matches is an IME-driven selection move
@@ -357,10 +370,11 @@ impl ImeMirror {
                     return;
                 }
             }
-            let selection = window
-                .with_input_handler(|handler| handler.selected_text_range(false))
-                .flatten();
-            let Some(selection) = selection else {
+            let handler_selection = handler.and_then(|handler| {
+                let selection = handler.selected_text_range(false)?;
+                Some((handler, selection))
+            });
+            let Some((handler, selection)) = handler_selection else {
                 if !mirror.text.borrow().is_empty() {
                     mirror.element.set_value("");
                     mirror.text.borrow_mut().clear();
@@ -373,12 +387,11 @@ impl ImeMirror {
             // IME edit gestures (word deletion, autocorrect rewrites), so
             // text outside the range must not be mirrored at all. The IME
             // sees the range's edges as the field's edges.
-            let editable_range = window
-                .with_input_handler(|handler| handler.text_input_editable_range())
-                .flatten();
+            let editable_range = handler.text_input_editable_range();
 
             if is_consistent(
                 window,
+                handler,
                 &selection.range,
                 editable_range.as_ref(),
                 MIN_EDGE_CHARS,
@@ -393,6 +406,7 @@ impl ImeMirror {
             // right when it is about to act on the tapped word.
             if move_selection_within_window(
                 window,
+                handler,
                 &selection.range,
                 editable_range.as_ref(),
                 MIN_EDGE_CHARS,
@@ -410,11 +424,8 @@ impl ImeMirror {
                     .max(window_range.start);
             }
             let mut adjusted = None;
-            let text = window
-                .with_input_handler(|handler| {
-                    handler.text_for_range(window_range.clone(), &mut adjusted)
-                })
-                .flatten()
+            let text = handler
+                .text_for_range(window_range.clone(), &mut adjusted)
                 .unwrap_or_default();
             let window_start = adjusted.unwrap_or(window_range).start;
 
@@ -457,6 +468,7 @@ impl ImeMirror {
 /// mispositioning the selection.
 fn move_selection_within_window(
     window: &WebWindowInner,
+    handler: &mut PlatformInputHandler,
     app_selection: &std::ops::Range<usize>,
     editable_range: Option<&std::ops::Range<usize>>,
     min_edge: usize,
@@ -500,14 +512,11 @@ fn move_selection_within_window(
     // excuses a missing right margin, as does reaching the editable
     // range's end.
     let mut adjusted = None;
-    let document_text = window
-        .with_input_handler(|handler| {
-            handler.text_for_range(
-                window_start..window_start + stored_length + 1,
-                &mut adjusted,
-            )
-        })
-        .flatten()
+    let document_text = handler
+        .text_for_range(
+            window_start..window_start + stored_length + 1,
+            &mut adjusted,
+        )
         .unwrap_or_default();
     let document_text_length = document_text.encode_utf16().count();
     let window_at_right_boundary = document_text_length == stored_length
@@ -541,6 +550,7 @@ fn move_selection_within_window(
 /// the element (see [`sync`] on why writes are harmful).
 fn is_consistent(
     window: &WebWindowInner,
+    handler: &mut PlatformInputHandler,
     app_selection: &std::ops::Range<usize>,
     editable_range: Option<&std::ops::Range<usize>>,
     min_edge: usize,
@@ -588,11 +598,8 @@ fn is_consistent(
             // Verify the window genuinely reaches the end of the document
             // by asking for one unit past the stored window.
             let mut adjusted = None;
-            window
-                .with_input_handler(|handler| {
-                    handler.text_for_range(window_end..window_end + 1, &mut adjusted)
-                })
-                .flatten()
+            handler
+                .text_for_range(window_end..window_end + 1, &mut adjusted)
                 .unwrap_or_default()
                 .is_empty()
         };
@@ -604,14 +611,11 @@ fn is_consistent(
     // (a remote edit inside the window invalidates it), and the element
     // must still hold exactly the stored text.
     let mut adjusted = None;
-    let document_text = window
-        .with_input_handler(|handler| {
-            handler.text_for_range(
-                app_window_start..app_window_start + stored_length,
-                &mut adjusted,
-            )
-        })
-        .flatten()
+    let document_text = handler
+        .text_for_range(
+            app_window_start..app_window_start + stored_length,
+            &mut adjusted,
+        )
         .unwrap_or_default();
     if document_text != stored_text {
         return false;
