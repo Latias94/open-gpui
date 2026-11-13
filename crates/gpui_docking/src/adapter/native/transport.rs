@@ -14,7 +14,7 @@ use open_gpui::{
     WindowFrameSubmissionSnapshot,
 };
 
-use super::{NativeBridge, NativeBridgeError, NativeReport};
+use super::{NativeBridge, NativeBridgeError, NativeReport, gpui::SubmissionCustody};
 
 #[cfg(test)]
 #[path = "transport_tests.rs"]
@@ -163,7 +163,11 @@ pub(super) enum Inbound {
     ),
     LogicalClosed(NativeWindowBinding),
     NativeTerminal(NativeWindowBinding, NativeWindowFacts),
-    Submission(NativeWindowBinding, WindowFrameSubmissionSnapshot),
+    Submission(
+        NativeWindowBinding,
+        WindowFrameSubmissionSnapshot,
+        SubmissionCustody,
+    ),
     CaptureTerminal(
         NativeWindowBinding,
         NativeCapturedDragReleaseBarrier,
@@ -193,7 +197,7 @@ impl Inbound {
             | Self::Close(binding, _, _)
             | Self::LogicalClosed(binding)
             | Self::NativeTerminal(binding, _)
-            | Self::Submission(binding, _)
+            | Self::Submission(binding, _, _)
             | Self::CaptureTerminal(binding, _, _) => Some(*binding),
             Self::CaptureUnobserved(binding) => Some(*binding),
             Self::Effect(result) => Some(result.binding().window()),
@@ -213,7 +217,14 @@ impl NativeBridge {
         while let Some(record) = self.transport.pop() {
             if let Some(binding) = record.binding()
                 && (!session.recognizes_native_window_binding(binding)
-                    || !self.windows.contains_key(&binding))
+                    || match &record {
+                        Inbound::Submission(_, snapshot, original) => !self
+                            .windows
+                            .binding(snapshot.window_id())
+                            .and_then(|current| self.windows.get(current))
+                            .is_some_and(|callbacks| callbacks.has_submission_custody(original)),
+                        _ => self.windows.get(binding).is_none(),
+                    })
                 && !matches!(record, Inbound::Effect(_))
             {
                 self.reports.push_back(NativeReport::StaleCallback(binding));
@@ -223,7 +234,7 @@ impl NativeBridge {
             match record {
                 Inbound::Effect(result) => {
                     let result =
-                        if let Some(callbacks) = self.windows.get(&result.binding().window()) {
+                        if let Some(callbacks) = self.windows.get(result.binding().window()) {
                             callbacks.correlate_cleanup(result)
                         } else {
                             result
@@ -254,13 +265,13 @@ impl NativeBridge {
         match record {
             Inbound::Observed(binding, facts) => {
                 self.record_snapshot(session, Some((*binding, *facts)), None)?;
-                if let Some(callbacks) = self.windows.get(binding) {
+                if let Some(callbacks) = self.windows.get(*binding) {
                     callbacks.set_facts(*facts);
                 }
             }
             Inbound::Close(binding, state, acknowledgement) => {
                 session.publish_native_close(*binding, *state, *acknowledgement)?;
-                if let Some(callbacks) = self.windows.get(binding)
+                if let Some(callbacks) = self.windows.get(*binding)
                     && let Some(facts) = callbacks.facts()
                 {
                     callbacks.set_facts(facts.with_close(*state, *acknowledgement));
@@ -268,7 +279,7 @@ impl NativeBridge {
             }
             Inbound::LogicalClosed(binding) => {
                 session.report_native_input_binding_retired(*binding)?;
-                if let Some(callbacks) = self.windows.get(binding) {
+                if let Some(callbacks) = self.windows.get(*binding) {
                     callbacks.set_logical_closed();
                 }
                 self.reports
@@ -279,7 +290,7 @@ impl NativeBridge {
             }
             Inbound::NativeTerminal(binding, facts) => {
                 self.record_snapshot(session, Some((*binding, *facts)), None)?;
-                if let Some(callbacks) = self.windows.get(binding) {
+                if let Some(callbacks) = self.windows.get(*binding) {
                     callbacks.set_facts(*facts);
                     callbacks.set_native_terminal();
                 }
@@ -289,22 +300,14 @@ impl NativeBridge {
                     self.draining = true;
                 }
             }
-            Inbound::Submission(binding, snapshot) => {
-                if self
-                    .windows
-                    .get(binding)
-                    .and_then(|entry| entry.window_id())
-                    != Some(snapshot.window_id())
-                {
-                    return Err(NativeBridgeError::UnknownBinding);
-                }
+            Inbound::Submission(binding, snapshot, _) => {
                 self.reports.push_back(NativeReport::Submission {
                     binding: *binding,
                     snapshot: *snapshot,
                 });
             }
             Inbound::CaptureTerminal(binding, barrier, terminal) => {
-                if let Some(callbacks) = self.windows.get(binding) {
+                if let Some(callbacks) = self.windows.get(*binding) {
                     callbacks.finish_capture(*barrier, *terminal);
                 }
                 self.reports.push_back(NativeReport::CaptureTerminal {
@@ -325,7 +328,7 @@ impl NativeBridge {
             } => {
                 let callbacks = self
                     .windows
-                    .get(binding)
+                    .get(*binding)
                     .ok_or(NativeBridgeError::UnknownBinding)?;
                 if !callbacks.can_accept_capture_event(event) {
                     self.reports

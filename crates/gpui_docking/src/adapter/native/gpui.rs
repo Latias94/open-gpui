@@ -1,7 +1,7 @@
 use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
-    rc::Rc,
+    rc::{Rc, Weak},
 };
 
 use dockspace::{
@@ -136,6 +136,8 @@ struct CallbackState {
 /// Callback custody for one physical lifetime; it never borrows `SharedHost`.
 #[derive(Clone)]
 pub struct NativeCallbacks(Rc<CallbackState>);
+
+pub(super) struct SubmissionCustody(Weak<CallbackState>);
 
 impl NativeCallbacks {
     pub(super) fn new(
@@ -323,9 +325,10 @@ impl NativeCallbacks {
             if let Some(state) = weak.upgrade()
                 && !state.sealed.get()
             {
-                state
-                    .transport
-                    .push(Inbound::Submission(binding, snapshot), cx);
+                state.transport.push(
+                    Inbound::Submission(binding, snapshot, SubmissionCustody(weak)),
+                    cx,
+                );
             }
         });
         Ok(())
@@ -354,6 +357,9 @@ impl NativeCallbacks {
     /// Returns the exact current callback route, never a surface-id lookup.
     pub fn binding(&self) -> NativeWindowBinding {
         self.0.binding.get()
+    }
+    pub(super) fn has_submission_custody(&self, original: &SubmissionCustody) -> bool {
+        Rc::downgrade(&self.0).ptr_eq(&original.0)
     }
     /// Returns the full GPUI window id reserved during root construction.
     pub fn window_id(&self) -> Option<open_gpui::WindowId> {
@@ -690,6 +696,9 @@ impl NativeBridge {
         if self.draining || self.transport.is_frozen() {
             return Err(NativeBridgeError::Draining);
         }
+        if self.opening.is_some() {
+            return Err(NativeBridgeError::NotQuiescent);
+        }
         let owner = window.window_handle().window_id();
         if (anchor && self.anchor.is_some()) || self.binding_for_window(owner).is_some() {
             return Err(NativeBridgeError::WindowAlreadyBound);
@@ -701,14 +710,14 @@ impl NativeBridge {
             Some(owner)
         } else {
             self.anchor
-                .and_then(|binding| self.windows.get(&binding))
+                .and_then(|binding| self.windows.get(binding))
                 .and_then(NativeCallbacks::window_id)
         };
         if let Some(anchor) = anchor {
             let dependencies = self
                 .windows
-                .values()
-                .filter_map(NativeCallbacks::window_id)
+                .iter()
+                .map(|(_, window, _)| window)
                 .chain(std::iter::once(owner))
                 .filter(|dependency| *dependency != anchor);
             cx.register_native_window_retirement_dependencies(anchor, dependencies)
@@ -724,13 +733,23 @@ impl NativeBridge {
         anchor: bool,
         cx: &mut App,
     ) -> Result<NativeCallbacks, NativeBridgeError> {
-        let callbacks = self
-            .windows
-            .entry(binding)
-            .or_insert_with(|| {
-                NativeCallbacks::new(binding, self.transport.clone(), self.geometry.clone())
-            })
-            .clone();
+        if self.opening.is_some() {
+            return Err(NativeBridgeError::NotQuiescent);
+        }
+        let owner = ticket.snapshot().window_id();
+        let callbacks = if let Some(callbacks) = self.windows.get(binding) {
+            if callbacks.window_id() != Some(owner) {
+                return Err(NativeBridgeError::WindowAlreadyBound);
+            }
+            callbacks.clone()
+        } else {
+            let callbacks =
+                NativeCallbacks::new(binding, self.transport.clone(), self.geometry.clone());
+            self.windows
+                .insert(binding, owner, callbacks.clone())
+                .map_err(|_| NativeBridgeError::WindowAlreadyBound)?;
+            callbacks
+        };
         if anchor && self.anchor.is_none() {
             callbacks.set_anchor();
             self.anchor = Some(binding);
@@ -747,7 +766,7 @@ impl NativeBridge {
     ) -> Result<(), NativeBridgeError> {
         if let Some(anchor) = self
             .anchor
-            .and_then(|binding| self.windows.get(&binding))
+            .and_then(|binding| self.windows.get(binding))
             .and_then(NativeCallbacks::window_id)
         {
             cx.register_native_window_retirement_dependencies(anchor, retirements)
@@ -766,14 +785,18 @@ impl NativeBridge {
         factory: &mut NativeWindowFactory<'_>,
         cx: &mut App,
     ) -> Result<usize, NativeBridgeError> {
-        for callbacks in self.windows.values() {
+        if self.opening.is_some() {
+            self.register_opening()?;
+            self.refresh_dependencies(cx)?;
+        }
+        for (_, _, callbacks) in self.windows.iter() {
             callbacks.observe_open_retirement(cx);
             callbacks.dispatch_capture_cancellations(cx);
         }
-        for callbacks in self
+        for (_, _, callbacks) in self
             .windows
-            .values()
-            .filter(|callbacks| callbacks.0.close.get().is_some())
+            .iter()
+            .filter(|(_, _, callbacks)| callbacks.0.close.get().is_some())
         {
             self.remove_window(callbacks, cx);
         }
@@ -855,7 +878,7 @@ impl NativeBridge {
                     resolution: NativeCloseDisposition::Cancel,
                 } => self.cancel_close_effect(request, close.binding(), cx),
                 NativeEffectOperation::RetainChild { binding } => {
-                    if self.windows.contains_key(&binding.window()) {
+                    if self.windows.get(binding.window()).is_some() {
                         let _ = request.begin_dispatch().accepted();
                     } else {
                         self.transport.push(
@@ -867,7 +890,7 @@ impl NativeBridge {
                     }
                 }
                 NativeEffectOperation::AwaitCleanup { binding } => {
-                    if let Some(callbacks) = self.windows.get(&binding.window()) {
+                    if let Some(callbacks) = self.windows.get(binding.window()) {
                         if let Some(NativeEffectAcknowledgement::Cleanup(observation)) =
                             request.begin_dispatch().accepted()
                         {
@@ -914,7 +937,7 @@ impl NativeBridge {
         factory: &mut NativeWindowFactory<'_>,
         cx: &mut App,
     ) -> Result<(), NativeBridgeError> {
-        if self.windows.contains_key(&open.binding.window()) {
+        if self.windows.get(open.binding.window()).is_some() {
             self.transport.push(
                 Inbound::Effect(request.dispatch_failed(NativeDispatchFailure::AdapterRejected)),
                 cx,
@@ -926,8 +949,7 @@ impl NativeBridge {
             self.transport.clone(),
             self.geometry.clone(),
         );
-        self.windows
-            .insert(open.binding.window(), callbacks.clone());
+        self.opening = Some(callbacks.clone());
         let dispatch = request.begin_dispatch();
         match factory(open, &callbacks, cx) {
             Err(error) => {
@@ -949,12 +971,25 @@ impl NativeBridge {
                     retirement_ticket,
                 });
                 if !owns_native {
-                    self.windows.remove(&open.binding.window());
+                    self.opening = None;
                 } else {
+                    self.register_opening()?;
                     self.refresh_dependencies(cx)?;
                 }
             }
             Ok(handle) => {
+                let registered = self
+                    .register_opening()
+                    .and_then(|()| self.refresh_dependencies(cx));
+                if let Err(error) = registered {
+                    self.transport.push(
+                        Inbound::Effect(
+                            dispatch.indeterminate(NativeIndeterminateReason::AcknowledgementLost),
+                        ),
+                        cx,
+                    );
+                    return Err(error);
+                }
                 if callbacks.handle() != Some(handle) {
                     self.transport.push(
                         Inbound::Effect(
@@ -964,7 +999,6 @@ impl NativeBridge {
                     );
                     return Err(NativeBridgeError::UnknownBinding);
                 }
-                self.refresh_dependencies(cx)?;
                 let placement = handle.update(cx, |_, window, _| {
                     self.geometry
                         .as_ref()
@@ -1129,7 +1163,7 @@ impl NativeBridge {
         enabled: bool,
         cx: &mut App,
     ) {
-        let Some(callbacks) = self.windows.get(&binding.window()).cloned() else {
+        let Some(callbacks) = self.windows.get(binding.window()).cloned() else {
             self.transport.push(
                 Inbound::Effect(request.dispatch_failed(NativeDispatchFailure::WindowUnavailable)),
                 cx,
@@ -1185,7 +1219,7 @@ impl NativeBridge {
         binding: NativeSurfaceBinding,
         cx: &mut App,
     ) {
-        let Some(callbacks) = self.windows.get(&binding.window()).cloned() else {
+        let Some(callbacks) = self.windows.get(binding.window()).cloned() else {
             self.transport.push(
                 Inbound::Effect(request.dispatch_failed(NativeDispatchFailure::WindowUnavailable)),
                 cx,
@@ -1244,7 +1278,7 @@ impl NativeBridge {
         binding: NativeSurfaceBinding,
         cx: &mut App,
     ) {
-        let Some(callbacks) = self.windows.get(&binding.window()) else {
+        let Some(callbacks) = self.windows.get(binding.window()) else {
             self.transport.push(
                 Inbound::Effect(request.dispatch_failed(NativeDispatchFailure::WindowUnavailable)),
                 cx,
@@ -1273,7 +1307,7 @@ impl NativeBridge {
         binding: NativeSurfaceBinding,
         cx: &mut App,
     ) {
-        let Some(callbacks) = self.windows.get(&binding.window()).cloned() else {
+        let Some(callbacks) = self.windows.get(binding.window()).cloned() else {
             self.transport.push(
                 Inbound::Effect(request.dispatch_failed(NativeDispatchFailure::WindowUnavailable)),
                 cx,
@@ -1313,14 +1347,14 @@ impl NativeBridge {
     pub(super) fn refresh_dependencies(&self, cx: &App) -> Result<(), NativeBridgeError> {
         if let Some(anchor) = self
             .anchor
-            .and_then(|binding| self.windows.get(&binding))
+            .and_then(|binding| self.windows.get(binding))
             .and_then(NativeCallbacks::window_id)
         {
             let dependents = self
                 .windows
                 .iter()
-                .filter(|(binding, _)| Some(**binding) != self.anchor)
-                .filter_map(|(_, callbacks)| callbacks.window_id());
+                .filter(|(binding, _, _)| Some(*binding) != self.anchor)
+                .map(|(_, window, _)| window);
             cx.register_native_window_retirement_dependencies(anchor, dependents)
                 .map_err(NativeBridgeError::Dependencies)?;
         }
@@ -1340,18 +1374,19 @@ impl NativeBridge {
             return Ok(());
         }
         self.draining = true;
-        for (binding, callbacks) in &self.windows {
-            if Some(*binding) != self.anchor {
+        for (binding, _, callbacks) in self.windows.iter() {
+            if Some(binding) != self.anchor {
                 self.remove_window(callbacks, cx);
             }
         }
         let dependents_terminal = self
             .windows
             .iter()
-            .filter(|(binding, _)| Some(**binding) != self.anchor)
-            .all(|(_, callbacks)| callbacks.0.native_terminal.get());
+            .filter(|(binding, _, _)| Some(*binding) != self.anchor)
+            .all(|(_, _, callbacks)| callbacks.0.native_terminal.get());
         if dependents_terminal
-            && let Some(anchor) = self.anchor.and_then(|binding| self.windows.get(&binding))
+            && self.opening.is_none()
+            && let Some(anchor) = self.anchor.and_then(|binding| self.windows.get(binding))
         {
             self.remove_window(anchor, cx);
         }
@@ -1369,6 +1404,7 @@ impl NativeBridge {
         binding: NativeSurfaceBinding,
     ) -> Result<(), NativeBridgeError> {
         if !self.transport.is_empty()
+            || self.opening.is_some()
             || !self.reports.is_empty()
             || session.has_pending_native_input()
             || self
@@ -1381,14 +1417,14 @@ impl NativeBridge {
         {
             return Err(NativeBridgeError::NotQuiescent);
         }
-        if let Some(callbacks) = self.windows.get(&binding.window())
+        if let Some(callbacks) = self.windows.get(binding.window())
             && (!callbacks.0.sealed.get() || !callbacks.0.native_terminal.get())
             && !self.retired_placements.contains(&binding)
         {
             return Err(NativeBridgeError::NotQuiescent);
         }
         session.report_native_binding_quiescence(binding)?;
-        if let Some(callbacks) = self.windows.get(&binding.window()) {
+        if let Some(callbacks) = self.windows.get(binding.window()) {
             callbacks
                 .0
                 .cleanup
@@ -1401,7 +1437,7 @@ impl NativeBridge {
             .next()
             .is_none()
         {
-            self.windows.remove(&binding.window());
+            let _ = self.windows.remove(binding.window());
         }
         Ok(())
     }

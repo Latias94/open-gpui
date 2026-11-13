@@ -25,7 +25,7 @@ mod transport;
 mod tests;
 
 use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeSet, VecDeque},
     rc::Rc,
 };
 
@@ -33,7 +33,7 @@ use dockspace::runtime::{
     DockspaceRuntimeError, DockspaceSession, HostFrameReport, NativeEffectRequest,
     NativeHostCapabilities, NativeHostCapability, NativePointerRoster, NativeSurfaceBinding,
     NativeSurfaceCloseAction, NativeSurfaceCloseRequest, NativeWindowBinding, NativeWindowFacts,
-    NativeWorkAreaRoster,
+    NativeWindows, NativeWorkAreaRoster,
 };
 use open_gpui::{
     AnyWindowHandle, App, NativeCapturedDragReleaseBarrier, NativeCapturedDragReleaseTerminal,
@@ -150,7 +150,8 @@ pub type NativeWindowFactory<'factory> = dyn FnMut(
 /// Physical bindings and ordered transport for one managed native provider.
 pub struct NativeBridge {
     transport: NativeTransport,
-    windows: BTreeMap<NativeWindowBinding, NativeCallbacks>,
+    windows: NativeWindows<open_gpui::WindowId, NativeCallbacks>,
+    opening: Option<NativeCallbacks>,
     effects: VecDeque<NativeEffectRequest>,
     reports: VecDeque<NativeReport>,
     geometry: Option<Rc<NativeGeometry>>,
@@ -195,7 +196,8 @@ impl NativeBridge {
         session.configure_managed_native_capabilities(capabilities)?;
         Ok(Self {
             transport,
-            windows: BTreeMap::new(),
+            windows: NativeWindows::new(),
+            opening: None,
             effects: VecDeque::new(),
             reports: VecDeque::new(),
             geometry,
@@ -226,14 +228,19 @@ impl NativeBridge {
 
     /// Reads the physical route without lending a mutable semantic owner.
     pub fn callbacks(&self, binding: NativeWindowBinding) -> Option<NativeCallbacks> {
-        self.windows.get(&binding).cloned()
+        self.windows
+            .get(binding)
+            .or_else(|| {
+                self.opening
+                    .as_ref()
+                    .filter(|callbacks| callbacks.binding() == binding)
+            })
+            .cloned()
     }
 
     /// Looks up the exact native lifetime using the full GPUI window id.
     pub fn binding_for_window(&self, window: open_gpui::WindowId) -> Option<NativeWindowBinding> {
-        self.windows.iter().find_map(|(binding, callbacks)| {
-            (callbacks.window_id() == Some(window)).then_some(*binding)
-        })
+        self.windows.binding(window)
     }
 
     /// Returns callback custody without borrowing the host's session.
@@ -271,12 +278,11 @@ impl NativeBridge {
         if self.draining || self.transport.is_frozen() {
             return Err(NativeBridgeError::Draining);
         }
-        if self.windows.contains_key(&binding)
-            || self
-                .windows
-                .values()
-                .any(|entry| entry.window_id() == Some(window.window_handle().window_id()))
-        {
+        if self.opening.is_some() {
+            return Err(NativeBridgeError::NotQuiescent);
+        }
+        let owner = window.window_handle().window_id();
+        if self.windows.get(binding).is_some() || self.windows.binding(owner).is_some() {
             return Err(NativeBridgeError::WindowAlreadyBound);
         }
         if anchor && self.anchor.is_some() {
@@ -289,7 +295,9 @@ impl NativeBridge {
             callbacks.set_anchor();
         }
         callbacks.install(window, cx)?;
-        self.windows.insert(binding, callbacks.clone());
+        self.windows
+            .insert(binding, owner, callbacks.clone())
+            .map_err(|_| NativeBridgeError::WindowAlreadyBound)?;
         if anchor {
             self.anchor = Some(binding);
         }
@@ -302,9 +310,10 @@ impl NativeBridge {
         for continuation in report.native_root_continuations() {
             let before = continuation.predecessor();
             let after = continuation.successor();
-            if let Some(callbacks) = self.windows.remove(&before.window()) {
-                callbacks.continue_root(after.window());
-                self.windows.insert(after.window(), callbacks);
+            if matches!(self.windows.continue_root(*continuation), Ok(true)) {
+                if let Some(callbacks) = self.windows.get(after.window()) {
+                    callbacks.continue_root(after.window());
+                }
                 if self.anchor == Some(before.window()) {
                     self.anchor = Some(after.window());
                 }
@@ -377,6 +386,7 @@ impl NativeBridge {
     /// Reports whether every physical and transport owner in this generation has retired.
     pub fn is_quiescent(&self) -> bool {
         self.windows.is_empty()
+            && self.opening.is_none()
             && self.effects.is_empty()
             && self.pending.is_none()
             && self.retired_placements.is_empty()
@@ -394,7 +404,7 @@ impl NativeBridge {
             let facts = replacement
                 .filter(|(window, _)| *window == binding)
                 .map(|(_, facts)| facts)
-                .or_else(|| self.windows.get(&binding).and_then(NativeCallbacks::facts))?;
+                .or_else(|| self.windows.get(binding).and_then(NativeCallbacks::facts))?;
             observations.push((binding, facts));
         }
         if let Some((binding, facts)) = replacement
@@ -404,5 +414,20 @@ impl NativeBridge {
             observations.push((binding, facts));
         }
         Some(observations)
+    }
+
+    fn register_opening(&mut self) -> Result<(), NativeBridgeError> {
+        let Some(callbacks) = self.opening.take() else {
+            return Ok(());
+        };
+        let Some(window) = callbacks.window_id() else {
+            self.opening = Some(callbacks);
+            return Err(NativeBridgeError::UnknownBinding);
+        };
+        if let Err(error) = self.windows.insert(callbacks.binding(), window, callbacks) {
+            self.opening = Some(error.into_value());
+            return Err(NativeBridgeError::WindowAlreadyBound);
+        }
+        Ok(())
     }
 }
