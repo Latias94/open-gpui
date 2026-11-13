@@ -103,8 +103,15 @@ pub mod gpui_adapter {
         point_anchor_placement,
     };
     pub use crate::table::TableDebugSelector;
-    pub use crate::text_input::adapter::{TextInputController, init as init_text_input};
+    pub use crate::text_input::adapter::TextInputController;
+    pub use crate::textarea::init as init_textarea;
     pub use crate::virtualized_list::runtime::VirtualizedListGpuiExt;
+
+    /// Registers default key bindings for single-line and multiline text controls.
+    pub fn init_text_input(cx: &mut open_gpui::App) {
+        crate::text_input::adapter::init(cx);
+        init_textarea(cx);
+    }
 }
 
 pub use public_api::default::*;

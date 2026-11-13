@@ -5,11 +5,12 @@ use std::{ops::Range, rc::Rc};
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, Bounds, Context, CursorStyle, Element, ElementId, ElementInputHandler, Entity,
-    EntityInputHandler, FocusHandle, Focusable, GlobalElementId, Hsla, InspectorElementId,
-    IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
-    ParentElement, Pixels, Point, RenderOnce, ScrollHandle, ShapedLine, SharedString, Style,
-    Styled, TargetedEvent, TextRun, UTF16Selection, Window, div, fill, point, px, relative, rgba,
+    App, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId, ElementInputHandler,
+    Entity, EntityInputHandler, FocusHandle, Focusable, GlobalElementId, Hsla, InspectorElementId,
+    IntoElement, KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    PaintQuad, ParentElement, Pixels, Point, PrepaintPublicationId, RenderOnce, ScrollHandle,
+    ShapedLine, SharedString, Style, Styled, TargetedEvent, TextRun, UTF16Selection, Window,
+    actions, div, fill, point, px, relative, rgba,
 };
 use open_gpui_ui_core::{
     AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx, ui_px,
@@ -27,9 +28,125 @@ use crate::form_control::FormControlState;
 use crate::text_editing::{
     self, EditableTextDocument, TextEditingPolicy, TextEditingProjection, TextSelection,
 };
+use crate::text_input::adapter::{
+    Backspace, Copy, Cut, Delete, End, Home, Left, Paste, Right, SelectAll, SelectLeft,
+    SelectRight, ShowCharacterPalette,
+};
 use crate::theme::ThemeResolver;
 
 type TextareaChangeHandler = Rc<dyn Fn(String, &mut Window, &mut App)>;
+
+actions!(
+    textarea,
+    [
+        /// Insert a line break at the current selection.
+        InsertNewline,
+        /// Move the caret to the preceding line.
+        Up,
+        /// Move the caret to the following line.
+        Down,
+        /// Extend selection to the preceding line.
+        SelectUp,
+        /// Extend selection to the following line.
+        SelectDown,
+        /// Extend selection to the start of the current line.
+        SelectHome,
+        /// Extend selection to the end of the current line.
+        SelectEnd,
+        /// Move the caret to the start of the document.
+        DocumentHome,
+        /// Move the caret to the end of the document.
+        DocumentEnd,
+        /// Extend selection to the start of the document.
+        SelectDocumentHome,
+        /// Extend selection to the end of the document.
+        SelectDocumentEnd,
+    ]
+);
+
+const TEXTAREA_KEY_CONTEXT: &str = "Textarea";
+
+/// Registers default key bindings for multiline text controls.
+pub fn init(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("enter", InsertNewline, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("shift-enter", InsertNewline, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("backspace", Backspace, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("shift-backspace", Backspace, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("delete", Delete, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("left", Left, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("right", Right, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("shift-left", SelectLeft, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("shift-right", SelectRight, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("up", Up, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("down", Down, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("shift-up", SelectUp, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("shift-down", SelectDown, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("home", Home, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("end", End, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("shift-home", SelectHome, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("shift-end", SelectEnd, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("ctrl-home", DocumentHome, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("ctrl-end", DocumentEnd, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new(
+            "ctrl-shift-home",
+            SelectDocumentHome,
+            Some(TEXTAREA_KEY_CONTEXT),
+        ),
+        KeyBinding::new(
+            "ctrl-shift-end",
+            SelectDocumentEnd,
+            Some(TEXTAREA_KEY_CONTEXT),
+        ),
+        KeyBinding::new("cmd-left", Home, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("cmd-right", End, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("cmd-shift-left", SelectHome, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("cmd-shift-right", SelectEnd, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("cmd-up", DocumentHome, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("cmd-down", DocumentEnd, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new(
+            "cmd-shift-up",
+            SelectDocumentHome,
+            Some(TEXTAREA_KEY_CONTEXT),
+        ),
+        KeyBinding::new(
+            "cmd-shift-down",
+            SelectDocumentEnd,
+            Some(TEXTAREA_KEY_CONTEXT),
+        ),
+        KeyBinding::new("cmd-a", SelectAll, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("ctrl-a", SelectAll, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("cmd-c", Copy, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("ctrl-c", Copy, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("ctrl-insert", Copy, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("cmd-x", Cut, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("ctrl-x", Cut, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new("shift-delete", Cut, Some(TEXTAREA_KEY_CONTEXT)),
+        #[cfg(not(target_family = "wasm"))]
+        KeyBinding::new("cmd-v", Paste, Some(TEXTAREA_KEY_CONTEXT)),
+        #[cfg(not(target_family = "wasm"))]
+        KeyBinding::new("ctrl-v", Paste, Some(TEXTAREA_KEY_CONTEXT)),
+        #[cfg(not(target_family = "wasm"))]
+        KeyBinding::new("shift-insert", Paste, Some(TEXTAREA_KEY_CONTEXT)),
+        KeyBinding::new(
+            "ctrl-cmd-space",
+            ShowCharacterPalette,
+            Some(TEXTAREA_KEY_CONTEXT),
+        ),
+    ]);
+}
+
+#[derive(Clone, Copy)]
+enum CursorMovement {
+    Left,
+    Right,
+    Up,
+    Down,
+    LineStart,
+    LineEnd,
+    DocumentStart,
+    DocumentEnd,
+}
 
 /// Resolved textarea color intents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -372,12 +489,17 @@ struct TextareaController {
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
+    preferred_vertical_x: Option<Pixels>,
     last_layout: Vec<TextareaLayoutLine>,
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
     disabled: bool,
     read_only: bool,
     on_change: Option<TextareaChangeHandler>,
+    edit_revision: u64,
+    pending_paste: Option<(u64, ClipboardItem)>,
+    publication: PrepaintPublicationId,
+    reveal_caret: bool,
 }
 
 impl std::fmt::Debug for TextareaController {
@@ -389,12 +511,15 @@ impl std::fmt::Debug for TextareaController {
             .field("selected_range", &self.selected_range)
             .field("selection_reversed", &self.selection_reversed)
             .field("marked_range", &self.marked_range)
+            .field("preferred_vertical_x", &self.preferred_vertical_x)
             .field("last_layout", &self.last_layout)
             .field("last_bounds", &self.last_bounds)
             .field("is_selecting", &self.is_selecting)
             .field("disabled", &self.disabled)
             .field("read_only", &self.read_only)
             .field("on_change", &self.on_change.as_ref().map(|_| "<handler>"))
+            .field("edit_revision", &self.edit_revision)
+            .field("paste_queued", &self.pending_paste.is_some())
             .finish()
     }
 }
@@ -408,12 +533,17 @@ impl TextareaController {
             selected_range: 0..0,
             selection_reversed: false,
             marked_range: None,
+            preferred_vertical_x: None,
             last_layout: Vec::new(),
             last_bounds: None,
             is_selecting: false,
             disabled: false,
             read_only: false,
             on_change: None,
+            edit_revision: 0,
+            pending_paste: None,
+            publication: PrepaintPublicationId::new(),
+            reveal_caret: false,
         }
     }
 
@@ -476,6 +606,9 @@ impl TextareaController {
         read_only: bool,
         on_change: Option<TextareaChangeHandler>,
     ) {
+        if self.disabled != disabled || self.read_only != read_only {
+            self.invalidate_paste();
+        }
         self.disabled = disabled;
         self.read_only = read_only;
         self.on_change = on_change;
@@ -532,10 +665,19 @@ impl TextareaController {
     }
 
     fn apply_editing_projection(&mut self, projection: TextEditingProjection) {
+        if self.content.as_ref() != projection.text()
+            || self.selected_range != projection.selection().range()
+            || self.selection_reversed != projection.selection().reversed()
+            || self.marked_range != projection.marked_range()
+        {
+            self.invalidate_paste();
+            self.reveal_caret = true;
+        }
         self.content = projection.text().into();
         self.selected_range = projection.selection().range();
         self.selection_reversed = projection.selection().reversed();
         self.marked_range = projection.marked_range();
+        self.preferred_vertical_x = None;
     }
 
     fn index_for_mouse_position(&self, position: Point<Pixels>) -> usize {
@@ -597,6 +739,198 @@ impl TextareaController {
     fn dispatch_change(&self, window: &mut Window, cx: &mut App) {
         if let Some(on_change) = self.on_change.as_ref().cloned() {
             on_change(self.content.to_string(), window, cx);
+        }
+    }
+
+    fn accepts_keyboard_navigation(&self) -> bool {
+        !self.disabled && self.marked_range.is_none()
+    }
+
+    fn move_cursor(&mut self, movement: CursorMovement, selecting: bool, cx: &mut Context<Self>) {
+        if !self.accepts_keyboard_navigation() {
+            cx.propagate();
+            return;
+        }
+        let cursor = self.cursor_offset();
+        let mut preferred_x = None;
+        let offset = match movement {
+            CursorMovement::Left if !selecting && !self.selected_range.is_empty() => {
+                self.selected_range.start
+            }
+            CursorMovement::Right if !selecting && !self.selected_range.is_empty() => {
+                self.selected_range.end
+            }
+            CursorMovement::Left => self.document().previous_grapheme_boundary(cursor),
+            CursorMovement::Right => self.document().next_grapheme_boundary(cursor),
+            CursorMovement::LineStart => self.content[..cursor]
+                .rfind('\n')
+                .map_or(0, |index| index + 1),
+            CursorMovement::LineEnd => self.content[cursor..]
+                .find('\n')
+                .map_or(self.content.len(), |index| cursor + index),
+            CursorMovement::DocumentStart => 0,
+            CursorMovement::DocumentEnd => self.content.len(),
+            CursorMovement::Up | CursorMovement::Down => {
+                let Some(line) = layout_line_for_offset(&self.last_layout, cursor) else {
+                    return;
+                };
+                let x = self
+                    .preferred_vertical_x
+                    .unwrap_or_else(|| line.x_for_stored_offset(cursor, self.value()));
+                preferred_x = Some(x);
+                let target_index = match movement {
+                    CursorMovement::Up => line.index.checked_sub(1),
+                    _ => line.index.checked_add(1),
+                };
+                match target_index.and_then(|index| self.last_layout.get(index)) {
+                    Some(target) => target.stored_offset_for_x(x, self.value()),
+                    None if matches!(movement, CursorMovement::Up) => 0,
+                    None => self.content.len(),
+                }
+            }
+        };
+        if selecting {
+            self.select_to(offset, cx);
+        } else {
+            self.move_to(offset, cx);
+        }
+        self.preferred_vertical_x = preferred_x;
+    }
+
+    fn insert_newline(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.accepts_editing() || !self.accepts_keyboard_navigation() {
+            cx.propagate();
+            return;
+        }
+        self.replace_text_in_range(None, "\n", window, cx);
+    }
+
+    fn delete(&mut self, backward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.accepts_editing() || !self.accepts_keyboard_navigation() {
+            cx.propagate();
+            return;
+        }
+        let projection = if backward {
+            self.document().delete_backward()
+        } else {
+            self.document().delete_forward()
+        };
+        if let Some(projection) = projection {
+            let previous = self.content.clone();
+            self.apply_editing_projection(projection);
+            if previous != self.content {
+                self.dispatch_change(window, cx);
+            }
+            cx.notify();
+        } else {
+            window.play_system_bell();
+        }
+    }
+
+    fn select_all(&mut self, cx: &mut Context<Self>) {
+        if !self.accepts_keyboard_navigation() {
+            cx.propagate();
+            return;
+        }
+        self.set_accessible_selection_bytes(0, self.content.len(), cx);
+    }
+
+    fn copy(&self, cx: &mut Context<Self>) {
+        if !self.accepts_keyboard_navigation() {
+            cx.propagate();
+            return;
+        }
+        if !self.selected_range.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(
+                self.content[self.selected_range.clone()].to_string(),
+            ));
+        }
+    }
+
+    fn cut(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.accepts_editing() || !self.accepts_keyboard_navigation() {
+            cx.propagate();
+            return;
+        }
+        self.copy(cx);
+        if !self.selected_range.is_empty() {
+            self.replace_text_in_range(None, "", window, cx);
+        }
+    }
+
+    fn paste(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.accepts_editing() || !self.accepts_keyboard_navigation() {
+            cx.propagate();
+            return;
+        }
+        self.invalidate_paste();
+        let revision = self.edit_revision;
+        let read = cx.read_from_clipboard_async();
+        cx.spawn_in(window, async move |this, cx| {
+            if let Some(item) = read.await? {
+                let _ = cx.update(|_, cx| {
+                    this.update(cx, |this, cx| {
+                        if this.edit_revision == revision {
+                            this.pending_paste = Some((revision, item));
+                            cx.notify();
+                        }
+                    })
+                });
+            }
+            Ok::<_, open_gpui::ClipboardReadError>(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn invalidate_paste(&mut self) {
+        self.edit_revision = self.edit_revision.wrapping_add(1);
+        self.pending_paste = None;
+    }
+
+    fn accept_frame(
+        &mut self,
+        revision: u64,
+        scroll: &ScrollHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.edit_revision != revision {
+            return;
+        }
+        if !self.focus_handle.is_focused(window)
+            || !window.is_focus_handle_rendered(&self.focus_handle)
+            || !window.subtree_presentation().is_interactive()
+        {
+            self.invalidate_paste();
+            return;
+        }
+        if self.reveal_caret
+            && let Some(bounds) = self.last_bounds
+            && let Some(line) = layout_line_for_offset(&self.last_layout, self.cursor_offset())
+        {
+            self.reveal_caret = false;
+            let viewport = scroll.bounds();
+            let line_height = textarea_layout_line_height(&bounds, &self.last_layout);
+            let top = bounds.top() + line_height * line.index as f32;
+            let bottom = top + line_height;
+            let mut offset = scroll.offset();
+            if top < viewport.top() {
+                offset.y += viewport.top() - top;
+            } else if bottom > viewport.bottom() {
+                offset.y += viewport.bottom() - bottom;
+            }
+            offset.y = offset.y.clamp(-scroll.max_offset().y, px(0.0));
+            if offset != scroll.offset() {
+                scroll.set_offset(offset);
+                cx.notify();
+            }
+        }
+        if let Some((pending_revision, item)) = self.pending_paste.take()
+            && pending_revision == revision
+            && self.accepts_editing()
+            && self.accepts_keyboard_navigation()
+        {
+            EntityInputHandler::paste(self, item, window, cx);
         }
     }
 
@@ -686,7 +1020,9 @@ impl EntityInputHandler for TextareaController {
     }
 
     fn unmark_text(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.marked_range = None;
+        if self.marked_range.take().is_some() {
+            self.invalidate_paste();
+        }
         cx.notify();
     }
 
@@ -1202,6 +1538,34 @@ impl RenderOnce for Textarea {
             })
             .when_some(controller.clone(), |this, controller| {
                 let focus = controller.focus_handle(cx);
+                let revision = controller.read(cx).edit_revision;
+                let publication = controller.read(cx).publication;
+                let accepted = controller.downgrade();
+                let discarded = controller.downgrade();
+                let scroll = scroll_handle.clone();
+                let newline = controller.clone();
+                let backspace = controller.clone();
+                let delete = controller.clone();
+                let left = controller.clone();
+                let right = controller.clone();
+                let up = controller.clone();
+                let down = controller.clone();
+                let select_left = controller.clone();
+                let select_right = controller.clone();
+                let select_up = controller.clone();
+                let select_down = controller.clone();
+                let home = controller.clone();
+                let end = controller.clone();
+                let select_home = controller.clone();
+                let select_end = controller.clone();
+                let document_home = controller.clone();
+                let document_end = controller.clone();
+                let select_document_home = controller.clone();
+                let select_document_end = controller.clone();
+                let select_all = controller.clone();
+                let copy = controller.clone();
+                let cut = controller.clone();
+                let paste = controller.clone();
                 let mouse_down = controller.clone();
                 let mouse_up = controller.clone();
                 let mouse_up_out = controller.clone();
@@ -1212,60 +1576,178 @@ impl RenderOnce for Textarea {
                 let set_text_selection_published_value = published_semantic_value;
                 let set_value = controller.clone();
 
-                this.track_focus(&focus)
-                    .on_ui_a11y_action(
-                        AccessibleAction::ReplaceSelectedText,
-                        move |data, window, cx| {
-                            dispatch_accessible_text_replacement(
-                                &replace_selected_text,
-                                data,
-                                AccessibleTextReplacementTarget::SelectedText,
-                                window,
-                                cx,
-                            );
-                        },
-                    )
-                    .on_ui_a11y_action(
-                        AccessibleAction::SetTextSelection,
-                        move |data, _window, cx| {
-                            dispatch_accessible_text_selection_in_runs(
-                                &set_text_selection,
-                                set_text_selection_published_value.as_str(),
-                                data,
-                                &set_text_selection_runs,
-                                cx,
-                            );
-                        },
-                    )
-                    .on_ui_a11y_action(AccessibleAction::SetValue, move |data, window, cx| {
+                this.record_prepaint_window_transaction(
+                    publication,
+                    move |_, window, cx| {
+                        let _ = accepted.update(cx, |controller, cx| {
+                            controller.accept_frame(revision, &scroll, window, cx);
+                        });
+                    },
+                    move |_, _, cx| {
+                        let _ = discarded.update(cx, |controller, _| {
+                            controller.invalidate_paste();
+                        });
+                    },
+                )
+                .key_context(TEXTAREA_KEY_CONTEXT)
+                .track_focus(&focus)
+                .on_ui_a11y_action(
+                    AccessibleAction::ReplaceSelectedText,
+                    move |data, window, cx| {
                         dispatch_accessible_text_replacement(
-                            &set_value,
+                            &replace_selected_text,
                             data,
-                            AccessibleTextReplacementTarget::EntireValue,
+                            AccessibleTextReplacementTarget::SelectedText,
                             window,
                             cx,
                         );
-                    })
-                    .on_mouse_down(MouseButton::Left, move |event, window, cx| {
-                        mouse_down.update(cx, |controller, cx| {
-                            controller.on_mouse_down(event, window, cx);
-                        });
-                    })
-                    .on_mouse_up(MouseButton::Left, move |event, window, cx| {
-                        mouse_up.update(cx, |controller, cx| {
-                            controller.on_mouse_up(event, window, cx);
-                        });
-                    })
-                    .on_mouse_up_out(MouseButton::Left, move |event, window, cx| {
-                        mouse_up_out.update(cx, |controller, cx| {
-                            controller.on_mouse_up(event, window, cx);
-                        });
-                    })
-                    .on_mouse_move(move |event, window, cx| {
-                        mouse_move.update(cx, |controller, cx| {
-                            controller.on_mouse_move(event, window, cx);
-                        });
-                    })
+                    },
+                )
+                .on_ui_a11y_action(
+                    AccessibleAction::SetTextSelection,
+                    move |data, _window, cx| {
+                        dispatch_accessible_text_selection_in_runs(
+                            &set_text_selection,
+                            set_text_selection_published_value.as_str(),
+                            data,
+                            &set_text_selection_runs,
+                            cx,
+                        );
+                    },
+                )
+                .on_ui_a11y_action(AccessibleAction::SetValue, move |data, window, cx| {
+                    dispatch_accessible_text_replacement(
+                        &set_value,
+                        data,
+                        AccessibleTextReplacementTarget::EntireValue,
+                        window,
+                        cx,
+                    );
+                })
+                .on_action(move |_: &InsertNewline, window, cx| {
+                    newline.update(cx, |controller, cx| controller.insert_newline(window, cx));
+                })
+                .on_action(move |_: &Backspace, window, cx| {
+                    backspace.update(cx, |controller, cx| controller.delete(true, window, cx));
+                })
+                .on_action(move |_: &Delete, window, cx| {
+                    delete.update(cx, |controller, cx| controller.delete(false, window, cx));
+                })
+                .on_action(move |_: &Left, _, cx| {
+                    left.update(cx, |controller, cx| {
+                        controller.move_cursor(CursorMovement::Left, false, cx)
+                    });
+                })
+                .on_action(move |_: &Right, _, cx| {
+                    right.update(cx, |controller, cx| {
+                        controller.move_cursor(CursorMovement::Right, false, cx)
+                    });
+                })
+                .on_action(move |_: &Up, _, cx| {
+                    up.update(cx, |controller, cx| {
+                        controller.move_cursor(CursorMovement::Up, false, cx)
+                    });
+                })
+                .on_action(move |_: &Down, _, cx| {
+                    down.update(cx, |controller, cx| {
+                        controller.move_cursor(CursorMovement::Down, false, cx)
+                    });
+                })
+                .on_action(move |_: &SelectLeft, _, cx| {
+                    select_left.update(cx, |controller, cx| {
+                        controller.move_cursor(CursorMovement::Left, true, cx)
+                    });
+                })
+                .on_action(move |_: &SelectRight, _, cx| {
+                    select_right.update(cx, |controller, cx| {
+                        controller.move_cursor(CursorMovement::Right, true, cx)
+                    });
+                })
+                .on_action(move |_: &SelectUp, _, cx| {
+                    select_up.update(cx, |controller, cx| {
+                        controller.move_cursor(CursorMovement::Up, true, cx)
+                    });
+                })
+                .on_action(move |_: &SelectDown, _, cx| {
+                    select_down.update(cx, |controller, cx| {
+                        controller.move_cursor(CursorMovement::Down, true, cx)
+                    });
+                })
+                .on_action(move |_: &Home, _, cx| {
+                    home.update(cx, |controller, cx| {
+                        controller.move_cursor(CursorMovement::LineStart, false, cx)
+                    });
+                })
+                .on_action(move |_: &End, _, cx| {
+                    end.update(cx, |controller, cx| {
+                        controller.move_cursor(CursorMovement::LineEnd, false, cx)
+                    });
+                })
+                .on_action(move |_: &SelectHome, _, cx| {
+                    select_home.update(cx, |controller, cx| {
+                        controller.move_cursor(CursorMovement::LineStart, true, cx)
+                    });
+                })
+                .on_action(move |_: &SelectEnd, _, cx| {
+                    select_end.update(cx, |controller, cx| {
+                        controller.move_cursor(CursorMovement::LineEnd, true, cx)
+                    });
+                })
+                .on_action(move |_: &DocumentHome, _, cx| {
+                    document_home.update(cx, |controller, cx| {
+                        controller.move_cursor(CursorMovement::DocumentStart, false, cx)
+                    });
+                })
+                .on_action(move |_: &DocumentEnd, _, cx| {
+                    document_end.update(cx, |controller, cx| {
+                        controller.move_cursor(CursorMovement::DocumentEnd, false, cx)
+                    });
+                })
+                .on_action(move |_: &SelectDocumentHome, _, cx| {
+                    select_document_home.update(cx, |controller, cx| {
+                        controller.move_cursor(CursorMovement::DocumentStart, true, cx)
+                    });
+                })
+                .on_action(move |_: &SelectDocumentEnd, _, cx| {
+                    select_document_end.update(cx, |controller, cx| {
+                        controller.move_cursor(CursorMovement::DocumentEnd, true, cx)
+                    });
+                })
+                .on_action(move |_: &SelectAll, _, cx| {
+                    select_all.update(cx, |controller, cx| controller.select_all(cx));
+                })
+                .on_action(move |_: &Copy, _, cx| {
+                    copy.update(cx, |controller, cx| controller.copy(cx));
+                })
+                .on_action(move |_: &Cut, window, cx| {
+                    cut.update(cx, |controller, cx| controller.cut(window, cx));
+                })
+                .on_action(move |_: &Paste, window, cx| {
+                    paste.update(cx, |controller, cx| controller.paste(window, cx));
+                })
+                .on_action(move |_: &ShowCharacterPalette, window, _| {
+                    window.show_character_palette();
+                })
+                .on_mouse_down(MouseButton::Left, move |event, window, cx| {
+                    mouse_down.update(cx, |controller, cx| {
+                        controller.on_mouse_down(event, window, cx);
+                    });
+                })
+                .on_mouse_up(MouseButton::Left, move |event, window, cx| {
+                    mouse_up.update(cx, |controller, cx| {
+                        controller.on_mouse_up(event, window, cx);
+                    });
+                })
+                .on_mouse_up_out(MouseButton::Left, move |event, window, cx| {
+                    mouse_up_out.update(cx, |controller, cx| {
+                        controller.on_mouse_up(event, window, cx);
+                    });
+                })
+                .on_mouse_move(move |event, window, cx| {
+                    mouse_move.update(cx, |controller, cx| {
+                        controller.on_mouse_move(event, window, cx);
+                    });
+                })
             })
             .child(text_content)
     }

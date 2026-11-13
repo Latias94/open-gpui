@@ -36,6 +36,19 @@ label. Wrap independent actions in `listbox::ListboxRowAction`; pass the row's
 disabled state to children that share that policy. These callbacks belong to the
 GPUI adapter and never run during renderer-neutral state resolution.
 
+`gpui_adapter::init_text_input` now registers editing bindings for both TextInput
+and Textarea. Applications that initialize controls individually may call
+`text_input::adapter::init` and `gpui_adapter::init_textarea`. Textarea handles
+ordinary multiline Enter, deletion, horizontal/vertical cursor movement,
+directional selection and clipboard editing through its original text document,
+focus and IME handlers. During active composition these editing actions yield to
+the original input owner. Read-only fields retain navigation/copy while refusing
+mutations. A delayed paste stays bound to the original text/selection revision;
+its result waits for the original control's accepted publication and rechecks
+current properties, focus and rendered membership. An intervening edit, selection,
+composition, retirement or editability change cancels that request. Keyboard
+navigation and editing reveal the caret through the original scroll handle.
+
 ## Blanket Element Conversion
 
 `Element` now requires `'static + Sized` and no longer requires a separate `IntoElement`
