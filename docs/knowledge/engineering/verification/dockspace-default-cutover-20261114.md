@@ -14,6 +14,11 @@ incumbent-removal or physical-platform qualification scope.
 | Shared dockspace | `c200977d0f34943284a125c492919791650e1bff` | Unchanged production dependency; its complete session remains the only semantic authority of a migrated workspace. |
 | Official Zed | `27bbbc1cc480a7500cec122f120e796d1fb8500c` | Unchanged fixed GPUI comparison. This increment changes the fork-owned docking facade and consumers, with no new upstream Core/platform import. |
 
+| Open-GPUI delivery | Commit | Qualification linkage |
+| --- | --- | --- |
+| Structured diagnostic text redaction | `28ce49635639617bf6d2a68c2031f59f37f24a44` | Generic JSON structure/idempotence test and complete DevTools cohort below. |
+| Default session cutover, inspection and close decisions | `e7bf156a6dcafe49f34ea81e4d578159d1dad3ee` | Final source for the deterministic and compiler gates below; includes compatibility isolation, migrated consumers, root roster cleanup and wasm clock correction. Native attempts retain their explicitly intermediate build scope. |
+
 ## Ownership and API cutover
 
 The root and `prelude::DockSurface` now denote the shared-session implementation.

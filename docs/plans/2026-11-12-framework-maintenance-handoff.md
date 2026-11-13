@@ -66,6 +66,15 @@ before deleting those compatibility owners. Historical source paths below are
 relative to their recorded commits; incumbent files now live under
 `crates/gpui_docking/src/legacy/`.
 
+The cutover implementation is `e7bf156a`, preceded by generic JSON diagnostic
+redaction `28ce4963`. Final default docking passes 65 cases, all-feature docking
+passes 1,541, complete DevTools passes 123 and the migrated example pair passes
+its two lifecycle trajectories. Rust 1.95, the independent consumer, wasm smoke
+compilation and ownership/documentation gates pass. Two real Mac editor attempts
+refuse startup without an atomic display publication; both exit and leave zero
+probe processes/apps. Preserve that unpassed native boundary when selecting the
+next downstream pin; do not replace it with the earlier successful smoke receipt.
+
 The continuation independently rechecks the full 564-SHA fixed upstream set,
 149 root/toolchain entries and actual final iOS/Apple/Tokio/EGL/renderer owners;
 no unexplained applicable source omission remains. `6561969d` adds the original
