@@ -2634,6 +2634,10 @@ impl Window {
                 cx.enqueue_window_button_layout_changed(handle.window_id());
             }
         }));
+        platform_window.on_active_status_source(Box::new({
+            let cx = cx.to_async();
+            move || cx.capture_window_active_status_source(handle.window_id())
+        }));
         platform_window.on_active_status_change(Box::new({
             let cx = cx.to_async();
             move |observation| {

@@ -197,6 +197,14 @@ impl AsyncApp {
         );
     }
 
+    pub(crate) fn capture_window_active_status_source(
+        &self,
+        window_id: WindowId,
+    ) -> Option<crate::PlatformWindowActiveStatusSource> {
+        let app = self.app.upgrade()?;
+        Some(app.capture_window_active_status_source(window_id))
+    }
+
     pub(crate) fn enqueue_window_modifiers_changed(
         &self,
         window_id: WindowId,

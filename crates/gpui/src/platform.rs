@@ -1177,6 +1177,26 @@ pub enum PlatformWindowActivationSupport {
 pub struct PlatformWindowActiveStatusObservation {
     active: bool,
     exact_native_positive: bool,
+    source: Option<PlatformWindowActiveStatusSource>,
+}
+
+/// Original application-ingress identity of a native activation edge.
+///
+/// Backends that defer confirmation retain this value from the source callback rather than
+/// assigning the old edge the later delivery's position among activation commands.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlatformWindowActiveStatusSource {
+    window_id: WindowId,
+    sequence: u64,
+}
+
+impl PlatformWindowActiveStatusSource {
+    pub(crate) const fn new(window_id: WindowId, sequence: u64) -> Self {
+        Self {
+            window_id,
+            sequence,
+        }
+    }
 }
 
 impl PlatformWindowActiveStatusObservation {
@@ -1186,6 +1206,20 @@ impl PlatformWindowActiveStatusObservation {
         Self {
             active,
             exact_native_positive: active && exact_native_positive,
+            source: None,
+        }
+    }
+
+    /// Attaches the original edge's source without granting positive activation evidence.
+    pub const fn with_source(mut self, source: PlatformWindowActiveStatusSource) -> Self {
+        self.source = Some(source);
+        self
+    }
+
+    pub(crate) fn activation_sequence(self, window_id: WindowId, delivery: u64) -> Option<u64> {
+        match self.source {
+            Some(source) => (source.window_id == window_id).then_some(source.sequence),
+            None => Some(delivery),
         }
     }
 
@@ -6236,6 +6270,15 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_input(&self, callback: PlatformInputCallback);
     fn on_modifiers_changed(&self, _callback: Box<dyn Fn(ModifiersChangedEvent)>) {}
     fn on_active_status_change(&self, callback: Box<dyn Fn(PlatformWindowActiveStatusObservation)>);
+    /// Registers the original-ingress capture used before deferred activation confirmation.
+    ///
+    /// Invoke the callback outside backend locks at the native edge, then attach its result with
+    /// [`PlatformWindowActiveStatusObservation::with_source`]. Synchronous backends need no capture.
+    fn on_active_status_source(
+        &self,
+        _callback: Box<dyn Fn() -> Option<PlatformWindowActiveStatusSource>>,
+    ) {
+    }
     /// Registers presentation visibility transitions outside any window update.
     fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>);
     fn on_hover_status_change(&self, callback: Box<dyn Fn(bool)>);

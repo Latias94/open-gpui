@@ -615,6 +615,10 @@ impl NativeEventIngress {
         NativeIngressSequence::new(self.reserve_sequence())
     }
 
+    pub(super) fn reserve_callback_sequence(&self) -> u64 {
+        self.reserve_sequence()
+    }
+
     fn reserve_sequence(&self) -> u64 {
         // Earlier callback entries must enter the foreground queue before this local sequence.
         let (staged, sequence) = self.sequencer.lock().take_staged_before_reserving();
@@ -1720,11 +1724,13 @@ impl NativeEventEnvelope {
                     if admissible
                         && observation.active()
                         && observation.exact_native_positive()
+                        && let Some(source_sequence) =
+                            observation.activation_sequence(window_id, ingress_sequence.value())
                         && let Some(app_cell) = cx.this.upgrade()
                     {
                         app_cell.observe_native_window_activation_exact_positive(
                             window_id,
-                            ingress_sequence.value(),
+                            source_sequence,
                         );
                     }
                     window.native_active_status_changed(observation.active(), cx);

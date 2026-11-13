@@ -2470,6 +2470,16 @@ impl AppCell {
         self.native_events.enqueue(window_id, event);
     }
 
+    pub(super) fn capture_window_active_status_source(
+        &self,
+        window_id: WindowId,
+    ) -> crate::PlatformWindowActiveStatusSource {
+        crate::PlatformWindowActiveStatusSource::new(
+            window_id,
+            self.native_events.reserve_callback_sequence(),
+        )
+    }
+
     pub(super) fn enqueue_frame_submission_completed(
         &self,
         submission: PlatformFrameSubmission,
@@ -4767,6 +4777,55 @@ mod tests {
                 PlatformWindowCommand::StartWindowResize(crate::ResizeEdge::BottomRight),
             ]
         );
+    }
+
+    #[crate::test]
+    fn deferred_old_activation_keeps_its_source_before_a_newer_window_command(
+        cx: &mut TestAppContext,
+    ) {
+        let source: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let target: AnyWindowHandle = cx
+            .open_window(size(px(280.0), px(180.0)), |_, _| Empty)
+            .into();
+        cx.run_until_parked();
+        cx.set_platform_focused_window_available(false);
+        let source_window = cx.test_window(source);
+        let target_window = cx.test_window(target);
+        target_window.set_platform_command_callback(|command, _| {
+            assert!(matches!(command, PlatformWindowCommand::Activate { .. }));
+            PlatformWindowCommandOutcome::Accepted
+        });
+        let original_source = cx
+            .to_async()
+            .capture_window_active_status_source(source.window_id())
+            .unwrap();
+        let old_positive = crate::PlatformWindowActiveStatusObservation::new(true, true)
+            .with_source(original_source);
+        let terminals = Rc::new(RefCell::new(Vec::new()));
+        let (ticket, _subscription) = cx
+            .update_window(target, |_, window, _| {
+                let ticket = window.activate_window();
+                let subscription = ticket.subscribe({
+                    let terminals = terminals.clone();
+                    move |snapshot| terminals.borrow_mut().push(snapshot.status())
+                });
+                // The source's native edge preceded this command, but its exact confirmation
+                // arrives while the original App borrow still holds the command in the FIFO.
+                source_window.simulate_active_status_observation(old_positive);
+                (ticket, subscription)
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            ticket.snapshot().status(),
+            crate::WindowActivationStatus::Terminal(WindowActivationTerminal::Activated)
+        );
+        assert_eq!(terminals.borrow().as_slice(), &[ticket.snapshot().status()]);
+        source_window.simulate_active_status_observation(old_positive);
+        cx.run_until_parked();
+        assert_eq!(terminals.borrow().as_slice(), &[ticket.snapshot().status()]);
     }
 
     #[crate::test]

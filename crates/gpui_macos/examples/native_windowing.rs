@@ -276,19 +276,31 @@ mod macos {
         drop(content);
         let callbacks = Rc::new(Cell::new(0));
         let callback_dropped = Rc::new(Cell::new(false));
+        let activation_request_in_flight = Rc::new(Cell::new(false));
         window.on_active_status_change(Box::new({
             let platform = Rc::downgrade(platform);
             let window = Rc::downgrade(&window);
             let callbacks = callbacks.clone();
+            let activation_request_in_flight = activation_request_in_flight.clone();
+            let native_window = Retained::as_ptr(&native_window);
             let lifetime = ObserveCallbackDrop(callback_dropped.clone());
             move |observation| {
                 let _lifetime = &lifetime;
                 assert!(MainThreadMarker::new().is_some());
+                assert!(
+                    !activation_request_in_flight.get(),
+                    "application activation callbacks must follow the native request"
+                );
                 let platform = platform.upgrade().expect("the running platform");
                 let window = window.upgrade().expect("the live platform window");
                 let _ = platform.background_executor();
                 let _ = window.is_active();
+                eprintln!("native activation callback: {observation:?}");
                 if observation.exact_native_positive() {
+                    let app = NSApplication::sharedApplication(MainThreadMarker::new().unwrap());
+                    let key_window: *const AnyObject =
+                        unsafe { objc2::msg_send![&*app, keyWindow] };
+                    assert_eq!(key_window, native_window);
                     callbacks.set(callbacks.get() + 1);
                 }
             }
@@ -302,14 +314,31 @@ mod macos {
         assert!(window.platform_facts().accepts_activation);
         platform.set_activation_policy(ActivationPolicy::Regular);
         if launched {
+            activation_request_in_flight.set(true);
             unsafe {
                 let _: () =
                     objc2::msg_send![&*native_window, makeKeyAndOrderFront: None::<&AnyObject>];
             }
             platform.activate(true);
+            activation_request_in_flight.set(false);
+            let mut last_activation = None;
             wait_for_native(
                 platform,
-                || is_active(app) && window.is_active() && callbacks.get() > 0,
+                || {
+                    let activation = (
+                        is_active(app),
+                        typed_window.isKeyWindow(),
+                        window.is_active(),
+                        callbacks.get(),
+                    );
+                    if last_activation != Some(activation) {
+                        eprintln!(
+                            "native activation (application, native key, observed key, callbacks): {activation:?}"
+                        );
+                        last_activation = Some(activation);
+                    }
+                    activation.0 && activation.2 && activation.3 > 0
+                },
                 "explicit activation must reach the exact window and its callback",
             )
             .await;

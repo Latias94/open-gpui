@@ -20,19 +20,20 @@ use open_gpui::{
     PlatformInputHandlerSlot, PlatformNativePointerPhysicalFrame,
     PlatformNativeWindowRetirementOutcome, PlatformPointerCaptureReleaseOutcome,
     PlatformPresentationShutdownOutcome, PlatformShouldCloseCallbackSlot, PlatformWindow,
-    PlatformWindowActiveStatusObservation, PlatformWindowCommand, PlatformWindowCommandDispatcher,
-    PlatformWindowCommandOutcome, PlatformWindowDispatch, PlatformWindowInteractionQuiescence,
-    PlatformWindowMutationObservation, PlatformWindowMutationTerminal,
-    PlatformWindowMutationUnobservedTerminal, PlatformWindowPhysicalGeometry,
-    PlatformWindowPresentOutcome, Point, PreparedPlatformPointerCaptureRelease,
-    PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions,
-    SharedString, Size, SystemWindowTab, WindowActivationPolicy, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowCreationFacts, WindowId,
-    WindowKind, WindowMutationDomain, WindowMutationRequest, WindowParams,
-    WindowPhysicalPlacementRequest, WindowPresentationShutdownTicket, WindowVisibility, point,
-    popup::PopupNotSupportedError, px, size,
+    PlatformWindowActiveStatusObservation, PlatformWindowActiveStatusSource, PlatformWindowCommand,
+    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, PlatformWindowDispatch,
+    PlatformWindowInteractionQuiescence, PlatformWindowMutationObservation,
+    PlatformWindowMutationTerminal, PlatformWindowMutationUnobservedTerminal,
+    PlatformWindowPhysicalGeometry, PlatformWindowPresentOutcome, Point,
+    PreparedPlatformPointerCaptureRelease, PreparedPlatformPresentationShutdown, PromptButton,
+    PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowActivationPolicy,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
+    WindowCreationFacts, WindowId, WindowKind, WindowMutationDomain, WindowMutationRequest,
+    WindowParams, WindowPhysicalPlacementRequest, WindowPresentationShutdownTicket,
+    WindowVisibility, point, popup::PopupNotSupportedError, px, size,
 };
 
+mod active_status;
 mod deferred_frame;
 mod file_drag;
 mod hover;
@@ -1259,6 +1260,8 @@ struct MacWindowPendingObservationEvent<O = MacWindowNativeObservation> {
     kind: MacWindowObservationEvent,
     observation: Option<O>,
     signal_at: Option<Instant>,
+    active_generation: Option<u64>,
+    active_source: Option<PlatformWindowActiveStatusSource>,
 }
 
 impl<O> MacWindowPendingObservationEvent<O> {
@@ -1267,6 +1270,8 @@ impl<O> MacWindowPendingObservationEvent<O> {
             kind,
             observation: Some(observation),
             signal_at: None,
+            active_generation: None,
+            active_source: None,
         }
     }
 
@@ -1275,6 +1280,8 @@ impl<O> MacWindowPendingObservationEvent<O> {
             kind,
             observation: None,
             signal_at: None,
+            active_generation: None,
+            active_source: None,
         }
     }
 }
@@ -1584,6 +1591,8 @@ struct MacWindowObservationEffectEvent {
     kind: MacWindowObservationEvent,
     is_latest_active: bool,
     signal_at: Option<Instant>,
+    active_generation: Option<u64>,
+    active_source: Option<PlatformWindowActiveStatusSource>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1610,6 +1619,8 @@ impl<O: Copy + PartialEq> MacWindowPendingObservationEvents<O> {
                     kind: event.kind,
                     is_latest_active: Some(event_index) == last_active_event_index,
                     signal_at: event.signal_at,
+                    active_generation: event.active_generation,
+                    active_source: event.active_source,
                 }),
             });
         }
@@ -1758,6 +1769,8 @@ struct MacWindowState {
     event_callback: PlatformInputCallbackSlot,
     native_pointer_frame: Rc<MacNativePointerPhysicalFrameState>,
     activate_callback: Option<Rc<dyn Fn(PlatformWindowActiveStatusObservation)>>,
+    active_status: active_status::MacWindowActiveStatus,
+    active_source_callback: Option<Rc<dyn Fn() -> Option<PlatformWindowActiveStatusSource>>>,
     visibility_observer: MacWindowVisibilityObserver,
     resize_callback: Option<Rc<dyn Fn(Size<Pixels>, f32)>>,
     moved_callback: Option<Rc<dyn Fn()>>,
@@ -1866,6 +1879,7 @@ impl MacWindowState {
         self.mutation_callback = None;
         self.request_frame_callback = None;
         self.activate_callback = None;
+        self.active_source_callback = None;
         self.resize_callback = None;
         self.moved_callback = None;
         self.display_changed_callback = None;
@@ -3387,6 +3401,8 @@ impl MacWindow {
                     event_callback: PlatformInputCallbackSlot::default(),
                     native_pointer_frame: Rc::default(),
                     activate_callback: None,
+                    active_status: active_status::MacWindowActiveStatus::default(),
+                    active_source_callback: None,
                     visibility_observer: MacWindowVisibilityObserver::default(),
                     resize_callback: None,
                     moved_callback: None,
@@ -3979,6 +3995,8 @@ fn deliver_window_observation_effect_batch(
                 active_event,
                 batch.observation.is_active,
                 event.is_latest_active,
+                event.active_generation,
+                event.active_source,
                 event.signal_at,
                 panic_boundary,
             );
@@ -5403,6 +5421,16 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn on_active_status_source(
+        &self,
+        callback: Box<dyn Fn() -> Option<PlatformWindowActiveStatusSource>>,
+    ) {
+        let mut state = self.0.lock();
+        if !state.is_closed() {
+            state.active_source_callback = Some(Rc::from(callback));
+        }
+    }
+
     fn on_hover_status_change(&self, _: Box<dyn Fn(bool)>) {}
 
     fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>) {
@@ -6707,6 +6735,17 @@ extern "C" fn window_did_change_key_status(this: &AnyObject, selector: Sel, _: *
         return;
     };
     let window_state = unsafe { get_window_state(this) };
+    let (generation, source_callback) = {
+        let mut state = window_state.lock();
+        if state.is_closed() || state.interaction_is_quiesced() {
+            return;
+        }
+        (
+            state.active_status.record_native_event(),
+            state.active_source_callback.clone(),
+        )
+    };
+    let source = source_callback.and_then(|callback| callback());
     let (target_generation, event) = {
         let state = window_state.lock();
         if state.is_closed() || state.interaction_is_quiesced() {
@@ -6714,6 +6753,8 @@ extern "C" fn window_did_change_key_status(this: &AnyObject, selector: Sel, _: *
         }
         let mut event = state.pending_observation_event(MacWindowObservationEvent::Active(event));
         event.signal_at = signal_at;
+        event.active_generation = Some(generation);
+        event.active_source = source;
         (state.observation_target_generation(), event)
     };
     request_window_observation_commit(&window_state, target_generation, Some(event), true);
@@ -6724,6 +6765,8 @@ fn deliver_window_active_event(
     event: MacWindowActiveEvent,
     observed_is_active: bool,
     event_is_latest: bool,
+    active_generation: Option<u64>,
+    active_source: Option<PlatformWindowActiveStatusSource>,
     signal_at: Option<Instant>,
     panic_boundary: &mut MacWindowCallbackPanicBoundary,
 ) {
@@ -6755,19 +6798,6 @@ fn deliver_window_active_event(
     }
 
     drop(lock);
-
-    let exact_reorder_positive =
-        event == MacWindowActiveEvent::BecameKey && event_is_latest && observed_is_active && {
-            let native_window = window_state.lock().native_window;
-            crate::main_thread_marker().is_some_and(|marker| unsafe {
-                let app = NSApplication::sharedApplication(marker);
-                let key_window: *mut AnyObject = msg_send![&*app, keyWindow];
-                key_window == native_window
-            })
-        };
-    if exact_reorder_positive && !reorder_mac_transient_after_native_activation(window_state) {
-        log::error!("failed to reorder an exact active macOS transient window");
-    }
 
     let a11y_events = {
         let mut lock = window_state.lock();
@@ -6816,34 +6846,13 @@ fn deliver_window_active_event(
         }
     }
 
-    let (callback, native_window) = {
-        let mut lock = window_state.lock();
-        if lock.is_closed() || lock.interaction_is_quiesced() {
-            return;
-        }
-        if is_active {
-            lock.move_traffic_light();
-        }
-        let Some(callback) = lock.activate_callback.clone() else {
-            return;
-        };
-        (callback, lock.native_window)
-    };
-    let exact_native_positive = is_active
-        && event_is_latest
-        && observed_is_active
-        && crate::main_thread_marker().is_some_and(|marker| unsafe {
-            let app = NSApplication::sharedApplication(marker);
-            let key_window: *mut AnyObject = msg_send![&*app, keyWindow];
-            key_window == native_window
-        });
-    panic_boundary.deliver(|| {
-        callback(PlatformWindowActiveStatusObservation::new(
-            is_active,
-            exact_native_positive,
-        ));
-    });
-    panic_boundary.deliver(|| drop(callback));
+    active_status::enqueue_observation(
+        window_state,
+        event,
+        active_generation,
+        active_source,
+        event_is_latest && observed_is_active,
+    );
 }
 
 extern "C" fn window_should_close(this: &AnyObject, _: Sel, _: *mut AnyObject) -> Bool {
