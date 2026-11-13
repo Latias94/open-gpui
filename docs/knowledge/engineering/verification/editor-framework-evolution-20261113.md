@@ -670,3 +670,7 @@ The production dependency remains dockspace `46da973b`; inspecting a newer local
 source does not update its immutable pin or qualify its uncommitted changes.
 These are deterministic GPUI test-renderer results, not new physical-input or
 native-renderer qualification. No native probe was launched for this follow-up.
+
+The [dockspace integration review](dockspace-integration-review-20261113.md)
+records the newer native helpers, candidate motion fixes, isolated source pins,
+test results and recommended adoption order.
