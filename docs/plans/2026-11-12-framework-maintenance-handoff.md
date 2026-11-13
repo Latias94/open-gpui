@@ -36,8 +36,8 @@ lifecycle qualification still precede retirement of their incumbent production o
 implementation and executed limits are recorded in the
 [November 13 evidence](../knowledge/engineering/verification/editor-framework-evolution-20261113.md).
 
-The current local code checkpoint is `104f5dca`
-on `refactor/editor-framework-evolution`; this session has not pushed it. Numeric,
+The evolution branch was fast-forward merged and published on `main` at
+`1686f58c`. Numeric,
 Tree and asynchronous choice workflows, multiline keyboard editing and the shared
 docking adapter have local commits and explicit compiler/source receipts. The
 Core/Mac and complete old/new docking libraries at `68d52b00` pass 3,626 cases in two
@@ -45,6 +45,16 @@ serial runs; 236 affected component/input cases also pass. The final real Mac
 smoke creates and submits a child, preserves View identity and local/shared state
 through relocation, and retires the exact native group while another workspace
 survives. Review findings, corrections and exact run IDs belong in the evidence.
+The subsequent [lifecycle review](../knowledge/engineering/verification/lifecycle-boundary-review-20261113.md)
+renews that native trajectory at the integrated `1686f58c` baseline and records
+the additional identity/receipt corrections and their own verification scope.
+Its fixes are `2012c525` (window identity), `e34ed609` (logical terminal receipts),
+`ba4506ae` (report consumption and physical inventory) and `ec7089b8` (capture
+release custody). Final Core and docking runs pass 1,723 and 1,532 cases
+respectively; the rebuilt editor also completes its native trajectory with OS
+exit 0. Continue consolidating cleanup entry points and qualifying platform
+input boundaries before deleting superseded docking owners. Keep document/View
+state in applications and docking policy in the adapter.
 
 The continuation independently rechecks the full 564-SHA fixed upstream set,
 149 root/toolchain entries and actual final iOS/Apple/Tokio/EGL/renderer owners;

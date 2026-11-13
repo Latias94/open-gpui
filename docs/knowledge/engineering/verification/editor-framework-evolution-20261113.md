@@ -712,12 +712,16 @@ static gates pass; advisory warnings remain. The
 [integration record](dockspace-integration-review-20261113.md) retains log paths,
 initial failures, source/compiler boundaries and remaining physical-input gates.
 
-The current real Mac renewal does **not** pass. Its first bounded attempt times
+The initial real Mac renewal of this integration does **not** pass. Its first bounded attempt times
 out in `ChildAdmitted`; diagnostic renewals first hit unavailable atomic display
 publication (`CoreGraphics returned no active displays`), then time out at root
 submission after a temporary display-wake assertion. Read-only console inspection
 confirms `CGSSessionScreenIsLocked = true`. The first child timeout is not thereby
 proven environmental. All diagnostic probes and temporary apps are closed, and
-diagnostic source/root-layout changes are removed. Exact-source native renewal
-must continue on an unlocked interactive desktop; earlier positive Mac receipts
-do not qualify this dependency or bridge revision.
+diagnostic source/root-layout changes are removed. A later exact-source run at
+`1686f58c` passes on the active desktop in 2.114 seconds, including child
+admission/submission, retained View edits, group retirement and surviving sibling
+isolation. The [lifecycle review](lifecycle-boundary-review-20261113.md) owns its
+actual OS exit-0 receipt and cleanup, the additional native close/layer checks,
+and subsequent Core/docking defect corrections. This later success does not
+retrospectively establish the cause of the initial child-admission timeout.

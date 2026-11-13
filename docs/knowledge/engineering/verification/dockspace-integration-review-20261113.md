@@ -234,7 +234,11 @@ as a single 3,506/3,506 passing run after its focused correction. Physical OS
 dragging, capture, mixed-DPI, IME across transferred panes and GPU pacing remain
 the owning platform gates.
 
-### Native renewal remains incomplete
+### Initial native renewal failure
+
+The later [lifecycle review](lifecycle-boundary-review-20261113.md#native-renewal-on-an-active-desktop)
+renews this exact integrated baseline successfully after an active desktop
+returns. The initial failures and diagnostics below keep their original scope.
 
 The production editor executable was rebuilt from Cargo's JSON artifact path and
 run only through the existing bounded LaunchServices runner. The initial attempt
@@ -255,8 +259,8 @@ the two root rectangles does not resolve that result.
 
 Read-only console inspection then confirms `CGSSessionScreenIsLocked = true`.
 No further GUI launches are attempted. The original child-admission timeout is
-not conclusively attributed to the later observed lock state; it still needs
-renewal on an unlocked interactive desktop. Core comparison finds no changed
+not conclusively attributed to the later observed lock state; at that point it
+still needs renewal on an unlocked interactive desktop. Core comparison finds no changed
 first-live guard in `46da973b..c200977d`, which is source evidence rather than
 proof that the native path works.
 
@@ -264,10 +268,11 @@ Every attempted process reaches its bounded failure/normal exit 1, and the
 runner removes its temporary app. Temporary diagnostic statements and the
 experimental root geometry are removed from source. The ordinary executable is
 rebuilt without them. No production display check, output admission guard,
-timeout or native assertion is relaxed. Positive qualification for this current
-source, including actual create/admit/move/retire and isolated sibling survival,
-remains required after desktop unlock. Earlier positive receipts belong to their
-recorded earlier revisions.
+timeout or native assertion is relaxed. At the end of this initial attempt,
+positive qualification for the integrated source, including actual
+create/admit/move/retire and isolated sibling survival, still required desktop
+unlock. The later lifecycle review owns that renewal; earlier positive receipts
+retain their recorded revisions.
 
 The final cleanup receipt is
 `/tmp/open-gpui-dockspace-native-cleanup-20261113.json`: six sequential attempts,
