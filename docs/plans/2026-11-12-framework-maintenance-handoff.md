@@ -68,8 +68,9 @@ APIs do not justify silently raising package floors or replacing typed owners.
 Continue with the actual remaining integration boundaries:
 
 1. Run Nara's canonical Dialogue Session/file and complete native trajectory on
-   Windows DX12/Vulkan with its exact selected source. Its canonical 1.95 Windows
-   SDK compile and 83 library cases pass; Mac Session Open remains unsupported by
+   Windows DX12/Vulkan with its exact selected source. Nara `0caee7fd` includes the
+   final review fixes and original-index resource finder; its canonical 1.95 Windows
+   SDK compile and 93 library cases on both 1.95/1.100 pass. Mac Session Open remains unsupported by
    NaraFS's exact guarantees. The local source is not remotely fetchable until
    its objects are supplied or a later publication is authorized.
 2. Complete the adapter's independently observed OS capture, native hit-stack,

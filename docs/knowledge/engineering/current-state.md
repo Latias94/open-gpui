@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-13T18:05:00+08:00
+timestamp: 2026-11-13T18:29:00+08:00
 git_branch: refactor/editor-framework-evolution
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -25,9 +25,11 @@ verified_by:
   through `6ceb6fee`; its ten-row increment reaches `27bbbc1c` with no unexplained
   applicable source gap. Editor extensions are separate from those official ports.
   Local `68d52b00` delivers composable controls and the selected shared Dockspace
-  adapter, with complete compiler/review/native receipts. Nara's final canonical
-  consumer selects that unpublished Git source and passes its 1.95 Windows SDK
-  compile and 83 library cases. Native Nara Session/GPU qualification remains open.
+  adapter, with complete compiler/review/native receipts. Nara's canonical consumer
+  at `0caee7fd` selects that unpublished Git source, passes its 1.95 Windows SDK
+  compile and 93 library cases on both 1.95 and 1.100, and includes original-index
+  resource lookup plus resolved independent review findings. Native Nara Session/GPU
+  qualification remains open.
   The adapter's remaining physical input facts still precede U7 facade/caller
   cutover and incumbent deletion. Preserve Entity, exact submission and original native
   retirement owners; no compositor or state-runtime replacement is selected.

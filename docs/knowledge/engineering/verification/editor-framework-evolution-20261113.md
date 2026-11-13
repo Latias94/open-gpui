@@ -227,7 +227,7 @@ official GPUI commits or a reason to recount already reconciled changes.
 | U5 | One complete shared session; retained View entities; same-Window output aggregation and independent Deferred sibling progress. All 46 adapter tests pass, including original terminal delivery behind a sibling candidate. | CPU tests do not establish actual native input; precise remaining physical capabilities are listed under U6. |
 | U6 | Managed transport, original creation rollback, close policy and exact group retirement have deterministic coverage. The real Mac smoke creates/submits a child, moves the original View and retires the exact group while an isolated sibling survives. | Independent OS capture ownership, native hit-stack observation, stationary desktop sampling, mixed-DPI and owning Windows runtime. |
 | U7 | ADR 0034 selects shared-session/N-ary semantics; v2/v3 persistence migration has atomic validation and provenance coverage. | Production facade/caller cutover and incumbent deletion await the declared physical-input qualification. |
-| U8 | Two-View Dialogue controls and portable Session workflow source use original Nara owners; canonical source/lock selects `68d52b00` with one Git identity. | Supported filesystem execution and Windows native DX12/Vulkan workflow remain separate gates. The selected development source is local and unpublished. |
+| U8 | Nara `0caee7fd` supplies two-View Dialogue editing, field/choice conflict resolution and original-index resource lookup; source/lock selects `68d52b00` with one Git identity. Final source passes 93 pure library cases on 1.95/1.100 and the canonical 1.95 Windows SDK compile. | Supported filesystem execution and Windows native DX12/Vulkan workflow remain separate gates. The selected development source is local and unpublished. |
 
 The adapter's final single-pass simplification reviewed 7,428 production lines
 against the reuse, quality, efficiency, test and comment rubrics. It applied nine
@@ -607,3 +607,39 @@ without changing the production scheduler or reducing assertions. The final
 shared adapter cohort is **46/46**, run `09a5b51e-a285-4fa8-b81e-ccc39819d1d9`,
 with 1,478 incumbent tests outside this filter. An independent bounded source
 review finds no confirmed P1/P2 in the test, wrappers or migration documentation.
+
+## Final Nara consumer source
+
+The original-owner Browser seam is local Nara
+`e6cd99a09d414700a7329180af43e0fbba0ac85f`; the complete Dialogue consumer is
+`0caee7fdf73af0ddf5274c9fcfc8a677875a364b`. These are commits in the separate Nara
+repository, not Open-GPUI ports or new official SHAs. The consumer deliberately
+retains exact framework pin `68d52b009dde3c784b01268208cb1d0ed690e99c`.
+
+The completed six-lens review `20261113-165020-dff6809b` confirms four findings
+against immutable predecessor `1e2dc6be47bfbe5b34d7e8b5271de779fd3fc3d7`. All four
+now have source corrections: three-way field and stable-choice merging with
+explicit Current/Draft decisions, source/incarnation-bound node actions, independent
+bounded preview scrolling and resource lookup over the original Project Browser
+index. A bounded independent follow-up catches Review/Remove/Current silently
+clearing a missing choice field. Resolution now restores the complete current
+member or retains the conflict on failure; the independent recheck closes it.
+The original full review receipt remains unchanged.
+
+The resource UI reuses the original immutable index and existing per-View query
+state, with generation/epoch refusal and original asynchronous Scene/Prefab Open
+results. The original Session/document/history/file and RenderHost owners remain.
+Native smoke source includes Chinese/long paths, independent queries and selection,
+late-index refusal, actual surviving-View edits/Cancel restoration, and Apply/Undo
+queued before retirement. Compilation does not qualify that Windows trajectory.
+
+Final actual pure library execution is **93/93** on Rust 1.95,
+`734e2acd-0b1b-43d0-ada7-745f76cc9eb4`, and **93/93** on Rust 1.100,
+`358ed07d-bd75-471e-b2ce-2e1034af87fb`. The exact canonical Windows SDK example
+passes `cargo +1.95.0 xwin check --cross-compiler clang-cl` with
+`dialogue-workflow,ui-work-observation` in 22.75 seconds. The current Session test
+target also compiles without running. All use one Cargo build job and the existing
+Nara target directory. Historical Mac Session **0/12** remains an actual original
+Host Open failure; NaraFS's unsupported exact-spelling/local-identity guarantees
+were not bypassed. Windows DX12/Vulkan execution, graph gestures, physical input
+and Editor-default selection remain separate follow-up.
