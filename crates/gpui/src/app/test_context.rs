@@ -724,6 +724,25 @@ impl TestAppContext {
         self.test_window(window).set_present_outcome(outcome);
     }
 
+    /// Selects synchronous presentation or original-token deferred frame delivery.
+    pub fn set_window_frame_delivery_mode(
+        &self,
+        window: AnyWindowHandle,
+        mode: crate::PlatformFrameDeliveryMode,
+    ) {
+        self.test_window(window).set_frame_delivery_mode(mode);
+    }
+
+    /// Returns the original pending CPU-platform submission token, if one was delivered.
+    ///
+    /// Completing this token simulates a renderer terminal; it does not prove GPU execution.
+    pub fn pending_window_frame_submission(
+        &self,
+        window: AnyWindowHandle,
+    ) -> Option<crate::PlatformFrameSubmission> {
+        self.test_window(window).pending_frame_submission()
+    }
+
     /// Delivers a scheduled backend callback and advances pending deterministic work.
     pub fn simulate_window_scheduled_frame(&self, window: AnyWindowHandle) -> bool {
         let delivered = self.test_window(window).simulate_scheduled_frame();

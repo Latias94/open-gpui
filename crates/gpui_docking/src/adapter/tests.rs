@@ -364,6 +364,118 @@ fn a_deferred_window_does_not_hold_the_session_update_lease(cx: &mut TestAppCont
 }
 
 #[open_gpui::test]
+fn an_original_submitted_output_waits_for_a_sibling_candidate_before_admission(
+    cx: &mut TestAppContext,
+) {
+    cx.defer_next_window_frame_requests();
+    let (dock, views, _) = fixture(cx);
+    let first = cx.open_window(size(px(800.0), px(600.0)), |_, _| Root {
+        dock: dock.clone(),
+        surfaces: vec![FIRST],
+    });
+    cx.defer_next_window_frame_requests();
+    let second = cx.open_window(size(px(800.0), px(600.0)), |_, _| Root {
+        dock: dock.clone(),
+        surfaces: vec![SECOND],
+    });
+    let mut first_visual = VisualTestContext::from_window(first.into(), cx);
+    let mut second_visual = VisualTestContext::from_window(second.into(), cx);
+    frames(&mut first_visual, &dock);
+    frames(&mut second_visual, &dock);
+    first_visual.set_window_present_outcome(first.into(), PlatformWindowPresentOutcome::Deferred);
+    cx.update(|cx| {
+        dock.update(
+            |frame| {
+                frame.dock_item_current(B, DockPlacement::Center(DockAnchor::Item(A)))?;
+                frame.select_item_current(B)?;
+                Ok(())
+            },
+            cx,
+        )
+    })
+    .unwrap();
+    frames(&mut first_visual, &dock);
+    frames(&mut second_visual, &dock);
+    let ticket = {
+        let host = dock.host.borrow();
+        let pending = host.mounts[&first.window_id()].pending.as_ref().unwrap();
+        assert!(
+            pending.update.is_none(),
+            "renderer deferral has released the affine update"
+        );
+        pending.ticket.clone()
+    };
+    cx.set_window_frame_delivery_mode(
+        second.into(),
+        open_gpui::PlatformFrameDeliveryMode::Deferred,
+    );
+    dock.host
+        .borrow_mut()
+        .mounts
+        .get_mut(&second.window_id())
+        .unwrap()
+        .regions
+        .get_mut(&SECOND)
+        .unwrap()
+        .dirty = true;
+    assert!(second_visual.simulate_frame(RequestFrameOptions {
+        require_presentation: true,
+        force_render: true,
+        ..Default::default()
+    }));
+    let sibling_submission = cx.pending_window_frame_submission(second.into()).unwrap();
+    assert!(
+        dock.is_update_pending(),
+        "the real sibling candidate retains its original affine update"
+    );
+    first_visual.set_window_present_outcome(first.into(), PlatformWindowPresentOutcome::Submitted);
+    assert!(first_visual.simulate_frame(RequestFrameOptions {
+        require_presentation: true,
+        ..Default::default()
+    }));
+    let output = {
+        let host = dock.host.borrow();
+        assert!(host.error.is_none(), "{:?}", host.error);
+        assert_eq!(
+            ticket.snapshot().outcome(),
+            open_gpui::WindowFrameSubmissionOutcome::Submitted
+        );
+        assert!(
+            host.presentation_pending,
+            "the original terminal waits behind the sibling lease"
+        );
+        let (_, output) = host.mounts[&first.window_id()].regions[&FIRST]
+            .presented
+            .unwrap();
+        assert!(
+            !host
+                .session
+                .presented_surface(FIRST)
+                .is_some_and(|presented| { presented.matches_presentation_artifact(output) }),
+            "a queued terminal has not yet granted input authority"
+        );
+        output
+    };
+    cx.update(|_| assert!(sibling_submission.complete(PlatformWindowPresentOutcome::Submitted)));
+    cx.run_until_parked();
+    {
+        let host = dock.host.borrow();
+        assert!(!host.presentation_pending);
+        assert!(
+            host.session
+                .presented_surface(FIRST)
+                .is_some_and(|presented| { presented.matches_presentation_artifact(output) }),
+            "sibling acceptance admits the original Submitted output without repeating it"
+        );
+    }
+    frames(&mut first_visual, &dock);
+    let button = first_visual.debug_bounds("view:22").unwrap();
+    first_visual.simulate_click(button.center(), Modifiers::default());
+    assert_eq!(views[1].read_with(&first_visual, |view, _| view.clicks), 1);
+    assert!(dock.error().is_none(), "{:?}", dock.error());
+}
+
+#[open_gpui::test]
 fn registering_one_entity_as_two_views_is_rejected(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let view = cx.new(|_| View {
