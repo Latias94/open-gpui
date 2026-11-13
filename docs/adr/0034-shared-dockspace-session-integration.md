@@ -51,6 +51,14 @@ ADRs 0029, 0030 and 0031 continue to govern platform and renderer ownership:
 - Preserve desktop physical coordinates and target-display DPI. Native frame bounds and client
   bounds are independent observations. Unsupported conversion, hit testing or capture remains
   explicit; an adapter cannot infer native capabilities from ordinary logical mouse events.
+- Index established native resources with the core's `NativeWindows`, retaining a bounded
+  pre-open callback slot and original failed-open rollback tickets until a real GPUI ID exists.
+  Physical Root continuation moves resources once while every predecessor placement retires
+  separately. Deferred submission results keep their original binding and callback custody.
+- Admit pending tear-off surfaces only through their exact native placement and the core's
+  first-live presentation roster. Their absence from the published layout does not prove removal.
+  A no-paint commit preserves current scene authority; explicit unavailable contributions revoke
+  it. Native Dock Back also requires the original source outer geometry and current recovery scene.
 
 ## Persistence migration
 

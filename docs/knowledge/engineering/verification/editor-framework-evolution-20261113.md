@@ -10,17 +10,18 @@ This authorizes implementation and local commits; it does not waive submission, 
 | --- | --- | --- |
 | Open-GPUI implementation base | `22399cb09e6399f6d247cc60bc665b45ab92d5df` | Plan commit retained on `refactor/editor-framework-evolution`. |
 | Official GPUI adoption endpoint | `27bbbc1cc480a7500cec122f120e796d1fb8500c` | Existing reconciled baseline; no new core port is implied by adapter work. |
-| dockspace | `46da973bcc8db7cb50c72aef0f65b6acd6b59338` | Immutable Git dependency, defaults disabled, `serde` enabled. Apache-2.0 core. |
+| dockspace original integration | `46da973bcc8db7cb50c72aef0f65b6acd6b59338` | Historical adapter origin and initial compiler/consumer qualification. |
+| dockspace current integration | `c200977d0f34943284a125c492919791650e1bff` | Immutable Git dependency, defaults disabled, `serde` enabled. Apache-2.0 core; reviewed native helpers and recovery preflight. |
 
 The production adapter consumes only `dockspace`, not its egui/winit adapters or its standalone GPUI harness.
 The source harness's existing uncommitted changes are excluded from this dependency and remain untouched.
 The adapter keeps one complete `DockspaceSession` as its logical authority; it does not mirror that session into the incumbent graph/controller.
 Its GPUI chrome/content integration starts from the clean Apache-2.0 harness at
-the same fixed revision, then adds multiple regions, exact output correlation and
+the original `46da973b` revision, then adds multiple regions, exact output correlation and
 managed native transport in the production package. The source contains no NOTICE
 file; Open-GPUI retains the Apache license and records the origin here.
 
-An independently locked temporary consumer compiled the core and `serde` feature on macOS ARM64 with Rust 1.93.0 using `--ignore-rust-version`.
+For the original `46da973b` integration, an independently locked temporary consumer compiled the core and `serde` feature on macOS ARM64 with Rust 1.93.0 using `--ignore-rust-version`.
 The same lockfile compiled with Rust 1.95.0 without that override.
 The override is diagnostic evidence, not a supported consumption command: the selected immutable package declares Rust 1.95.
 Accordingly `open-gpui-docking` explicitly declares Rust 1.95; its DevTools, Gallery, docking-example and workspace-tooling consumers declare the same floor so their complete feature sets remain covered. The workspace default, GPUI core, platform/rendering packages and UI components remain at 1.93.
@@ -666,11 +667,57 @@ placements while the physical window remains live. Its intermediate fixture
 needed to drain and consume the original queued stale callback before claiming
 quiescence; this did not change production retirement requirements.
 
-The production dependency remains dockspace `46da973b`; inspecting a newer local
-source does not update its immutable pin or qualify its uncommitted changes.
+At the end of that initial review, production remained dockspace `46da973b`;
+inspecting a newer local source did not update its immutable pin or qualify its
+uncommitted changes. The accepted integration follow-up selects `c200977d` after
+separately integrating and qualifying the committed source.
 These are deterministic GPUI test-renderer results, not new physical-input or
 native-renderer qualification. No native probe was launched for this follow-up.
 
 The [dockspace integration review](dockspace-integration-review-20261113.md)
 records the newer native helpers, candidate motion fixes, isolated source pins,
 test results and recommended adoption order.
+
+## Accepted dockspace helper integration
+
+The follow-up upgrades the production dependency from `46da973b` to
+`c200977d0f34943284a125c492919791650e1bff` on the published dockspace
+`integrate/gpui-host-contracts` branch. The integration record maps all four
+earlier corrections to their commits on `6e4a2366`, plus the newly discovered
+native Dock Back preflight defect. Core/egui qualification is **2,362 passed,
+3 pre-existing skipped**, with actual Rust 1.95 core-only `serde` compilation.
+Concurrent dockspace main/harness development remains outside that source claim.
+
+Open-GPUI `ffef5715` pins the dependency; `620ee058` replaces the bridge's map
+and reverse scan with `NativeWindows`, retaining bounded opening custody and
+original rollback tickets. `64e0fbb7` reports the undecorated test backend's
+known physical outer observation. `14f03fb4` accepts exact native staging
+placements and encodes their first-live roster even before the published layout
+contains the surface. Its regression retains one View through partial tear-off,
+Dock Back, actual content interaction and shutdown. Core preflight now refuses
+missing source outer geometry using the same recovery preparation as submission.
+
+The complete all-feature Core+docking run is **3,505 passed and 1 failed**,
+`428164de-d936-44cd-85b5-52e91d69dbf1`; all **49** shared-adapter cases pass.
+The only failure expected the test backend's old absent outer field. Its
+full-snapshot expectation was corrected, and the geometry/drag-start cohort is
+**3/3**, `881e23b5-afdc-4ee6-9fea-c2a3386ec36f`. Final adapter/native-capture/tab
+coverage is **88/88**, `c9981dbb-ebb2-4e8c-ab50-1753ef120fa9`, after the small
+existing-path lint cleanup in `5c0b8430`. These remain distinct receipts.
+
+Actual Rust 1.95 all-target/all-feature docking, editor and independently locked
+public-consumer compilation passes. Core/docking/editor Clippy with correctness
+and suspicious categories denied, workspace formatting and the existing public
+static gates pass; advisory warnings remain. The
+[integration record](dockspace-integration-review-20261113.md) retains log paths,
+initial failures, source/compiler boundaries and remaining physical-input gates.
+
+The current real Mac renewal does **not** pass. Its first bounded attempt times
+out in `ChildAdmitted`; diagnostic renewals first hit unavailable atomic display
+publication (`CoreGraphics returned no active displays`), then time out at root
+submission after a temporary display-wake assertion. Read-only console inspection
+confirms `CGSSessionScreenIsLocked = true`. The first child timeout is not thereby
+proven environmental. All diagnostic probes and temporary apps are closed, and
+diagnostic source/root-layout changes are removed. Exact-source native renewal
+must continue on an unlocked interactive desktop; earlier positive Mac receipts
+do not qualify this dependency or bridge revision.

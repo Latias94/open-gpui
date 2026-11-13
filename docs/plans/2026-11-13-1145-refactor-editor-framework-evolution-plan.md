@@ -19,6 +19,15 @@ execution: code
 
 **Execution profile:** Local, reviewable units with Conventional Commits; no push or publication is implied. U1 establishes compatibility, U2–U4 improve existing controls, U5–U6 qualify the docking candidate, and U7 is a separately selected cutover. U8 belongs in Nara. These are coordinated repository deliverables, not a requirement to open or merge PRs during planning.
 
+**Accepted execution update:** The subsequent user authorization selects the shared session under
+[ADR 0034](../adr/0034-shared-dockspace-session-integration.md). Its production dependency now pins
+dockspace `c200977d`, including the integrated native helper corrections and recovery preflight.
+The [integration record](../knowledge/engineering/verification/dockspace-integration-review-20261113.md)
+tracks source commits and qualification. Core motion remains an explicit follow-up; full physical
+input qualification and deletion of displaced docking owners remain U7 gates. The separately
+authorized dockspace integration branch is published so immutable dependency resolution works;
+this does not merge its concurrently edited main branch.
+
 **Stop conditions:** Preserve concurrent edits. Stop a cutover when it would introduce two semantic docking writers, manufacture Submitted/native-terminal facts, silently change the compiler floor, or remove an incumbent contract without a replacement decision. An unmet condition is a candidate result rather than a reason to hide the difference behind an adapter.
 
 ---
