@@ -31,7 +31,7 @@ asserts unexecuted physical input, native submitted frames or numerical performa
 - Fork comparison baseline: `a0e5a818e0a3628114e37362bc57a0bc240e66c0`. Concurrent working-tree edits are not attributed to this revision.
 - Content-verified reconstruction anchor: Zed `6e9465a4288c332208643892e23b9d35d7be5c79`. This is the excluded left endpoint, not an asserted original import checkout or a cross-repository ancestor.
 - Available upstream object-history endpoint: Zed `78f5d7446c55f6c1aa9b66e8111f6b3f4625ebb0`. The local reference is non-shallow; the actual objects for the anchor and this endpoint are available.
-- Selected final source target: Zed `6ceb6fee8738274589b59139df27efc191ec2231`. The seven later objects are unavailable in this host's object databases; six official rendering patches plus the final official product patch supply their full SHA/title/path provenance.
+- Selected final source target: Zed `6ceb6fee8738274589b59139df27efc191ec2231`. At the initial reconciliation the seven later objects were unavailable, so six official rendering patches plus the final official product patch supplied their full SHA/title/path provenance. The November 13 continuation can read the exact target objects and independently verifies the same inventory directly from Git history; it does not change the fixed target.
 - Existing whole-framework historical pin: `635026fabc38`. The earlier bounded ports do not establish a fully synchronized base. This ledger includes the entire anchor-to-endpoint history.
 
 The [import record](zed-gpui-import.md#november-5-provenance-reconstruction),
@@ -95,6 +95,28 @@ evidence is the official `.patch` URL of that same commit plus the recorded sele
 source and integration owners below. No reference checkout was fetched or moved.
 
 ## Inventory and state counts
+
+The November 13 independent continuation rechecks all 31 pathspec entries, including the
+21 original imported entries, nested derive packages and deleted Media. The exact
+anchor-to-`78f5d744` history has **557 non-merge commits**; the strict pathspec through
+`6ceb6fee` has **563**, with the explicitly retained final product-only commit making
+the canonical set **564**. Expected entries, ledger rows and unique full SHAs are
+**564 / 564 / 564**; missing, extra and duplicate entries are **0 / 0 / 0**. The
+SHA-256 of the sorted full-SHA set, joined with newlines and a final newline, is
+`cf53075acfb33590d870994c30590bdaa0df9bf3c623e68ff81e0815e18132ef`.
+All **149 / 149** root/toolchain entries retain their normalized official titles;
+125 changed root keys/member entries and all 81 outside-framework source slices
+were inspected. The original eleven queued entries and one partial renderer entry
+map to current owners and local commits that are ancestors of `68d52b00`.
+
+A separate source lane rechecks iOS activation/interaction/composition/frame-demand/
+retirement, shared Apple, complete Tokio source, all five EGL root selections and
+the final Windows/WGPU sprite/COLR mechanisms against the exact fixed target.
+It confirms those source owners without adding execution credit. The continuation's
+native Mac activation finding and repair are recorded in the
+[editor-framework evidence](../knowledge/engineering/verification/editor-framework-evolution-20261113.md).
+These checks add no upstream row, do not count the ten later incremental commits
+again, and do not turn docking U7 or Nara qualification into upstream omissions.
 
 | Inventory | Commit count | Counting rule |
 | --- | ---: | --- |
@@ -929,7 +951,7 @@ Verification owner: [owning record](../verification.md#shared-apple-framework-to
 
 The adopted mechanism stores a Tokio handle in an App Global, either owning a two-worker enable_all runtime or borrowing an application-supplied handle. Owned-runtime drop calls shutdown_background; a supplied runtime is not owned or shut down. Tokio::spawn and spawn_result run the actual future on Tokio, return through a GPUI background Task, and retain a defer/abort handle so dropping the GPUI task cancels the Tokio task. JoinError and nested anyhow results retain their separate public result routes; handle returns a clone of the current handle. This is an explicit bridge, not a replacement executor or a product transport service.
 
-Adoption decision: **adopted-now at the anchor level**, implemented-local-verified. Current bridge source, root workspace member, open_gpui_tokio alias and ordinary consumer/lock integration are complete. Seven real public bridge tests pass in the focused and F-ALL cohorts, covering owned/supplied runtime custody, Task-drop cancellation, result/JoinError propagation, handle reuse and nonblocking owned-runtime shutdown; F-PUBLIC compiles and runs the ordinary bridge consumer without test-support. L-TOKIO maps the local implementation hash for main to fill. This grants no baseline credit, asserts no introduction by the anchor commit and adds no synthetic history row.
+Adoption decision: **adopted-now at the anchor level**, implemented-local-verified. Current bridge source, root workspace member, consumer-side open_gpui_tokio alias and ordinary consumer/lock integration are complete. Seven real public bridge tests pass in the focused and F-ALL cohorts, covering owned/supplied runtime custody, Task-drop cancellation, result/JoinError propagation, handle reuse and nonblocking owned-runtime shutdown; F-PUBLIC compiles and runs the ordinary bridge consumer without test-support. L-TOKIO maps the local implementation hash above. The unused root workspace dependency alias is later removed in `68d52b00`; direct ordinary consumers remain, and `98fb59fe` corrects the README accordingly. This grants no baseline credit, asserts no introduction by the anchor commit and adds no synthetic history row.
 
 ### T-TOKIO
 

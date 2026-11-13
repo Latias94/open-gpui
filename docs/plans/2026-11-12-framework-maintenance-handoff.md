@@ -29,8 +29,58 @@ The subsequent [Editor Framework Evolution plan](2026-11-13-1145-refactor-editor
 records the owner's revised development direction: wrappers and focused extensions around official
 GPUI, mature control references, evaluation of the shared `dockspace` implementation, and complete
 Nara editing pages. Keep the existing state model; broader external-host expansion is deferred.
-The docking replacement remains a candidate with dependency, multiview, persistence and native
-lifecycle gates. This roadmap does not supersede Accepted ADR 0033 or authorize a production cutover.
+The owner subsequently authorized breaking changes and implementation of the replacement.
+[ADR 0034](../adr/0034-shared-dockspace-session-integration.md) selects the shared semantic session
+and supersedes ADR 0033's binary-kernel choice. Dependency, multiview, persistence and native
+lifecycle qualification still precede retirement of their incumbent production owners. Current
+implementation and executed limits are recorded in the
+[November 13 evidence](../knowledge/engineering/verification/editor-framework-evolution-20261113.md).
+
+The current local code checkpoint is `104f5dca`
+on `refactor/editor-framework-evolution`; this session has not pushed it. Numeric,
+Tree and asynchronous choice workflows, multiline keyboard editing and the shared
+docking adapter have local commits and explicit compiler/source receipts. The
+Core/Mac and complete old/new docking libraries at `68d52b00` pass 3,626 cases in two
+serial runs; 236 affected component/input cases also pass. The final real Mac
+smoke creates and submits a child, preserves View identity and local/shared state
+through relocation, and retires the exact native group while another workspace
+survives. Review findings, corrections and exact run IDs belong in the evidence.
+
+The continuation independently rechecks the full 564-SHA fixed upstream set,
+149 root/toolchain entries and actual final iOS/Apple/Tokio/EGL/renderer owners;
+no unexplained applicable source omission remains. `6561969d` adds the original
+cross-window Submitted/candidate overlap regression; all 46 shared adapter tests
+pass. `b51c2163` restores official deferred Mac activation callback timing while
+retaining original native and ingress identities. Its final native matrix is
+14/14, independent public runtime is 8/8, and the complete Core/Mac run's 2,105
+other cases plus corrected focused regression pass. Rust 1.93 and correctness
+Clippy remain qualified. `104f5dca` fixes probe cleanup and identity reuse;
+final execution leaves zero probe processes or Dock entries. Historical failures
+and actual source scopes remain in the evidence rather than being overwritten.
+
+Rust 1.100 is the local development compiler. Core/components remain at Rust
+1.93; docking and its selected consumers declare 1.95. Cargo 1.100 intermediate
+paths require JSON artifact discovery, and the shared older nextest 0.9.115 has a
+known environment-reconstruction warning; the task used an isolated 0.9.151
+runner without changing that shared installation. New allocator and DropGuard
+APIs do not justify silently raising package floors or replacing typed owners.
+
+Continue with the actual remaining integration boundaries:
+
+1. Run Nara's canonical Dialogue Session/file and complete native trajectory on
+   Windows DX12/Vulkan with its exact selected source. Its canonical 1.95 Windows
+   SDK compile and 83 library cases pass; Mac Session Open remains unsupported by
+   NaraFS's exact guarantees. The local source is not remotely fetchable until
+   its objects are supplied or a later publication is authorized.
+2. Complete the adapter's independently observed OS capture, native hit-stack,
+   stationary pointer and mixed-DPI placement facts on their owning backends.
+   The Mac window smoke does not establish those physical input capabilities.
+3. After that declared qualification, migrate facade/callers together and remove
+   the displaced graph/controller/interaction owners under U7. Retain the one-way
+   durable migration and original GPUI physical lifecycle contracts.
+4. Attribute C0's actual engine/UI workload before selecting a retained-layout,
+   upload or raster experiment. Preserve Entity and the original engine queue;
+   there is no selected Signals rewrite or wholesale compositor import.
 
 ## Recorded Windows Publication
 
@@ -374,8 +424,8 @@ Editor success cannot establish gamepad, split-screen or world-space behavior.
 |---|---|---|
 | P0 | Keep published source and direct consumers buildable. | One framework source identity; focused checks and native integration for changed contracts. Preserve compiler/feature/platform support explicitly. |
 | P0 | Preserve existing hosted-root and presentation correctness. | Fix concrete capture/text/IME/popups, geometry, candidate and close regressions through the original owners; broader host expansion is not the current development priority. |
-| P1 | Complete editable scalar, Tree and searchable-choice workflows through existing controls. | Adapt mature native behavior/composition patterns; prove ordinary consumers and Nara recipes. Preserve private semantic activation, text/focus and publication owners. |
-| P1 | Qualify the shared dockspace candidate before extending an independent docking kernel. | Prove dependency/compiler compatibility, independent document Views, logical/native surfaces, exact output admission, factories, persistence and group retirement. Existing U4–U9 and ADR 0033 remain incumbent contracts until an explicit replacement decision. |
+| P1 | Use the delivered scalar, Tree and searchable-choice workflows in complete consumers. | The November 13 component/Gallery receipt and resolved independent findings are recorded in the evolution evidence. Preserve private semantic activation, text/focus and publication owners; physical capture/IME still needs the owning platform. |
+| P1 | Complete physical qualification and caller cutover for the selected shared dockspace architecture. | ADR 0034 supersedes the binary-kernel choice. Logical multiview, exact output correlation, persistence and group retirement have deterministic coverage. Native capture/hit-stack and active-display execution precede incumbent removal; do not introduce two semantic writers in a workspace. |
 | P1 | Deliver a coherent Nara editing page above the reusable controls and selected docking proof. | Preserve original document/history/Workspace and RenderHost ownership. Qualify the exact source pin; a fixture or design mockup does not establish an Editor-default migration. |
 | P2 | Retain the current state model and measure concrete update/layout costs. | Preserve existing projections, independent drafts and operation-basis correctness. A different state architecture requires a separately selected consumer-backed design. |
 | P2 | Optimize repeated upload or raster work when measurements justify it. | Correct baseline versus static properties, scrolling collection, caret/text, node canvas and unrelated animated View; report allocations, bytes/uploads, CPU/GPU and latency separately. |

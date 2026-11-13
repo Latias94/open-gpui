@@ -73,8 +73,10 @@ deliberately invalid-mode negative control prints the assertion and exits **1**,
 without `fatal runtime error` or abort; the real direct positive control still
 passes. This changes probe failure reporting, not production panic policy.
 
-`scripts/run_macos_native_probe.py` gives each built probe a unique temporary
-bundle identity, signs it ad hoc and launches it through LaunchServices. It
+`scripts/run_macos_native_probe.py` signs each temporary app ad hoc and launches
+it through LaunchServices. These original receipts used a unique bundle identity;
+the later [editor-framework follow-up](knowledge/engineering/verification/editor-framework-evolution-20261113.md#probe-cleanup-and-original-cross-window-regression)
+reuses one identity and removes each app after exit to prevent accumulated Dock entries. It
 retains stdout/stderr and requires both the probe's explicit success marker and
 the app's actual normal exit status **0**, obtained through Darwin's process
 exit notification. `open -W` does not propagate the application's exit code. Its real activity

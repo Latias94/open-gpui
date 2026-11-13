@@ -83,6 +83,17 @@ omissions, extras, duplicates or title mismatches. Each official SHA has one
 canonical row; mechanism groups connect it to local commits and platform gates.
 The per-row source disposition and executed platform qualification remain separate.
 
+The later editor-framework continuation independently rechecks this same set
+against the now-readable exact target objects. Its 564/564 inventory and SHA-set
+fingerprint are recorded in the canonical ledger; its final-tree lane confirms
+iOS/Apple/Tokio/EGL and Windows/WGPU owners without an unresolved source finding.
+That follow-up also restores the fixed official Mac callback timing in
+`b51c2163`, retaining the fork's original native generation and ingress identity.
+The final actual AppKit matrix passes 14/14 under Rust 1.100, with its original
+failures and runner cleanup scope in the
+[editor-framework evidence](../knowledge/engineering/verification/editor-framework-evolution-20261113.md#fixed-upstream-closure-recheck-and-native-activation-follow-up).
+No upstream row or selected endpoint is added by that qualification.
+
 The current source completes the previous eleven queued commits and ordinary
 WGPU sprite fast branch, then corrects inherited keymap precedence/continuation,
 Div drag-over/debug-selector, Window pointer/cache/test/menu/scale/paint APIs,
