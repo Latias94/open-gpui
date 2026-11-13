@@ -1,5 +1,8 @@
 //! Public content integration through GPUI's deterministic test renderer.
 
+#[path = "recovery_tests.rs"]
+mod recovery;
+
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,

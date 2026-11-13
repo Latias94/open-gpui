@@ -15,7 +15,7 @@ use dockspace::{
         DockspaceHostFrame, DockspaceSession, HostFrameReport, HostWindowToken,
         NativeHostCapability, NativeReceiverAnswer, NativeReceiverPurpose, NativeReceiverQuery,
         NativeSurfaceBinding, NativeSurfaceCloseAction, NativeSurfaceCloseRequest,
-        NativeSurfacePlacement, NativeWindowBinding, NativeWindowHit, SurfaceUnavailableReason,
+        NativeSurfacePlacement, NativeWindowBinding, NativeWindowHit,
     },
 };
 use open_gpui::{
@@ -47,7 +47,7 @@ type WindowFactory = dyn Fn(
 pub(super) struct ManagedHost {
     bridge: Option<NativeBridge>,
     pub(super) transport: NativeTransport,
-    callbacks: BTreeMap<WindowId, NativeCallbacks>,
+    pub(super) callbacks: BTreeMap<WindowId, NativeCallbacks>,
     roots: BTreeSet<WindowId>,
     pending_reports: VecDeque<HostFrameReport>,
     reports: VecDeque<NativeReport>,
@@ -357,10 +357,9 @@ impl DockSurface {
             native,
             ..
         } = &mut *host;
-        let mut frame = session.begin_native_host_frame(|query| {
+        let frame = session.begin_native_host_frame(|query| {
             resolve(query, mounts, native.as_ref().unwrap(), Some(window), cx)
         })?;
-        frame.complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)?;
         let report = frame.commit()?;
         let binding = report
             .native_bindings()
@@ -1016,7 +1015,6 @@ fn collect_host(
         if !pending_input && !advanced {
             return Ok(false);
         }
-        frame.complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)?;
         let mut report = frame.commit()?;
         let progressed = advanced || !report.inputs().is_empty();
         host.invalidate_report(&report);

@@ -4,9 +4,7 @@ use std::{collections::BTreeMap, rc::Rc};
 
 use dockspace::{
     model::SurfaceId,
-    runtime::{
-        DockspaceUpdate, PaintedSurfaceOutput, SurfacePresentationResult, SurfaceUnavailableReason,
-    },
+    runtime::{DockspaceUpdate, PaintedSurfaceOutput, SurfacePresentationResult},
 };
 use open_gpui::{
     AcceptedFrameFence, App, Window, WindowFrameSubmissionOutcome, WindowFrameSubmissionTicket,
@@ -342,14 +340,13 @@ fn settle_pending(
     if !host.presentation_pending || host.has_unaccepted_update() {
         return Ok(());
     }
-    let mut frame = host_native::begin_frame(
+    let frame = host_native::begin_frame(
         &mut host.session,
         &host.mounts,
         host.native.as_ref(),
         window,
         cx,
     )?;
-    frame.complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)?;
     let report = frame.commit()?;
     host.apply_report(report);
     host.presentation_pending = false;

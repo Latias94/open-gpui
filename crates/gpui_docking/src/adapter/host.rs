@@ -295,7 +295,6 @@ impl DockSurface {
         } = &mut *host;
         let mut frame = host_native::begin_frame(session, mounts, native.as_ref(), None, cx)?;
         let value = update(&mut frame)?;
-        frame.complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)?;
         let report = frame.commit()?;
         host.apply_report(report);
         drop(host);
@@ -404,8 +403,17 @@ impl HostState {
             return Ok(false);
         }
         for region in regions {
+            let native_staging = self
+                .native
+                .as_ref()
+                .and_then(|native| native.callbacks.get(&owner))
+                .is_some_and(|callbacks| {
+                    self.session
+                        .native_surface_bindings_for_window(callbacks.binding())
+                        .any(|binding| binding.surface() == region.surface)
+                });
             ensure!(
-                self.session.view().surface(region.surface).is_some(),
+                self.session.view().surface(region.surface).is_some() || native_staging,
                 "unknown logical surface"
             );
             ensure!(

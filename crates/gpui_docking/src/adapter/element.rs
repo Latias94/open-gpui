@@ -885,6 +885,11 @@ fn build_candidate(
     let config = &host.config;
     let managed = host.native.is_some();
     let owner = window.window_handle().window_id();
+    let native_window = host
+        .native
+        .as_ref()
+        .and_then(|native| native.callbacks.get(&owner))
+        .map(|callbacks| callbacks.binding());
     let pointers: BTreeMap<_, _> = host.mounts[&owner]
         .regions
         .iter()
@@ -907,14 +912,20 @@ fn build_candidate(
     let mut packets = BTreeMap::new();
     for (surface, bounds) in regions {
         let surface = *surface;
-        if frame.view().surface(surface).is_none() {
-            // A move or close can remove an ordinary source surface. Keep its
-            // physical slot empty without suppressing surviving regions.
+        if frame.view().surface(surface).is_none() && !presentation_surfaces.contains(&surface) {
+            // A pending tear-off is not yet in the committed layout. Retain its
+            // staging slot until the core can encode the first-live output.
+            // An ordinary removed surface instead leaves a vacant physical slot.
+            let deferred = native_window.is_some_and(|binding| {
+                frame
+                    .native_surface_bindings_for_window(binding)
+                    .any(|binding| binding.surface() == surface)
+            });
             packets.insert(
                 surface,
                 Rc::new(Packet {
                     draws: Vec::new(),
-                    deferred: false,
+                    deferred,
                 }),
             );
             continue;
