@@ -9,6 +9,17 @@ use std::path::Path;
 
 const DECLARED_MSRV: &str = "1.93";
 
+const MSRV_EXCEPTIONS: &[(&str, &str)] = &[
+    ("open-gpui-devtools", "1.95"),
+    ("open-gpui-docking", "1.95"),
+    ("open-gpui-docking-minimal", "1.95"),
+    ("open-gpui-docking-multiviewport", "1.95"),
+    ("open-gpui-docking-native", "1.95"),
+    ("open-gpui-dockspace-editor", "1.95"),
+    ("open-gpui-ui-foundation-gallery", "1.95"),
+    ("xtask", "1.95"),
+];
+
 const ALLOWED_DUPLICATE_CRATES: &[&str] = &[
     "accesskit_consumer",
     "async-channel",
@@ -139,7 +150,6 @@ fn cargo_metadata(root: &Path) -> Result<Value, ()> {
 
 fn msrv_failures(metadata: &Value) -> Vec<String> {
     let mut failures = Vec::new();
-    let declared = RustVersion::parse(DECLARED_MSRV).expect("declared MSRV must parse");
     let workspace_members = metadata
         .get("workspace_members")
         .and_then(Value::as_array)
@@ -147,49 +157,102 @@ fn msrv_failures(metadata: &Value) -> Vec<String> {
         .flatten()
         .filter_map(Value::as_str)
         .collect::<BTreeSet<_>>();
-
-    let mut max_dependency_version = RustVersion::default();
-    let mut max_dependency_packages = Vec::new();
+    let packages_by_id = packages(metadata)
+        .filter_map(|package| Some((package.get("id")?.as_str()?, package)))
+        .collect::<BTreeMap<_, _>>();
+    let Some(nodes) = metadata.pointer("/resolve/nodes").and_then(Value::as_array) else {
+        return vec![
+            "cargo metadata must include resolved dependency nodes for MSRV checks".into(),
+        ];
+    };
+    let dependencies_by_id = nodes
+        .iter()
+        .filter_map(|node| {
+            Some((
+                node.get("id")?.as_str()?,
+                node.get("dependencies")?.as_array()?,
+            ))
+        })
+        .collect::<BTreeMap<_, _>>();
 
     for package in packages(metadata) {
-        let name = package
-            .get("name")
-            .and_then(Value::as_str)
-            .unwrap_or("<unknown>");
         let id = package
             .get("id")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        let rust_version = package.get("rust_version").and_then(Value::as_str);
-
-        if workspace_members.contains(id) {
-            if rust_version != Some(DECLARED_MSRV) {
-                failures.push(format!(
-                    "workspace package `{name}` must inherit rust-version `{DECLARED_MSRV}`, found `{}`",
-                    rust_version.unwrap_or("missing")
-                ));
-            }
+        if !workspace_members.contains(id) {
+            continue;
         }
 
-        if let Some(rust_version) = rust_version.and_then(RustVersion::parse) {
-            match rust_version.cmp(&max_dependency_version) {
+        let name = package
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("<unknown>");
+        let expected = MSRV_EXCEPTIONS
+            .iter()
+            .find_map(|&(exception, version)| (exception == name).then_some(version))
+            .unwrap_or(DECLARED_MSRV);
+        let rust_version = package.get("rust_version").and_then(Value::as_str);
+        if rust_version != Some(expected) {
+            failures.push(format!(
+                "workspace package `{name}` must declare rust-version `{expected}`, found `{}`",
+                rust_version.unwrap_or("missing")
+            ));
+        }
+        let Some(declared) = rust_version.and_then(RustVersion::parse) else {
+            continue;
+        };
+        if !dependencies_by_id.contains_key(id) {
+            failures.push(format!(
+                "workspace package `{name}` is missing from resolved dependency nodes"
+            ));
+            continue;
+        }
+
+        let mut pending = vec![id];
+        let mut visited = BTreeSet::new();
+        let mut max_dependency_version = RustVersion::default();
+        let mut max_dependency_packages = BTreeSet::new();
+        while let Some(dependency_id) = pending.pop() {
+            if !visited.insert(dependency_id) {
+                continue;
+            }
+            if let Some(dependencies) = dependencies_by_id.get(dependency_id) {
+                pending.extend(dependencies.iter().filter_map(Value::as_str));
+            }
+            let Some(dependency) = packages_by_id.get(dependency_id) else {
+                continue;
+            };
+            let Some(version) = dependency
+                .get("rust_version")
+                .and_then(Value::as_str)
+                .and_then(RustVersion::parse)
+            else {
+                continue;
+            };
+            let dependency_name = dependency
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("<unknown>");
+            match version.cmp(&max_dependency_version) {
                 std::cmp::Ordering::Greater => {
-                    max_dependency_version = rust_version;
+                    max_dependency_version = version;
                     max_dependency_packages.clear();
-                    max_dependency_packages.push(name.to_string());
+                    max_dependency_packages.insert(dependency_name);
                 }
-                std::cmp::Ordering::Equal => max_dependency_packages.push(name.to_string()),
+                std::cmp::Ordering::Equal => {
+                    max_dependency_packages.insert(dependency_name);
+                }
                 std::cmp::Ordering::Less => {}
             }
         }
-    }
 
-    if max_dependency_version > declared {
-        failures.push(format!(
-            "declared MSRV `{DECLARED_MSRV}` is below dependency floor `{}` from {}",
-            max_dependency_version,
-            max_dependency_packages.join(", ")
-        ));
+        if max_dependency_version > declared {
+            failures.push(format!(
+                "workspace package `{name}` declares MSRV `{declared}` below dependency floor `{max_dependency_version}` from {}",
+                max_dependency_packages.into_iter().collect::<Vec<_>>().join(", ")
+            ));
+        }
     }
 
     failures
@@ -364,6 +427,84 @@ mod tests {
                 patch: 0
             })
         );
+    }
+
+    #[test]
+    fn msrv_scan_rejects_transitive_dependency_above_package_floor() {
+        let metadata = serde_json::json!({
+            "workspace_members": ["core"],
+            "packages": [
+                {"id": "core", "name": "open-gpui", "rust_version": "1.93"},
+                {"id": "helper", "name": "helper", "rust_version": "1.93"},
+                {"id": "dependency", "name": "requires-new-rust", "rust_version": "1.95"}
+            ],
+            "resolve": {"nodes": [
+                {"id": "core", "dependencies": ["helper"]},
+                {"id": "helper", "dependencies": ["dependency"]},
+                {"id": "dependency", "dependencies": []}
+            ]}
+        });
+
+        let failures = msrv_failures(&metadata);
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].contains("`open-gpui` declares MSRV `1.93`"));
+        assert!(failures[0].contains("dependency floor `1.95` from requires-new-rust"));
+    }
+
+    #[test]
+    fn msrv_scan_allows_docking_floor_without_raising_core_floor() {
+        let metadata = serde_json::json!({
+            "workspace_members": ["core", "docking"],
+            "packages": [
+                {"id": "core", "name": "open-gpui", "rust_version": "1.93"},
+                {"id": "docking", "name": "open-gpui-docking", "rust_version": "1.95"},
+                {"id": "dockspace", "name": "dockspace", "rust_version": "1.95"}
+            ],
+            "resolve": {"nodes": [
+                {"id": "core", "dependencies": []},
+                {"id": "docking", "dependencies": ["core", "dockspace"]},
+                {"id": "dockspace", "dependencies": []}
+            ]}
+        });
+
+        assert!(msrv_failures(&metadata).is_empty());
+    }
+
+    #[test]
+    fn msrv_scan_rejects_unlisted_package_floor() {
+        let metadata = serde_json::json!({
+            "workspace_members": ["unlisted"],
+            "packages": [
+                {"id": "unlisted", "name": "unlisted-package", "rust_version": "1.95"}
+            ],
+            "resolve": {"nodes": [
+                {"id": "unlisted", "dependencies": []}
+            ]}
+        });
+
+        let failures = msrv_failures(&metadata);
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].contains("`unlisted-package` must declare rust-version `1.93`"));
+    }
+
+    #[test]
+    fn msrv_scan_requires_exact_exception_floor() {
+        let mut metadata = serde_json::json!({
+            "workspace_members": ["docking"],
+            "packages": [
+                {"id": "docking", "name": "open-gpui-docking", "rust_version": "1.93"}
+            ],
+            "resolve": {"nodes": [
+                {"id": "docking", "dependencies": []}
+            ]}
+        });
+
+        for version in ["1.93", "1.100"] {
+            metadata["packages"][0]["rust_version"] = version.into();
+            let failures = msrv_failures(&metadata);
+            assert_eq!(failures.len(), 1);
+            assert!(failures[0].contains("`open-gpui-docking` must declare rust-version `1.95`"));
+        }
     }
 
     #[test]

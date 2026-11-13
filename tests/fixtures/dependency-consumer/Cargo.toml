@@ -10,7 +10,7 @@ khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42
 name = "open-gpui-dependency-consumer"
 version = "0.0.0"
 edition = "2024"
-rust-version = "1.93"
+rust-version = "1.95"
 publish = false
 
 [features]

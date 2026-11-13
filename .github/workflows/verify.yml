@@ -38,16 +38,34 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Check framework on minimum Rust
-        run: cargo +1.93.0 check --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-windows -p open-gpui-canvas -p open-gpui-platform -p open-gpui-bench-metrics -p open-gpui-macros -p open-gpui-motion -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-docking --all-features --all-targets -j 1
-
-      - name: Check independent consumer on minimum Rust
-        run: cargo +1.93.0 check --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-targets --all-features --target-dir target -j 1
+        run: cargo +1.93.0 check --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-windows -p open-gpui-canvas -p open-gpui-platform -p open-gpui-bench-metrics -p open-gpui-macros -p open-gpui-motion -p open-gpui-ui-core -p open-gpui-ui-components --all-features --all-targets -j 1
 
       - name: Check independent test-support consumer on minimum Rust
         run: cargo +1.93.0 check --locked --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --all-targets --all-features --target-dir target -j 1
 
       - name: Check hot-reload consumer on minimum Rust
         run: cargo +1.93.0 check --locked --manifest-path tests/fixtures/hot-reload-consumer/Cargo.toml --all-targets --target-dir target -j 1
+
+  msrv-docking-windows:
+    name: msrv (windows, docking and tooling, Rust 1.95)
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install docking minimum Rust toolchain
+        uses: dtolnay/rust-toolchain@1.95.0
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check docking, examples, and tooling on minimum Rust
+        run: cargo +1.95.0 check --locked -p open-gpui-devtools -p open-gpui-docking -p open-gpui-docking-minimal -p open-gpui-docking-multiviewport -p open-gpui-docking-native -p open-gpui-dockspace-editor -p open-gpui-ui-foundation-gallery -p xtask --all-features --all-targets -j 1
+
+      - name: Check independent consumer on docking minimum Rust
+        run: cargo +1.95.0 check --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-targets --all-features --target-dir target -j 1
 
   verify:
     name: verify (${{ matrix.name }})

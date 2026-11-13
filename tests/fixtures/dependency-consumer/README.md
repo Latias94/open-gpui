@@ -4,6 +4,13 @@ This application is its own Cargo workspace. It consumes Open GPUI through path 
 without inheriting the repository workspace's dependency resolution or lockfile. Its own
 `Cargo.lock` records the consumer resolution.
 
+This full consumer declares Rust 1.95 because it directly depends on `open-gpui-docking`,
+whose pinned dockspace dependency declares that minimum. Disabling fixture features does
+not remove its docking dependency. CI checks this application with Rust 1.95 separately
+from the Rust 1.93 gates for core, macros, components, and the independent test-support
+and hot-reload consumers. A successful build on Rust 1.100 or a newer compiler does not
+qualify either minimum compiler version.
+
 The feature-free `deferred_frames` target type-checks the exact public submission identity,
 delivery mode and platform entry points without constructing private authority. Its closures
 are deliberately unexecuted; actual candidate publication and native GPU submission belong to
