@@ -17,11 +17,12 @@ use dockspace::{
     },
 };
 use open_gpui::{
-    AnyWindowHandle, App, Entity, PlatformWindowActivationSupport, Render, Subscription, Window,
-    WindowActivationTerminal, WindowActivationTicket, WindowFrameSubmissionTicket,
-    WindowInitialPresentationStatus, WindowMutationDispatch, WindowMutationOutcome,
-    WindowMutationTicket, WindowOpenError, WindowOpenFailureStage, WindowOptions,
-    WindowPhysicalPlacementRequest, WindowPlatformFacts, WindowPresentationShutdownTicket,
+    AnyWindowHandle, App, Entity, NativeCapturedDragReleaseBarrier,
+    PlatformWindowActivationSupport, Render, Subscription, Window, WindowActivationTerminal,
+    WindowActivationTicket, WindowFrameSubmissionTicket, WindowInitialPresentationStatus,
+    WindowMutationDispatch, WindowMutationOutcome, WindowMutationTicket, WindowOpenError,
+    WindowOpenFailureStage, WindowOptions, WindowPhysicalPlacementRequest, WindowPlatformFacts,
+    WindowPresentationShutdownTicket,
 };
 
 use super::{
@@ -123,7 +124,7 @@ struct CallbackState {
     sealed: Cell<bool>,
     anchor: Cell<bool>,
     capture: Cell<Option<NativeCapture>>,
-    capture_release: Cell<Option<open_gpui::NativeCapturedDragReleaseBarrier>>,
+    capture_release: Cell<Option<(NativeWindowBinding, NativeCapturedDragReleaseBarrier)>>,
     capture_failed: Cell<bool>,
     capture_cancellations: RefCell<VecDeque<NativeCapture>>,
     capture_observation_missing: Cell<bool>,
@@ -137,7 +138,7 @@ struct CallbackState {
 #[derive(Clone)]
 pub struct NativeCallbacks(Rc<CallbackState>);
 
-pub(super) struct SubmissionCustody(Weak<CallbackState>);
+pub(super) struct CallbackCustody(Weak<CallbackState>);
 
 impl NativeCallbacks {
     pub(super) fn new(
@@ -326,7 +327,7 @@ impl NativeCallbacks {
                 && !state.sealed.get()
             {
                 state.transport.push(
-                    Inbound::Submission(binding, snapshot, SubmissionCustody(weak)),
+                    Inbound::Submission(binding, snapshot, CallbackCustody(weak)),
                     cx,
                 );
             }
@@ -358,7 +359,7 @@ impl NativeCallbacks {
     pub fn binding(&self) -> NativeWindowBinding {
         self.0.binding.get()
     }
-    pub(super) fn has_submission_custody(&self, original: &SubmissionCustody) -> bool {
+    pub(super) fn has_callback_custody(&self, original: &CallbackCustody) -> bool {
         Rc::downgrade(&self.0).ptr_eq(&original.0)
     }
     /// Returns the full GPUI window id reserved during root construction.
@@ -510,7 +511,7 @@ impl NativeCallbacks {
 
     pub(super) fn request_capture_cancellation(&self, capture: NativeCapture) {
         if self.0.native_terminal.get()
-            || self.0.capture_release.get().is_some_and(|barrier| {
+            || self.0.capture_release.get().is_some_and(|(_, barrier)| {
                 barrier.source_window() == capture.source
                     && barrier.drag_generation() == capture.generation
             })
@@ -529,10 +530,11 @@ impl NativeCallbacks {
 
     pub(super) fn finish_capture(
         &self,
+        binding: NativeWindowBinding,
         barrier: open_gpui::NativeCapturedDragReleaseBarrier,
         terminal: open_gpui::NativeCapturedDragReleaseTerminal,
     ) {
-        if self.0.capture_release.get() != Some(barrier) {
+        if self.0.capture_release.get() != Some((binding, barrier)) {
             return;
         }
         self.0.capture_release.set(None);
@@ -585,14 +587,15 @@ impl NativeCallbacks {
             open_gpui::PointerCancelReason::CaptureRevoked,
             move |barrier, terminal, cx| {
                 if let Some(state) = weak.upgrade() {
-                    state
-                        .transport
-                        .push(Inbound::CaptureTerminal(binding, barrier, terminal), cx);
+                    state.transport.push(
+                        Inbound::CaptureTerminal(binding, barrier, terminal, CallbackCustody(weak)),
+                        cx,
+                    );
                 }
             },
         );
         if let Some(barrier) = barrier {
-            self.0.capture_release.set(Some(barrier));
+            self.0.capture_release.set(Some((binding, barrier)));
         } else {
             self.0.capture_failed.set(true);
             self.0
@@ -1419,6 +1422,13 @@ impl NativeBridge {
                 .any(|request| request.operation().binding().window() == binding.window())
             || self.pending.as_ref().is_some_and(|pending| {
                 pending.request.operation().binding().window() == binding.window()
+            })
+            || self.windows.iter().any(|(_, _, callbacks)| {
+                callbacks
+                    .0
+                    .capture_release
+                    .get()
+                    .is_some_and(|(owner, _)| owner == binding.window())
             })
         {
             return Err(NativeBridgeError::NotQuiescent);

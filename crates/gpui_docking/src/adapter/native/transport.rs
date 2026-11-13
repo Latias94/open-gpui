@@ -14,7 +14,7 @@ use open_gpui::{
     WindowFrameSubmissionSnapshot,
 };
 
-use super::{NativeBridge, NativeBridgeError, NativeReport, gpui::SubmissionCustody};
+use super::{NativeBridge, NativeBridgeError, NativeReport, gpui::CallbackCustody};
 
 #[cfg(test)]
 #[path = "transport_tests.rs"]
@@ -166,12 +166,13 @@ pub(super) enum Inbound {
     Submission(
         NativeWindowBinding,
         WindowFrameSubmissionSnapshot,
-        SubmissionCustody,
+        CallbackCustody,
     ),
     CaptureTerminal(
         NativeWindowBinding,
         NativeCapturedDragReleaseBarrier,
         NativeCapturedDragReleaseTerminal,
+        CallbackCustody,
     ),
     CaptureUnobserved(NativeWindowBinding),
     Pointer(NativePointerInput),
@@ -198,7 +199,7 @@ impl Inbound {
             | Self::LogicalClosed(binding)
             | Self::NativeTerminal(binding, _)
             | Self::Submission(binding, _, _)
-            | Self::CaptureTerminal(binding, _, _) => Some(*binding),
+            | Self::CaptureTerminal(binding, _, _, _) => Some(*binding),
             Self::CaptureUnobserved(binding) => Some(*binding),
             Self::Effect(result) => Some(result.binding().window()),
             Self::CapturedDrag { binding, .. } => Some(*binding),
@@ -222,7 +223,12 @@ impl NativeBridge {
                             .windows
                             .binding(snapshot.window_id())
                             .and_then(|current| self.windows.get(current))
-                            .is_some_and(|callbacks| callbacks.has_submission_custody(original)),
+                            .is_some_and(|callbacks| callbacks.has_callback_custody(original)),
+                        Inbound::CaptureTerminal(_, barrier, _, original) => !self
+                            .windows
+                            .binding(barrier.source_window())
+                            .and_then(|current| self.windows.get(current))
+                            .is_some_and(|callbacks| callbacks.has_callback_custody(original)),
                         _ => self.windows.get(binding).is_none(),
                     })
                 && !matches!(record, Inbound::Effect(_))
@@ -306,9 +312,13 @@ impl NativeBridge {
                     snapshot: *snapshot,
                 });
             }
-            Inbound::CaptureTerminal(binding, barrier, terminal) => {
-                if let Some(callbacks) = self.windows.get(*binding) {
-                    callbacks.finish_capture(*barrier, *terminal);
+            Inbound::CaptureTerminal(binding, barrier, terminal, _) => {
+                if let Some(callbacks) = self
+                    .windows
+                    .binding(barrier.source_window())
+                    .and_then(|current| self.windows.get(current))
+                {
+                    callbacks.finish_capture(*binding, *barrier, *terminal);
                 }
                 self.reports.push_back(NativeReport::CaptureTerminal {
                     binding: *binding,
