@@ -25,6 +25,13 @@ standalone applications alongside hosted roots. Return the exact revision, migra
 changed feature/platform scope and a focused consumer command. A compositor, new package
 hierarchy or Signals rewrite needs a measured workload and its own selected design first.
 
+The subsequent [Editor Framework Evolution plan](2026-11-13-1145-refactor-editor-framework-evolution-plan.md)
+records the owner's revised development direction: wrappers and focused extensions around official
+GPUI, mature control references, evaluation of the shared `dockspace` implementation, and complete
+Nara editing pages. Keep the existing state model; broader external-host expansion is deferred.
+The docking replacement remains a candidate with dependency, multiview, persistence and native
+lifecycle gates. This roadmap does not supersede Accepted ADR 0033 or authorize a production cutover.
+
 ## Recorded Windows Publication
 
 ```text
@@ -366,10 +373,11 @@ Editor success cannot establish gamepad, split-screen or world-space behavior.
 | Priority | Work | Acceptance and limits |
 |---|---|---|
 | P0 | Keep published source and direct consumers buildable. | One framework source identity; focused checks and native integration for changed contracts. Preserve compiler/feature/platform support explicitly. |
-| P0 | Stabilize hosted-root, custom native content and presentation lifecycle. | Capture/text/IME/popups, geometry/scale changes, accepted/refused frames, cancellation and close work through the original Window and submission owner. |
-| P1 | Complete public behavior/skin reuse under a real custom-control consumer. | Two skins share pointer/keyboard/a11y/programmatic activation, focus, disabled/read-only behavior, publication and retirement. Do not expose internal state solely to make an export list look complete. |
-| P1 | Continue canonical docking U4–U9 against its owning plan. | Preserve stable panel identity, factories, multiple View lifetimes and native ownership. Do not infer docking completion from finite graph panels. |
-| P1 | Improve projection/state ergonomics and quantify layout cost. | Shared models, independent dirty drafts and equal-value/new-operation-basis cases remain correct; attribute notification, render, layout/prepaint and subscription release. |
+| P0 | Preserve existing hosted-root and presentation correctness. | Fix concrete capture/text/IME/popups, geometry, candidate and close regressions through the original owners; broader host expansion is not the current development priority. |
+| P1 | Complete editable scalar, Tree and searchable-choice workflows through existing controls. | Adapt mature native behavior/composition patterns; prove ordinary consumers and Nara recipes. Preserve private semantic activation, text/focus and publication owners. |
+| P1 | Qualify the shared dockspace candidate before extending an independent docking kernel. | Prove dependency/compiler compatibility, independent document Views, logical/native surfaces, exact output admission, factories, persistence and group retirement. Existing U4–U9 and ADR 0033 remain incumbent contracts until an explicit replacement decision. |
+| P1 | Deliver a coherent Nara editing page above the reusable controls and selected docking proof. | Preserve original document/history/Workspace and RenderHost ownership. Qualify the exact source pin; a fixture or design mockup does not establish an Editor-default migration. |
+| P2 | Retain the current state model and measure concrete update/layout costs. | Preserve existing projections, independent drafts and operation-basis correctness. A different state architecture requires a separately selected consumer-backed design. |
 | P2 | Optimize repeated upload or raster work when measurements justify it. | Correct baseline versus static properties, scrolling collection, caret/text, node canvas and unrelated animated View; report allocations, bytes/uploads, CPU/GPU and latency separately. |
 | P2 | Refine runtime/platform/render/component package seams from consumers. | Standalone UI, engine hosting and appropriate game roots each demonstrate their dependency/lifecycle need. Preserve ordinary applications and avoid Nara-specific public interfaces. |
 
