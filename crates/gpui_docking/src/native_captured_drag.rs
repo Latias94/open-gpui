@@ -1689,6 +1689,10 @@ fn lock_native_captured_release(
             .expect("validated release route must remain active");
         route.latest_sequence.set(Some(event.sequence()));
         let route_snapshot = route.clone();
+        #[allow(
+            clippy::arc_with_non_send_sync,
+            reason = "GPUI route locks require Arc<dyn Any>; this reservation stays on the UI thread"
+        )]
         let reservation = Arc::new(DockNativeCapturedReleaseReservation {
             route_epoch: route.epoch,
             generation: route.generation,

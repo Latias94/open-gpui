@@ -670,7 +670,6 @@ impl Render for DockHost {
             .text_color(session.visual_style().host.foreground)
             .child(pointer_session_listener)
             .on_drag_move(cx.listener({
-                let window_binding = window_binding;
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
                     if !this.accepts_render_callback(
                         window_binding,
@@ -704,7 +703,6 @@ impl Render for DockHost {
                 }
             }))
             .on_drop(cx.listener({
-                let window_binding = window_binding;
                 move |this, event: &DropEvent<DockDragPayload>, window, cx| {
                     if !this.accepts_render_callback(
                         window_binding,
@@ -737,7 +735,6 @@ impl Render for DockHost {
                 .track_focus(&host_focus)
                 .focus_visible(move |style| style.shadow(focus_ring.clone()))
                 .capture_key_down(cx.listener({
-                    let window_binding = window_binding;
                     move |this, event: &KeyDownEvent, window, cx| {
                         if !this.accepts_render_callback(
                             window_binding,

@@ -256,7 +256,6 @@ impl DockHost {
                         .text_color(tab_hover_palette.text)
                 })
                 .on_click(cx.listener({
-                    let window_binding = window_binding;
                     move |this, _, _, cx| {
                         if !this.accepts_bound_render_callback(window_binding, cx) {
                             return;
@@ -265,7 +264,6 @@ impl DockHost {
                     }
                 }))
                 .on_a11y_action(gpui_accessible_action_from_ui(AccessibleAction::Focus), {
-                    let window_binding = window_binding;
                     move |_, _, cx| {
                         focus_entity.update(cx, |host, cx| {
                             if !host.accepts_bound_render_callback(window_binding, cx) {
@@ -379,7 +377,6 @@ impl DockHost {
                     })
                     .cursor_pointer()
                     .on_click(cx.listener({
-                        let window_binding = window_binding;
                         move |this, _, _, cx| {
                             if !this.accepts_bound_render_callback(window_binding, cx) {
                                 return;
