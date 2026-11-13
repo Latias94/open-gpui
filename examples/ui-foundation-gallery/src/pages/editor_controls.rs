@@ -744,4 +744,39 @@ mod tests {
             assert_eq!(page.staged.material.value(), "clay");
         });
     }
+
+    #[open_gpui::test]
+    fn material_query_selection_and_apply_survive_object_navigation(cx: &mut TestAppContext) {
+        let (page, cx) = open_page(cx);
+        click(cx, "text-input:editor-material-input:root");
+        cx.simulate_keystrokes("ctrl-a");
+        cx.simulate_input("mo");
+        draw(cx);
+        cx.executor().advance_clock(Duration::from_millis(120));
+        draw(cx);
+        page.read_with(cx, |page, _| {
+            assert_eq!(page.catalog.query(), "mo");
+            assert_eq!(page.catalog.results().options_ref()[0].value(), "moss");
+        });
+        cx.simulate_keystrokes("down enter");
+        draw(cx);
+        page.read_with(cx, |page, _| {
+            assert_eq!(page.staged.material.value(), "moss");
+            assert_eq!(page.objects[0].saved.material.value(), "clay");
+        });
+        assert!(
+            cx.debug_bounds("combobox:editor-material:content")
+                .is_none()
+        );
+        click(cx, "button:editor-apply:root");
+        click(cx, "tree:editor-controls-objects:item:marker");
+        click(cx, "tree:editor-controls-objects:item:panel");
+        page.read_with(cx, |page, cx| {
+            assert_eq!(page.selected, 0);
+            assert_eq!(page.objects[0].saved.material.value(), "moss");
+            assert_eq!(page.staged.material.value(), "moss");
+            assert_eq!(page.objects[1].saved.material.value(), "cobalt");
+            assert!(!page.has_changes(cx));
+        });
+    }
 }

@@ -248,12 +248,24 @@ impl ComboboxState {
                 .iter()
                 .any(|item| item.value() == value)
         });
-        let selected_value = raw_collection
-            .selected_value()
-            .map(str::to_owned)
+        let selected_item = raw_collection.selected_item().or_else(|| {
+            if filter_mode != ComboboxFilterMode::External && selected_label.is_none() {
+                return None;
+            }
+            let value = selected_value.as_deref()?;
+            (!ambiguous_values.contains(value))
+                .then(|| {
+                    raw_collection
+                        .items()
+                        .iter()
+                        .find(|item| item.value() == value)
+                })
+                .flatten()
+        });
+        let selected_value = selected_item
+            .map(|item| item.value().to_owned())
             .or(selected_value.filter(|_| selected_absent));
-        let selected_label = raw_collection
-            .selected_item()
+        let selected_label = selected_item
             .map(|item| item.label().to_owned())
             .or(selected_label.filter(|_| selected_absent));
         let empty_label = if filtered_option_count == 0 {

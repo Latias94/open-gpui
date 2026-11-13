@@ -58,6 +58,7 @@ struct ComboboxRuntime {
     selected_value: Option<String>,
     selection_ownership: ChoiceSelectionOwnership,
     retained_selection: Option<ComboboxSelection>,
+    observed_selected_item: Option<ComboboxSelection>,
     observed_selected_label: Option<Option<String>>,
     observed_input_user_edit_revision: u64,
     input_value_source: ComboboxInputValueSource,
@@ -77,7 +78,11 @@ impl ComboboxRuntime {
         }
     }
 
-    fn sync_selection(&mut self, selection: &SingleChoiceSelectionControl) {
+    fn sync_selection(
+        &mut self,
+        selection: &SingleChoiceSelectionControl,
+        selected_item: Option<&ComboboxSelection>,
+    ) {
         let selection_ownership =
             ChoiceSelectionOwnership::from_controlled(selection.is_controlled());
         let mut changed = self.selection_ownership != selection_ownership;
@@ -87,6 +92,14 @@ impl ComboboxRuntime {
             changed = true;
         }
         self.selection_ownership = selection_ownership;
+        if self.observed_selected_item.as_ref() != selected_item {
+            self.observed_selected_item = selected_item.cloned();
+            if selected_item
+                .is_some_and(|item| Some(item.value()) == self.selected_value.as_deref())
+            {
+                self.retained_selection = selected_item.cloned();
+            }
+        }
         if changed && selection.is_controlled() {
             self.pending_selection_projection = true;
         }
@@ -490,6 +503,7 @@ impl RenderOnce for Combobox {
                 self.selection.is_controlled(),
             ),
             retained_selection: self.selected_item.clone(),
+            observed_selected_item: self.selected_item.clone(),
             observed_selected_label: None,
             observed_input_user_edit_revision: 0,
             input_value_source: if self.default_query.is_empty() {
@@ -541,7 +555,9 @@ impl RenderOnce for Combobox {
                 )));
             }
         });
-        runtime.update(cx, |runtime, _| runtime.sync_selection(&self.selection));
+        runtime.update(cx, |runtime, _| {
+            runtime.sync_selection(&self.selection, self.selected_item.as_ref())
+        });
         let (input_query, input_user_edit_revision, composing) = {
             let controller = input_controller.read(cx);
             (
@@ -570,11 +586,10 @@ impl RenderOnce for Combobox {
 
         let selected_value = runtime_state.selected_value.as_deref();
         let active_value = runtime_state.active_value.as_deref().or(selected_value);
-        let retained_selection = self.selected_item.as_ref().or_else(|| {
-            (self.filter_mode == ComboboxFilterMode::External)
-                .then_some(runtime_state.retained_selection.as_ref())
-                .flatten()
-        });
+        let retained_selection = (self.filter_mode == ComboboxFilterMode::External
+            || self.selected_item.is_some())
+        .then_some(runtime_state.retained_selection.as_ref())
+        .flatten();
         let state = ComboboxState::resolve(ComboboxStateRequest {
             size: self.size,
             disabled: self.disabled,

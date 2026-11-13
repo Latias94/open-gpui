@@ -243,6 +243,103 @@ fn duplicate_result_identities_fail_closed_before_local_filtering() {
     assert!(state.listbox().activation_for_key("enter").is_none());
 }
 
+#[test]
+fn disabled_external_result_preserves_selection_without_becoming_activatable() {
+    let state = Combobox::new("disabled-selection", "Resources")
+        .selected_item(Some(ComboboxSelection::new("selected", "Original label")))
+        .results(ComboboxResults::new().option(
+            ComboboxOptionDescriptor::new("selected", "Unavailable resource").disabled(true),
+        ))
+        .state();
+
+    assert_eq!(state.selected_value(), Some("selected"));
+    assert_eq!(state.selected_label(), Some("Unavailable resource"));
+    assert_eq!(state.listbox().selected_value(), None);
+    assert_eq!(state.active_value(), None);
+    assert!(state.listbox().options()[0].disabled());
+    assert!(state.listbox().activation_for_key("enter").is_none());
+}
+
+#[open_gpui::test]
+fn controlled_item_keeps_latest_result_label_until_the_owner_explicitly_changes_it(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct Probe {
+        selected: Option<ComboboxSelection>,
+        results: ComboboxResults,
+        states: Rc<RefCell<Vec<ComboboxState>>>,
+    }
+
+    impl Render for Probe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let states = self.states.clone();
+            Combobox::new("retained-item-label", "Resources")
+                .default_open(true)
+                .selected_item(self.selected.clone())
+                .results(self.results.clone())
+                .results_content(move |state, listbox, _, _| {
+                    states.borrow_mut().push(state.clone());
+                    listbox
+                })
+        }
+    }
+
+    cx.update(init_text_input);
+    let states = Rc::new(RefCell::new(Vec::new()));
+    let (view, cx) = cx.add_window_view(|_, _| Probe {
+        selected: Some(ComboboxSelection::new("selected", "Original label")),
+        results: ComboboxResults::new()
+            .option(ComboboxOptionDescriptor::new("selected", "Original label")),
+        states: states.clone(),
+    });
+    assert!(cx.activate_accessibility());
+    for (results, owner_label, expected_label) in [
+        (
+            ComboboxResults::new()
+                .option(ComboboxOptionDescriptor::new("selected", "Renamed result")),
+            "Original label",
+            "Renamed result",
+        ),
+        (
+            ComboboxResults::loading(),
+            "Original label",
+            "Renamed result",
+        ),
+        (
+            ComboboxResults::failed("Offline"),
+            "Original label",
+            "Renamed result",
+        ),
+        (
+            ComboboxResults::new(),
+            "Explicit owner label",
+            "Explicit owner label",
+        ),
+    ] {
+        view.update(cx, |view, cx| {
+            view.selected = Some(ComboboxSelection::new("selected", owner_label));
+            view.results = results;
+            cx.notify();
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(
+            states.borrow().last().unwrap().selected_label(),
+            Some(expected_label)
+        );
+        assert_eq!(
+            rendered_input_value(cx, "Resources").as_deref(),
+            Some(expected_label)
+        );
+    }
+    view.update(cx, |view, cx| {
+        view.selected = None;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(states.borrow().last().unwrap().selected_value().is_none());
+    assert_eq!(rendered_input_value(cx, "Resources").as_deref(), Some(""));
+}
+
 #[open_gpui::test]
 fn external_pages_retain_selected_label_and_results_composition_keeps_listbox_authority(
     cx: &mut open_gpui::TestAppContext,
