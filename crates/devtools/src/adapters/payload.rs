@@ -89,6 +89,11 @@ pub fn opaque_stable_id(namespace: &str, value: &str) -> String {
 
 /// Removes sensitive fragments from diagnostic text, labels, ids, and payload strings.
 pub fn sanitize_sensitive_text(value: &str) -> String {
+    if matches!(value.trim_start().as_bytes().first(), Some(b'{' | b'['))
+        && let Ok(structured) = serde_json::from_str::<serde_json::Value>(value)
+    {
+        return sanitize_json_value(structured).to_string();
+    }
     let redacted = redact_email_like(value);
     let redacted = redact_url_queries(&redacted);
     let redacted = redact_sensitive_assignments(&redacted);

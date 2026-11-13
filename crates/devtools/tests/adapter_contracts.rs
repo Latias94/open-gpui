@@ -103,6 +103,27 @@ fn sanitizer_redacts_separated_sensitive_assignments() {
 }
 
 #[test]
+fn json_text_redaction_preserves_structure_and_full_quoted_values() {
+    let body = serde_json::json!({
+        "password": "quoted-password with spaces",
+        "context": [{ "token": "nested-credential", "stage": "open" }],
+    });
+    for input in [
+        serde_json::to_string(&body).unwrap(),
+        serde_json::to_string_pretty(&body).unwrap(),
+    ] {
+        let sanitized = sanitize_sensitive_text(&input);
+        let output: serde_json::Value = serde_json::from_str(&sanitized).unwrap();
+        assert_eq!(output["password"], "[redacted]");
+        assert_eq!(output["context"][0]["token"], "[redacted]");
+        assert_eq!(output["context"][0]["stage"], "open");
+        assert!(!sanitized.contains("quoted-password"));
+        assert!(!sanitized.contains("nested-credential"));
+        assert_eq!(sanitize_sensitive_text(&sanitized), sanitized);
+    }
+}
+
+#[test]
 fn probe_ids_and_custom_kind_labels_are_sanitized_for_exports() {
     let probe_id = ProbeId::new("owner alice@example.com").unwrap();
     let envelope = SnapshotEnvelope::new(
