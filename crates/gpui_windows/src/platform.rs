@@ -3655,6 +3655,10 @@ impl WindowsPlatformInner {
             {
                 return;
             }
+            #[allow(
+                deprecated,
+                reason = "try_update requires Rust 1.100; GPUI supports Rust 1.93"
+            )]
             let timer_id = NEXT_NATIVE_RETIREMENT_TIMER_ID
                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
                 .expect("native retirement timer identity exhausted");

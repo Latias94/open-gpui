@@ -889,6 +889,10 @@ pub(crate) struct TraceGuard {
 ))]
 pub(crate) fn trace_scope() -> TraceGuard {
     let _lifecycle = TRACE_LIFECYCLE_LOCK.lock();
+    #[allow(
+        deprecated,
+        reason = "try_update requires Rust 1.100; GPUI supports Rust 1.93"
+    )]
     let incremented = TRACE_STATE.fetch_update(Ordering::AcqRel, Ordering::Acquire, |state| {
         (state & TRACE_SCOPE_COUNT_MASK < TRACE_SCOPE_COUNT_MASK).then(|| state + 1)
     });
@@ -903,6 +907,10 @@ pub(crate) fn trace_scope() -> TraceGuard {
 impl Drop for TraceGuard {
     fn drop(&mut self) {
         let _lifecycle = TRACE_LIFECYCLE_LOCK.lock();
+        #[allow(
+            deprecated,
+            reason = "try_update requires Rust 1.100; GPUI supports Rust 1.93"
+        )]
         let previous_state =
             TRACE_STATE.fetch_update(Ordering::AcqRel, Ordering::Acquire, |state| {
                 (state & TRACE_SCOPE_COUNT_MASK > 0).then(|| state - 1)

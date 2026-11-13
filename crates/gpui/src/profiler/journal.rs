@@ -454,6 +454,10 @@ impl ForegroundRunnableCounter {
     }
 
     pub(crate) fn finished(&self) {
+        #[allow(
+            deprecated,
+            reason = "try_update requires Rust 1.100; GPUI supports Rust 1.93"
+        )]
         let _ = self
             .0
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {

@@ -1,7 +1,8 @@
 # EGL binding error regression
 
-This fixture consumes the real `khronos-egl` public binding. It has no Cargo manifest and
-does not change workspace resolution. Compile it with `rustc` against the exact source below.
+This independently locked fixture consumes the real `khronos-egl` public binding and
+does not change workspace resolution. Its positive consumer pins the exact source below;
+the registry control builds the same mock and tests against the unfixed 6.0.0 release.
 The upstream crate's own tests remain the primary regression owner; this consumer adds the
 dynamic loader and the `initialize` wrapper used by WGPU.
 
@@ -103,6 +104,30 @@ native symbols through the actual loader.
 
 ## Executed receipt and commands
 
+Rust 1.100 changes Cargo's intermediate artifact layout. New runs use the fixture's
+Cargo roots and `run.py`, which reads the `compiler-artifact.filenames` JSON field rather
+than scanning `target/debug/deps`. The registry control returns the actual failing test
+status; it does not turn the expected panic into a successful test. Both commands reuse
+the repository target directory and should run serially:
+
+```text
+python3 tests/fixtures/egl-errors/run.py --locked
+python3 tests/fixtures/egl-errors/run.py --registry-control --locked
+```
+
+On 2026-11-13, macOS `aarch64-apple-darwin`, Rust/Cargo 1.100.0, the Cargo-based
+positive consumer passed all **3 tests** (nextest run
+`3fd38718-dfeb-4f55-9f77-b21c7fe56999`). The registry control passed **2 tests** and
+failed **1 test**, returning exit status 100 (nextest run
+`03198153-a2ce-4d61-86b0-3d7b29a628eb`). The failure remains the original
+`initialize` unwrap panic at registry `src/lib.rs:1065:27`. Both runs selected and
+loaded the mock through Cargo's actual artifact message. These receipts qualify
+the binding/loader path, without native GPU or window-system execution.
+
+The following receipt and direct `rustc` commands describe the original Rust 1.99.1 run.
+Their artifact names are historical, require that compiler and do not describe Cargo's
+Rust 1.100 layout.
+
 On 2026-11-13, macOS `aarch64-apple-darwin`, `rustc 1.99.1`:
 
 - Exact pinned crate unit tests: **8 passed**.
@@ -172,7 +197,10 @@ no current EGL edge, so their entry can be unused and is not a runtime fix.
 | `tests/fixtures/arena-miri/Cargo.toml` | Existing lock contains only the independent arena/log closure; no EGL |
 
 `tests/fixtures/hot-reload-consumer/panel/Cargo.toml` is a workspace member, not another root.
-The new EGL fixture has no manifest and therefore creates no ninth root.
+The Cargo-based EGL fixture subsequently adds two independent roots, each with its
+own lockfile: the positive consumer at `tests/fixtures/egl-errors/Cargo.toml` and the
+negative control at `tests/fixtures/egl-errors/registry-control/Cargo.toml`. They
+select their binding sources directly and do not change production resolution.
 
 The integration selects the patch in the four EGL-bearing roots and the new iOS platform
 consumer. The three Core-only roots have no EGL edge and receive no unused patch. The

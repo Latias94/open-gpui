@@ -1281,6 +1281,10 @@ impl A11y {
 
 #[cfg(not(target_family = "wasm"))]
 pub(crate) fn set_requested_active(state: &AtomicU64, active: bool) {
+    #[allow(
+        deprecated,
+        reason = "try_update requires Rust 1.100; GPUI supports Rust 1.93"
+    )]
     let _ = state.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
         let generation = (current >> 1).wrapping_add(1);
         Some((generation << 1) | u64::from(active))

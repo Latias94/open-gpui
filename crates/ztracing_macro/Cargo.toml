@@ -15,3 +15,6 @@ description = "Disabled instrumentation attribute used by Open GPUI Tracing."
 proc-macro = true
 test = false
 doctest = false
+
+[lints]
+workspace = true

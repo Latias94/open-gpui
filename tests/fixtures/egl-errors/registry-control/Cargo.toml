@@ -1,0 +1,24 @@
+[workspace]
+resolver = "3"
+
+[package]
+name = "open-gpui-egl-error-registry-control"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.93"
+publish = false
+
+[lib]
+name = "egl_error_mock"
+path = "../mock_egl.rs"
+crate-type = ["cdylib"]
+test = false
+doctest = false
+
+[[test]]
+name = "egl_errors"
+path = "../egl_error_tests.rs"
+
+[dependencies]
+khronos-egl = { version = "=6.0.0", features = ["dynamic"] }
+libloading = "0.8"
