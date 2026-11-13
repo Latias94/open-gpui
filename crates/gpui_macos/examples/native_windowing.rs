@@ -1,5 +1,7 @@
 //! Native process-main-thread gate, run on macOS with a GUI session and Metal device:
-//! `cargo run -p open-gpui-macos --example native_windowing -- <mode>`.
+//! Build with `cargo build -p open-gpui-macos --features test-support,runtime_shaders --examples`.
+//! Launch with `python3 scripts/run_macos_native_probe.py target/debug/examples/native_windowing -- <mode>`.
+//! The app bundle and LaunchServices identity are required for activation on macOS 27.
 //!
 //! Run each mode in a fresh process: `default`, `windowed`, `headless`, `accessory`, `direct`,
 //! `activity`, `sheet`, `native-close`. The activity mode exercises the real headless platform acquisition/drop path.
@@ -15,6 +17,11 @@
 
 #[cfg(target_os = "macos")]
 fn main() {
+    let panic_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        panic_hook(info);
+        std::process::exit(1);
+    }));
     macos::run();
 }
 
@@ -266,6 +273,7 @@ mod macos {
             WindowBackgroundAppearance::Blurred
         );
         window.set_background_appearance(WindowBackgroundAppearance::Opaque);
+        drop(content);
         let callbacks = Rc::new(Cell::new(0));
         let callback_dropped = Rc::new(Cell::new(false));
         window.on_active_status_change(Box::new({
@@ -294,11 +302,11 @@ mod macos {
         assert!(window.platform_facts().accepts_activation);
         platform.set_activation_policy(ActivationPolicy::Regular);
         if launched {
-            platform.activate(true);
             unsafe {
                 let _: () =
                     objc2::msg_send![&*native_window, makeKeyAndOrderFront: None::<&AnyObject>];
             }
+            platform.activate(true);
             wait_for_native(
                 platform,
                 || is_active(app) && window.is_active() && callbacks.get() > 0,
@@ -369,13 +377,8 @@ mod macos {
         assert_eq!(native_policy(app), native_before);
 
         if launched {
-            platform.activate(true);
-            wait_for_native(
-                platform,
-                || is_active(app),
-                "explicit activation without a window must succeed",
-            )
-            .await;
+            // AppKit may refuse activation without a visible window. The positive
+            // activation control runs below with a real ordered native window.
             platform.hide();
             wait_for_native(
                 platform,
@@ -598,9 +601,9 @@ mod macos {
 
     async fn exercise_sheets(platform: &Rc<MacPlatform>, cx: &mut AsyncApp) {
         eprintln!("SHEET stage=owner-main-control");
-        platform.activate(true);
         let (owner, native_owner, owner_clicks) =
             cx.update(|cx| open_sheet_probe(cx, WindowOptions::default()));
+        platform.activate(true);
         wait_for_scene(platform, cx, owner).await;
         send_native_click(&native_owner);
         drain_main_queue(platform).await;

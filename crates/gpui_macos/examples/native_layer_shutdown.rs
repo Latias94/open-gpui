@@ -2,6 +2,8 @@
 //!
 //! Run in a fresh macOS GUI process with:
 //! `cargo run -p open-gpui-macos --example native_layer_shutdown --locked`.
+//! For activation and submitted resize, use the built executable with
+//! `python3 scripts/run_macos_native_probe.py target/debug/examples/native_layer_shutdown -- --exercise-window`.
 //! The native view and window remain retained while their GPUI binding retires. This
 //! exposes AppKit requests for a backing layer during the native retirement tail.
 //! Add `-- --ancestor-backed` to keep the content view layer backed during retirement.
@@ -25,10 +27,10 @@ mod macos {
         rc::Retained,
         runtime::{AnyObject, Bool},
     };
-    use objc2_app_kit::{NSView, NSWindow};
+    use objc2_app_kit::{NSView, NSWindow, NSWindowOcclusionState};
     use open_gpui::{
-        AppContext, Application, Bounds, Context, IntoElement, QuitMode, Render, Window,
-        WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
+        App, AppContext, Application, Bounds, Context, IntoElement, QuitMode, Render, Window,
+        WindowBounds, WindowId, WindowOptions, div, prelude::*, px, rgb, size,
     };
     use open_gpui_macos::MacPlatform;
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -49,6 +51,35 @@ mod macos {
                 .bg(rgb(0xf5f6f8))
                 .child("Native layer shutdown probe")
         }
+    }
+
+    fn rendering_snapshot(cx: &App, id: WindowId) -> serde_json::Value {
+        let debug = cx.debug_state();
+        let window = debug["windows"]
+            .as_array()
+            .expect("the app diagnostic lists its windows")
+            .iter()
+            .find(|window| window["id"].as_u64() == Some(id.as_u64()))
+            .expect("the live window has a diagnostic snapshot");
+        let native = &window["platform"];
+        serde_json::json!({
+            "app": {
+                "active": debug["platform"]["app_is_active"],
+                "hidden": debug["platform"]["app_is_hidden"],
+                "unoccluded": debug["platform"]["app_occlusion_state_visible"],
+            },
+            "window": {
+                "visible": native["is_visible"],
+                "unoccluded": native["occlusion_state_visible"],
+                "key": native["is_key_window"],
+                "on_active_space": native["is_on_active_space"],
+                "frame": native["frame"],
+            },
+            "content_size": window["content_size"],
+            "core_frame": window["frame"],
+            "frame_source": native["frame_source"],
+            "renderer": native["renderer"],
+        })
     }
 
     pub(super) fn run() {
@@ -129,10 +160,14 @@ mod macos {
                         }
                     })
                     .detach();
-                    cx.activate(true);
+                    if !exercise_window {
+                        cx.activate(true);
+                    }
                     window
                         .update(cx, |_, window, _| {
-                            let _ = window.activate_window();
+                            if !exercise_window {
+                                let _ = window.activate_window();
+                            }
                             window.refresh();
                             *progress.lock().expect("probe progress") = format!(
                                 "window opened; {:?}",
@@ -153,14 +188,18 @@ mod macos {
                         assert!(!layer.is_null(), "the live renderer owns a layer");
                         if exercise_window {
                         let deadline = Instant::now() + Duration::from_secs(3);
-                        let before = loop {
+                        let initially_submitted = loop {
                             let facts = window
                                 .update(cx, |_, window, _| window.presentation_facts())
                                 .expect("the native window remains live");
                             *progress.lock().expect("probe progress") =
-                                format!("waiting for initial Submitted; {facts:?}");
-                            assert!(Instant::now() < deadline, "initial rendering timed out; {facts:?}");
-                            if facts.native_visible {
+                                format!("waiting for initial Submitted and an ordered native window; {facts:?}");
+                            assert!(
+                                Instant::now() < deadline,
+                                "initial rendering or native ordering timed out; {facts:?}; {}",
+                                cx.update(|cx| rendering_snapshot(cx, id)),
+                            );
+                            if facts.native_visible && native_window.isVisible() {
                                 if let Some(generation) = facts.present_submitted_generation {
                                     break generation;
                                 }
@@ -169,6 +208,46 @@ mod macos {
                                 .timer(Duration::from_millis(10))
                                 .await;
                         };
+                        let activation = window
+                            .update(cx, |_, window, _| window.activate_window())
+                            .expect("the submitted visible window can request activation");
+                        cx.update(|cx| cx.activate(true));
+                        println!(
+                            "NATIVE LAYER SHUTDOWN: initial Submitted {initially_submitted}; requested window and application activation after native ordering",
+                        );
+                        let before = loop {
+                            let facts = window
+                                .update(cx, |_, window, _| window.presentation_facts())
+                                .expect("the native window remains live during activation");
+                            let native_unoccluded = native_window.isVisible()
+                                && native_window
+                                    .occlusionState()
+                                    .contains(NSWindowOcclusionState::Visible);
+                            let snapshot = cx.update(|cx| rendering_snapshot(cx, id));
+                            let frame_source_attached = snapshot["frame_source"]["attached"]
+                                .as_bool()
+                                .expect("the macOS frame source reports its attachment");
+                            *progress.lock().expect("probe progress") =
+                                format!("waiting for live-rendering prerequisites; native_unoccluded={native_unoccluded}, frame_source_attached={frame_source_attached}; {facts:?}");
+                            assert!(
+                                Instant::now() < deadline,
+                                "live-rendering prerequisites timed out before resize; native_unoccluded={native_unoccluded}, frame_source_attached={frame_source_attached}; activation={:?}; {facts:?}; {snapshot}",
+                                activation.snapshot(),
+                            );
+                            if facts.native_visible && native_unoccluded && frame_source_attached {
+                                if let Some(generation) = facts.present_submitted_generation {
+                                    break generation;
+                                }
+                            }
+                            cx.background_executor()
+                                .timer(Duration::from_millis(10))
+                                .await;
+                        };
+                        println!(
+                            "NATIVE LAYER SHUTDOWN: live-rendering prerequisites met; Submitted before resize={before}, activation={:?}; {}",
+                            activation.snapshot(),
+                            cx.update(|cx| rendering_snapshot(cx, id)),
+                        );
                         let mut frame = native_window.frame();
                         frame.origin.x += 12.0;
                         frame.origin.y += 8.0;
@@ -177,6 +256,10 @@ mod macos {
                         native_window.setFrame_display(frame, true);
                         window.update(cx, |_, window, _| window.refresh())
                             .expect("the resized window can refresh");
+                        println!(
+                            "NATIVE LAYER SHUTDOWN: resize requested; {}",
+                            cx.update(|cx| rendering_snapshot(cx, id)),
+                        );
                         let deadline = Instant::now() + Duration::from_secs(3);
                         loop {
                             let facts = window
@@ -184,7 +267,11 @@ mod macos {
                                 .expect("the moved and resized native window remains live");
                             *progress.lock().expect("probe progress") =
                                 format!("waiting for resized Submitted after {before}; {facts:?}");
-                            assert!(Instant::now() < deadline, "resize rendering timed out after {before}; {facts:?}");
+                            assert!(
+                                Instant::now() < deadline,
+                                "resize rendering timed out after {before}; {facts:?}; {}",
+                                cx.update(|cx| rendering_snapshot(cx, id)),
+                            );
                             if facts
                                 .present_submitted_generation
                                 .is_some_and(|generation| generation > before)
