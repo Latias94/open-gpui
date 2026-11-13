@@ -1,5 +1,208 @@
 # Verification
 
+## November 13 Incremental Sync and Native Follow-up
+
+This continuation starts at local `d1ffee6315e72dd81f3ef690486860680a696e3a`
+and selects the fixed official range
+`6ceb6fee8738274589b59139df27efc191ec2231..27bbbc1cc480a7500cec122f120e796d1fb8500c`.
+The [ten-row ledger](imports/zed-gpui-incremental-sync-2026-11-13.md) supplies
+each full upstream SHA and its framework/product disposition. The earlier
+564-row ledger keeps its original boundary. Official comparison patch retrieval
+succeeds after a rate-limited GitHub API attempt; no reference checkout is moved.
+The final code checkpoint is `ccd5070dfe502ef413b0259c359e66e69f63b1f8`;
+individual earlier receipts retain their stated implementation scope.
+
+The host is Apple Silicon/macOS 27.0, Rust 1.99.1 and SDK 26.5. CoreGraphics now
+reports **one active display**, unlike the previous zero-display run. Cargo uses
+two jobs, one build at a time and the shared checkout target; nextest uses one
+test thread. Native app activation, actual submitted frames, browser backend
+execution and numerical performance remain separate qualifications.
+
+| Receipt | Actual result and scope |
+| --- | --- |
+| N-CORE | Core/shared Apple/macOS/WGPU library regressions with `test-support,runtime_shaders`: **2000/2000**, zero skipped, 81.983 s execution; nextest `b2d59825-102e-4192-b2d3-7febd9e87f8a`. Includes all SVG upstream tests, stable permutation/full texture-key/exact-clip journal controls and existing native GPU readbacks. |
+| N-URL | Official decoded-URL path boundary assertions pass **1/1**, 160 unrelated tests filtered; nextest `256d7f7e-9332-4bfa-86a1-d8286eb78539`. Windows and Unix path styles are both exercised on the host; this is not Windows native execution. |
+| N-FINISH | The new `Primitives/finish` target compiles and its **24/24** Criterion test-mode cases pass in 2.625 s. Random seeds 0/1 and six fixed patterns at 256/1024/4096 primitives use untimed Scene construction. This is unoptimized workload completion, not an upstream speedup or a baseline/candidate measurement. |
+| N-MSRV | Real Rust **1.93.0** locked Core/util library checks pass with `test-support,bench-support` in 17.039 s after all three new official contributions. The final WGPU library/test-support check separately passes in **21.395 s** after the shader corrections. The compiler floor is unchanged. |
+| N-WGPU | WGPU library plus ordinary `linear_scene` consumer cohort passes **127/127**, zero skipped, 30.087 s after the uniform adaptation (`9de13c0e-8031-4a26-9a85-204c6f1e4abb`), then **127/127** again in **24.159 s** after the browser LOD repair (`ee10e6ab-1c7f-4742-a4f2-ff818c90c8b7`). Includes four actual GPU alpha/color-space pixel combinations, all three Naga shader variants, exact uniform layout, storage/packed textures, imported images, host recording and existing readbacks. |
+| N-IOS | Locked `open-gpui-ios` library/all-feature simulator compilation passes after the new shared Core owners in **12.894 s**, `aarch64-apple-ios-sim`, deployment floor 15.0. This adds compilation credit, not a repeat of the earlier native UIKit probe. |
+| N-BROWSER | The complete required Chromium **151.0.7922.34** workflow exits **0** in **222.274 s** after all repairs, without an unavailable skip. Explicit WebGL, Auto-to-WebGPU, explicit WebGPU and forced-no-WebGPU Auto fallback pass actual 22/22 PNG samples at both viewport sizes. Platform identity, trusted clipboard, text/selection with twelve extra focus round trips, fonts and WebGL touch pass in the same invocation. |
+| N-FOCUSED-WEB | The focused clipboard repair passes in **32.932 s**; the corrected native editing driver passes text input in **30.768 s**; coherent-handler text input with twelve extra focus round trips passes in **38.460 s**; font fallback passes in **35.117 s**; explicit WebGPU touch passes in **35.176 s**. The final complete invocation above provides the combined execution receipt. |
+| N-APPKIT | After one active display returns, the final signed-bundle native matrix passes **14/14** in **24.949 s** across fresh processes. Every probe has its explicit success marker and actual normal OS exit 0. Both plain and ancestor-backed submitted-resize cases reach live native activation/occlusion/frame-source attachment, submit a strictly newer generation and finish exact renderer/native retirement-tail layout. |
+| N-STATIC | Affected host all-target Clippy passes with `-D clippy::correctness -D clippy::suspicious` for Core/util/WGPU/macOS/platform/xtask in **30.825 s**; the final driver-only all-target rerun passes in **1.882 s**. Production Web wasm owner-only Clippy with `--no-deps` passes the same denied categories in **11.104 s**. Root formatting and the existing import/public-API/doc-link/release-document gates pass. Existing advisory warnings remain. |
+
+The exact commands for these receipts are:
+
+```text
+CARGO_BUILD_JOBS=2 cargo nextest run --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-macos -p open-gpui-apple --lib --features test-support,runtime_shaders --test-threads=1 --no-fail-fast
+CARGO_BUILD_JOBS=2 cargo nextest run --locked -p open-gpui-util --lib -E 'test(paths::tests::test_url_path_to_path)' --test-threads=1 --no-fail-fast
+CARGO_BUILD_JOBS=2 cargo rustc --locked -p open-gpui-platform --profile dev --features bench-support,font-kit,runtime_shaders --bench primitives --message-format=json-render-diagnostics -- -C debug-assertions=no
+BENCH_MEASUREMENT=wall-time CARGO_REPORTED_PRIMITIVES_EXECUTABLE Primitives/finish --test --noplot
+```
+
+The dev-profile dependencies retain their normal settings; only the benchmark
+entry point disables its debug-assertions guard. The executable is taken from
+Cargo's actual compiler-artifact receipt, not a guessed hashed filename.
+
+The initial bare native matrix is **6/14**. Real native/reentrant close, default
+and ancestor-backed retirement-tail layout, application appearance, idle-sleep
+activity and actual termination pass; activation-dependent modes and submitted
+resize do not. An initial bundled matrix is **9/14**: the submitted/ancestor
+resize control passes, while other cases still expose activation prerequisites.
+These failures remain evidence rather than being counted as unavailable skips.
+
+Native-only AppKit controls use an explicit macOS 12 deployment target. The
+identical binary cannot activate as a bare executable, while LaunchServices can
+activate its `.app` bundle. A second control confirms that `activate` after hide,
+without a visible window, may remain inactive in both Regular and Accessory
+policies; ordering a real window before activation produces active/key/visible
+occlusion. These controls do not depend on GPUI or its renderers.
+
+The windowing fixture releases its additional retained content view before
+checking full native resource retirement. Its real direct-mode red test becomes
+green in 0.235 s. Activation controls now order the real window before activating;
+the positive window/callback check and negative implicit-activation assertions
+remain. The sheet control activates after creating its first native window.
+The corrected bundled default/headless/accessory/sheet cohort passes **4/4**,
+including the full sheet gate in 7.896 s.
+
+The failed sheet assertion originally unwound through the AppKit event loop and
+terminated with SIGABRT, producing a system crash report. The standalone probe
+now installs the same print-and-exit panic boundary as the layer probe. Its
+deliberately invalid-mode negative control prints the assertion and exits **1**,
+without `fatal runtime error` or abort; the real direct positive control still
+passes. This changes probe failure reporting, not production panic policy.
+
+`scripts/run_macos_native_probe.py` gives each built probe a unique temporary
+bundle identity, signs it ad hoc and launches it through LaunchServices. It
+retains stdout/stderr and requires both the probe's explicit success marker and
+the app's actual normal exit status **0**, obtained through Darwin's process
+exit notification. `open -W` does not propagate the application's exit code. Its real activity
+positive control returns **0**; an invalid-mode assertion returns **1** through
+the wrapper without abort. Only the unique invocation's executable can be
+terminated by its bounded timeout. No Cargo process, network download or
+platform qualification is hidden inside this runner. Three native-only app
+controls print the required marker before exiting normally with 0, exiting with
+7, or receiving SIGKILL. All three launchers return 0, but their observed wait
+statuses are **0 / 1792 / 9**, and the complete runner correctly returns
+**0 / 1 / 1**. These controls close an independent review finding that checking
+only marker text could miss a failure during final native-object destruction.
+If an app exits before process monitoring attaches, the runner fails explicitly;
+it never converts missing exit evidence into a pass.
+
+The submitted-resize fixture now waits for native ordering, requests explicit
+activation and requires actual unoccluded visibility plus an attached frame
+source before changing geometry. It still requires a strictly newer real
+Submitted generation, exact retirement and retained-native layout. The final
+source compiles, but the attempt to rerun the complete native matrix stops at
+its first case: CoreGraphics independently changes from **one to zero active
+displays** at **2026-11-13 09:42:31 +08:00**. The failure prints the exact display
+topology refusal and exits unsuccessfully without a system crash. No final
+14/14 native pass is claimed at that point; the earlier individually executed gates retain
+their own source/runner scope and explicit marker receipts, before the stricter
+OS exit-status runner. In particular, the ancestor-backed submitted
+resize previously passed before the final prerequisite diagnostics, whereas
+the final non-ancestor submitted-resize execution awaits an active GUI at that point.
+
+At **2026-11-13 10:40:32 +08:00**, the independent CoreGraphics query reports
+**one active display** again. The final matrix is immediately rerun through the
+strict runner on the frozen native source, completing **14/14** in 24.949 s.
+This later result closes the preceding temporary GUI limitation without erasing
+the initial topology and activation failures.
+
+| Final native cohort | Cases | Executed result |
+| --- | ---: | --- |
+| Windowing: default, windowed, headless, accessory, direct, activity | 6 | Every mode prints its exact receipt; OS exit status 0. |
+| Sheets and native/reentrant close | 2 | Hidden submission/activation, explicit/nested owner sheets, native close and exact renderer-before-native shutdown pass; OS exit status 0. |
+| Layer shutdown: default, ancestor-backed, submitted resize, submitted resize plus ancestor backing | 4 | All pass retirement-tail layout; both submitted modes observe actual active/key/unoccluded native windows, an attached CAMetalDisplayLink, then a newer real Submitted generation after resize. Native layout does not recreate a Metal layer; OS exit status 0. |
+| Application appearance and actual AppKit termination | 2 | Inheritance/callback/cleanup and actual native quit notification/process termination pass; OS exit status 0. |
+
+This qualifies the existing automated AppKit scenarios with runtime shaders;
+physical input, fullscreen pixels, multiple-display positioning and forced
+native-close lock-contention cases outside these probes retain their own scope.
+
+Independent WGPU review finds that the upstream alpha flag is already a uniform,
+but the fork's `LINEAR_SRGB` override still reaches shader stages that do not use
+it, retaining the official Safari failure condition. Both decisions now use bits
+in the existing globals `u32`; pipeline compilation supplies no override constants.
+The bit-specific pixel control includes flags **2**, verifying linear straight
+RGB does not accidentally become premultiplied. The complete 127/127 result
+includes the ordinary host-owned LinearSrgb recording path. Safari itself still
+needs its own executed browser receipt.
+
+The first required Chromium **151.0.7922.34** browser run genuinely executes
+WebGL: both 800x600 and 960x720 renderer panels pass **22/22** PNG samples,
+including high-index quads, text, clips, images, paths and alpha. WebGPU selects
+its actual backend but renders black; Chromium's WGSL validator rejects implicit
+`textureSample` after the simple branch's exact-clip-dependent return. Fixing only
+the later slow-branch sample exposes the same issue in the simple branch itself.
+Both failures are retained. The official implementation samples before branching;
+the fork additionally needs imported-image coordinate clamping and exact clips.
+It now uses explicit mip-zero sampling in both branches, preserving the ordinary
+no-instance-read return. Atlas textures have one mip, while imported host textures
+retain their original allocation and expose exactly one selected mip through their
+existing 2D view. Explicit LOD zero is relative to that view; it preserves the host's
+selected mip. The existing sampler uses the same linear min/mag filter, so this
+needs no texture-policy change or imported-image copy.
+
+The unchanged full browser oracles then pass **WebGL, Auto→WebGPU and explicit
+WebGPU**, each at both viewport sizes with **22/22** pixel samples and complete
+input/capture/docking/activation/resize checks. Eleven original/mocked/throwing
+platform-identity controls also pass. This run stops later at trusted clipboard
+paste: its driver hard-codes Ctrl+V on the Mac host. A focused driver correction
+selects Meta+V on macOS, preserving trusted CDP input, exact single-paste counts
+and the original asynchronous/image/retirement assertions. The browser renderer
+receipts do not by themselves count as a complete clipboard/text/font/touch pass.
+
+Browser construction uses the independently locked smoke manifest, an absolute
+shared `CARGO_TARGET_DIR`, nightly wasm, Trunk 0.22.0 and the official matching
+wasm-bindgen CLI **0.2.130** placed in a task-local tools directory. The pre-existing
+global CLI is 0.2.125 and remains untouched. No unavailable skip flag is supplied.
+WebGPU's smoke case explicitly requests a fallback adapter; this is actual browser
+backend/pixel execution, not qualification of a physical device or Safari.
+
+After correcting the trusted editing path, a full invocation exposes an
+intermittent A-to-B-to-A field recovery failure. The accepted A model retains
+selection **3..5** and unchanged counts, while the textarea has A's correct text
+but selection **9..9**. The old mirror obtains selection, editable range and text
+through separate handler checkouts. Releasing each native callback lease can
+publish a new accepted handler; B's selection 11 minus A's editable start 2
+explains the observed 9. The failure does not include per-query focus identities,
+so this is a source-supported interleaving, not an asserted uniquely captured
+runtime trace.
+
+The corrected mirror keeps all model queries and DOM writes within one callback
+lease and handler identity. After release it compares focus and schedules another
+coalesced synchronization if a different field was published. No model selection
+setter or counter reset is used to satisfy the oracle. Composition, no-handler
+and retirement behavior remain intact; independent review finds no new same-slot
+reentry. The existing real-browser regression gains twelve further A/B/A round
+trips, checking exact model/DOM text and selection plus unchanged A counts on
+every cycle. The focused cohort passes in 38.460 s, then the complete required
+workflow passes in 222.274 s with the same stronger regression and all remaining
+font, touch and fallback controls.
+
+The final browser command is the existing gate, with task-local tool selection:
+
+```text
+OPEN_GPUI_WEB_SMOKE_BROWSER=CHROMIUM_EXECUTABLE PATH=MATCHING_WASM_BINDGEN_DIRECTORY:EXISTING_PATH RUSTUP_TOOLCHAIN=nightly CARGO_TARGET_DIR=ABSOLUTE_CHECKOUT_TARGET CARGO_BUILD_JOBS=2 TRUNK_OFFLINE=true TRUNK_BUILD_FROZEN=true TRUNK_SKIP_VERSION_CHECK=true target/debug/xtask web-smoke
+```
+
+`OPEN_GPUI_WEB_SMOKE_CASE=text-input`, `clipboard` or `font-fallback` selects
+the corresponding bounded follow-up; `OPEN_GPUI_WEB_SMOKE_TOUCH_BACKEND=webgpu`
+selects the additional actual WebGPU touch run. These optional selectors are
+unset for the final complete gate. Synthetic composition and unavailable-API
+controls keep their explicit labels; no physical input or Safari pass is implied.
+
+An additional whole-dependency wasm Clippy invocation initially fails on six
+existing `arc_with_non_send_sync` diagnostics in shared WGPU context/atlas,
+imported-image and external-recording owners. WebGPU handles are thread-bound
+on this target; those cross-platform owners intentionally retain their existing
+Arc-based API and lifetime contract. No unsafe Send implementation, allocation
+rewrite or permanent lint suppression is introduced. The Web owner is then
+qualified explicitly with Clippy's `--no-deps`; the whole-dependency denied-lint
+invocation remains a recorded failed extra check, not a full-wasm Clippy pass.
+
 ## November 13 Framework Closure Completion
 
 This continuation starts at local `a0e5a818e0a3628114e37362bc57a0bc240e66c0`,

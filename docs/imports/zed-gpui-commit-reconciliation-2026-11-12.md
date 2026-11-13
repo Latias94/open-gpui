@@ -8,6 +8,11 @@ root-only product changes, retained source contracts and the final product commi
 The source evidence and verification ownership needed to interpret those rows are
 recorded here; no temporary audit directory is required to use this document.
 
+The later [November 13 incremental ledger](zed-gpui-incremental-sync-2026-11-13.md)
+reviews the next ten official commits through `27bbbc1cc480a7500cec122f120e796d1fb8500c`.
+Its source decisions and newer native/browser receipts supplement this ledger;
+the 564 rows below retain their original `6ceb6fee` boundary.
+
 The selected implementation is **complete**, with **zero unexplained source gaps**.
 The final affected host cohort passes **3615/3615**, with three existing AppKit
 main-thread tests ignored. EGL's formerly open dependency correction is adopted and
@@ -286,18 +291,20 @@ WARP/readback, IME/caption/PopUp and Job execution still require Windows.
 
 Each row below reaches the full official SHA through its evidence group and the
 full local SHA through its L-* key. These are **commands to run on the named
-runner**, not current passes. Use one Cargo process, retain logs/run IDs, and add
+runner**; command text alone grants no execution credit. The later incremental
+ledger supplies explicitly scoped Chromium and final AppKit receipts without
+changing this historical source inventory. Use one Cargo process, retain logs/run IDs, and add
 the actual platform/compiler/feature/device facts to the verification record.
 
 | Runner / source map | Starting command | Required observation and remaining scope |
 | --- | --- | --- |
-| Active macOS GUI: P26 / L-PLATFORM | `cargo run --locked -p open-gpui-macos --features test-support,runtime_shaders --example native_windowing -- sheet` and repeat with `native-close`; run `--example native_layer_shutdown` separately | Hidden activation produces the first accepted visible content; sheets/native/reentrant close and submitted resize retain exact renderer-before-native retirement. Current host has no active AppKit displays. |
+| Active macOS GUI: P26 / L-PLATFORM | `cargo build --locked -p open-gpui-macos --features test-support,runtime_shaders --examples`; `python3 scripts/run_macos_native_probe.py target/debug/examples/native_windowing -- sheet`, repeat with `native-close`; run `native_layer_shutdown` through the same helper with `--exercise-window` and `--ancestor-backed` variants | The later incremental ledger records the final **14/14** native matrix after a display returns, including hidden activation, sheets, native/reentrant close, both submitted-resize and layer-retirement variants, appearance and actual quit. Every process has both its receipt and normal OS exit 0. Physical input, fullscreen/multiple-display pixels and separate forced-close contention remain unqualified. |
 | Windows CPU COLR: Q-COLR / L-GPU | `cargo nextest run --locked -p open-gpui-windows --features test-support,runtime_shaders --lib -E 'test(direct_write::readback_tests::)' --test-threads=1 --no-fail-fast` | Real DirectWrite recommended modes, extending color layers, straight BGRA and headless emoji readback on installed color fonts. Portable bitmap tests and cross-compilation do not replace this. |
 | Windows input/window state: G-GW3/GW4/GW5 / L-GPU | `cargo nextest run --locked -p open-gpui-windows --all-features --lib --test-threads=1 --no-fail-fast` | Disabled caption hit/release and live style changes; sibling-window IME focus ownership; ordinary topmost PopUp versus owned/provisional cases. Run the interactive native workflow where focus input needs a desktop. |
 | Windows Job activity: H05 / L-PLATFORM | `cargo nextest run --locked -p open-gpui-util --lib -E 'test(process::windows_tests::)' --test-threads=1 --no-fail-fast` | Unassigned None, direct-child exit with live grandchild Some(true), terminated job Some(false), real query errors and teardown. |
 | Windows renderer/resources: W-RENDER/U-RC / L-GPU/L-PLATFORM | `cargo check --locked -p open-gpui-windows -p open-gpui-platform --all-targets --all-features`; repeat the Windows library tests with runtime shaders enabled and disabled | Actual FXC entries, embedded shaders, WARP/readback, resource compiler/link and manifest output. Mac cross-host build-script cfg does not execute these native compiler paths. |
 | Linux X11/Wayland/GLES: P04/P13-P16/D-EGL / L-PLATFORM/L-DEPS | `cargo check --locked -p open-gpui-linux --all-targets --features x11,wayland,test-support`; then `cargo nextest run --locked -p open-gpui-linux --features x11,wayland,test-support --lib -E 'test(native_windowing_tests::)' --run-ignored only --test-threads=1 --no-fail-fast` | Supply live DISPLAY/WAYLAND_DISPLAY or the documented GPUI_LINUX_TEST_* overrides. Check native switching, callback receipt time/profiler, GLES failure propagation, IME, clipboard/drag and renderer teardown. FreeBSD retains its own build/compositor runner. |
-| Browser: P12/P19-P21/W-RENDER / L-BASE/L-GPU | `cargo run --locked -p xtask -- web-smoke` | Actual WebGPU and WebGL controls, canvas/input/clipboard/RAF/viewport behavior. A browser-unavailable skip and wasm compilation grant no browser pass. |
+| Browser: P12/P19-P21/W-RENDER / L-BASE/L-GPU | `cargo run --locked -p xtask -- web-smoke`, with the matching wasm toolchain/CLI and an available local Chromium binary | The later incremental ledger records the complete actual Chromium WebGL/WebGPU pixel/input/clipboard/text/font/touch/viewport workflow passing in 222.274 s after its fixes; explicit WebGPU touch also passes. Safari, physical input and hardware-failure fallback retain separate qualification. An unavailable skip and wasm compilation alone grant no browser pass. |
 | Physical iOS: H17/G-IOS-CORE / L-IOS/L-CORE | `cargo check --locked -p open-gpui-ios -p open-gpui-platform --target aarch64-apple-ios --lib --all-features`; package/sign the ordinary iOS example for an owned device | Device build already passes locally; signed device execution still needs hardware. Check IME/session changes, rotation/iPad resize, lifecycle/reconnection/memory warning, safe-area/keyboard, Universal Links, gestures and real GPU retirement. Diagnose the recorded UIKit appearance warning. |
 | OHOS: P25 / L-PLATFORM | Inspect `cargo tree --locked -p open-gpui-platform --target aarch64-unknown-linux-ohos`; check the package with an actual OHOS SDK/toolchain | Verify desktop Linux exclusion and explicit `Application::with_platform` injection. No in-tree OHOS backend is selected or claimed. |
 | Numeric comparison: G-BENCH / L-BENCH | `python3.13 scripts/compare_benchmarks.py BASELINE CANDIDATE --measurement wall-time` | Choose two committed revisions already exposing the same manifest/API fixtures. Retain the created branches/worktrees, actual features/fonts/device and raw samples; use optimized bench settings for numerical claims. The host five-target smoke is not such a comparison. |

@@ -28,6 +28,40 @@ The November continuation applies the
 Record retained differences and their consumer/verification basis here; an unimplemented
 official mechanism remains queued until it receives an explicit disposition.
 
+## November 13 Incremental Continuation
+
+Following the request to check remaining upstream commits and execute available
+local gates, this separate bounded continuation starts at fork
+`d1ffee6315e72dd81f3ef690486860680a696e3a` and selects official
+`6ceb6fee8738274589b59139df27efc191ec2231..27bbbc1cc480a7500cec122f120e796d1fb8500c`.
+The [ten-row incremental ledger](zed-gpui-incremental-sync-2026-11-13.md) records
+every changed commit, including mixed SVG/Mermaid and URL/remote-project slices.
+Three contributions were missing: SVG measurement/font caches, Scene sorting
+and its finish-only benchmark, and the public decoded-URL path helper. The
+upstream alpha-uniform fix already has an equivalent owner; the fork's separate
+LinearSrgb override needs the same compatibility adaptation. Six product-only
+commits remain outside the framework closure. This does not move the previous
+564-row ledger's pin or the read-only reference checkout.
+
+All four applicable source contributions are now reconciled, with zero open
+source commits at the selected endpoint. The final code checkpoint is
+`ccd5070dfe502ef413b0259c359e66e69f63b1f8`. Real browser execution additionally
+repairs non-uniform sprite sampling, macOS trusted editing commands and a
+cross-handler IME mirror synchronization seam. The complete required Chromium
+workflow exits 0 in 222.274 seconds; its twelve focus round trips preserve
+model/DOM selection and unchanged field counts. These local adaptations do not
+invent additional official SHAs or grant Safari/physical-input qualification.
+After the active display returns, the complete AppKit matrix also passes **14/14**
+in 24.949 seconds, with actual normal exit 0 for every process and newer submitted
+generations in both resize variants. The intervening zero-display failure remains
+recorded separately.
+
+The [new qualification record](../verification.md#november-13-incremental-sync-and-native-follow-up)
+owns actual local results, native runner prerequisites, initial failures and
+reruns. CoreGraphics now reports one active display; the prior zero-display
+receipt remains historical. Keep source completion, AppKit submitted frames,
+browser execution and numerical benchmark comparisons distinct.
+
 ## November 13 Framework Closure Completion
 
 The owner explicitly extends the task from the recent queue to all applicable

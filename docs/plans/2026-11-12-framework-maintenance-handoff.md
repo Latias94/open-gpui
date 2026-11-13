@@ -160,6 +160,46 @@ the test-only migration corrections are owned by the
 before treating the earlier cross-compilation limit as the current Windows result. AppKit GUI
 close/sheet/resize and forced-close contention still need their owning Mac runner.
 
+## November 13 Incremental Sync and Native Follow-up
+
+The [incremental ledger](../imports/zed-gpui-incremental-sync-2026-11-13.md)
+continues from local `d1ffee6315e72dd81f3ef690486860680a696e3a` across ten
+official commits, fixing the new endpoint at
+`27bbbc1cc480a7500cec122f120e796d1fb8500c`. The earlier 564-commit closure
+remains complete at its original target. Three newly missing contributions are
+adopted; the fork's LinearSrgb specialization follows the official alpha-uniform
+compatibility mechanism.
+
+Use the [current execution record](../verification.md#november-13-incremental-sync-and-native-follow-up)
+for newer native and browser results. On this macOS 27 runner, bare CLI processes
+cannot establish the same AppKit activation state as app bundles launched through
+LaunchServices. AppKit also refuses some windowless activation requests; test
+explicit activation after ordering a real native window. Keep the exact submitted
+frame, callback, ownership and renderer-retirement assertions. A probe assertion
+must print its error and exit unsuccessfully before unwinding through AppKit.
+
+The final code checkpoint is `ccd5070dfe502ef413b0259c359e66e69f63b1f8`.
+The new ten-row source range is complete. Real execution also fixes WebGPU
+non-uniform sprite sampling, macOS CDP editing commands and a mirror snapshot
+that could span two accepted input-handler identities. The complete Chromium
+workflow exits 0 in 222.274 seconds, including model/DOM selection agreement
+through twelve additional field-focus round trips, fonts, clipboard and touch.
+The incremental ledger maps every new source and qualification owner to its
+full local SHA; original failing attempts remain in the verification record.
+
+An earlier final AppKit attempt stops after CoreGraphics changes from one to
+zero active displays. After one display returns, the complete strict matrix
+passes **14/14** in 24.949 seconds, with actual normal OS exit 0 for every case
+and a newer submitted generation in both resize variants. Build the examples once,
+then repeat the required modes through
+`python3 scripts/run_macos_native_probe.py target/debug/examples/native_windowing -- sheet`
+and the corresponding native-close/layer-shutdown commands. This runner uses
+an isolated app bundle and requires the explicit receipt plus the app's actual
+normal exit 0. Earlier individual native success markers retain their narrower
+scope; the final combined receipt is recorded separately. Windows/Linux native
+drivers/input, Safari, physical iOS and numerical
+benchmark comparisons still belong to the original named platform runners.
+
 ## November 13 Framework Closure Completion
 
 The owner expands maintenance to all applicable GPUI behavior at fixed Zed
