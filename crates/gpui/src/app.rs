@@ -209,13 +209,18 @@ pub enum NativeWindowRetirementDependencyError {
 #[error("window open failed during {stage:?}: {source}")]
 pub struct WindowOpenError {
     stage: WindowOpenFailureStage,
+    retirement: Option<crate::WindowPresentationShutdownTicket>,
     #[source]
     source: anyhow::Error,
 }
 
 impl WindowOpenError {
     fn new(stage: WindowOpenFailureStage, source: anyhow::Error) -> Self {
-        Self { stage, source }
+        Self {
+            stage,
+            retirement: None,
+            source,
+        }
     }
 
     fn from_reservation(error: window_registry::WindowReservationError) -> Self {
@@ -235,6 +240,16 @@ impl WindowOpenError {
     /// Returns the exact synchronous stage that failed.
     pub const fn stage(&self) -> WindowOpenFailureStage {
         self.stage
+    }
+
+    /// Returns the original rollback shutdown authority when GPUI created a platform target.
+    ///
+    /// Root construction need not have run. A failed open can still own a native
+    /// window and outstanding rendering work; this ticket observes their normal
+    /// retirement without creating another window or manufacturing a terminal.
+    /// Absence means no rollback ticket was issued by this GPUI open transaction.
+    pub fn retirement_ticket(&self) -> Option<&crate::WindowPresentationShutdownTicket> {
+        self.retirement.as_ref()
     }
 }
 
@@ -1982,10 +1997,12 @@ impl App {
         ) -> Result<Box<dyn PlatformWindow>>,
         build_root_view: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
     ) -> std::result::Result<WindowHandle<V>, WindowOpenError> {
-        self.update(|cx| {
+        let mut reserved_window = None;
+        let opened = self.update(|cx| {
             let mut reservation =
                 window_registry::reserve(cx).map_err(WindowOpenError::from_reservation)?;
             let id = reservation.id();
+            reserved_window = Some(id);
             let handle = WindowHandle::new(id);
             let interaction_authority = reservation.interaction_authority();
             match Window::new(
@@ -2087,6 +2104,11 @@ impl App {
                     )),
                 },
             }
+        });
+        opened.map_err(|mut error| {
+            error.retirement = reserved_window
+                .and_then(|window| self.this.upgrade()?.native_window_retirement_ticket(window));
+            error
         })
     }
 
@@ -4820,7 +4842,24 @@ mod test {
         cx.fail_next_window_map("injected map failure");
         let error = cx
             .update(|app| {
-                app.open_window_detailed(WindowOptions::default(), |_, app| app.new(|_| Empty))
+                let error = app
+                    .open_window_detailed(WindowOptions::default(), |_, app| app.new(|_| Empty))
+                    .expect_err("the injected map failure must reject window creation");
+                let ticket = error
+                    .retirement_ticket()
+                    .expect("native rollback authority");
+                let original = app
+                    .this
+                    .upgrade()
+                    .unwrap()
+                    .native_window_retirement_ticket(ticket.snapshot().window_id())
+                    .expect("the original native retirement owns this ticket");
+                assert!(ticket.same_authority(&original));
+                assert!(
+                    !ticket.snapshot().native_terminal(),
+                    "an open error is not a native terminal"
+                );
+                Err::<crate::WindowHandle<Empty>, _>(error)
             })
             .expect_err("the injected native map failure must reject window creation");
 
@@ -4829,11 +4868,31 @@ mod test {
             .last_created_test_window()
             .expect("the failed map must retain a test platform window for retirement");
         cx.run_until_parked();
+        let terminal = error.retirement_ticket().unwrap().snapshot();
+        assert!(terminal.quiesced() && terminal.native_terminal());
+        assert!(!terminal.protocol_violation());
         assert_eq!(
             platform_window.presentation_shutdown_counts(),
             (1, 1, 1),
             "a post-native map failure must use the exact retirement authority rather than direct backend Drop"
         );
+        assert_app_transaction_idle(cx);
+    }
+
+    #[crate::test]
+    fn failed_open_before_platform_target_has_no_retirement_authority(cx: &mut TestAppContext) {
+        let error = cx
+            .update(|app| {
+                app.open_window_with_platform_window(
+                    WindowOptions::default(),
+                    |_, _, _| Err(std::io::Error::other("failure before native ownership").into()),
+                    |_, app| app.new(|_| Empty),
+                )
+            })
+            .expect_err("the platform factory rejected creation");
+        assert_eq!(error.stage(), WindowOpenFailureStage::PlatformCreateOrMap);
+        assert!(error.retirement_ticket().is_none());
+        assert!(error.source.downcast_ref::<std::io::Error>().is_some());
         assert_app_transaction_idle(cx);
     }
 

@@ -1679,6 +1679,18 @@ impl AppCell {
         self.request_active_shutdown_completion();
     }
 
+    /// Reads the existing rollback authority while the enclosing App update still owns ingress.
+    pub(super) fn native_window_retirement_ticket(
+        &self,
+        window: WindowId,
+    ) -> Option<crate::WindowPresentationShutdownTicket> {
+        self.native_window_retirements
+            .borrow()
+            .get(&window)
+            .and_then(|retirement| retirement.presentation_shutdown.as_ref())
+            .map(|shutdown| shutdown.ticket().clone())
+    }
+
     /// Includes late-prepared retirement authorities in the shutdown fence. Unprepared owners
     /// keep the fence pending until their queued preparation retry publishes a real ticket.
     fn quiesce_shutdown_presentations(&self, fence: &mut NativeShutdownFence) -> bool {

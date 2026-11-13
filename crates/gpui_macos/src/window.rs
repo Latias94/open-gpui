@@ -11,28 +11,33 @@ use block2::RcBlock;
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
 use open_gpui::{
-    AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalDragPayload,
-    ExternalPaths, FileDropEvent, ForegroundExecutor, FrameRequestSource, KeyDownEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformExternalDragSession, PlatformFrameDeliveryMode,
-    PlatformFrameSignal, PlatformFrameSubmission, PlatformHoveredWindow, PlatformInput,
-    PlatformInputCallback, PlatformInputCallbackSlot, PlatformInputHandler,
-    PlatformInputHandlerSlot, PlatformNativeWindowRetirementOutcome,
-    PlatformPointerCaptureReleaseOutcome, PlatformPresentationShutdownOutcome,
-    PlatformShouldCloseCallbackSlot, PlatformWindow, PlatformWindowActiveStatusObservation,
-    PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
-    PlatformWindowInteractionQuiescence, PlatformWindowPresentOutcome, Point,
-    PreparedPlatformPointerCaptureRelease, PreparedPlatformPresentationShutdown, PromptButton,
-    PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowActivationPolicy,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowCreationFacts, WindowId, WindowKind, WindowParams, WindowPresentationShutdownTicket,
-    WindowVisibility, point, popup::PopupNotSupportedError, px, size,
+    AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, DevicePixels,
+    ExternalDragPayload, ExternalPaths, FileDropEvent, ForegroundExecutor, FrameRequestSource,
+    KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseMoveEvent,
+    MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformExternalDragSession,
+    PlatformFrameDeliveryMode, PlatformFrameSignal, PlatformFrameSubmission, PlatformHoveredWindow,
+    PlatformInput, PlatformInputCallback, PlatformInputCallbackSlot, PlatformInputHandler,
+    PlatformInputHandlerSlot, PlatformNativePointerPhysicalFrame,
+    PlatformNativeWindowRetirementOutcome, PlatformPointerCaptureReleaseOutcome,
+    PlatformPresentationShutdownOutcome, PlatformShouldCloseCallbackSlot, PlatformWindow,
+    PlatformWindowActiveStatusObservation, PlatformWindowCommand, PlatformWindowCommandDispatcher,
+    PlatformWindowCommandOutcome, PlatformWindowDispatch, PlatformWindowInteractionQuiescence,
+    PlatformWindowMutationObservation, PlatformWindowMutationTerminal,
+    PlatformWindowMutationUnobservedTerminal, PlatformWindowPhysicalGeometry,
+    PlatformWindowPresentOutcome, Point, PreparedPlatformPointerCaptureRelease,
+    PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions,
+    SharedString, Size, SystemWindowTab, WindowActivationPolicy, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowCreationFacts, WindowId,
+    WindowKind, WindowMutationDomain, WindowMutationRequest, WindowParams,
+    WindowPhysicalPlacementRequest, WindowPresentationShutdownTicket, WindowVisibility, point,
+    popup::PopupNotSupportedError, px, size,
 };
 
 mod deferred_frame;
 mod file_drag;
 mod hover;
 mod native_close;
+mod physical_placement;
 mod pointer_button;
 mod sheet;
 mod simple_fullscreen;
@@ -40,6 +45,9 @@ mod visibility;
 
 use deferred_frame::MacDeferredFrame;
 use file_drag::MacExternalDrag;
+use physical_placement::{
+    MacNativePointerPhysicalFrameScope, MacNativePointerPhysicalFrameState, MacWindowMutations,
+};
 use pointer_button::{MacPointerButton, MacPointerInput};
 use sheet::MacSheetSession;
 use simple_fullscreen::{SimpleFullscreenState, release_simple_fullscreen_presentation_options};
@@ -1239,6 +1247,11 @@ enum MacWindowObservationEvent {
     Fullscreen(MacFullscreenTransitionTerminal),
     Moved,
     State(MacWindowStateEvent),
+    Mutation {
+        domain: WindowMutationDomain,
+        generation: u64,
+        terminal: PlatformWindowMutationTerminal,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1532,7 +1545,11 @@ impl MacWindowObservationCommitCoordinator {
 struct MacWindowNativeObservation {
     topology_generation: u64,
     bounds: Bounds<Pixels>,
+    native_outer_rect: NSRect,
+    native_client_rect: NSRect,
+    physical_geometry: Option<PlatformWindowPhysicalGeometry>,
     display: MacDisplay,
+    accepts_pointer_input: bool,
     is_minimized: bool,
     is_maximized: bool,
     is_fullscreen: bool,
@@ -1655,6 +1672,8 @@ impl MacWindowNativeObservationChanges {
                 || previous.is_fullscreen != current.is_fullscreen
                 || previous.simple_fullscreen_restore_bounds
                     != current.simple_fullscreen_restore_bounds
+                || previous.accepts_pointer_input != current.accepts_pointer_input
+                || previous.physical_geometry != current.physical_geometry
                 || previous.style_mask != current.style_mask
                 || previous.titlebar_appears_transparent != current.titlebar_appears_transparent,
         }
@@ -1737,12 +1756,16 @@ struct MacWindowState {
     display_transaction_frame_depth: MacDisplayTransactionFrameDepth,
     request_frame_callback: Option<Rc<dyn Fn(RequestFrameOptions)>>,
     event_callback: PlatformInputCallbackSlot,
+    native_pointer_frame: Rc<MacNativePointerPhysicalFrameState>,
     activate_callback: Option<Rc<dyn Fn(PlatformWindowActiveStatusObservation)>>,
     visibility_observer: MacWindowVisibilityObserver,
     resize_callback: Option<Rc<dyn Fn(Size<Pixels>, f32)>>,
     moved_callback: Option<Rc<dyn Fn()>>,
     display_changed_callback: Option<Box<dyn FnMut()>>,
     window_state_change_callback: Option<Rc<dyn Fn()>>,
+    mutation_callback: Option<Rc<dyn Fn(PlatformWindowMutationObservation)>>,
+    mutations: MacWindowMutations,
+    supports_live_mutations: bool,
     should_close_callback: PlatformShouldCloseCallbackSlot,
     close_callback: Option<Box<dyn FnOnce()>>,
     appearance_changed_callback: Option<Rc<dyn Fn()>>,
@@ -1834,10 +1857,13 @@ impl MacWindowState {
         self.synthetic_drag_counter += 1;
         self.last_left_mouse_down_event = None;
         self.pointer_button.cancel();
+        self.native_pointer_frame.invalidate();
         self.file_drop_sequence = None;
         self.fullscreen_transition = None;
         self.observation_commit.cancel();
         self.observation_effects.cancel();
+        self.mutations.clear();
+        self.mutation_callback = None;
         self.request_frame_callback = None;
         self.activate_callback = None;
         self.resize_callback = None;
@@ -2164,6 +2190,7 @@ impl MacWindowState {
             let is_minimized: Bool = msg_send![self.native_window, isMiniaturized];
             let is_maximized: Bool = msg_send![self.native_window, isZoomed];
             let is_active = window.isKeyWindow();
+            let ignores_mouse_events: Bool = msg_send![self.native_window, ignoresMouseEvents];
             let screen_after = window.screen()?;
             let target_after = topology.validate_native_screen(&screen_after).ok()?;
 
@@ -2200,7 +2227,17 @@ impl MacWindowState {
             Some(MacWindowNativeObservation {
                 topology_generation: topology.generation(),
                 bounds,
+                native_outer_rect: window_frame,
+                native_client_rect: content_rect,
+                physical_geometry: physical_placement::observe_geometry(
+                    topology,
+                    display,
+                    screen_frame,
+                    window_frame,
+                    content_rect,
+                ),
                 display,
+                accepts_pointer_input: ignores_mouse_events == Bool::NO,
                 is_minimized: is_minimized == Bool::YES,
                 is_maximized: !is_fullscreen && is_maximized == Bool::YES,
                 is_fullscreen,
@@ -2259,6 +2296,7 @@ impl MacWindowState {
 
     fn store_native_observation(&mut self, observation: MacWindowNativeObservation) {
         self.native_observation = Some(observation);
+        self.accepts_pointer_input = observation.accepts_pointer_input;
         if self.simple_fullscreen_state.is_none()
             && observation.simple_fullscreen_restore_bounds.is_none()
             && !observation.is_fullscreen
@@ -3347,12 +3385,19 @@ impl MacWindow {
                     display_transaction_frame_depth: MacDisplayTransactionFrameDepth::default(),
                     request_frame_callback: None,
                     event_callback: PlatformInputCallbackSlot::default(),
+                    native_pointer_frame: Rc::default(),
                     activate_callback: None,
                     visibility_observer: MacWindowVisibilityObserver::default(),
                     resize_callback: None,
                     moved_callback: None,
                     display_changed_callback: None,
                     window_state_change_callback: None,
+                    mutation_callback: None,
+                    mutations: MacWindowMutations::default(),
+                    supports_live_mutations: matches!(
+                        kind,
+                        WindowKind::Normal | WindowKind::Floating
+                    ),
                     should_close_callback: PlatformShouldCloseCallbackSlot::default(),
                     close_callback: None,
                     appearance_changed_callback: None,
@@ -3889,7 +3934,7 @@ fn deliver_window_observation_effect_batch(
     batch: MacWindowObservationEffectBatch,
     panic_boundary: &mut MacWindowCallbackPanicBoundary,
 ) {
-    let (changes, stale_frame) = {
+    let (changes, stale_frame, facts) = {
         let mut state = window_state.lock();
         if state.is_closed() {
             return;
@@ -3901,7 +3946,8 @@ fn deliver_window_observation_effect_batch(
         ) {
             state.move_traffic_light();
         }
-        (changes, deferred_frame::take_stale(&mut state))
+        let facts = state.platform_facts_for_observation(batch.observation);
+        (changes, deferred_frame::take_stale(&mut state), facts)
     };
     deferred_frame::complete(stale_frame, PlatformWindowPresentOutcome::RepaintRequired);
 
@@ -3975,6 +4021,23 @@ fn deliver_window_observation_effect_batch(
             if changes.state_changed {
                 panic_boundary.deliver(|| notify_window_state_changed(window_state));
             }
+        }
+        MacWindowObservationEvent::Mutation {
+            domain,
+            generation,
+            terminal,
+        } => {
+            if changes.state_changed {
+                panic_boundary.deliver(|| notify_window_state_changed(window_state));
+            }
+            physical_placement::deliver_mutation_observation(
+                window_state,
+                domain,
+                generation,
+                terminal,
+                facts,
+                panic_boundary,
+            );
         }
     }
 }
@@ -4469,6 +4532,7 @@ impl PlatformWindow for MacWindow {
                     if generation.is_some_and(|generation| {
                         state.pointer_button.cancel_generation(generation)
                     }) {
+                        state.native_pointer_frame.invalidate();
                         state.synthetic_drag_counter += 1;
                         state.last_left_mouse_down_event = None;
                     }
@@ -4535,6 +4599,29 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().bounds()
     }
 
+    fn physical_geometry(&self) -> Option<PlatformWindowPhysicalGeometry> {
+        self.0
+            .lock()
+            .committed_native_observation()
+            .physical_geometry
+    }
+
+    fn native_pointer_physical_frame(&self) -> Option<PlatformNativePointerPhysicalFrame> {
+        let state = self.0.lock();
+        if state.is_closed() || state.interaction_is_quiesced() {
+            None
+        } else {
+            state.native_pointer_frame.current()
+        }
+    }
+
+    fn physical_placement_for_outer_bounds(
+        &self,
+        bounds: Bounds<DevicePixels>,
+    ) -> Option<WindowPhysicalPlacementRequest> {
+        physical_placement::request_for_outer_bounds(&self.0, bounds)
+    }
+
     fn map_window(&mut self) -> anyhow::Result<()> {
         let mut state = self.0.lock();
         if !state.initial_presentation.mapped {
@@ -4560,7 +4647,8 @@ impl PlatformWindow for MacWindow {
     }
 
     fn accepts_pointer_input(&self) -> bool {
-        self.0.as_ref().lock().accepts_pointer_input
+        let state = self.0.lock();
+        !state.interaction_is_quiesced() && state.accepts_pointer_input
     }
 
     fn creation_facts(&self) -> WindowCreationFacts {
@@ -4578,39 +4666,41 @@ impl PlatformWindow for MacWindow {
     fn platform_facts(&self) -> open_gpui::WindowPlatformFacts {
         let state = self.0.as_ref().lock();
         let observation = state.committed_native_observation();
-        let window_bounds = state.window_bounds_from_client_bounds(
-            observation.bounds,
-            observation.is_fullscreen,
-            observation.is_maximized,
-            observation.simple_fullscreen_restore_bounds,
-        );
-        let activation_policy = if state.interaction_is_quiesced() {
-            WindowActivationPolicy {
-                accepts_activation: false,
-                focus_on_click: false,
-            }
-        } else {
-            state.activation_policy
-        };
-        open_gpui::WindowPlatformFacts {
-            bounds: observation.bounds,
-            coordinate_space: open_gpui::WindowCoordinateSpace::GlobalScreen,
-            physical_geometry: None,
-            window_bounds,
-            inner_window_bounds: window_bounds,
-            content_size: observation.bounds.size,
-            scale_factor: observation.display.scale_factor(),
-            display_id: Some(observation.display.id()),
-            is_minimized: observation.is_minimized,
-            is_maximized: observation.is_maximized,
-            is_fullscreen: observation.is_fullscreen,
-            accepts_pointer_input: state.accepts_pointer_input,
-            accepts_activation: activation_policy.accepts_activation,
-            focus_on_click: activation_policy.focus_on_click,
-            background_appearance: state.background_appearance,
-            topmost: state.topmost,
-            taskbar_visible: state.taskbar_visible,
-            is_active: !state.interaction_is_quiesced() && observation.is_active,
+        state.platform_facts_for_observation(observation)
+    }
+
+    fn prepare_window_mutation(&self, domain: WindowMutationDomain, generation: u64) {
+        self.0.lock().mutations.prepare(domain, generation);
+    }
+
+    fn finish_window_mutation_without_observation(
+        &self,
+        domain: WindowMutationDomain,
+        generation: u64,
+        _terminal: PlatformWindowMutationUnobservedTerminal,
+    ) {
+        self.0.lock().mutations.retire(domain, generation);
+    }
+
+    fn invalidate_window_mutation(&self, domain: WindowMutationDomain) {
+        self.0.lock().mutations.invalidate(domain);
+    }
+
+    fn request_window_mutation(
+        &mut self,
+        generation: u64,
+        request: WindowMutationRequest,
+    ) -> PlatformWindowDispatch {
+        physical_placement::queue_mutation(&self.0, generation, request)
+    }
+
+    fn on_window_mutation_observation(
+        &self,
+        callback: Box<dyn Fn(PlatformWindowMutationObservation)>,
+    ) {
+        let mut state = self.0.lock();
+        if !state.is_closed() {
+            state.mutation_callback = Some(Rc::from(callback));
         }
     }
 
@@ -6035,6 +6125,8 @@ extern "C" fn handle_key_event(
     if lock.is_closed() || lock.interaction_is_quiesced() {
         return blocked;
     }
+    let _physical_frame_mask =
+        MacNativePointerPhysicalFrameScope::enter(&lock.native_pointer_frame, None);
 
     let window_height = lock.content_size().height;
     let event = platform_input_from_native(
@@ -6197,6 +6289,8 @@ extern "C" fn handle_view_event(this: &AnyObject, _: Sel, native_event: *mut Any
     if lock.is_closed() || lock.interaction_is_quiesced() {
         return;
     }
+    let _physical_frame_mask =
+        MacNativePointerPhysicalFrameScope::enter(&lock.native_pointer_frame, None);
     let window_height = lock.content_size().height;
     let MacWindowState {
         pointer_button,
@@ -6239,7 +6333,7 @@ extern "C" fn handle_view_event(this: &AnyObject, _: Sel, native_event: *mut Any
                     }
                 }
                 lock = window_state.as_ref().lock();
-                if lock.interaction_is_quiesced() {
+                if lock.is_closed() || lock.interaction_is_quiesced() {
                     return;
                 }
             }
@@ -6294,6 +6388,13 @@ extern "C" fn handle_view_event(this: &AnyObject, _: Sel, native_event: *mut Any
 
         let event_callback = lock.event_callback.clone();
         let interaction_quiesced = lock.interaction_quiesced.clone();
+        let physical_frame = physical_placement::sample_pointer_frame(
+            &lock,
+            unsafe { &*native_event.cast::<NSEvent>() },
+            window_height,
+        );
+        let _physical_frame =
+            MacNativePointerPhysicalFrameScope::enter(&lock.native_pointer_frame, physical_frame);
         drop(lock);
         if !interaction_quiesced.load(Ordering::Acquire) {
             event_callback.dispatch(event);
@@ -7202,6 +7303,8 @@ extern "C" fn do_command_by_selector(this: &AnyObject, _: Sel, _: Sel) {
     if lock.is_closed() || lock.interaction_is_quiesced() {
         return;
     }
+    let _physical_frame_mask =
+        MacNativePointerPhysicalFrameScope::enter(&lock.native_pointer_frame, None);
     let keystroke = lock.keystroke_for_do_command.take();
     let event_callback = lock.event_callback.clone();
     drop(lock);
@@ -7377,7 +7480,7 @@ async fn synthetic_drag(
     loop {
         executor.timer(Duration::from_millis(16)).await;
         if let Some(window_state) = window_state.upgrade() {
-            let event_callback = {
+            let (event_callback, _physical_frame_mask) = {
                 let mut lock = window_state.lock();
                 if lock.is_closed()
                     || lock.interaction_is_quiesced()
@@ -7393,7 +7496,10 @@ async fn synthetic_drag(
                     lock.synthetic_drag_counter += 1;
                     break;
                 }
-                lock.event_callback.clone()
+                (
+                    lock.event_callback.clone(),
+                    MacNativePointerPhysicalFrameScope::enter(&lock.native_pointer_frame, None),
+                )
             };
             event_callback.dispatch(PlatformInput::MouseMove(event.clone()));
         } else {
@@ -7728,11 +7834,20 @@ mod creation_projection_tests {
         }
     }
 
-    fn complete_native_observation() -> MacWindowNativeObservation {
+    pub(super) fn complete_native_observation() -> MacWindowNativeObservation {
+        let client_rect = global_client_bounds_to_appkit_content_rect(
+            restore_bounds(),
+            NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1920.0, 1080.0)),
+            Bounds::new(point(px(0.0), px(0.0)), size(px(1920.0), px(1080.0))),
+        );
         MacWindowNativeObservation {
             topology_generation: 1,
             bounds: restore_bounds(),
+            native_outer_rect: client_rect,
+            native_client_rect: client_rect,
+            physical_geometry: None,
             display: crate::display::tests::display(7_u128 << 64, 0.0, 0.0, 2.0, 1_920.0),
+            accepts_pointer_input: true,
             is_minimized: false,
             is_maximized: false,
             is_fullscreen: false,

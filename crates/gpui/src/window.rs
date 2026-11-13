@@ -6574,6 +6574,18 @@ impl Window {
         self.request_window_mutation(WindowMutationRequest::PhysicalPlacement(request))
     }
 
+    /// Prepares a client-area placement from native frame bounds at the target display's DPI.
+    ///
+    /// The platform owns decoration conversion. An absent result indicates that
+    /// the backend cannot prove this conversion; no placement has been applied.
+    pub fn physical_placement_for_outer_bounds(
+        &self,
+        bounds: Bounds<crate::DevicePixels>,
+    ) -> Option<WindowPhysicalPlacementRequest> {
+        self.platform_window
+            .physical_placement_for_outer_bounds(bounds)
+    }
+
     /// Requests one atomic final physical placement and point-scoped Z-order settlement for the
     /// exact bound provisional session.
     #[doc(hidden)]

@@ -718,7 +718,11 @@ fn macos_window_capabilities(kind: &WindowKind) -> PlatformWindowCapabilities {
         },
         mutations: PlatformWindowMutationCapabilities {
             position: WindowMutationSupport::CreationOnly,
-            physical_placement: WindowMutationSupport::Unsupported,
+            physical_placement: if supports_toplevel_state {
+                WindowMutationSupport::Live
+            } else {
+                WindowMutationSupport::Unsupported
+            },
             size: WindowMutationSupport::CreationOnly,
             windowed: WindowMutationSupport::CreationOnly,
             maximized: if supports_toplevel_state {
@@ -737,7 +741,11 @@ fn macos_window_capabilities(kind: &WindowKind) -> PlatformWindowCapabilities {
             } else {
                 WindowMutationSupport::Unsupported
             },
-            pointer_input: WindowMutationSupport::CreationOnly,
+            pointer_input: if supports_toplevel_state {
+                WindowMutationSupport::Live
+            } else {
+                WindowMutationSupport::CreationOnly
+            },
             activation_policy: if supports_toplevel_state {
                 WindowMutationSupport::CreationOnly
             } else {
@@ -1970,14 +1978,22 @@ mod window_capability_tests {
             },
             mutations: PlatformWindowMutationCapabilities {
                 position: WindowMutationSupport::CreationOnly,
-                physical_placement: WindowMutationSupport::Unsupported,
+                physical_placement: if supports_toplevel_state {
+                    WindowMutationSupport::Live
+                } else {
+                    WindowMutationSupport::Unsupported
+                },
                 size: WindowMutationSupport::CreationOnly,
                 windowed: WindowMutationSupport::CreationOnly,
                 maximized: toplevel_state,
                 fullscreen: toplevel_state,
                 minimized: WindowMutationSupport::Unsupported,
                 restore_bounds: toplevel_state,
-                pointer_input: WindowMutationSupport::CreationOnly,
+                pointer_input: if supports_toplevel_state {
+                    WindowMutationSupport::Live
+                } else {
+                    WindowMutationSupport::CreationOnly
+                },
                 activation_policy: toplevel_state,
                 alpha: WindowMutationSupport::CreationOnly,
                 topmost: WindowMutationSupport::Unsupported,
@@ -1989,7 +2005,7 @@ mod window_capability_tests {
     }
 
     #[test]
-    fn capabilities_match_exact_kind_specific_creation_paths() {
+    fn capabilities_match_kind_specific_creation_and_typed_mutation_paths() {
         assert_eq!(
             super::macos_window_capabilities(&open_gpui::WindowKind::Normal),
             expected_macos_capabilities(true, true)

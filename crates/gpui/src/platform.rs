@@ -326,6 +326,7 @@ bitflags::bitflags! {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlatformWindowPhysicalGeometry {
     client_bounds: Bounds<DevicePixels>,
+    outer_bounds: Option<Bounds<DevicePixels>>,
     scale_factor: f32,
     display: Option<PlatformPhysicalDisplayObservation>,
 }
@@ -566,6 +567,7 @@ impl PlatformWindowPhysicalGeometry {
         }
         Some(Self {
             client_bounds,
+            outer_bounds: None,
             scale_factor,
             display: None,
         })
@@ -587,6 +589,30 @@ impl PlatformWindowPhysicalGeometry {
     /// Returns the client bounds in physical desktop coordinates.
     pub fn client_bounds(self) -> Bounds<DevicePixels> {
         self.client_bounds
+    }
+
+    /// Adds native frame bounds captured in the same observation as the client area.
+    ///
+    /// The frame includes platform decorations, excludes shadows, and uses the
+    /// same physical desktop coordinate space. Unsupported backends leave it
+    /// absent; client bounds alone do not establish decoration geometry.
+    pub fn with_outer_bounds(mut self, bounds: Bounds<DevicePixels>) -> Option<Self> {
+        let (right, bottom) = checked_physical_bounds_end(bounds)?;
+        let (client_right, client_bottom) = checked_physical_bounds_end(self.client_bounds)?;
+        if bounds.origin.x > self.client_bounds.origin.x
+            || bounds.origin.y > self.client_bounds.origin.y
+            || right < client_right
+            || bottom < client_bottom
+        {
+            return None;
+        }
+        self.outer_bounds = Some(bounds);
+        Some(self)
+    }
+
+    /// Returns same-observation native frame bounds, including decorations but excluding shadows.
+    pub fn outer_bounds(self) -> Option<Bounds<DevicePixels>> {
+        self.outer_bounds
     }
 
     /// Returns the DPI scale sampled with the client bounds.
@@ -5999,6 +6025,17 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn physical_geometry(&self) -> Option<PlatformWindowPhysicalGeometry> {
         None
     }
+    /// Converts desired native frame bounds using this window's decoration policy at the target DPI.
+    ///
+    /// This prepares a client-area request without applying it or granting a
+    /// mutation capability. Backends must use current target-display facts and
+    /// native frame-to-client conversion, rather than source-display insets.
+    fn physical_placement_for_outer_bounds(
+        &self,
+        _bounds: Bounds<DevicePixels>,
+    ) -> Option<WindowPhysicalPlacementRequest> {
+        None
+    }
     /// Returns the physical pointer frame scoped to the active native input callback.
     #[doc(hidden)]
     fn native_pointer_physical_frame(&self) -> Option<PlatformNativePointerPhysicalFrame> {
@@ -9239,6 +9276,43 @@ impl From<String> for ClipboardString {
 #[cfg(test)]
 mod physical_display_observation_tests {
     use super::*;
+
+    #[test]
+    fn native_frame_observation_keeps_client_coordinates_and_rejects_invalid_frames() {
+        let client = Bounds::new(
+            point(DevicePixels(-1_200), DevicePixels(140)),
+            size(DevicePixels(720), DevicePixels(520)),
+        );
+        let geometry = PlatformWindowPhysicalGeometry::try_new(client, 1.5).unwrap();
+        assert_eq!(geometry.outer_bounds(), None);
+        let outer = Bounds::new(
+            point(DevicePixels(-1_208), DevicePixels(104)),
+            size(DevicePixels(736), DevicePixels(564)),
+        );
+        let observed = geometry.with_outer_bounds(outer).unwrap();
+        assert_eq!(observed.outer_bounds(), Some(outer));
+        assert_eq!(observed.client_bounds(), client);
+        assert_eq!(
+            observed.local_to_global(point(px(10.0), px(10.0))),
+            Some(point(DevicePixels(-1_185), DevicePixels(155)))
+        );
+        assert!(
+            geometry
+                .with_outer_bounds(Bounds::new(
+                    client.origin,
+                    size(DevicePixels(719), DevicePixels(520))
+                ))
+                .is_none()
+        );
+        assert!(
+            geometry
+                .with_outer_bounds(Bounds::new(
+                    point(DevicePixels(i32::MAX - 1), DevicePixels(0)),
+                    size(DevicePixels(100), DevicePixels(100)),
+                ))
+                .is_none()
+        );
+    }
 
     #[test]
     fn display_observation_rejects_work_area_outside_display() {

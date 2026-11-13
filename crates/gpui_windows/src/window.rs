@@ -4309,7 +4309,7 @@ impl WindowsWindowInner {
                 }
                 ProvisionalActivationWindowObservation::Observed {
                     physical_geometry, ..
-                } => classify_activation_window_authority(
+                } => classify_activation_geometry_authority(
                     authority.physical_geometry(),
                     Some(physical_geometry),
                 ),
@@ -4370,7 +4370,7 @@ impl WindowsWindowInner {
                     physical_geometry,
                 } => (hwnd, physical_geometry),
             };
-        let physical_geometry = match classify_activation_window_authority(
+        let physical_geometry = match classify_activation_geometry_authority(
             authority.physical_geometry(),
             Some(observed_geometry),
         ) {
@@ -5414,12 +5414,9 @@ impl WindowsWindowInner {
         )
         .expect("the drifted display observation should remain coherent");
         authority.replace_physical_geometry_for_test(
-            PlatformWindowPhysicalGeometry::try_new(
-                geometry.client_bounds(),
-                geometry.scale_factor(),
-            )
-            .and_then(|geometry| geometry.with_display_observation(drifted_display))
-            .expect("the topology-only drift should preserve coherent client geometry"),
+            geometry
+                .with_display_observation(drifted_display)
+                .expect("the topology-only drift should preserve complete physical geometry"),
         );
     }
 
@@ -5927,12 +5924,14 @@ impl WindowsWindowInner {
             open_status.client_placement = client_placement;
             self.checkpoint_settled_initial_placement(&mut open_status, settled_geometry)?;
             let facts = self.mutation_terminal_platform_facts()?;
+            let confirmed_geometry = facts
+                .physical_geometry
+                .context("hidden physical placement omitted its confirmed geometry")?;
             anyhow::ensure!(
-                facts
-                    .physical_geometry
-                    .is_some_and(|geometry| request.matches_geometry(geometry)),
+                request.matches_geometry(confirmed_geometry),
                 "hidden physical placement facts did not match the requested client geometry"
             );
+            open_status.checkpoint_settled_geometry(confirmed_geometry)?;
             Ok(facts)
         })();
         match result {
@@ -5969,12 +5968,6 @@ impl WindowsWindowInner {
         open_status: &mut WindowOpenStatus,
         settled_geometry: PlatformWindowPhysicalGeometry,
     ) -> Result<()> {
-        anyhow::ensure!(
-            open_status
-                .client_placement
-                .matches_geometry(settled_geometry),
-            "settled hidden geometry does not match its retained client placement"
-        );
         let display_observation = settled_geometry
             .display_observation()
             .context("settled hidden placement did not identify its display")?;
@@ -5992,14 +5985,7 @@ impl WindowsWindowInner {
         let display = snapshot
             .display(display_observation.display_id())
             .context("settled hidden placement display is no longer available")?;
-        let mut outer_bounds = RECT::default();
-        unsafe { GetWindowRect(self.hwnd, &mut outer_bounds) }
-            .context("failed to observe the settled hidden target window frame")?;
-        open_status.placement.rcNormalPosition = outer_bounds;
-        open_status.placement.showCmd = match open_status.state {
-            WindowOpenState::Windowed | WindowOpenState::Fullscreen => SW_SHOWNORMAL.0 as u32,
-            WindowOpenState::Maximized => SW_SHOWMAXIMIZED.0 as u32,
-        };
+        open_status.checkpoint_settled_geometry(settled_geometry)?;
         self.set_display_binding(display, display_observation.topology_generation());
         self.state.scale_factor.set(settled_geometry.scale_factor());
         Ok(())
@@ -7050,6 +7036,7 @@ impl WindowsWindowInner {
                 target_display,
             )
             .context("deferred logical placement left its retained target display")?;
+            open_status.settled_geometry = None;
             open_status.placement.rcNormalPosition =
                 self.initial_window_rect_for_physical_client_bounds(open_status.client_placement)?;
             open_status.placement.showCmd = match open_status.state {
@@ -7111,39 +7098,11 @@ impl WindowsWindowInner {
             .expect("Windows window construction seeds coherent platform facts")
     }
 
-    fn project_pending_initial_placement(
-        &self,
-        mut facts: WindowPlatformFacts,
-    ) -> WindowPlatformFacts {
+    fn project_pending_initial_placement(&self, facts: WindowPlatformFacts) -> WindowPlatformFacts {
         let Some(open_status) = self.pending_initial_placement() else {
             return facts;
         };
-        let target_display = open_status.target_display();
-        let physical_client_bounds = open_status.client_placement.client_bounds();
-        let restore_bounds = open_status.logical_client_bounds();
-        let physical_geometry = PlatformWindowPhysicalGeometry::try_new(
-            physical_client_bounds,
-            target_display.scale_factor(),
-        )
-        .and_then(|geometry| geometry.with_display_observation(target_display))
-        .expect("retained initial placement facts remain physically coherent");
-        let window_bounds = match open_status.state {
-            WindowOpenState::Windowed => WindowBounds::Windowed(restore_bounds),
-            WindowOpenState::Maximized => WindowBounds::Maximized(restore_bounds),
-            WindowOpenState::Fullscreen => WindowBounds::Fullscreen(restore_bounds),
-        };
-        facts.bounds = restore_bounds;
-        facts.physical_geometry = Some(physical_geometry);
-        facts.window_bounds = window_bounds;
-        facts.inner_window_bounds = window_bounds;
-        facts.content_size = restore_bounds.size;
-        facts.scale_factor = target_display.scale_factor();
-        facts.display_id = Some(target_display.display_id());
-        facts.is_minimized = false;
-        facts.is_maximized = matches!(open_status.state, WindowOpenState::Maximized);
-        facts.is_fullscreen = matches!(open_status.state, WindowOpenState::Fullscreen);
-        facts.is_active = false;
-        facts
+        open_status.project_platform_facts(facts)
     }
 
     #[cfg(test)]
@@ -7429,14 +7388,19 @@ impl WindowsWindowInner {
         ValidatedWindowsNativeDisplay,
     )> {
         let bounds = self.physical_client_bounds_observation()?;
+        let mut outer_rect = RECT::default();
+        unsafe { GetWindowRect(self.hwnd, &mut outer_rect) }
+            .context("failed to read native physical window frame")?;
+        let outer_bounds = physical_bounds_from_native_rect(outer_rect)?;
         let scale_factor = self.physical_scale_factor_observation()?;
         let monitor = unsafe { MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONULL) };
         let native_display = snapshot
             .validated_native_display(monitor)
             .context("failed to resolve the native window display")?;
         let geometry = PlatformWindowPhysicalGeometry::try_new(bounds, scale_factor)
+            .and_then(|geometry| geometry.with_outer_bounds(outer_bounds))
             .and_then(|geometry| geometry.with_display_observation(native_display.observation()))
-            .context("native physical client geometry and display were not coherent")?;
+            .context("native physical client, frame and display geometry were not coherent")?;
         Ok((geometry, native_display))
     }
 
@@ -8691,6 +8655,77 @@ impl PlatformWindow for WindowsWindow {
         self.0.physical_geometry_from_native().ok()
     }
 
+    fn physical_placement_for_outer_bounds(
+        &self,
+        bounds: Bounds<DevicePixels>,
+    ) -> Option<WindowPhysicalPlacementRequest> {
+        if !self.accepts_generation_bound_message(self.registration.generation())
+            || self.presentation_shutdown_claimed()
+        {
+            return None;
+        }
+        let authority = RegisteredWindowAuthority::capture(&self.0).ok()?;
+        let observation_epoch = self.state.native_placement_epoch();
+        WindowPhysicalPlacementRequest::try_new(bounds)?;
+        let coordinator = self.native_retirement_coordinator.upgrade()?;
+        let snapshot = coordinator.exact_display_topology_snapshot().ok()?;
+        let outer_rect = RECT {
+            left: bounds.origin.x.0,
+            top: bounds.origin.y.0,
+            right: bounds.right().0,
+            bottom: bounds.bottom().0,
+        };
+        let monitor = unsafe { MonitorFromRect(&outer_rect, MONITOR_DEFAULTTONULL) };
+        let display = snapshot.validated_native_display(monitor)?.observation();
+        let outer_overlap = bounds.intersect(&display.bounds());
+        if outer_overlap.size.width.0 <= 0 || outer_overlap.size.height.0 <= 0 {
+            return None;
+        }
+        let target = WindowPhysicalPlacementRequest::try_new_for_display(
+            bounds,
+            outer_overlap.center(),
+            display,
+        )?;
+        let target_monitor = self.validate_physical_placement_target(target).ok()?;
+        let target_dpi = target_monitor_dpi_for_physical_placement(target, target_monitor).ok()?;
+        let style = WINDOW_STYLE(
+            self.get_window_long_checked(GWL_STYLE, "failed to read native window style")
+                .ok()? as u32,
+        );
+        let extended_style = WINDOW_EX_STYLE(
+            self.get_window_long_checked(GWL_EXSTYLE, "failed to read native extended window style")
+                .ok()? as u32,
+        );
+        let has_menu = !unsafe { GetMenu(self.hwnd) }.is_invalid();
+        let adjusted_frame = adjusted_window_rect_for_dpi(
+            Bounds::new(Point::default(), bounds.size),
+            style,
+            extended_style,
+            has_menu,
+            target_dpi,
+            self.non_client_policy,
+        )
+        .ok()?;
+        let client_bounds = client_bounds_from_adjusted_frame(bounds, adjusted_frame).ok()?;
+        let client_overlap = client_bounds.intersect(&display.bounds());
+        if client_overlap.size.width.0 <= 0 || client_overlap.size.height.0 <= 0 {
+            return None;
+        }
+        let request = WindowPhysicalPlacementRequest::try_new_for_display(
+            client_bounds,
+            client_overlap.center(),
+            display,
+        )?;
+        self.validate_physical_placement_target(request).ok()?;
+        authority
+            .ensure_current("validating native frame-to-client conversion")
+            .ok()?;
+        (self.state.native_placement_epoch() == observation_epoch
+            && self.accepts_generation_bound_message(self.registration.generation())
+            && !self.presentation_shutdown_claimed())
+        .then_some(request)
+    }
+
     fn native_pointer_physical_frame(&self) -> Option<PlatformNativePointerPhysicalFrame> {
         self.state.native_pointer_physical_frame.current.get()
     }
@@ -9809,6 +9844,7 @@ struct WindowOpenStatus {
     placement: WINDOWPLACEMENT,
     state: WindowOpenState,
     client_placement: WindowPhysicalPlacementRequest,
+    settled_geometry: Option<PlatformWindowPhysicalGeometry>,
 }
 
 impl WindowOpenStatus {
@@ -9846,7 +9882,55 @@ impl WindowOpenStatus {
             placement,
             state,
             client_placement,
+            settled_geometry: None,
         })
+    }
+
+    fn checkpoint_settled_geometry(
+        &mut self,
+        geometry: PlatformWindowPhysicalGeometry,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            self.client_placement.matches_geometry(geometry),
+            "settled hidden geometry does not match its retained client placement"
+        );
+        let outer_bounds = geometry
+            .outer_bounds()
+            .context("settled hidden geometry omitted its native frame")?;
+        self.placement.rcNormalPosition = RECT {
+            left: outer_bounds.origin.x.0,
+            top: outer_bounds.origin.y.0,
+            right: outer_bounds.right().0,
+            bottom: outer_bounds.bottom().0,
+        };
+        self.placement.showCmd = match self.state {
+            WindowOpenState::Windowed | WindowOpenState::Fullscreen => SW_SHOWNORMAL.0 as u32,
+            WindowOpenState::Maximized => SW_SHOWMAXIMIZED.0 as u32,
+        };
+        self.settled_geometry = Some(geometry);
+        Ok(())
+    }
+
+    fn project_platform_facts(&self, mut facts: WindowPlatformFacts) -> WindowPlatformFacts {
+        let target_display = self.target_display();
+        let restore_bounds = self.logical_client_bounds();
+        let window_bounds = match self.state {
+            WindowOpenState::Windowed => WindowBounds::Windowed(restore_bounds),
+            WindowOpenState::Maximized => WindowBounds::Maximized(restore_bounds),
+            WindowOpenState::Fullscreen => WindowBounds::Fullscreen(restore_bounds),
+        };
+        facts.bounds = restore_bounds;
+        facts.physical_geometry = self.settled_geometry;
+        facts.window_bounds = window_bounds;
+        facts.inner_window_bounds = window_bounds;
+        facts.content_size = restore_bounds.size;
+        facts.scale_factor = target_display.scale_factor();
+        facts.display_id = Some(target_display.display_id());
+        facts.is_minimized = false;
+        facts.is_maximized = matches!(self.state, WindowOpenState::Maximized);
+        facts.is_fullscreen = matches!(self.state, WindowOpenState::Fullscreen);
+        facts.is_active = false;
+        facts
     }
 
     fn target_display(&self) -> PlatformPhysicalDisplayObservation {
@@ -10258,6 +10342,86 @@ fn physical_geometry_sample_is_stable(
         && first_geometry == second_geometry
 }
 
+fn classify_activation_geometry_authority(
+    previous: PlatformWindowPhysicalGeometry,
+    current: Option<PlatformWindowPhysicalGeometry>,
+) -> ProvisionalActivationWindowAuthorityStatus {
+    if current.is_some_and(|geometry| geometry.outer_bounds() != previous.outer_bounds()) {
+        return ProvisionalActivationWindowAuthorityStatus::GeometryChanged;
+    }
+    classify_activation_window_authority(previous, current)
+}
+
+fn physical_bounds_from_native_rect(rect: RECT) -> Result<Bounds<DevicePixels>> {
+    let width = rect
+        .right
+        .checked_sub(rect.left)
+        .context("native physical rectangle width overflowed")?;
+    let height = rect
+        .bottom
+        .checked_sub(rect.top)
+        .context("native physical rectangle height overflowed")?;
+    anyhow::ensure!(
+        width >= 0 && height >= 0,
+        "native physical rectangle was inverted"
+    );
+    Ok(Bounds::new(
+        point(DevicePixels(rect.left), DevicePixels(rect.top)),
+        size(DevicePixels(width), DevicePixels(height)),
+    ))
+}
+
+fn client_bounds_from_adjusted_frame(
+    outer_bounds: Bounds<DevicePixels>,
+    adjusted_frame: RECT,
+) -> Result<Bounds<DevicePixels>> {
+    WindowPhysicalPlacementRequest::try_new(outer_bounds)
+        .context("physical frame conversion requires non-empty representable bounds")?;
+    let right_offset = adjusted_frame
+        .right
+        .checked_sub(outer_bounds.size.width.0)
+        .context("target-DPI right frame inset overflowed")?;
+    let bottom_offset = adjusted_frame
+        .bottom
+        .checked_sub(outer_bounds.size.height.0)
+        .context("target-DPI bottom frame inset overflowed")?;
+    anyhow::ensure!(
+        adjusted_frame.left <= 0
+            && adjusted_frame.top <= 0
+            && right_offset >= 0
+            && bottom_offset >= 0,
+        "target-DPI native frame did not contain its reference client area"
+    );
+    let client_rect = RECT {
+        left: outer_bounds
+            .origin
+            .x
+            .0
+            .checked_sub(adjusted_frame.left)
+            .context("physical client left edge overflowed")?,
+        top: outer_bounds
+            .origin
+            .y
+            .0
+            .checked_sub(adjusted_frame.top)
+            .context("physical client top edge overflowed")?,
+        right: outer_bounds
+            .right()
+            .0
+            .checked_sub(right_offset)
+            .context("physical client right edge overflowed")?,
+        bottom: outer_bounds
+            .bottom()
+            .0
+            .checked_sub(bottom_offset)
+            .context("physical client bottom edge overflowed")?,
+    };
+    let client_bounds = physical_bounds_from_native_rect(client_rect)?;
+    WindowPhysicalPlacementRequest::try_new(client_bounds)
+        .context("target-DPI native frame leaves no representable client area")?;
+    Ok(client_bounds)
+}
+
 fn adjusted_window_rect_for_dpi(
     client_bounds: Bounds<DevicePixels>,
     style: WINDOW_STYLE,
@@ -10409,17 +10573,20 @@ fn set_non_rude_hwnd(hwnd: HWND, non_rude: bool) -> Result<()> {
 mod tests {
     use super::{
         A11yActionHandler, A11yActivationHandler, A11yInteractionAuthority, ClickState, NativeRect,
-        ProvisionalPlacementCompensation, ProvisionalPlacementCompensationComponent,
-        StyleAndBounds, WindowInteractionGate, WindowOpenState,
-        WindowsNativePointerPhysicalFrameScope, WindowsNativePointerPhysicalFrameState,
-        WindowsNonClientPolicy, adjusted_window_rect_for_dpi, non_rude_hwnd_for_fullscreen,
-        physical_geometry_sample_is_stable, window_rect_from_observed_frame, with_windows_callback,
-        with_windows_shared_callback,
+        ProvisionalActivationWindowAuthorityStatus, ProvisionalPlacementCompensation,
+        ProvisionalPlacementCompensationComponent, StyleAndBounds, WindowInteractionGate,
+        WindowOpenState, WindowOpenStatus, WindowsNativePointerPhysicalFrameScope,
+        WindowsNativePointerPhysicalFrameState, WindowsNonClientPolicy,
+        adjusted_window_rect_for_dpi, classify_activation_geometry_authority,
+        client_bounds_from_adjusted_frame, non_rude_hwnd_for_fullscreen,
+        physical_bounds_from_native_rect, physical_geometry_sample_is_stable,
+        window_rect_from_observed_frame, with_windows_callback, with_windows_shared_callback,
     };
     use open_gpui::{
-        Bounds, DevicePixels, MouseButton, PlatformNativePointerPhysicalFrame,
-        PlatformWindowPhysicalGeometry, TitlebarOptions, WindowBounds, WindowId, WindowKind, point,
-        size,
+        Bounds, DevicePixels, DisplayId, MouseButton, PlatformNativePointerPhysicalFrame,
+        PlatformPhysicalDisplayObservation, PlatformWindowPhysicalGeometry, TitlebarOptions,
+        WindowBounds, WindowId, WindowKind, WindowPhysicalPlacementRequest, WindowPlatformFacts,
+        point, size,
     };
     use std::time::Duration;
     use std::{
@@ -10434,8 +10601,8 @@ mod tests {
     use windows::Win32::{
         Foundation::RECT,
         UI::WindowsAndMessaging::{
-            WINDOW_EX_STYLE, WINDOW_STYLE, WS_CAPTION, WS_EX_DLGMODALFRAME, WS_EX_TOOLWINDOW,
-            WS_EX_TOPMOST, WS_OVERLAPPEDWINDOW, WS_POPUP,
+            WINDOW_EX_STYLE, WINDOW_STYLE, WINDOWPLACEMENT, WS_CAPTION, WS_EX_DLGMODALFRAME,
+            WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_OVERLAPPEDWINDOW, WS_POPUP,
         },
     };
 
@@ -10633,6 +10800,188 @@ mod tests {
         assert!(frame_at_144.top < frame_at_96.top);
         assert!(frame_at_144.right > frame_at_96.right);
         assert!(frame_at_144.bottom > frame_at_96.bottom);
+
+        for (dpi, frame) in [(96, frame_at_96), (144, frame_at_144)] {
+            let outer_bounds = physical_bounds_from_native_rect(frame).unwrap();
+            let adjusted_frame = adjusted_window_rect_for_dpi(
+                Bounds::new(Default::default(), outer_bounds.size),
+                WS_OVERLAPPEDWINDOW,
+                WINDOW_EX_STYLE(0),
+                false,
+                dpi,
+                WindowsNonClientPolicy::NativeCaption,
+            )
+            .unwrap();
+            assert_eq!(
+                client_bounds_from_adjusted_frame(outer_bounds, adjusted_frame).unwrap(),
+                client_bounds,
+            );
+        }
+    }
+
+    #[test]
+    fn native_physical_rect_conversion_preserves_negative_desktop_coordinates() {
+        assert_eq!(
+            physical_bounds_from_native_rect(RECT {
+                left: -1_600,
+                top: -200,
+                right: -800,
+                bottom: 400,
+            })
+            .unwrap(),
+            Bounds::new(
+                point(DevicePixels(-1_600), DevicePixels(-200)),
+                size(DevicePixels(800), DevicePixels(600)),
+            ),
+        );
+        for (left, top, right, bottom) in [
+            (1, 0, 0, 0),
+            (0, 1, 0, 0),
+            (i32::MIN, 0, i32::MAX, 0),
+            (0, i32::MIN, 0, i32::MAX),
+        ] {
+            assert!(
+                physical_bounds_from_native_rect(RECT {
+                    left,
+                    top,
+                    right,
+                    bottom,
+                })
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn outer_frame_conversion_uses_asymmetric_target_frame_insets() {
+        let outer_bounds = Bounds::new(
+            point(DevicePixels(-1_600), DevicePixels(-200)),
+            size(DevicePixels(824), DevicePixels(657)),
+        );
+        let client_bounds = client_bounds_from_adjusted_frame(
+            outer_bounds,
+            RECT {
+                left: -12,
+                top: -45,
+                right: 836,
+                bottom: 669,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            client_bounds,
+            Bounds::new(
+                point(DevicePixels(-1_588), DevicePixels(-155)),
+                size(DevicePixels(800), DevicePixels(600)),
+            ),
+        );
+    }
+
+    #[test]
+    fn outer_frame_conversion_preserves_custom_titlebar_and_undecorated_client_tops() {
+        let outer_bounds = Bounds::new(
+            point(DevicePixels(-1_600), DevicePixels(-200)),
+            size(DevicePixels(824), DevicePixels(612)),
+        );
+        assert_eq!(
+            client_bounds_from_adjusted_frame(
+                outer_bounds,
+                RECT {
+                    left: -12,
+                    top: 0,
+                    right: 836,
+                    bottom: 624,
+                },
+            )
+            .unwrap(),
+            Bounds::new(
+                point(DevicePixels(-1_588), DevicePixels(-200)),
+                size(DevicePixels(800), DevicePixels(600)),
+            ),
+        );
+        assert_eq!(
+            client_bounds_from_adjusted_frame(
+                outer_bounds,
+                RECT {
+                    left: 0,
+                    top: 0,
+                    right: 824,
+                    bottom: 612,
+                },
+            )
+            .unwrap(),
+            outer_bounds,
+        );
+    }
+
+    #[test]
+    fn outer_frame_conversion_rejects_frames_without_a_positive_client_area() {
+        for (width, height) in [(24, 100), (23, 100), (100, 57), (100, 56)] {
+            let outer_bounds = Bounds::new(
+                point(DevicePixels(-500), DevicePixels(100)),
+                size(DevicePixels(width), DevicePixels(height)),
+            );
+            assert!(
+                client_bounds_from_adjusted_frame(
+                    outer_bounds,
+                    RECT {
+                        left: -12,
+                        top: -45,
+                        right: width + 12,
+                        bottom: height + 12,
+                    },
+                )
+                .is_err(),
+            );
+        }
+    }
+
+    #[test]
+    fn outer_frame_conversion_rejects_overflow_and_invalid_reference_frames() {
+        let outer_bounds = Bounds::new(
+            point(DevicePixels(100), DevicePixels(100)),
+            size(DevicePixels(800), DevicePixels(600)),
+        );
+        for (left, top, right, bottom) in [
+            (1, 0, 800, 600),
+            (0, 1, 800, 600),
+            (0, 0, 799, 600),
+            (0, 0, 800, 599),
+            (i32::MIN, 0, 800, 600),
+            (0, i32::MIN, 800, 600),
+            (0, 0, i32::MIN, 600),
+            (0, 0, 800, i32::MIN),
+        ] {
+            assert!(
+                client_bounds_from_adjusted_frame(
+                    outer_bounds,
+                    RECT {
+                        left,
+                        top,
+                        right,
+                        bottom,
+                    },
+                )
+                .is_err()
+            );
+        }
+        for invalid_bounds in [
+            Bounds::new(Default::default(), size(DevicePixels(0), DevicePixels(600))),
+            Bounds::new(
+                Default::default(),
+                size(DevicePixels(800), DevicePixels(-1)),
+            ),
+            Bounds::new(
+                point(DevicePixels(i32::MAX), DevicePixels(0)),
+                size(DevicePixels(1), DevicePixels(600)),
+            ),
+            Bounds::new(
+                point(DevicePixels(0), DevicePixels(i32::MAX)),
+                size(DevicePixels(800), DevicePixels(1)),
+            ),
+        ] {
+            assert!(client_bounds_from_adjusted_frame(invalid_bounds, RECT::default()).is_err());
+        }
     }
 
     #[test]
@@ -10652,6 +11001,252 @@ mod tests {
         assert!(!physical_geometry_sample_is_stable(
             7, 9, 11, 11, geometry, geometry,
         ));
+        assert!(!physical_geometry_sample_is_stable(
+            7, 7, 11, 13, geometry, geometry,
+        ));
+    }
+
+    #[test]
+    fn stable_physical_geometry_sample_requires_the_same_native_outer_frame() {
+        let client_geometry = PlatformWindowPhysicalGeometry::try_new(
+            Bounds::new(
+                point(DevicePixels(-1_600), DevicePixels(120)),
+                size(DevicePixels(800), DevicePixels(600)),
+            ),
+            1.5,
+        )
+        .unwrap();
+        let first_geometry = client_geometry
+            .with_outer_bounds(Bounds::new(
+                point(DevicePixels(-1_612), DevicePixels(75)),
+                size(DevicePixels(824), DevicePixels(657)),
+            ))
+            .unwrap();
+        let second_geometry = client_geometry
+            .with_outer_bounds(Bounds::new(
+                point(DevicePixels(-1_614), DevicePixels(70)),
+                size(DevicePixels(828), DevicePixels(664)),
+            ))
+            .unwrap();
+
+        assert!(physical_geometry_sample_is_stable(
+            7,
+            7,
+            11,
+            11,
+            first_geometry,
+            first_geometry,
+        ));
+        assert!(!physical_geometry_sample_is_stable(
+            7,
+            7,
+            11,
+            11,
+            first_geometry,
+            second_geometry,
+        ));
+        assert!(!physical_geometry_sample_is_stable(
+            7,
+            7,
+            11,
+            11,
+            first_geometry,
+            client_geometry,
+        ));
+    }
+
+    fn pending_initial_geometry_fixture() -> (
+        WindowOpenStatus,
+        PlatformWindowPhysicalGeometry,
+        WindowPlatformFacts,
+    ) {
+        let display_bounds = Bounds::new(
+            point(DevicePixels(-1_920), DevicePixels(0)),
+            size(DevicePixels(1_920), DevicePixels(1_080)),
+        );
+        let display = PlatformPhysicalDisplayObservation::try_new(
+            7,
+            DisplayId::from(11),
+            display_bounds,
+            display_bounds,
+            1.5,
+        )
+        .unwrap();
+        let client_bounds = Bounds::new(
+            point(DevicePixels(-1_600), DevicePixels(120)),
+            size(DevicePixels(800), DevicePixels(600)),
+        );
+        let geometry = PlatformWindowPhysicalGeometry::try_new(client_bounds, 1.5)
+            .and_then(|geometry| {
+                geometry.with_outer_bounds(Bounds::new(
+                    point(DevicePixels(-1_612), DevicePixels(75)),
+                    size(DevicePixels(824), DevicePixels(657)),
+                ))
+            })
+            .and_then(|geometry| geometry.with_display_observation(display))
+            .unwrap();
+        let open_status = WindowOpenStatus {
+            placement: WINDOWPLACEMENT::default(),
+            state: WindowOpenState::Windowed,
+            client_placement: WindowPhysicalPlacementRequest::try_new_for_display(
+                client_bounds,
+                client_bounds.center(),
+                display,
+            )
+            .unwrap(),
+            settled_geometry: None,
+        };
+        let bounds = open_status.logical_client_bounds();
+        let facts = WindowPlatformFacts {
+            bounds,
+            coordinate_space: Default::default(),
+            physical_geometry: None,
+            window_bounds: WindowBounds::Windowed(bounds),
+            inner_window_bounds: WindowBounds::Windowed(bounds),
+            content_size: bounds.size,
+            scale_factor: 1.5,
+            display_id: Some(display.display_id()),
+            is_minimized: false,
+            is_maximized: false,
+            is_fullscreen: false,
+            accepts_pointer_input: false,
+            accepts_activation: false,
+            focus_on_click: false,
+            background_appearance: Default::default(),
+            topmost: false,
+            taskbar_visible: false,
+            is_active: false,
+        };
+        (open_status, geometry, facts)
+    }
+
+    #[test]
+    fn pending_initial_projection_preserves_complete_confirmed_native_geometry() {
+        let (mut open_status, geometry, facts) = pending_initial_geometry_fixture();
+        open_status.checkpoint_settled_geometry(geometry).unwrap();
+
+        let projected = open_status.project_platform_facts(facts);
+        assert_eq!(projected.physical_geometry, Some(geometry));
+        assert_eq!(
+            open_status.placement.rcNormalPosition,
+            RECT {
+                left: -1_612,
+                top: 75,
+                right: -788,
+                bottom: 732,
+            },
+        );
+        assert_eq!(
+            open_status.project_platform_facts(projected.clone()),
+            projected,
+        );
+
+        let confirmed = geometry
+            .with_outer_bounds(Bounds::new(
+                point(DevicePixels(-1_614), DevicePixels(70)),
+                size(DevicePixels(828), DevicePixels(664)),
+            ))
+            .unwrap();
+        open_status.checkpoint_settled_geometry(confirmed).unwrap();
+        assert_ne!(confirmed, geometry);
+        assert_eq!(
+            open_status
+                .project_platform_facts(projected)
+                .physical_geometry,
+            Some(confirmed),
+        );
+    }
+
+    #[test]
+    fn unsettled_initial_projection_does_not_fabricate_physical_geometry() {
+        let (open_status, geometry, mut facts) = pending_initial_geometry_fixture();
+        facts.physical_geometry = Some(geometry);
+        assert_eq!(
+            open_status.project_platform_facts(facts).physical_geometry,
+            None
+        );
+    }
+
+    #[test]
+    fn hidden_initial_checkpoint_rejects_missing_frame_and_stale_geometry() {
+        let (mut open_status, geometry, facts) = pending_initial_geometry_fixture();
+        open_status.checkpoint_settled_geometry(geometry).unwrap();
+        let retained_frame = open_status.placement.rcNormalPosition;
+        let display = geometry.display_observation().unwrap();
+        let client_only = PlatformWindowPhysicalGeometry::try_new(
+            geometry.client_bounds(),
+            geometry.scale_factor(),
+        )
+        .and_then(|geometry| geometry.with_display_observation(display))
+        .unwrap();
+        let stale_display = PlatformPhysicalDisplayObservation::try_new(
+            display.topology_generation() + 1,
+            display.display_id(),
+            display.bounds(),
+            display.visible_bounds(),
+            display.scale_factor(),
+        )
+        .unwrap();
+        let stale_geometry = geometry.with_display_observation(stale_display).unwrap();
+        let mut changed_client = geometry.client_bounds();
+        changed_client.origin.x.0 += 1;
+        let moved = PlatformWindowPhysicalGeometry::try_new(changed_client, 1.5)
+            .and_then(|changed| changed.with_outer_bounds(geometry.outer_bounds().unwrap()))
+            .and_then(|changed| changed.with_display_observation(display))
+            .unwrap();
+        for rejected in [client_only, stale_geometry, moved] {
+            assert!(open_status.checkpoint_settled_geometry(rejected).is_err());
+            assert_eq!(open_status.placement.rcNormalPosition, retained_frame);
+            assert_eq!(
+                open_status
+                    .project_platform_facts(facts.clone())
+                    .physical_geometry,
+                Some(geometry),
+            );
+        }
+    }
+
+    #[test]
+    fn activation_topology_refresh_requires_the_same_native_outer_frame() {
+        let (_, geometry, _) = pending_initial_geometry_fixture();
+        let display = geometry.display_observation().unwrap();
+        let next_display = PlatformPhysicalDisplayObservation::try_new(
+            display.topology_generation() + 1,
+            display.display_id(),
+            display.bounds(),
+            display.visible_bounds(),
+            display.scale_factor(),
+        )
+        .unwrap();
+        let refreshed = geometry.with_display_observation(next_display).unwrap();
+        assert_eq!(refreshed.outer_bounds(), geometry.outer_bounds());
+        assert_ne!(refreshed, geometry);
+        assert_eq!(
+            classify_activation_geometry_authority(geometry, Some(refreshed)),
+            ProvisionalActivationWindowAuthorityStatus::Compatible(refreshed),
+        );
+        let reframed = refreshed
+            .with_outer_bounds(Bounds::new(
+                point(DevicePixels(-1_614), DevicePixels(70)),
+                size(DevicePixels(828), DevicePixels(664)),
+            ))
+            .unwrap();
+        let client_only = PlatformWindowPhysicalGeometry::try_new(
+            geometry.client_bounds(),
+            geometry.scale_factor(),
+        )
+        .and_then(|geometry| geometry.with_display_observation(next_display))
+        .unwrap();
+        for changed in [reframed, client_only] {
+            assert_eq!(
+                classify_activation_geometry_authority(geometry, Some(changed)),
+                ProvisionalActivationWindowAuthorityStatus::GeometryChanged,
+            );
+        }
+        assert_eq!(
+            classify_activation_geometry_authority(geometry, None),
+            ProvisionalActivationWindowAuthorityStatus::AuthorityEnded,
+        );
     }
 
     #[test]
