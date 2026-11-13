@@ -1,4 +1,4 @@
-"""Run a built macOS native probe through LaunchServices with an isolated app identity."""
+"""Run a built macOS native probe through LaunchServices and remove its temporary app."""
 
 import argparse
 from contextlib import closing
@@ -13,7 +13,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import uuid
 
 
 def success_marker(executable, arguments):
@@ -105,6 +104,22 @@ def wait_for_native_exit(command, native):
             launcher.wait(timeout=5)
 
 
+def remove_probe_bundle(app, native):
+    if matching_process(native) is not None:
+        raise RuntimeError("the native process is still running; its bundle was retained")
+    unregister = Path(
+        "/System/Library/Frameworks/CoreServices.framework/Frameworks/"
+        "LaunchServices.framework/Support/lsregister"
+    )
+    result = subprocess.run(
+        [str(unregister), "-u", str(app)], capture_output=True, text=True, timeout=5
+    )
+    # kLSApplicationNotFoundErr also means an earlier failure never registered this bundle.
+    if result.returncode and "-10814" not in result.stdout + result.stderr:
+        result.check_returncode()
+    shutil.rmtree(app)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("executable", type=Path, help="Path to a built native example")
@@ -131,7 +146,7 @@ def main():
         plistlib.dump(
             {
                 "CFBundleExecutable": executable.name,
-                "CFBundleIdentifier": f"dev.open-gpui.native-probe.p{uuid.uuid4().hex}",
+                "CFBundleIdentifier": "dev.open-gpui.native-probe",
                 "CFBundleName": f"Open GPUI {executable.name}",
                 "CFBundlePackageType": "APPL",
                 "CFBundleDevelopmentRegion": "en",
@@ -141,31 +156,38 @@ def main():
             },
             file,
         )
-    subprocess.run(["codesign", "--force", "--sign", "-", str(app)], check=True)
     stdout = output / "stdout.log"
     stderr = output / "stderr.log"
     command = [
         "open", "-n", "-W", "--stdout", str(stdout), "--stderr", str(stderr),
         str(app), "--args", *arguments,
     ]
-    print(f"Native probe bundle and logs: {output}", flush=True)
+    print(f"Native probe logs: {output}; temporary app removed after exit", flush=True)
+    exit_code = 1
     try:
+        subprocess.run(["codesign", "--force", "--sign", "-", str(app)], check=True)
         launcher_exit, native_status = wait_for_native_exit(command, native)
+        text = "\n".join(
+            path.read_text(errors="replace") for path in (stdout, stderr) if path.exists()
+        )
+        print(text, end="" if text.endswith("\n") else "\n")
+        # `open -W` does not propagate the app's status; require both OS status and receipt.
+        failed = re.search(r"panicked at|fatal runtime error|NATIVE [^\n]*FAILED", text)
+        normal_exit = os.WIFEXITED(native_status) and os.WEXITSTATUS(native_status) == 0
+        print(f"Native wait status: {native_status}; normal exit 0: {normal_exit}")
+        if not launcher_exit and normal_exit and marker in text and not failed:
+            exit_code = 0
+        else:
+            print("Native probe failed; see the retained logs", file=sys.stderr)
     except (OSError, RuntimeError, subprocess.SubprocessError) as error:
         print(f"Native probe failed: {error}; see the retained logs", file=sys.stderr)
-        return 1
-    text = "\n".join(
-        path.read_text(errors="replace") for path in (stdout, stderr) if path.exists()
-    )
-    print(text, end="" if text.endswith("\n") else "\n")
-    # `open -W` does not propagate the app's status; require both OS status and receipt.
-    failed = re.search(r"panicked at|fatal runtime error|NATIVE [^\n]*FAILED", text)
-    normal_exit = os.WIFEXITED(native_status) and os.WEXITSTATUS(native_status) == 0
-    print(f"Native wait status: {native_status}; normal exit 0: {normal_exit}")
-    if launcher_exit or not normal_exit or marker not in text or failed:
-        print("Native probe failed; see the retained logs", file=sys.stderr)
-        return 1
-    return 0
+    finally:
+        try:
+            remove_probe_bundle(app, native)
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            print(f"Native probe cleanup failed: {error}; see {output}", file=sys.stderr)
+            exit_code = 1
+    return exit_code
 
 
 if __name__ == "__main__":
