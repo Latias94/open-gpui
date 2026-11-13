@@ -3,7 +3,7 @@ use super::{
     inject_primary_button_up_best_effort,
 };
 use anyhow::{Context as _, Result, ensure};
-use open_gpui_docking::native_scenario_support::load_native_dockspace_scenario;
+use open_gpui_docking::legacy::native_scenario_support::load_native_dockspace_scenario;
 use open_gpui_windows::{
     NativeTestDisplay, NativeTestMixedDpiDisplayPair, native_test_mixed_dpi_display_pair,
 };

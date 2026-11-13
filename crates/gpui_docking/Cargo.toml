@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version = "1.95"
 authors.workspace = true
-description = "Retained docking graph and layout primitives for Open GPUI."
+description = "Retained docking views and native transport for a shared dockspace session."
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
@@ -23,29 +23,38 @@ doctest = false
 [[bench]]
 name = "tab_drag_latency"
 harness = false
-required-features = ["test-support"]
+required-features = ["test-support", "legacy-docking"]
 
 [[bench]]
 name = "tab_drag_allocations"
 harness = false
-required-features = ["test-support"]
+required-features = ["test-support", "legacy-docking"]
 
 [features]
+default = []
+legacy-docking = [
+    "dep:arrayvec",
+    "dep:open_gpui_motion",
+    "dep:open_gpui_ui_core",
+    "dep:slotmap",
+    "dep:smallvec",
+]
 test-support = ["open_gpui/test-support"]
 
 [dependencies]
 anyhow.workspace = true
 dockspace.workspace = true
-arrayvec.workspace = true
+arrayvec = { workspace = true, optional = true }
 open_gpui.workspace = true
-open_gpui_motion.workspace = true
-open_gpui_ui_core.workspace = true
+open_gpui_motion = { workspace = true, optional = true }
+open_gpui_ui_core = { workspace = true, optional = true }
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-slotmap.workspace = true
-smallvec.workspace = true
+slotmap = { workspace = true, optional = true }
+smallvec = { workspace = true, optional = true }
 thiserror.workspace = true
+web-time.workspace = true
 
 [dev-dependencies]
 open_gpui = { workspace = true, features = ["test-support"] }

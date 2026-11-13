@@ -1,371 +1,158 @@
 # Open GPUI Docking
 
-`open-gpui-docking` contains a facade-first retained docking system for Open GPUI applications. It separates durable layout state from GPUI runtime state so applications can persist dock spaces while keeping panel views, platform windows, drag sessions, and visual affordances behind runtime adapters.
+`open-gpui-docking` binds one renderer-neutral `DockspaceSession` to retained GPUI
+Views and physical windows. The crate root and `prelude` use this shared session
+by default. Layout, selection, gestures and durable pane identities have one
+semantic owner; the adapter owns GPUI entities, exact frame submission and native
+transport. Documents, history and engine rendering remain application-owned.
 
-Use this crate when an application needs IDE-style tab stacks, split panes, floating panels, and
-optional platform viewport windows.
-
-## Shared Dockspace Session
-
-The `adapter` module integrates the renderer-neutral `dockspace` session directly.
-It requires Rust 1.95. One `adapter::DockSurface` owns one supplied
-`DockspaceSession`; each `DockPane` retains a distinct application `AnyView`.
-Views may share a document, while their local editor state stays independent.
-`DockRegion` combines disjoint logical surfaces inside one physical Window and
-one original exact frame ticket. A deferred renderer does not retain the session's
-affine update lease or block another Window.
-
-Before issuing synchronous semantic intent, `is_update_pending` reports whether
-an original prepared GPUI candidate still owns that update. Native ingress and
-terminal output observations wait for its acceptance or withdrawal. A sibling
-that reaches prepaint meanwhile retains visual content without publishing new
-docking input facts, then wakes when the update becomes available.
-
-Use `adapter::DockSurface::new` for local logical surfaces, or `new_managed` with
-`open_native_root` for managed native roots and core-issued native effects. The
-two input producers are separate configurations. Native close policy supports
-allow, veto and defer; `begin_native_shutdown` drains the exact workspace group.
-Inspect `take_native_reports` and `native_is_quiescent` for original submission,
-failure and retirement observations. Application document/history and final
-engine rendering remain outside the docking owner.
-
-Pane content stays `SubtreePresentation::Inert` until its matching original
-Submitted artifact is admitted. Candidate acceptance alone does not enable its
-pointer, focus, IME or accessibility channels. Native capture packets and later
-platform facts share one FIFO, and cancellation retains its original drag
-generation through dispatch.
-
-`open_native_root` returns `NativeOpenFailure`, preserving any `root_binding`
-error together with the original `WindowOpenError` and retirement ticket. Custom
-root builders using `bind_native_root` pass their original detailed-open error
-to `retain_native_root_open_failure` so the bridge can retain rollback
-authority until real retirement. Root registration is preflighted before append;
-an appended attempt remains under the same session's recovery owner.
-
-The [dockspace editor example](../../examples/dockspace-editor/src/main.rs)
-contains real retained Views. Its `--smoke-native` mode exercises native child
-creation, submitted content, relocation, retirement and an isolated sibling.
-Current CPU tests and native/compiler limits are recorded in the
-[implementation evidence](../../docs/knowledge/engineering/verification/editor-framework-evolution-20261113.md).
-Desktop hover, independent OS capture and mixed-DPI placement require their actual
-platform facts; no ordinary local mouse event supplies those capabilities.
-
-`adapter::persistence::DockWorkspaceDocument` stores the core's public document and
-durable external pane-key history, including closed occurrences. Restore validates
-all identities before any host factory runs. The one-way legacy v2/v3 migrators
-require an explicit `LegacyTopologyMigration::RelativeWeights` choice and retain
-their non-equivalent size/topology contracts in a provenance receipt. Runtime
-entities, window handles and frame proofs are never persisted.
-
-Once a session belongs to `DockSurface`, call `capture_document` with validated
-host hints to save its committed document. A borrowed host or unaccepted update
-returns `DockPersistenceError::Busy` without advancing the save generation.
-Accepted outputs waiting on a renderer do not block capture. Resolve closed
-historical identities with `item_id_for_external_key`, then use `open_pane` to
-register a distinct retained View and open that occurrence atomically. A rejected
-placement, duplicate entity or busy update publishes neither operation.
-
-[ADR 0034](../../docs/adr/0034-shared-dockspace-session-integration.md) selects this
-shared-session architecture. The incumbent root/prelude facade described below
-remains available during qualification; no workspace should use both semantic
-runtimes. Full native-input qualification and facade/caller migration precede
-removal of the displaced implementation.
-
-## Public API Tiers
-
-The crate root and `open_gpui_docking::prelude` contain the common application API: `DockSurface`, `DockSurfaceBuilder`, durable layout and placement data, panel registry/catalog types, policy types, and typed facade outcomes. The root intentionally does not re-export raw graph, action, host, workspace, runtime-handle, or raw layout-node types.
-
-Low-level controller, graph, action, workspace, host, raw layout parts, and runtime-handle APIs live behind explicit modules. Use `open_gpui_docking::model` for `DockController`, `DockControllerBuilder`, graph/layout mutation tools, command objects, and `layout_from_raw_parts`/`layout_into_raw_parts`; use `open_gpui_docking::runtime` for `DockHost`, `DockHostOptions`, and direct viewport runtime integrations; use `open_gpui_docking::advanced` for diagnostics and transition internals. These types are useful for tests and tooling, but they are not part of the default application surface.
-
-## What This Crate Owns
-
-- `DockSurface` as the app-level owner for controller state, host-window creation, panel commands,
-  one monotonic committed revision stream, stable-item activation, and typed viewport capability
-  outcomes.
-- `DockSurfaceSnapshot` as the revision-consistent app-level persistence payload that combines
-  durable layout with facade-opened viewport placement hints.
-- `DockSurfaceViewports`, `DockSurfaceViewportSpec`, `DockSurfaceViewportReadinessReport`,
-  `DockSurfaceViewportOpenReport`, and `DockSurfaceViewportRestoreReport` as facade-level platform
-  window lifecycle, requests, capability checks, and batch outcomes for multi-viewport applications.
-- `DockSurfaceViewportShouldCloseOutcome` and `DockSurfaceViewportCloseOutcome` as facade-level
-  lifecycle results for platform close hooks, including merge-back close policies.
-- `DockLayout` as the common durable persistence type for serialization and validation. Raw
-  `DockLayoutSpace`/`DockLayoutNode` construction is available only through the explicit `model`
-  tier.
-- `DockGraph` for model-tier logical dock spaces, tab stacks, splits, in-window floating layout, and
-  graph operations.
-- `open_gpui_docking::model::DockController` and `open_gpui_docking::model::DockWorkspace` as the
-  low-level shared owner for rendered hosts and programmatic layout commands.
-- `open_gpui_docking::runtime::DockHost` as the GPUI renderer for one logical dock space, including
-  tab chrome, splitter interaction, floating panels, drop previews, accessibility descriptors, and
-  motion-backed visual affordances.
-- `DockVisualStyle` as the complete immutable paint authority and `DockVisualStyleResolver` as the
-  read-only per-surface or explicit-host adapter for application-owned window and subtree themes.
-  `DockDropGuideMetrics` remains structural and does not carry colors.
-- `open_gpui_docking::runtime::DockHostOptions::motion_preference` as the host-owned reduced-motion
-  policy input for zoom, unzoom, and visual-affordance transitions.
-- `DockPanelRegistry` and `DockPanelCatalog` for lazy panel factories, descriptor-only restore
-  metadata, GPUI view attachment, close/reopen policy, and tab labels.
-- `open_gpui_docking::runtime::DockViewportRuntimeHandle` and internal viewport runtime modules for
-  controller-backed platform window routing, placement snapshots, lifecycle cleanup, and cross-window
-  drop routing. Runtime handles are available through the explicit `runtime` API tier, and runtime
-  status diagnostics are available through `advanced`.
-
-## Capability Gates
-
-In-window floating and platform viewport windows are separate capabilities.
-
-Platform viewport windows fail closed unless both gates are true:
-
-- Application policy allows them through `DockSurfaceBuilder::allow_platform_viewports(true)` or `DockPolicy`.
-- The active backend reports `PlatformViewportCapabilities::platform_viewport_windows`.
-
-`DockSurface::viewports` returns a `DockSurfaceViewports` facade for the common multi-window path. First open the surface anchor through `DockSurface::open_primary_window` and match its typed `DockSurfacePrimaryWindowOpenOutcome`; managed viewport readiness and open requests return `SessionInactive` until that exact session generation is active. The facade can then check `readiness`, `readiness_many`, or `restore_readiness`, open detached dock spaces, restore saved placement data, export placement snapshots, and handle GPUI close hooks while keeping applications away from raw runtime handles. Readiness and open outcomes distinguish inactive sessions, policy-disabled, backend-unsupported, unsupported requested platform flags, invalid placement, and backend-open failures without parsing opaque errors. Unsupported backends should no-op for open or tear-off requests instead of constructing partial runtime state. Web and other backends without platform window support stay on the single-window route.
-
-Every surface owns an independent window session with a monotonic generation and exact primary anchor. Closing that anchor freezes new managed work, retires dependent viewports before the anchor, and reaches `Closed` only after its runtime registry and terminal window tickets converge. Close dispatch and logical GPUI removal are not native terminal facts: ordinary teardown waits for the platform's exact `Closed` callbacks, while App shutdown may confirm absence only after the window registry has been cleared. Docking never calls `App::quit`; GPUI's application quit policy remains authoritative. `DockSurface::window_session_status` exposes phase, generation, anchor, terminal reason, ticket counts, and runtime convergence for diagnostics. Embedded `host_view` content renders without creating an anchor or registering managed route and activation authority, so facade activation reports `Unavailable` for that embedded-only host. Applications that intentionally own a custom window lifetime use the explicit low-level runtime and host APIs instead.
-
-For an already-open detached viewport, Dock projects GPUI's property-specific window-mutation
-capabilities from that viewport window's actual immutable kind and target-display profile. Its
-diagnostics retain one profile per registered space/window and record immediate `dispatches`
-separately from terminal `observations`: queued dispatch is intent only, while each observation
-retains the typed request and committed facts that settled it. Route geometry, exported placement,
-and `DockSurface` observed-placement revisions consume committed `WindowPlatformFacts`.
-Applications should not infer success from a Dock sync attempt; inspect the terminal observation
-when a live window mutation matters. Dock suppresses per-frame retries after a terminal failure
-until the requested target or relevant committed facts change.
-
-Use `DockSurface::export_snapshot` for the common persistence path. The snapshot stores `DockLayout` for logical dock spaces plus `DockViewportPlacementLayout` for platform-window hints, without storing GPUI views or platform window handles. Applications that need custom storage can still persist `DockLayout` and viewport placement separately; `DockSurfaceViewportSpec::with_saved_placement` applies placement hints to fallback GPUI window options before a viewport opens. Applications can call `DockSurface::export_viewport_placement` to snapshot only facade-opened platform windows and `DockSurface::check_viewport_placement_restore` to validate saved placement before reopening windows, without importing `DockViewportRuntimeHandle`.
-
-Use `DockSurfaceBuilder::close_policy` or `DockSurface::set_viewport_close_policy` to choose how detached platform windows close. `DockViewportClosePolicy::RetainLayout` removes only the runtime window mapping, `Prevent` vetoes the platform close, and `MergeBack` moves a closing viewport's dock content into a fallback space. Applications with custom GPUI window hooks can call `DockSurface::handle_viewport_window_should_close`, `DockSurface::handle_viewport_window_closed`, and `DockSurface::cancel_viewport_window_close` without importing the low-level runtime handle.
-
-## Change Events, Persistence, And Activation
-
-Every `DockSurface` clone points to one private owner and observes the same monotonic revision.
-`subscribe_changes` publishes metadata only after a durable root operation commits. An event
-contains the revision and stable categories for layout, selection, panel lifecycle, viewport
-topology, and observed viewport placement. Rendering, focus intent, visual style changes, rejected
-or unchanged commands, and queued platform mutation requests do not create persistence revisions.
-
-Applications own debounce and storage. Keep the subscription alive, coalesce events according to
-product policy, then call `export_snapshot`. The returned `DockSurfaceSnapshot::revision()` is
-paired with both its layout and viewport-placement facts; Docking does not allocate a snapshot for
-each event, start a timer, or write files.
-
-Use `select_panel` when only tab selection is intended. Use stable-item `activate_panel` or
-`activate_panel_with_completion` when the application also needs window activation and descendant
-GPUI focus. The completion callback is `FnOnce(outcome, &mut App)` and runs after the owner state
-has been released, so it may safely issue a follow-up activation. Completion reports `Committed`,
-`Rejected`, `Superseded`, `Unavailable`, `DuplicateHostConflict`, or `WindowClosed`. Dropping the
-completion subscription stops observation without cancelling the issued intent. Generated graph
-node ids are not a product focus API.
-
-## Restoring Platform Viewports
-
-Use `DockSurfaceSnapshot` with `DockSurface::builder(...).try_snapshot(...)` and `DockSurface::viewports().restore_snapshot(...)` for the common restore path. This keeps layout validation, placement validation, backend capability checks, and batch outcome reporting on the facade surface:
+## Start With One Surface
 
 ```rust
-use open_gpui::{Bounds, WindowBounds, WindowOptions, px, size};
-use open_gpui_docking::prelude::{
-    DockSurface, DockSurfacePrimaryWindowOpenOutcome, DockSurfaceSnapshot,
-    DockSurfaceViewportOpenOutcome,
+use open_gpui::{App, WindowOptions};
+use open_gpui_docking::{DockPane, DockSurface, GpuiDockspaceConfig};
+use open_gpui_docking::dockspace::{
+    model::{DockspaceLayout, DockspaceNode, DockspaceRootLayout,
+            DockspaceSurfaceLayout, ItemId, RootId, SurfaceId},
+    policy::DockPolicy,
+    runtime::DockspaceSession,
 };
 
-fn panel_factory(_cx: &mut open_gpui::App) -> open_gpui::AnyView {
-    unreachable!("create and return a GPUI view for the panel")
-}
-
-fn restore_surface(
-    saved: &DockSurfaceSnapshot,
-    cx: &mut open_gpui::App,
-) -> Result<DockSurface, open_gpui_docking::prelude::DockLayoutValidationError> {
-    let surface = DockSurface::builder("main")
-        .try_snapshot(saved)?
-        .panel_factory("editor", "Editor", panel_factory)
-        .panel_factory("preview", "Preview", panel_factory)
-        .allow_platform_viewports(true)
-        .build(cx)
-        .expect("registered panels should satisfy the restored layout");
-
-    let primary = WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-            None,
-            size(px(960.0), px(640.0)),
-            cx,
-        ))),
-        ..Default::default()
-    };
-    let DockSurfacePrimaryWindowOpenOutcome::Opened(_) =
-        surface.open_primary_window(primary, cx)
-    else {
-        panic!("the managed Dock surface anchor must open before restoring viewports");
-    };
-
-    let viewports = surface.viewports();
-    let report = viewports.restore_snapshot(
-        saved,
-        |_| {
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                    None,
-                    size(px(720.0), px(480.0)),
-                    cx,
-                ))),
-                ..Default::default()
-            }
-        },
+fn open(cx: &mut App, content: impl Into<open_gpui::AnyView>) -> anyhow::Result<()> {
+    let surface_id = SurfaceId::new(1);
+    let item = ItemId::new(1);
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        surface_id,
+        DockspaceRootLayout::new(RootId::new(1), DockspaceNode::central_tabs([item])),
+    )])?;
+    let dock = DockSurface::new_managed(
+        DockspaceSession::from_layout(layout, DockPolicy::default())?,
+        [DockPane::new(item, "Editor", content)],
+        GpuiDockspaceConfig::default(),
         cx,
-    );
-
-    for outcome in report.outcomes() {
-        if let DockSurfaceViewportOpenOutcome::Unavailable(reason) = outcome.outcome() {
-            eprintln!("dock viewport unavailable: {reason:?}");
-        }
-    }
-
-    Ok(surface)
+    )?;
+    dock.open_native_root(surface_id, true, WindowOptions::default(), cx)?;
+    Ok(())
 }
 ```
 
-## Examples
+Use `DockSurface::new` for embedded logical content and `new_managed` for native
+workspaces. These enroll separate local and managed pointer producers; a session
+cannot use both. Render one logical surface with `element`, or disjoint regions
+sharing one physical window with `regions`. The adapter aggregates all regions
+under the original Window's exact frame ticket.
 
-Run the minimal single-window docking example first:
+Each `DockPane` is one View occurrence. Register a distinct GPUI entity and pane
+identity for each View, including Views that share a document. Moving a pane
+retains that entity. Duplicating a View creates another entity sharing the
+application document. One entity cannot be registered under two pane identities.
+Use `with_view` to inspect the published session model and `update` to submit
+programmatic changes through the sole semantic frame.
+
+## Native Lifecycle And Inspection
+
+Open ordinary roots through `open_native_root`, or use `bind_native_root` inside
+a custom original GPUI window creation transaction. A failed root open returns
+`NativeOpenFailure`, retaining its original `WindowOpenError`, binding error and
+rollback ticket. Custom builders pass their detailed-open failures through
+`retain_native_root_open_failure` so rollback authority survives until retirement.
+
+Native close policy supports allow, veto and defer. `begin_native_shutdown`
+freezes admission and drains the exact workspace group, with dependents before
+the anchor. `native_is_quiescent` waits for the original physical owners; logical
+close, renderer/capture quiescence and actual native destruction are separate.
+`take_native_reports` transfers observations to the application. Read-only
+`inspection` returns an owned snapshot or `DockInspectionError::Busy` during a
+mutable host borrow; it does not consume reports or drive the runtime. DevTools'
+`docking` feature projects that snapshot; it does not enable the old engine.
+
+Register `set_close_handler` before opening windows to decide the original
+committed content plans, including tab-close and native surface plans. The
+handler receives its surface without needing to capture a strong clone. It runs
+outside the host borrow after the update lease and earlier native input settle;
+use `update` and the plan's exact `pending_close_decisions` tokens to allow, veto
+or defer. No handler means no automatic permission to discard application
+content. Closing a demo View does not close its application document. Ordinary
+application roots default to native `RetainLayout`; children recover their
+original presentation. `set_native_close_policy` explicitly overrides that first
+native decision, separately from pane-content decisions. Forced anchor shutdown
+still drains the group independently.
+
+Content remains `SubtreePresentation::Inert` until its matching original Submitted
+artifact is admitted. Candidate acceptance alone does not authorize input,
+focus, IME or accessibility. A submitted output retains its original callback
+and binding across physical Root continuation. Desktop physical coordinates,
+target-display DPI, native hit stacks and OS capture require actual platform
+facts; ordinary logical mouse events do not supply them.
+
+## Save And Restore
+
+`persistence::DockWorkspaceDocument` embeds the shared core's public document and
+stable external View-key history, including closed occurrences. Runtime entities,
+focus handles, native handles and frame proofs never enter that document. Restore
+validates all keys before any content factory runs. `capture_document` refuses a
+borrowed host or unaccepted update without advancing its save generation;
+accepted outputs waiting on a renderer do not block capture.
+
+Resolve an existing closed occurrence with `item_id_for_external_key`, then use
+`open_pane` to atomically register its distinct retained View and open it. A busy
+lease, duplicate entity or rejected placement publishes neither operation.
+
+Legacy v2/v3 data migrates through the same module without `legacy-docking`.
+Choose `LegacyTopologyMigration::RelativeWeights` explicitly. Tab order,
+selection, floating bounds and representable relative shares are retained;
+legacy structural identities and absolute size references stay in a provenance
+receipt. Binary rounding, central sibling-size preservation and absolute sizing
+are not weighted N-ary equivalence claims. Persisted logical window positions
+remain hints until the current platform establishes physical facts.
+
+## Examples And Compatibility
 
 ```sh
 cargo run -p open-gpui-docking-minimal
-```
-
-This example uses `DockSurface::builder`, lazy panel factories, and `DockSurface::open_primary_window`. It enables in-window floating, but it does not enable platform viewport windows.
-It deliberately uses Docking's deterministic built-in visual fallback.
-
-Run the facade-level multi-viewport example when checking native platform-window behavior:
-
-```sh
 cargo run -p open-gpui-docking-multiviewport
+cargo run -p open-gpui-dockspace-editor
 ```
 
-This example opens two independent managed surface anchors. The primary surface opts into platform viewport windows through `DockSurfaceBuilder::allow_platform_viewports(true)`, detaches preview panels into a child dock space, and opens that space through `DockSurface::viewports`; the isolated surface remains an independent primary. It demonstrates that identical logical space ids do not merge session generations or window ownership across surfaces, while retaining typed unsupported-backend outcomes, committed revision logging, application-owned debounced snapshot export, and stable-item activation completion.
+The minimal example demonstrates one managed root. Multiviewport demonstrates
+shared-session windows and an isolated workspace. The editor example retains two
+Views of one document and has a bounded native smoke trajectory through the
+repository's macOS probe runner.
 
-Run the normal-checkout native dogfood example when working on viewport runtime behavior or
-diagnostics:
+The displaced engine is available only through `open_gpui_docking::legacy` and
+its explicit `legacy-docking` feature. Enabling it never changes the root or
+prelude types. It is not a fallback or a second writer for a migrated workspace.
+The old native dogfood example and browser unsupported-native-window smoke
+retain their own compatibility qualification until replacement scenarios run:
 
 ```sh
-cargo run -p open-gpui-docking-native
+cargo run -p open-gpui-docking-native --features legacy-docking
 ```
 
-The dogfood example demonstrates a controller-backed host with registered panels, tab stacks, split
-layout, floating behavior, capability-gated platform viewport windows, and the runtime diagnostic
-paths used by the docking tests. Its application-side adapter maps UI Components light, dark, and
-high-contrast theme snapshots into complete Dock styles. Deterministic tests prove that the source
-drag visual keeps its opening-generation style while target guides use the destination host's
-current style. Real captured cross-window transport and pre-release native visibility require the
-owning-platform evidence described in the verification plan.
+See [compatibility notes](LEGACY.md), the
+[migration guide](../../docs/ui/migration-v0.3.md#default-shared-docking-session),
+[ADR 0034](../../docs/adr/0034-shared-dockspace-session-integration.md) and the
+[cutover evidence](../../docs/knowledge/engineering/verification/dockspace-default-cutover-20261114.md).
+Historical receipts retain source paths at their recorded commits; incumbent
+files now live under `src/legacy/`.
 
-## Visual Style
+## Compiler And Verification Scope
 
-Applications may use the built-in fallback, install a fixed style, or resolve a complete style from
-their own theme authority:
-
-```rust
-use open_gpui_docking::{
-    DockSurface, DockVisualPalette, DockVisualStyle, DockVisualStyleResolver,
-};
-
-let resolver = DockVisualStyleResolver::new(|window, cx| {
-    let palette = application_dock_palette(window, cx);
-    DockVisualStyle::from_palette(palette)
-});
-
-let surface = DockSurface::builder("main")
-    .visual_style_resolver(resolver)
-    .build(cx)?;
-```
-
-The resolver callback receives read-only `Window` and `App` references. Prepare mutable theme or
-registry state before rendering; the callback cannot update entities, notify, dispatch, register,
-refresh, or reenter Dock style resolution. A multi-window low-level integration installs the same
-resolver through `DockViewportRuntimeHandle::with_visual_style_resolver`; a single explicit host can
-use `DockHost::from_controller_with_visual_style_resolver`.
-
-The style does not belong in `DockDragPayload`. Runtime metadata freezes the source drag visual for
-one opening generation, while destination guides and previews resolve their target host live.
-Cancellation and close retire that snapshot before reopen. The crate has no production dependency
-on UI Components; the native example is the reference application-owned theme adapter.
-
-Dear ImGui informs docking interaction behavior, including tab states, inner and outer targets,
-accepted/rejected previews, tear-off, one effective host per node, and commit-before-settings
-ordering. Open GPUI retains its own `DockGraph`, n-ary splits, explicit transactions, viewport and
-activation generations, typed focus completion, and application-owned persistence. It does not
-copy ImGui's default colors, immediate Dock context, pointer identities, binary node tree, builder
-API, frame-liveness inference, or settings format.
-
-Docking tests keep an internal scenario vocabulary for complex topologies such as
-`AAA, BBB | CCC + DDD` and three-viewport rehome flows. That vocabulary is test support, not a
-public headless crate: it seeds `DockGraph`, drives existing workspace transactions, records
-adapter/oracle labels, and gives benchmarks stable scenario ids. Applications should still use
-`DockSurface` for common work, `model` for explicit graph/controller integration, and `runtime` for
-low-level host or viewport integration.
-
-## Minimal Shape
-
-```rust
-use open_gpui::{AnyView, App};
-use open_gpui_docking::prelude::{DockPanelPlacement, DockSurface};
-
-fn panel_factory(_cx: &mut App) -> AnyView {
-    unreachable!("create and return a GPUI view for the panel")
-}
-
-let surface = DockSurface::builder("main")
-    .panel_placements([
-        DockPanelPlacement::left_rail("explorer").fraction(0.24),
-        DockPanelPlacement::center("editor").selected(),
-        DockPanelPlacement::bottom_rail("terminal").fraction(0.30),
-    ])
-    .panel_factory("explorer", "Explorer", panel_factory)
-    .panel_factory("editor", "Editor", panel_factory)
-    .panel_factory("terminal", "Terminal", panel_factory)
-    .allow_floating(true)
-    .build(cx)
-    .expect("dock surface setup should validate");
-
-let _ = surface;
-```
-
-Use `DockPanelPlacement::stacked_with(item, anchor)` to add tabs beside another panel without
-depending on generated node ids. If an anchor may be missing during restore, attach a fallback such
-as `.fallback(DockPanelPlacementTarget::right_rail())`.
-
-## Product Panel Placement
-
-Product code should describe where a panel belongs with `DockPanelPlacement` and
-`DockPanelPlacementTarget`, not by storing generated graph node ids. The builder accepts
-`panel_placements` for the initial layout, and panel descriptors may carry a default target through
-`DockPanelDescriptor::with_default_placement`.
-
-Close and reopen flows preserve placement as product facts. `DockPanelDescriptor::last_known_placement`
-records the most recent close/open target, and `DockPanelOpenOutcome::placement_source` tells callers
-whether a reopen used an explicit placement, last-known placement, descriptor default, or implicit
-center fallback. This keeps lazy panel restore descriptor-driven without mounting views early.
-
-Product commands should call `DockSurface::open_panel_at` for explicit destinations, `DockSurface::open_panel` for descriptor-backed restore, and `DockSurface::dock_panel_at` when moving an in-window floating panel back into the layout. Graph-targeted operations remain available through `open_gpui_docking::model`, but normal application restore flows should not persist tab or split node ids.
-
-Use `DockSurface::detach_panel_to_space` for product flows that move an already-open panel into a child dock space before opening that space in a platform viewport. This keeps common panel-to-subwindow workflows on ids and facade outcomes instead of graph node ids or low-level drop targets.
-
-Only call `allow_platform_viewports(true)` when the application intends to use platform-window docking routes and is prepared for `DockSurfaceViewportUnavailable::BackendUnsupported` on web or compositor backends without viewport-window support.
-
-## Verification
-
-For focused docking changes, run:
+This crate and its selected shared core require Rust 1.95. Core GPUI and the
+component crates retain Rust 1.93. The default path has no production dependency
+on the displaced engine's motion, UI core or graph containers. Applications map
+an owned `DockVisualPalette` or `DockVisualStyle` into `DockspaceColors`; content
+styling remains application-owned.
 
 ```sh
 cargo fmt -p open-gpui-docking
-cargo check -p open-gpui-docking --tests --locked
-cargo check -p open-gpui-docking-minimal --locked
-cargo check -p open-gpui-docking-multiviewport --locked
-cargo check -p open-gpui-docking-native --locked
-cargo nextest run -p open-gpui-docking host_viewport_platform_capability_tests --no-fail-fast
-cargo run -p xtask -- scan-ui-contract
+cargo nextest run -p open-gpui-docking --locked --lib --test-threads=1
+cargo nextest run -p open-gpui-docking --locked --all-features --lib --test-threads=1
+cargo check -p open-gpui-docking-minimal -p open-gpui-docking-multiviewport --locked --all-targets
+cargo check -p open-gpui-devtools --features docking --locked --all-targets
+cargo run -p xtask -- scan-public-api
 ```
 
-For render-authority, preview, splitter, motion, accessibility, and viewport work, use the narrower
-or full docking gates in `docs/verification.md`.
+CPU renderer tests establish model, ownership and exact correlation behavior.
+Physical captured dragging, mixed-DPI movement, OS IME and each foreign backend
+retain separate qualification. See [verification](../../docs/verification.md).

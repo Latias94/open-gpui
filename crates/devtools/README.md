@@ -11,7 +11,9 @@ GPUI UI surfaces later:
 - `ui-components` for theme, resolved accessibility semantics, window overlay runtime snapshots,
   and session-scoped Table behavior projections.
 - `motion` for `open-gpui-motion` frame-demand snapshots.
-- `docking` for `open-gpui-docking` runtime diagnostics.
+- `docking` for the shared `DockspaceSession` adapter's read-only diagnostics.
+- `legacy-docking` for the previous docking engine's diagnostics; this explicitly enables
+  `docking` and `open_gpui_docking/legacy-docking`.
 - `command` for `open-gpui-command` registry, keybinding, and keymap-resolution snapshots.
 - `gpui` for core GPUI scroll snapshots and native inspector UI elements. It also enables
   `ui-components` because the inspector UI uses component primitives.
@@ -63,9 +65,13 @@ mutation and live property editing are intentionally out of scope for the initia
   `DevtoolsInspectorState::selected_event_identity`.
 - `timeline` exposes renderer-neutral bounded event snapshots and timeline-domain capture helpers.
 - `layout` exposes renderer-neutral committed geometry snapshots and layout-domain capture helpers.
-- `docking` exposes capture-first runtime diagnostics, structured multi-viewport inspection rows,
-  explicit capability diagnostics, and a capture provider constructor when public docking status
-  records are available.
+- `docking` projects owned `DockSurfaceInspection` snapshots into model counts, physical mounts,
+  exact acceptance/submission evidence, and managed native owner facts. Its capture provider uses
+  opaque provider namespaces, and error text is sanitized before any DevTools DTO is constructed.
+  Enabling `docking` alone does not enable the legacy engine.
+- `legacy_docking`, available only with `legacy-docking`, preserves the previous runtime status,
+  window-session, capability, route, event, and visual-affordance projections. Source types now
+  live under `open_gpui_docking::legacy`, including `legacy::advanced`.
 - `gpui` exposes metadata-only `GpuiRuntimeSnapshot` adapters for app/window/focus/input/frame and
   scroll facts. Raw user input, clipboard payloads, editable text values, unredacted titles, and
   accessibility labels do not belong in runtime metadata. Use
@@ -97,6 +103,37 @@ mutation and live property editing are intentionally out of scope for the initia
   local inspector with existing UI components.
 - `DevtoolsInspectorController` is available only with the `gpui` feature and owns interactive
   inspector state, row selection, keyboard navigation, copy/export feedback, and clipboard writes.
+
+## Shared Dockspace Inspection
+
+Read the retained surface on its owning thread, then project the successful owned snapshot:
+
+```rust,ignore
+use open_gpui_devtools::docking;
+
+let inspection = surface.inspection()?;
+let capture = docking::docking_surface_capture(&inspection);
+let rows = docking::docking_surface_inspection(&inspection);
+```
+
+`surface.inspection()` uses one immutable borrow. It returns `DockInspectionError::Busy` if an
+update or native callback already holds a mutable borrow, including reentry from `surface.update`.
+It never commits, pumps, consumes reports, or retains another authoritative model. A busy read
+does not substitute an earlier snapshot. Closed registered views are counted separately from
+open model panes, and physical regions may remain after their logical surface is pruned.
+
+`DockingMountRow::submission` preserves the original ticket's accepted and submitted generations
+separately. A missing ticket does not prove that a previous frame was never submitted. Region
+`current_presentation` comes from the session's exact retained presentation artifact. Optional
+native input correlations remain absent when their original bindings are unavailable.
+
+`docking_surface_capture_provider` accepts a `Send + Sync` callback returning
+`Result<DockSurfaceInspection, DockInspectionError>`. Applications can publish successful owned
+snapshots to their existing diagnostic boundary; the GPUI surface stays on its owning thread.
+The provider maps a busy result to a collection failure without publishing empty or stale facts.
+Native counters name their specific retained owners: application-facing reports, host reports
+waiting for bridge dispatch, root rollback tickets, and their independent terminal/quiescence
+observations. They do not claim to enumerate private bridge state or platform capabilities.
 
 ## Basic Use
 
@@ -360,7 +397,7 @@ are not persistent trace storage.
 
 Gallery exposes `devtools_gallery_headless_artifacts()` for deterministic session/report artifacts.
 Docking-native exposes `docking_native_headless_artifacts()` over public
-`DockViewportRuntimeStatus` records. Both helpers keep runtime refresh authority in the example or
+`legacy::advanced::DockViewportRuntimeStatus` records with `legacy-docking` enabled. Both helpers keep runtime refresh authority in the example or
 application that owns the UI.
 
 With the `form` feature enabled, convert a public form snapshot directly:
@@ -452,7 +489,8 @@ cargo nextest run -p open-gpui-devtools --features gpui layout --no-fail-fast --
 cargo nextest run -p open-gpui-devtools --features form,resource form_resource_adapters --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features gpui,motion,docking framework_adapters --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features ui-components --test table_redaction --no-fail-fast --locked
-cargo nextest run -p open-gpui-devtools --features docking --test docking_runtime_contracts --no-fail-fast --locked
+cargo nextest run -p open-gpui-devtools --features docking --test dockspace_inspection_contracts --no-fail-fast --locked
+cargo nextest run -p open-gpui-devtools --features legacy-docking --test docking_runtime_contracts --no-fail-fast --locked
 cargo check -p xtask --locked
 cargo nextest run -p xtask --test devtools_cli_contracts --no-fail-fast --locked
 cargo run -p xtask -- devtools --help
@@ -475,6 +513,6 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page devtools
 
 The gallery DevTools page dogfoods the session path through `devtools_gallery_session_frame()` and
 keeps `devtools_gallery_capture()` plus `devtools_gallery_collection()` as compatibility views. The
-native docking example dogfoods `docking_runtime_inspection()` over real runtime status. Keep future
+native docking example dogfoods `legacy_docking::docking_runtime_inspection()` over real runtime status. Keep future
 gallery probes registry-backed or capture-backed; do not reintroduce static DevTools snapshot
 builders for the page itself.

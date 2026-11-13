@@ -17,6 +17,7 @@ name = "open-gpui-docking-minimal"
 path = "src/main.rs"
 
 [dependencies]
+anyhow.workspace = true
 open_gpui.workspace = true
 open_gpui_docking.workspace = true
 open_gpui_platform = { workspace = true, features = ["font-kit"] }

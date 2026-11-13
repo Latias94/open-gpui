@@ -4,6 +4,61 @@ Open GPUI v0.3 is an intentionally breaking, pre-release architecture release. S
 APIs are removed; explicitly adopted official migration aliases retain their upstream contract.
 This guide records each migration in the implementation unit that introduces it.
 
+## Default Shared Docking Session
+
+`open_gpui_docking::DockSurface` and `prelude::DockSurface` now use one shared
+`dockspace::runtime::DockspaceSession`. Construct a `DockspaceLayout` and session,
+register one retained `DockPane` per View occurrence, then choose `DockSurface::new`
+for embedded content or `new_managed` for native windows. Import shared model and
+policy types through `open_gpui_docking::dockspace`; the prelude includes common
+layout, identity, placement and session types.
+
+| Incumbent integration | Shared-session replacement |
+| --- | --- |
+| `DockSurface::builder`, panel placements and lazy panel factories | Shared-core layout or preset builders, explicit session, retained `DockPane` registrations; application factories create one entity per View occurrence. |
+| `open_primary_window`, viewport facade and child spaces | `open_native_root` / `bind_native_root` plus shared-core managed native requests through `update`. Each workspace has one session and its own anchor. |
+| Controller/graph mutation and generated node IDs | Revision-bound shared-core actions in the sole session frame. `with_view` provides read-only model access. |
+| Legacy layout/snapshot export and restore | `persistence::DockWorkspaceDocument` and `capture_document`; resolve closed historical View keys before atomic `open_pane`. |
+| Runtime status and DevTools' old `docking_runtime_inspection` | `DockSurface::inspection` and DevTools' ordinary `docking` module. Inspection does not consume reports or drive native work. |
+| Root `DockVisualStyleResolver` | Application-owned `DockspaceColors::from_palette` / `from_visual_style` in `GpuiDockspaceConfig`. The resolver remains an incumbent API under `legacy`. |
+
+Documents and history stay in the application. Several Views may share a
+document, but each View needs a distinct pane ID and GPUI entity. Moving a View
+preserves its entity. A second semantic controller must not mirror or recover a
+migrated workspace. An application owns persistence scheduling; legacy revision
+subscription and activation-completion APIs are not silently aliased to new
+session operations.
+
+Register `set_close_handler` before opening roots and resolve the original
+`pending_close_decisions(plan.request())` through `update` using
+`dockspace::close::CloseDecision`. The handler runs after mutable host borrows,
+unaccepted frame leases and earlier native input release their boundary. Native
+allow/veto/defer policy is separate from these pane-content decisions. Ordinary
+application roots default to `RetainLayout`; core-created children continue to
+use their original recovery obligation. Explicit `set_native_close_policy`
+overrides this default. An unregistered handler does not grant permission to
+discard content, and closing a View need not close its document.
+
+Legacy v2/v3 data uses the one-way migrator in `persistence`, without compiling
+the old runtime. Explicitly accept `LegacyTopologyMigration::RelativeWeights`;
+absolute binary size references, central sizing and rounding have a recorded
+contract difference. Native geometry hints acquire authority only from the
+current platform's physical observations.
+
+An incumbent application can temporarily enable `open-gpui-docking/legacy-docking`
+and import `open_gpui_docking::legacy::{prelude, model, runtime, advanced}`.
+DevTools' corresponding feature and module are both named `legacy-docking` and
+`legacy_docking`, respectively. The native dogfood example requires
+`--features legacy-docking`. Cargo feature unification never switches the root
+or prelude back to the incumbent types. The browser unsupported-window probe
+retains an explicit incumbent dependency until replacement qualification runs.
+
+See the [crate guide](../../crates/gpui_docking/README.md) and
+[cutover evidence](../knowledge/engineering/verification/dockspace-default-cutover-20261114.md)
+for executed checks and the platform scenarios still required before deleting
+the compatibility engine. Earlier incumbent API migrations in this guide apply
+inside the explicit `legacy` namespace.
+
 ## Native Docking Reports
 
 `adapter::native::NativeBridge::accept_report` now consumes `HostFrameReport` by

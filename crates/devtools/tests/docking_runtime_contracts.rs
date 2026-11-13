@@ -1,4 +1,4 @@
-#![cfg(feature = "docking")]
+#![cfg(feature = "legacy-docking")]
 
 use open_gpui::{
     Bounds, PlatformWindowActivationSupport, PlatformWindowCapabilities,
@@ -8,13 +8,14 @@ use open_gpui::{
     WindowOptions, WindowPlatformFacts, point, px, size,
 };
 use open_gpui_devtools::{
-    DevtoolsDiffKind, DevtoolsDiffStatus, DevtoolsRegistry, DevtoolsReport, docking,
-    docking::{
+    DevtoolsDiffKind, DevtoolsDiffStatus, DevtoolsRegistry, DevtoolsReport,
+    legacy_docking as docking,
+    legacy_docking::{
         DOCKING_PLATFORM_VIEWPORT_WINDOWS_UNSUPPORTED, DOCKING_VIEWPORT_ROUTE_FACTS_MISSING,
         DOCKING_VIEWPORT_ROUTE_FACTS_STALE,
     },
 };
-use open_gpui_docking::{
+use open_gpui_docking::legacy::{
     DockItemId, DockSpaceId, DockSurface, DockSurfacePrimaryWindowOpenOutcome,
     DockSurfaceViewportOpenOutcome,
     advanced::{

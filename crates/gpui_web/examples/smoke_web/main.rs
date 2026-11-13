@@ -8,7 +8,7 @@ use open_gpui::{
     SubtreeTransformOrigin, SvgRenderer, TargetedEvent, Window, WindowActivationPolicy,
     WindowBounds, WindowOptions, canvas, div, fill, img, point, px, rgb, rgba, size,
 };
-use open_gpui_docking::prelude::{
+use open_gpui_docking::legacy::prelude::{
     DockPanelPlacement, DockSurface, DockSurfacePrimaryWindowOpenOutcome,
     DockSurfaceViewportOpenOutcome, DockSurfaceViewportReadinessStatus,
     DockSurfaceViewportUnavailable, DockSurfaceWindowSessionStatus,
@@ -926,7 +926,7 @@ fn renderer_expectations() -> JsValue {
 
 fn docking_probe(surface: &DockSurface, cx: &mut App) -> DockingProbe {
     let spec =
-        open_gpui_docking::prelude::DockSurfaceViewportSpec::new("main", WindowOptions::default());
+        open_gpui_docking::legacy::prelude::DockSurfaceViewportSpec::new("main", WindowOptions::default());
     let readiness = surface.viewports().readiness(&spec, cx);
     let readiness = match readiness.status() {
         DockSurfaceViewportReadinessStatus::Openable => "openable",

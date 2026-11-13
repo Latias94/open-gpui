@@ -52,7 +52,7 @@ pub(super) struct ManagedHost {
     pending_reports: VecDeque<HostFrameReport>,
     reports: VecDeque<NativeReport>,
     retired: BTreeSet<NativeSurfaceBinding>,
-    close_policy: NativeCloseDecision,
+    close_policy: Option<NativeCloseDecision>,
     factory: Rc<WindowFactory>,
     _quit: Subscription,
     pump_scheduled: bool,
@@ -60,6 +60,12 @@ pub(super) struct ManagedHost {
     registrations: BTreeMap<WindowId, RootRegistration>,
     retirements: BTreeMap<WindowId, open_gpui::WindowPresentationShutdownTicket>,
     _terminal: Subscription,
+}
+
+impl ManagedHost {
+    pub(super) fn can_dispatch_close(&self) -> bool {
+        self.bridge.is_some() && !self.transport.is_frozen()
+    }
 }
 
 struct RootRegistration {
@@ -78,6 +84,143 @@ pub(super) fn accept_owned_report(native: &mut ManagedHost, report: HostFrameRep
         bridge.accept_report(report);
     } else {
         native.pending_reports.push_back(report);
+    }
+}
+
+pub(super) fn inspection(host: &HostState) -> Option<super::DockNativeInspection> {
+    let native = host.native.as_ref()?;
+    let tickets: Vec<_> = native
+        .retirements
+        .values()
+        .map(|ticket| ticket.snapshot())
+        .collect();
+    Some(super::DockNativeInspection {
+        admission_frozen: native.transport.is_frozen(),
+        bridge_available: native.bridge.is_some(),
+        quiescent: is_quiescent(host, native),
+        transport_empty: native.transport.is_empty(),
+        retained_report_count: native.reports.len(),
+        pending_host_report_count: native.pending_reports.len(),
+        callback_window_count: native.callbacks.len(),
+        root_window_count: native.roots.len(),
+        retiring_binding_count: native.retired.len(),
+        pending_root_registration_count: native.registrations.len(),
+        root_retirement_count: tickets.len(),
+        pending_root_terminal_count: tickets
+            .iter()
+            .filter(|ticket| !ticket.native_terminal())
+            .count(),
+        pending_root_quiescence_count: tickets.iter().filter(|ticket| !ticket.quiesced()).count(),
+        pump_scheduled: native.pump_scheduled,
+        continuation_pending: native.wake.is_some(),
+    })
+}
+
+fn is_quiescent(host: &HostState, native: &ManagedHost) -> bool {
+    native
+        .bridge
+        .as_ref()
+        .is_some_and(NativeBridge::is_quiescent)
+        && native.pending_reports.is_empty()
+        && native.retired.is_empty()
+        && native.registrations.is_empty()
+        && native.retirements.is_empty()
+        && native.callbacks.is_empty()
+        && native.wake.is_none()
+        && host.mounts.is_empty()
+        && !host.session.has_pending_native_input()
+}
+
+#[cfg(test)]
+mod inspection_tests {
+    use dockspace::{model::DockspaceLayout, policy::DockPolicy};
+    use open_gpui::TestAppContext;
+
+    use super::*;
+    use crate::adapter::GpuiDockspaceConfig;
+
+    #[open_gpui::test]
+    fn inspection_keeps_native_reports_and_pending_commits_with_their_original_owners(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let dock = DockSurface::new_managed(
+                DockspaceSession::from_layout(DockspaceLayout::empty(), DockPolicy::default())
+                    .unwrap(),
+                [],
+                GpuiDockspaceConfig::default(),
+                cx,
+            )
+            .unwrap();
+            let bridge = {
+                let mut host = dock.host.borrow_mut();
+                let report = host
+                    .session
+                    .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+                    .unwrap()
+                    .commit()
+                    .unwrap();
+                host.error = Some("retained original error".to_owned());
+                let native = host.native.as_mut().unwrap();
+                let bridge = native.bridge.take().unwrap();
+                accept_owned_report(native, report);
+                native.transport.freeze_admission();
+                native
+                    .reports
+                    .push_back(NativeReport::GroupShutdownRequested);
+                native.reports.push_back(NativeReport::Unsupported {
+                    operation: "test-operation",
+                });
+                bridge
+            };
+            {
+                let host = dock.host.borrow_mut();
+                let recorded = host.session.native_input_recorded_count();
+                let version = host.session.version();
+                assert_eq!(
+                    dock.inspection(),
+                    Err(super::super::DockInspectionError::Busy)
+                );
+                assert_eq!(host.session.native_input_recorded_count(), recorded);
+                assert_eq!(host.session.version(), version);
+                assert_eq!(host.native.as_ref().unwrap().reports.len(), 2);
+                assert_eq!(host.native.as_ref().unwrap().pending_reports.len(), 1);
+            }
+            let before = dock.inspection().unwrap();
+            assert_eq!(before, dock.inspection().unwrap());
+            assert_eq!(
+                before.last_error.as_deref(),
+                Some("retained original error")
+            );
+            let native = before.native.unwrap();
+            assert!(native.admission_frozen);
+            assert!(!native.bridge_available);
+            assert!(!native.quiescent);
+            assert_eq!(native.retained_report_count, 2);
+            assert_eq!(native.pending_host_report_count, 1);
+            assert!(!dock.native_is_quiescent());
+            assert_eq!(
+                dock.host
+                    .borrow()
+                    .native
+                    .as_ref()
+                    .unwrap()
+                    .pending_reports
+                    .len(),
+                1
+            );
+            let reports = dock.take_native_reports();
+            assert!(matches!(
+                reports.as_slice(),
+                [
+                    NativeReport::GroupShutdownRequested,
+                    NativeReport::Unsupported {
+                        operation: "test-operation"
+                    }
+                ]
+            ));
+            dock.host.borrow_mut().native.as_mut().unwrap().bridge = Some(bridge);
+        });
     }
 }
 
@@ -126,7 +269,7 @@ pub(super) fn enroll(shared: &SharedHost, cx: &mut App) -> Result<()> {
         pending_reports: VecDeque::new(),
         reports: VecDeque::new(),
         retired: BTreeSet::new(),
-        close_policy: NativeCloseDecision::Allow(NativeSurfaceCloseAction::RecoverPresentation),
+        close_policy: None,
         factory: Rc::new(default_factory),
         _quit: quit,
         pump_scheduled: false,
@@ -448,13 +591,17 @@ impl DockSurface {
         schedule(&self.host, cx);
     }
 
-    /// Selects ordinary native close policy. Anchor shutdown always drains the group.
+    /// Overrides ordinary native close policy. Anchor shutdown always drains the group.
+    ///
+    /// By default an application root retains its logical layout; a native child
+    /// recovers through its original presentation obligation. Content decisions
+    /// are supplied separately through [`Self::set_close_handler`].
     pub fn set_native_close_policy(&self, policy: NativeCloseDecision) -> Result<()> {
         let mut host = self.host.borrow_mut();
         host.native
             .as_mut()
             .ok_or_else(|| anyhow!("managed native hosting is not enabled"))?
-            .close_policy = policy;
+            .close_policy = Some(policy);
         Ok(())
     }
 
@@ -542,20 +689,9 @@ impl DockSurface {
     /// permanent binding-quiescence boundary must converge independently.
     pub fn native_is_quiescent(&self) -> bool {
         let host = self.host.borrow();
-        host.native.as_ref().is_some_and(|native| {
-            native
-                .bridge
-                .as_ref()
-                .is_some_and(NativeBridge::is_quiescent)
-                && native.pending_reports.is_empty()
-                && native.retired.is_empty()
-                && native.registrations.is_empty()
-                && native.retirements.is_empty()
-                && native.callbacks.is_empty()
-                && native.wake.is_none()
-                && host.mounts.is_empty()
-                && !host.session.has_pending_native_input()
-        })
+        host.native
+            .as_ref()
+            .is_some_and(|native| is_quiescent(&host, native))
     }
 }
 
@@ -832,18 +968,28 @@ pub(super) fn output_binding(
 pub(super) fn schedule(shared: &SharedHost, cx: &mut App) {
     {
         let mut host = shared.borrow_mut();
-        let Some(native) = &mut host.native else {
-            return;
+        let scheduled = if let Some(native) = &mut host.native {
+            &mut native.pump_scheduled
+        } else {
+            if !super::close::ready(&host) {
+                return;
+            }
+            &mut host.close_pump_scheduled
         };
-        if std::mem::replace(&mut native.pump_scheduled, true) {
+        if std::mem::replace(scheduled, true) {
             return;
         }
     }
     let weak = Rc::downgrade(shared);
     cx.defer_shutdown_critical_before_window_registry_clear_or_run_now(move |cx| {
         if let Some(shared) = weak.upgrade() {
-            if let Some(native) = &mut shared.borrow_mut().native {
-                native.pump_scheduled = false;
+            {
+                let mut host = shared.borrow_mut();
+                if let Some(native) = &mut host.native {
+                    native.pump_scheduled = false;
+                } else {
+                    host.close_pump_scheduled = false;
+                }
             }
             pump(&shared, cx);
         }
@@ -1089,7 +1235,17 @@ fn process_reports(host: &mut HostState, bridge: &mut NativeBridge, cx: &mut App
     while let Some(mut report) = bridge.pop_report() {
         match &report {
             NativeReport::CloseRequested(close) => {
-                let policy = host.native.as_ref().unwrap().close_policy;
+                let native = host.native.as_ref().unwrap();
+                let root = native.callbacks.iter().any(|(owner, callbacks)| {
+                    native.roots.contains(owner) && callbacks.binding() == close.binding().window()
+                });
+                let policy = native
+                    .close_policy
+                    .unwrap_or(NativeCloseDecision::Allow(if root {
+                        NativeSurfaceCloseAction::RetainLayout
+                    } else {
+                        NativeSurfaceCloseAction::RecoverPresentation
+                    }));
                 if !host.native.as_ref().unwrap().transport.is_frozen()
                     && let Err(error) = bridge.decide_close(&mut host.session, *close, policy)
                 {
@@ -1140,6 +1296,7 @@ fn process_reports(host: &mut HostState, bridge: &mut NativeBridge, cx: &mut App
 }
 
 pub(super) fn pump(shared: &SharedHost, cx: &mut App) {
+    super::close::dispatch(shared, cx);
     let Ok(mut host) = shared.try_borrow_mut() else {
         return;
     };
@@ -1218,11 +1375,16 @@ pub(super) fn pump(shared: &SharedHost, cx: &mut App) {
                 Ok(()) => {
                     host.native.as_mut().unwrap().retired.remove(&binding);
                     if bridge.callbacks(binding.window()).is_none() {
-                        host.native
-                            .as_mut()
-                            .unwrap()
-                            .callbacks
-                            .retain(|_, callbacks| callbacks.binding() != binding.window());
+                        let ManagedHost {
+                            callbacks, roots, ..
+                        } = host.native.as_mut().unwrap();
+                        callbacks.retain(|owner, callbacks| {
+                            let retained = callbacks.binding() != binding.window();
+                            if !retained {
+                                roots.remove(owner);
+                            }
+                            retained
+                        });
                     }
                     more = true;
                 }
@@ -1247,7 +1409,7 @@ pub(super) fn pump(shared: &SharedHost, cx: &mut App) {
     for window in windows {
         let _ = window.update(cx, |_, window, _| window.refresh());
     }
-    if more {
+    if more || super::close::ready(&shared.borrow()) {
         schedule(shared, cx);
     }
 }

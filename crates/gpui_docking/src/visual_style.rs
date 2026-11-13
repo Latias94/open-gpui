@@ -1,6 +1,4 @@
-use std::{cell::Cell, fmt, rc::Rc};
-
-use open_gpui::{App, BoxShadow, Rgba, Window, point, px, rgb, rgba};
+use open_gpui::{BoxShadow, Rgba, point, px, rgb, rgba};
 
 /// Complete semantic inputs used to derive a Dock visual style.
 ///
@@ -509,83 +507,111 @@ impl DockVisualStyle {
     }
 }
 
-type DockVisualStyleCallback = dyn Fn(&Window, &App) -> DockVisualStyle;
+#[cfg(feature = "legacy-docking")]
+pub use resolution::DockVisualStyleResolver;
 
-#[derive(Clone)]
-enum DockVisualStyleSource {
-    Dynamic(Rc<DockVisualStyleCallback>),
-    Fixed(Rc<DockVisualStyle>),
-}
+#[cfg(feature = "legacy-docking")]
+mod resolution {
+    use std::{cell::Cell, fmt, rc::Rc};
 
-/// Named render-time resolver for a complete [`DockVisualStyle`].
-///
-/// The resolver is an immutable per-surface or per-runtime value. It is evaluated synchronously in
-/// the active host's window and subtree render context, which lets application code adapt a local
-/// theme without a Docking dependency on that theme system. Its read-only arguments prevent entity
-/// updates, notifications, event dispatch, registration changes, and window refreshes. Reentrant
-/// Dock style resolution is rejected separately at runtime.
-#[derive(Clone)]
-pub struct DockVisualStyleResolver {
-    source: DockVisualStyleSource,
-}
+    use open_gpui::{App, Window};
 
-impl DockVisualStyleResolver {
-    /// Creates a resolver from one complete synchronous render-context mapping.
-    pub fn new(callback: impl Fn(&Window, &App) -> DockVisualStyle + 'static) -> Self {
-        Self {
-            source: DockVisualStyleSource::Dynamic(Rc::new(callback)),
-        }
+    use super::DockVisualStyle;
+
+    type DockVisualStyleCallback = dyn Fn(&Window, &App) -> DockVisualStyle;
+
+    #[derive(Clone)]
+    enum DockVisualStyleSource {
+        Dynamic(Rc<DockVisualStyleCallback>),
+        Fixed(Rc<DockVisualStyle>),
     }
 
-    /// Creates a resolver that always returns the same immutable style.
-    pub fn fixed(style: DockVisualStyle) -> Self {
-        Self {
-            source: DockVisualStyleSource::Fixed(Rc::new(style)),
-        }
+    /// Named render-time resolver for a complete [`DockVisualStyle`].
+    ///
+    /// The resolver is an immutable per-surface or per-runtime value. It is evaluated synchronously in
+    /// the active host's window and subtree render context, which lets application code adapt a local
+    /// theme without a Docking dependency on that theme system. Its read-only arguments prevent entity
+    /// updates, notifications, event dispatch, registration changes, and window refreshes. Reentrant
+    /// Dock style resolution is rejected separately at runtime.
+    #[derive(Clone)]
+    pub struct DockVisualStyleResolver {
+        source: DockVisualStyleSource,
     }
 
-    pub(crate) fn resolve(&self, window: &mut Window, cx: &mut App) -> Rc<DockVisualStyle> {
-        match &self.source {
-            DockVisualStyleSource::Dynamic(callback) => {
-                Rc::new(with_dock_visual_style_resolution(|| callback(window, cx)))
+    impl DockVisualStyleResolver {
+        /// Creates a resolver from one complete synchronous render-context mapping.
+        pub fn new(callback: impl Fn(&Window, &App) -> DockVisualStyle + 'static) -> Self {
+            Self {
+                source: DockVisualStyleSource::Dynamic(Rc::new(callback)),
             }
-            DockVisualStyleSource::Fixed(style) => style.clone(),
+        }
+
+        /// Creates a resolver that always returns the same immutable style.
+        pub fn fixed(style: DockVisualStyle) -> Self {
+            Self {
+                source: DockVisualStyleSource::Fixed(Rc::new(style)),
+            }
+        }
+
+        pub(crate) fn resolve(&self, window: &mut Window, cx: &mut App) -> Rc<DockVisualStyle> {
+            match &self.source {
+                DockVisualStyleSource::Dynamic(callback) => {
+                    Rc::new(with_dock_visual_style_resolution(|| callback(window, cx)))
+                }
+                DockVisualStyleSource::Fixed(style) => style.clone(),
+            }
         }
     }
-}
 
-impl fmt::Debug for DockVisualStyleResolver {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("DockVisualStyleResolver")
-            .finish_non_exhaustive()
+    impl fmt::Debug for DockVisualStyleResolver {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter
+                .debug_struct("DockVisualStyleResolver")
+                .finish_non_exhaustive()
+        }
     }
-}
 
-thread_local! {
-    static DOCK_VISUAL_STYLE_RESOLUTION_DEPTH: Cell<usize> = const { Cell::new(0) };
-}
+    thread_local! {
+        static DOCK_VISUAL_STYLE_RESOLUTION_DEPTH: Cell<usize> = const { Cell::new(0) };
+    }
 
-fn with_dock_visual_style_resolution<T>(resolve: impl FnOnce() -> T) -> T {
-    DOCK_VISUAL_STYLE_RESOLUTION_DEPTH.with(|depth| {
-        let entered_depth = depth.get();
+    fn with_dock_visual_style_resolution<T>(resolve: impl FnOnce() -> T) -> T {
+        DOCK_VISUAL_STYLE_RESOLUTION_DEPTH.with(|depth| {
+            let entered_depth = depth.get();
+            assert_eq!(
+                entered_depth, 0,
+                "DockVisualStyleResolver callbacks must not reenter Dock style resolution"
+            );
+            depth.set(entered_depth + 1);
+            let _guard = DockVisualStyleResolutionGuard { depth };
+            resolve()
+        })
+    }
+
+    struct DockVisualStyleResolutionGuard<'a> {
+        depth: &'a Cell<usize>,
+    }
+
+    impl Drop for DockVisualStyleResolutionGuard<'_> {
+        fn drop(&mut self) {
+            self.depth.set(self.depth.get().saturating_sub(1));
+        }
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn resolution_scope_rejects_reentry_and_recovers_after_unwind() {
+        let panic = std::panic::catch_unwind(|| {
+            with_dock_visual_style_resolution(|| {
+                with_dock_visual_style_resolution(|| DockVisualStyle::built_in())
+            })
+        });
+        assert!(panic.is_err(), "nested resolution must be rejected");
         assert_eq!(
-            entered_depth, 0,
-            "DockVisualStyleResolver callbacks must not reenter Dock style resolution"
+            with_dock_visual_style_resolution(DockVisualStyle::built_in),
+            DockVisualStyle::built_in(),
+            "the RAII guard must restore resolution state after unwind"
         );
-        depth.set(entered_depth + 1);
-        let _guard = DockVisualStyleResolutionGuard { depth };
-        resolve()
-    })
-}
-
-struct DockVisualStyleResolutionGuard<'a> {
-    depth: &'a Cell<usize>,
-}
-
-impl Drop for DockVisualStyleResolutionGuard<'_> {
-    fn drop(&mut self) {
-        self.depth.set(self.depth.get().saturating_sub(1));
     }
 }
 
@@ -661,20 +687,5 @@ mod tests {
         ] {
             assert!(style.previews.route(state).border.a > 0.0);
         }
-    }
-
-    #[test]
-    fn resolution_scope_rejects_reentry_and_recovers_after_unwind() {
-        let panic = std::panic::catch_unwind(|| {
-            with_dock_visual_style_resolution(|| {
-                with_dock_visual_style_resolution(|| DockVisualStyle::built_in())
-            })
-        });
-        assert!(panic.is_err(), "nested resolution must be rejected");
-        assert_eq!(
-            with_dock_visual_style_resolution(DockVisualStyle::built_in),
-            DockVisualStyle::built_in(),
-            "the RAII guard must restore resolution state after unwind"
-        );
     }
 }

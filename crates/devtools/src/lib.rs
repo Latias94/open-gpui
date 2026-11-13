@@ -16,6 +16,8 @@ pub mod form;
 pub mod gpui;
 mod inspector;
 pub mod layout;
+#[cfg(feature = "legacy-docking")]
+pub mod legacy_docking;
 #[cfg(feature = "motion")]
 pub mod motion;
 mod probe;

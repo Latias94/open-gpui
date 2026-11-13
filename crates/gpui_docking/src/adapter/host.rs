@@ -4,7 +4,7 @@ use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, VecDeque},
     rc::Rc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::{Result, ensure};
@@ -20,6 +20,7 @@ use open_gpui::{
     AnyView, AnyWindowHandle, App, Bounds, FocusHandle, GlobalElementId, IntoElement, Pixels,
     SharedString, Window, WindowId,
 };
+use web_time::Instant;
 
 use super::{GpuiDockspaceConfig, continuation, element, host_native, input, presentation};
 
@@ -178,6 +179,10 @@ impl DockSurface {
                 native_effects: VecDeque::new(),
                 presentation_pending: false,
                 error: None,
+                close_handler: None,
+                close_requests: VecDeque::new(),
+                close_pump_scheduled: false,
+                close_dispatching: false,
                 clock,
                 clock_origin,
                 native: None,
@@ -332,6 +337,10 @@ pub(super) struct HostState {
     pub(super) native_effects: VecDeque<NativeEffectRequest>,
     pub(super) presentation_pending: bool,
     pub(super) error: Option<String>,
+    pub(super) close_handler: Option<Rc<super::close::CloseHandler>>,
+    pub(super) close_requests: VecDeque<dockspace::runtime::DockspaceClosePlan>,
+    pub(super) close_pump_scheduled: bool,
+    pub(super) close_dispatching: bool,
     pub(super) clock: open_gpui::BackgroundExecutor,
     pub(super) clock_origin: Instant,
     pub(super) native: Option<host_native::ManagedHost>,
@@ -471,6 +480,7 @@ impl HostState {
     }
 
     pub(super) fn invalidate_report(&mut self, report: &HostFrameReport) {
+        super::close::observe(self, report);
         // Affected surfaces also include provenance-only presentation updates.
         // Only the repaint roster requests new encoding for those observations.
         for surface in report.repaint_surfaces() {

@@ -1,5 +1,5 @@
 #![cfg(any(
-    feature = "docking",
+    feature = "legacy-docking",
     feature = "gpui",
     feature = "motion",
     feature = "ui-components"
@@ -7,10 +7,10 @@
 
 #[cfg(feature = "ui-components")]
 use open_gpui::VisualContext as _;
-#[cfg(feature = "docking")]
-use open_gpui_devtools::docking;
 #[cfg(feature = "gpui")]
 use open_gpui_devtools::gpui;
+#[cfg(feature = "legacy-docking")]
+use open_gpui_devtools::legacy_docking as docking;
 #[cfg(feature = "motion")]
 use open_gpui_devtools::motion;
 #[cfg(feature = "ui-components")]
@@ -508,12 +508,12 @@ fn framework_adapters_convert_gpui_runtime_metadata() {
     assert_eq!(provider_capture.events.len(), 2);
 }
 
-#[cfg(feature = "docking")]
+#[cfg(feature = "legacy-docking")]
 #[test]
 fn framework_adapters_convert_docking_runtime_status() {
     use open_gpui_devtools::DevtoolsRegistry;
-    use open_gpui_docking::DockSpaceId;
-    use open_gpui_docking::advanced::{
+    use open_gpui_docking::legacy::DockSpaceId;
+    use open_gpui_docking::legacy::advanced::{
         DockViewportInputStatus, DockViewportLifecycleRecord, DockViewportPlatformCapabilityRecord,
         DockViewportPlatformRequestStatus, DockViewportRestoreReadinessRecord,
         DockViewportRouteStatus, DockViewportRuntimeStatus, DockViewportVisualAffordanceRecord,

@@ -2,7 +2,7 @@ use open_gpui::{
     App, AppContext as _, Context, IntoElement, ParentElement as _, Render, Styled as _, Window,
     WindowOptions, canvas, div, fill, px, rgb,
 };
-use open_gpui_docking::adapter::{
+use open_gpui_docking::{
     DockPane, DockSurface, GpuiDockspaceConfig,
     dockspace::{
         model::{
@@ -76,6 +76,31 @@ fn main() {
             cx,
         )
         .expect("retained preview content should mount");
+        surface
+            .set_close_handler(
+                |surface, plan, cx| {
+                    surface
+                        .update(
+                            |frame| {
+                                let items = frame
+                                    .pending_close_decisions(plan.request())
+                                    .collect::<Vec<_>>();
+                                for item in items {
+                                    frame.resolve_close(
+                                        plan.request(),
+                                        item.token(),
+                                        open_gpui_docking::dockspace::close::CloseDecision::Allow,
+                                    )?;
+                                }
+                                Ok(())
+                            },
+                            cx,
+                        )
+                        .expect("the application's preview close decision should commit");
+                },
+                cx,
+            )
+            .expect("the application owns preview close decisions");
         surface
             .open_native_root(surface_id, true, WindowOptions::default(), cx)
             .expect("the preview native root should open");

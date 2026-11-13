@@ -10,7 +10,7 @@ use open_gpui::{
     PlatformWindowPresentOutcome, Point, QuitMode, RenderImage, Size, Subscription, Window,
     WindowId, WindowMouseEvent, WindowMutationDispatch, WindowPlatformFacts, img,
 };
-use open_gpui_docking::{
+use open_gpui_docking::legacy::{
     DockSurfaceChangeEvent, DockSurfaceLiveUndockTestEventKind,
     DockSurfaceLiveUndockTestObservation, DockSurfaceShutdownTestEventKind,
     DockSurfaceShutdownTestObservation, DockSurfaceTransition, DockSurfaceWindowSessionPhase,
@@ -1082,7 +1082,7 @@ struct NativeDockScenario {
     native_identities: Rc<RefCell<BTreeMap<open_gpui::WindowId, NativeWindowTestIdentity>>>,
     app_shutdown_probe: Rc<RefCell<NativeAppShutdownProbeState>>,
     live_undock_observation: DockSurfaceLiveUndockTestObservation,
-    shutdown_observation: open_gpui_docking::DockSurfaceShutdownTestObservation,
+    shutdown_observation: open_gpui_docking::legacy::DockSurfaceShutdownTestObservation,
     dockspace_workflow: Option<NativeDockspaceWorkflow>,
     workflow_milestones: Vec<String>,
     _mouse_interceptors: Vec<Subscription>,

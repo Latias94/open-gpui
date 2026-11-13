@@ -10,17 +10,22 @@ homepage.workspace = true
 documentation.workspace = true
 readme.workspace = true
 publish = false
-description = "Facade-first multi-viewport docking example for Open GPUI."
+description = "Shared-session multi-window docking and persistence example for Open GPUI."
 
 [[bin]]
 name = "open-gpui-docking-multiviewport"
 path = "src/main.rs"
 
 [dependencies]
+anyhow.workspace = true
+env_logger.workspace = true
 log.workspace = true
 open_gpui.workspace = true
 open_gpui_docking.workspace = true
 open_gpui_platform = { workspace = true, features = ["font-kit"] }
+
+[dev-dependencies]
+open_gpui = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true

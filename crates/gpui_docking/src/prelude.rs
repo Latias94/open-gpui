@@ -1,33 +1,18 @@
-//! Common docking APIs for ordinary Open GPUI applications.
+//! Common retained docking APIs for Open GPUI applications.
+//!
+//! Layout and policy types belong to the shared semantic core. More specialized
+//! native transport and persistence APIs live in [`crate::native`] and
+//! [`crate::persistence`].
 
 pub use crate::{
-    DOCK_LAYOUT_VERSION, DOCK_VIEWPORT_PLACEMENT_VERSION, DockClassId, DockDropGuideMetrics,
-    DockItemId, DockLayout, DockLayoutValidationError, DockPanel, DockPanelAttachError,
-    DockPanelCatalog, DockPanelCloseOutcome, DockPanelDescriptor, DockPanelOpenOutcome,
-    DockPanelOpenPlacementSource, DockPanelPlacement, DockPanelPlacementTarget,
-    DockPanelRegistration, DockPanelRegistry, DockPanelReopenPolicy, DockPolicy, DockPolicyError,
-    DockSpaceId, DockSurface, DockSurfaceActivationOutcome, DockSurfaceActivationRequestId,
-    DockSurfaceBuildError, DockSurfaceBuilder, DockSurfaceChange, DockSurfaceChangeCategory,
-    DockSurfaceChangeEvent, DockSurfaceFloatingPanelSnapshot, DockSurfacePanelError,
-    DockSurfacePanelLocation, DockSurfacePanelLocationKind, DockSurfacePanelOutcome,
-    DockSurfacePanelSnapshot, DockSurfacePrimaryWindowOpenConflict,
-    DockSurfacePrimaryWindowOpenOutcome, DockSurfacePrimaryWindowOpened,
-    DockSurfacePrimaryWindowUnavailable, DockSurfaceSnapshot, DockSurfaceTransition,
-    DockSurfaceViewportCloseOutcome, DockSurfaceViewportCloseStatus,
-    DockSurfaceViewportFlagWarning, DockSurfaceViewportInputStatus,
-    DockSurfaceViewportLifecycleReadiness, DockSurfaceViewportOpenOutcome,
-    DockSurfaceViewportOpenReport, DockSurfaceViewportOpenStatus, DockSurfaceViewportOpened,
-    DockSurfaceViewportPlatformCapabilities, DockSurfaceViewportPlatformReadiness,
-    DockSurfaceViewportReadiness, DockSurfaceViewportReadinessReport,
-    DockSurfaceViewportReadinessStatus, DockSurfaceViewportRestoreOutcome,
-    DockSurfaceViewportRestoreReport, DockSurfaceViewportRouteStatus,
-    DockSurfaceViewportShouldCloseOutcome, DockSurfaceViewportShouldCloseStatus,
-    DockSurfaceViewportSpec, DockSurfaceViewportSpecError, DockSurfaceViewportStaleReason,
-    DockSurfaceViewportUnavailable, DockSurfaceViewportUnsupportedFlag, DockSurfaceViewports,
-    DockSurfaceWindowSessionOpeningRollbackReason, DockSurfaceWindowSessionPhase,
-    DockSurfaceWindowSessionReason, DockSurfaceWindowSessionShutdownReason,
-    DockSurfaceWindowSessionStatus, DockViewportClosePolicy, DockViewportPlacement,
-    DockViewportPlacementLayout, DockViewportPlacementValidationError,
-    DockViewportRestoreReadiness, DockViewportWindowBounds, DockViewportWindowState,
-    DockVisualPalette, DockVisualStyle, DockVisualStyleResolver,
+    DockPane, DockRegion, DockSurface, DockVisualPalette, DockVisualStyle, DockspaceColors,
+    DockspaceInputBindings, GpuiDockspaceConfig,
+};
+pub use dockspace::{
+    model::{
+        DockAnchor, DockPlacement, DockspaceAxis, DockspaceLayout, DockspaceNode,
+        DockspaceRootLayout, DockspaceSurfaceLayout, ItemId, RootId, SurfaceId,
+    },
+    policy::DockPolicy,
+    runtime::DockspaceSession,
 };

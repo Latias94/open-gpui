@@ -12,15 +12,23 @@ readme.workspace = true
 publish = false
 description = "Native docking smoke example for Open GPUI."
 
+[features]
+default = []
+legacy-docking = [
+    "open_gpui_docking/legacy-docking",
+    "open_gpui_devtools/legacy-docking",
+]
+
 [[bin]]
 name = "open-gpui-docking-native"
 path = "src/main.rs"
+required-features = ["legacy-docking"]
 
 [dependencies]
 env_logger.workspace = true
 log.workspace = true
 open_gpui.workspace = true
-open_gpui_devtools = { workspace = true, features = ["docking", "gpui"] }
+open_gpui_devtools = { workspace = true, features = ["gpui"] }
 open_gpui_docking.workspace = true
 open_gpui_platform = { workspace = true, features = ["font-kit"] }
 open_gpui_ui_components.workspace = true

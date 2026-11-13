@@ -587,6 +587,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "blake3"
+version = "1.8.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d9e454fc11f76977dc803893aff6304ed33d6a26efae8696573bea74baa27ae"
+dependencies = [
+ "arrayvec",
+ "cc",
+ "cfg-if",
+ "constant_time_eq",
+ "cpufeatures 0.3.1",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -860,6 +873,12 @@ name = "const-oid"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
+
+[[package]]
+name = "constant_time_eq"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 
 [[package]]
 name = "convert_case"
@@ -1196,6 +1215,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab8ecd87370524b461f8557c119c405552c396ed91fc0a8eec68679eab26f94a"
 dependencies = [
  "libloading",
+]
+
+[[package]]
+name = "dockspace"
+version = "0.1.0"
+source = "git+https://github.com/Latias94/dockspace?rev=c200977d0f34943284a125c492919791650e1bff#c200977d0f34943284a125c492919791650e1bff"
+dependencies = [
+ "blake3",
+ "serde",
+ "serde_json",
+ "slotmap",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -3297,7 +3328,9 @@ dependencies = [
 name = "open-gpui-docking"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "arrayvec",
+ "dockspace",
  "log",
  "open-gpui",
  "open-gpui-motion",
@@ -3307,6 +3340,7 @@ dependencies = [
  "slotmap",
  "smallvec",
  "thiserror 2.0.18",
+ "web-time",
 ]
 
 [[package]]

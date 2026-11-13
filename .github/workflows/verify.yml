@@ -503,14 +503,21 @@ jobs:
         shell: pwsh
         env:
           GPUI_LEAK_DETECTION: '1'
-        run: cargo nextest run -p open-gpui-docking-native --no-fail-fast
+        run: cargo nextest run -p open-gpui-docking-native --features legacy-docking --no-fail-fast
 
-      - name: Run docking authority tests
+      - name: Run default docking authority tests
         if: matrix.name == 'windows'
         shell: pwsh
         env:
           GPUI_LEAK_DETECTION: '1'
         run: cargo nextest run -p open-gpui-docking --locked --no-fail-fast
+
+      - name: Run legacy and shared docking authority tests
+        if: matrix.name == 'windows'
+        shell: pwsh
+        env:
+          GPUI_LEAK_DETECTION: '1'
+        run: cargo nextest run -p open-gpui-docking --all-features --locked --no-fail-fast
 
       - name: Check Linux platform surface
         if: matrix.name == 'linux'

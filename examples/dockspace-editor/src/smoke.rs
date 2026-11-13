@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context as _, Result, bail, ensure};
 use open_gpui::{AnyWindowHandle, App, Entity, WindowFrameSubmissionOutcome, WindowOptions};
-use open_gpui_docking::adapter::{
+use open_gpui_docking::{
     dockspace::{
         geometry::PhysicalRect,
         model::NativeWindowPlacement,

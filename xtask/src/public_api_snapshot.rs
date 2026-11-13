@@ -103,6 +103,7 @@ fn scan_devtools_public_api(root: &Path, failures: &mut Vec<String>) {
         "form",
         "gpui",
         "layout",
+        "legacy_docking",
         "motion",
         "resource",
         "timeline",
@@ -214,10 +215,12 @@ fn scan_docking_public_api(root: &Path, failures: &mut Vec<String>) {
         "DockWorkspace",
     ];
     for file_name in [
-        "surface.rs",
-        "surface/builder.rs",
-        "surface/panel.rs",
-        "surface/viewport.rs",
+        "adapter/host.rs",
+        "adapter/host_native.rs",
+        "legacy/surface.rs",
+        "legacy/surface/builder.rs",
+        "legacy/surface/panel.rs",
+        "legacy/surface/viewport.rs",
     ] {
         let tokens = public_signature_tokens(&source_dir.join(file_name), failures);
         reject_tokens(
@@ -1631,6 +1634,7 @@ mod tests {
             "form",
             "gpui",
             "layout",
+            "legacy_docking",
             "motion",
             "resource",
             "timeline",

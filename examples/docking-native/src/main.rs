@@ -18,7 +18,7 @@ use open_gpui_devtools::{
     DevtoolsSession, DevtoolsSessionError, DevtoolsSessionExport, DevtoolsSessionFrame,
     DevtoolsWorkbench, ProbeSnapshotError,
 };
-use open_gpui_docking::{
+use open_gpui_docking::legacy::{
     DockItemId, DockLayout, DockPanel, DockPanelDescriptor, DockPanelPlacement, DockSpaceId,
     DockSurface, DockSurfacePrimaryWindowOpenOutcome, DockSurfaceViewportOpenOutcome,
     DockSurfaceWindowSessionStatus, DockViewportPlacement, DockViewportPlacementLayout,
@@ -45,7 +45,7 @@ use open_gpui_docking::{
     runtime::DockViewportClosePolicy,
 };
 #[cfg(test)]
-use open_gpui_docking::{
+use open_gpui_docking::legacy::{
     DockPanelOpenOutcome, model::DockActionApplyError, runtime::DockViewportRuntimeHandle,
 };
 use open_gpui_platform::application;
@@ -431,7 +431,7 @@ impl RuntimeStatusPanel {
             #[cfg(test)]
             RuntimePanelAuthority::Unmanaged { .. } => return Vec::new(),
         };
-        let session = open_gpui_devtools::docking::docking_surface_inspection(
+        let session = open_gpui_devtools::legacy_docking::docking_surface_inspection(
             surface.window_session_status(cx),
             &surface.viewports().runtime_status(cx),
         )
@@ -1046,7 +1046,7 @@ fn open_item_result(
 }
 
 fn docking_runtime_devtools_summary(status: &DockViewportRuntimeStatus) -> String {
-    let inspection = open_gpui_devtools::docking::docking_runtime_inspection(status);
+    let inspection = open_gpui_devtools::legacy_docking::docking_runtime_inspection(status);
     format!(
         "viewports={}, events={}, affordances={}, diagnostics={}",
         inspection.summary.viewport_lifecycle_count,
@@ -1069,11 +1069,15 @@ fn docking_panel_devtools_session(status: Arc<Mutex<DockingDevtoolsStatus>>) -> 
                 })?
                 .clone();
             Ok(match status.window_session {
-                Some(window_session) => open_gpui_devtools::docking::docking_surface_capture(
-                    window_session,
-                    &status.runtime,
-                ),
-                None => open_gpui_devtools::docking::docking_runtime_capture(&status.runtime),
+                Some(window_session) => {
+                    open_gpui_devtools::legacy_docking::docking_surface_capture(
+                        window_session,
+                        &status.runtime,
+                    )
+                }
+                None => {
+                    open_gpui_devtools::legacy_docking::docking_runtime_capture(&status.runtime)
+                }
             })
         })
         .expect("docking panel capture provider id should be valid");
@@ -1094,7 +1098,7 @@ fn docking_runtime_devtools_session(
                     )
                 })?
                 .clone();
-            Ok(open_gpui_devtools::docking::docking_runtime_capture(
+            Ok(open_gpui_devtools::legacy_docking::docking_runtime_capture(
                 &status,
             ))
         })
@@ -1355,7 +1359,7 @@ pub fn docking_native_headless_status(generation: u64) -> DockViewportRuntimeSta
 fn docking_runtime_devtools_capture(
     status: &DockViewportRuntimeStatus,
 ) -> open_gpui_devtools::DevtoolsCapture {
-    open_gpui_devtools::docking::docking_runtime_capture(status)
+    open_gpui_devtools::legacy_docking::docking_runtime_capture(status)
 }
 
 fn debug_option<T: std::fmt::Debug>(value: Option<T>) -> String {
@@ -1683,7 +1687,7 @@ fn restored_demo_layout() -> DockLayout {
         .expect("demo controller setup should validate");
 
     let main_space = DockSpaceId::from(SPACE);
-    let preview_item: open_gpui_docking::DockItemId = "preview".into();
+    let preview_item: open_gpui_docking::legacy::DockItemId = "preview".into();
     controller
         .close_panel(main_space.clone(), preview_item.clone())
         .expect("preview panel should close before reopening into secondary space");
@@ -1694,7 +1698,7 @@ fn restored_demo_layout() -> DockLayout {
         )
         .expect("preview panel should reopen into the secondary demo dock space");
     let secondary_space = DockSpaceId::from(SECONDARY_SPACE);
-    let diff_item: open_gpui_docking::DockItemId = "diff".into();
+    let diff_item: open_gpui_docking::legacy::DockItemId = "diff".into();
     controller
         .open_panel_at_placement(
             secondary_space.clone(),
@@ -1717,7 +1721,7 @@ fn restored_demo_layout() -> DockLayout {
         )
         .expect("problems panel should float inside the demo dock space");
 
-    let outline_item: open_gpui_docking::DockItemId = "outline".into();
+    let outline_item: open_gpui_docking::legacy::DockItemId = "outline".into();
     assert!(
         controller
             .graph()
@@ -2304,7 +2308,7 @@ mod tests {
         PlatformWindowPhysicalCoverage, PlatformWindowPhysicalGeometry, TestAppContext,
         VisualTestContext,
     };
-    use open_gpui_docking::{
+    use open_gpui_docking::legacy::{
         DockClassId, DockPolicyError, DockSurfaceWindowSessionPhase,
         advanced::{
             DockViewportCoordinateStatusRecord, DockViewportInputStatus,

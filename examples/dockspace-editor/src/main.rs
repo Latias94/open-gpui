@@ -7,7 +7,7 @@ use open_gpui::{
 };
 
 mod smoke;
-use open_gpui_docking::adapter::{
+use open_gpui_docking::{
     DockPane, DockSurface, GpuiDockspaceConfig,
     dockspace::{
         model::{
@@ -140,6 +140,29 @@ fn workspace(cx: &mut App) -> Result<Workspace> {
             DockPane::new(SECOND, "Inspector View", second.clone()),
         ],
         GpuiDockspaceConfig::default(),
+        cx,
+    )?;
+    dock.set_close_handler(
+        |dock, plan, cx| {
+            if let Err(error) = dock.update(
+                |frame| {
+                    let items = frame
+                        .pending_close_decisions(plan.request())
+                        .collect::<Vec<_>>();
+                    for item in items {
+                        frame.resolve_close(
+                            plan.request(),
+                            item.token(),
+                            open_gpui_docking::dockspace::close::CloseDecision::Allow,
+                        )?;
+                    }
+                    Ok(())
+                },
+                cx,
+            ) {
+                eprintln!("editor demo View close failed: {error:#}");
+            }
+        },
         cx,
     )?;
     Ok(Workspace {

@@ -286,7 +286,7 @@ If a full adapter cannot express an existing required lifecycle through the cand
 
 **Dependencies:** U1; initial proof can use ordinary custom GPUI content before U2–U4 finish.
 
-**Files:** `dockspace:integration/gpui-harness/src/host.rs`, `element.rs`, `input.rs`, `presentation.rs`, `tests/embedding.rs`; new focused multiview tests there. Use `dockspace:integration/dockspace-host-harness/tests/logical_surfaces.rs` and `crates/gpui_docking/src/host_multiview_scenario_tests.rs` as scenario anchors.
+**Files:** `dockspace:integration/gpui-harness/src/host.rs`, `element.rs`, `input.rs`, `presentation.rs`, `tests/embedding.rs`; new focused multiview tests there. Use `dockspace:integration/dockspace-host-harness/tests/logical_surfaces.rs` and `crates/gpui_docking/src/legacy/host_multiview_scenario_tests.rs` as scenario anchors.
 
 **Approach:** One candidate session supplies multiple pane/surface records. Bind distinct View instances to distinct GPUI entities and stable external pane keys. Aggregate outputs per actual Window instead of creating one independent frame ticket per logical region. Prototype persistence/factory mapping through the public candidate APIs, without mirroring its graph.
 
@@ -300,7 +300,7 @@ If a full adapter cannot express an existing required lifecycle through the cand
 
 **Dependencies:** U5 and the selected backend's actual native capability support.
 
-**Files:** A concrete native bridge beside the candidate GPUI harness; `dockspace:crates/dockspace/src/runtime/native/session.rs`, `native_effect.rs`, and `integration/dockspace-host-harness/tests/native_surface_creation.rs`, `shared_window_close.rs`, `native_document_restore.rs` as existing contracts. Adapt scenario coverage from `crates/gpui_docking/src/surface/window_session_tests.rs`, `surface/payload_recovery_tests.rs`, `native_captured_drag.rs`, and `examples/docking-multiviewport/src/main.rs`.
+**Files:** A concrete native bridge beside the candidate GPUI harness; `dockspace:crates/dockspace/src/runtime/native/session.rs`, `native_effect.rs`, and `integration/dockspace-host-harness/tests/native_surface_creation.rs`, `shared_window_close.rs`, `native_document_restore.rs` as existing contracts. Adapt scenario coverage from `crates/gpui_docking/src/legacy/surface/window_session_tests.rs`, `surface/payload_recovery_tests.rs`, `native_captured_drag.rs`, and `examples/docking-multiviewport/src/main.rs`.
 
 **Approach:** Translate candidate managed-native intents through GPUI's existing create, placement, capture, first-submission, group-drain and retirement mechanisms. The current surface-local pointer producer must be replaced by the supported managed producer configuration. Preserve transport order and exact lineage; unsupported desktop/hover facts remain unsupported.
 
@@ -313,6 +313,15 @@ If a full adapter cannot express an existing required lifecycle through the cand
 **Goal:** Converge production docking on the selected implementation after the compatibility proof. Covers R4, R7; follows KTD3/KTD4.
 
 **Dependencies:** An explicit replacement decision based on U1/U5/U6 and the facade/persistence acceptance scope. This unit is not authorized by writing the plan.
+
+**November 14 execution:** The owner subsequently authorized the breaking
+replacement and continued refactoring. ADR 0034 selects it. Root/prelude,
+ordinary examples, DevTools and the independent consumer now cut over to the
+shared session; the displaced engine moves under an explicit `legacy-docking`
+feature and namespace. Remaining physical-platform qualification still gates
+deleting that compatibility engine. This entry-point increment does not close
+the entire removal unit or assert old binary sizing equivalence. See the
+[execution record](../knowledge/engineering/verification/dockspace-default-cutover-20261114.md).
 
 **Files:** `crates/gpui_docking` facade, dependency and runtime owners; existing layout/snapshot tests and examples; `docs/adr/0033-docking-kernel-transaction-architecture.md` plus a replacement ADR; migration/release documentation. Candidate package/release changes stay in `dockspace`.
 

@@ -1,4 +1,4 @@
-use open_gpui_docking::benchmark_support::{
+use open_gpui_docking::legacy::benchmark_support::{
     CanonicalGroupEdgePatchBenchmark, DockComplexDockspaceBenchmark, DockDragBenchmark,
     DockMultiViewDragBenchmark, DockspaceBenchmarkCase, DockspaceScenarioSequenceBenchmark,
 };

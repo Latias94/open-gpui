@@ -1,5 +1,24 @@
 # Verification
 
+## November 14 Default Docking Cutover
+
+The shared session is now the root/prelude API. Default library checks exercise
+that path; `--all-features` additionally compiles and tests the explicit
+compatibility engine under `legacy`. Both cohorts remain required. The native
+dogfood example requires `--features legacy-docking`; its Windows manifest runner
+and CI command pass that feature explicitly. Older commands below describe their
+recorded revisions: add the feature when rerunning incumbent scenarios on current
+source. Browser smoke also explicitly retains the incumbent unsupported-native
+window probe until its replacement is qualified.
+
+The [cutover evidence](knowledge/engineering/verification/dockspace-default-cutover-20261114.md)
+records the exact commits, compiler, test counts and native limits. Read-only
+inspection must preserve pending candidates, native reports and original terminal
+tickets. Ordinary examples, DevTools' `docking` feature and the independently
+locked consumer must compile with the shared root both alone and alongside the
+compatibility feature. This cutover supplies no new physical capture, mixed-DPI,
+OS IME or foreign-platform execution credit.
+
 ## November 13 Incremental Sync and Native Follow-up
 
 This continuation starts at local `d1ffee6315e72dd81f3ef690486860680a696e3a`

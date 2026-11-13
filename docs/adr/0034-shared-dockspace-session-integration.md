@@ -77,6 +77,15 @@ Saved logical window positions remain hints until the current platform establish
 
 ## Cutover and verification
 
+The November 14 default cutover promotes the shared implementation to the crate
+root and prelude. Ordinary examples, DevTools and the independently locked
+consumer use this entry point. The incumbent engine is isolated under `legacy`
+behind an explicit `legacy-docking` feature; enabling it never changes the root
+types and no migrated workspace calls it as fallback. Its physical qualification
+scenarios remain available until their declared replacements run. This is a
+production entry-point cutover, not completed removal or universal native parity.
+See the [cutover record](../knowledge/engineering/verification/dockspace-default-cutover-20261114.md).
+
 This decision selects the architecture; it is not evidence that every backend or consumer has
 passed native qualification. Implement and verify dependency compatibility, real pane content,
 multi-surface aggregation, deferred-sibling progress, native create/first-live, close recovery and

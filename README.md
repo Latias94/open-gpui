@@ -61,7 +61,7 @@ During local development, use workspace path dependencies instead of registry ve
 - Use `open-gpui-resource` for renderer-neutral async query and mutation ownership: deterministic query keys, observers, stale/invalidate state, retry policy, pagination snapshots, mutation lifecycle, and redacted cache diagnostics. Fetching stays protocol-agnostic.
 - Use `open-gpui-devtools` for read-only local inspection: app-owned probes and feature-gated first-party adapters collect target/domain/event captures, legacy snapshot envelopes, command facts, timeline events, layout geometry, diagnostics, redaction summaries, schema-versioned headless artifacts, and an optional GPUI inspector surface behind the `gpui` feature.
 - Use `open-gpui-motion` when a component or domain crate needs deterministic, renderer-neutral motion samples and frame-demand facts. It is not a global animation engine.
-- Use `open-gpui-docking` for retained tab stacks, splits, product panel placement, in-window floating panels, and capability-gated platform viewport windows. Start with the minimal example before the diagnostic dogfood example.
+- Use `open-gpui-docking` for a shared `DockspaceSession` with retained tab Views, weighted splits, floating content and native windows. Start with the minimal example, then multiviewport or the editor example.
 - Use `open-gpui-web` only for web backend work; most applications should continue to enter through `open-gpui-platform`.
 - Use `open-gpui-wgpu` for [application-owned Scene recording and retained GPU images](docs/external-wgpu.md). The recording module reuses your device and encoder; complete external window/event-loop hosting remains in development.
 
@@ -71,7 +71,7 @@ Open GPUI is pre-1.0, so the framework favors explicit product contracts over co
 
 - Scroll surfaces return typed `ScrollWheelIntent` values, publish committed `ScrollViewportSnapshot` facts, and expose test probes such as `TestInputDispatchSnapshot` for final input outcomes.
 - Native window placement and independent flag requests expose property-specific capabilities, seven generation domains, typed dispatch, generation-bound terminal observations, and one committed `WindowPlatformFacts` cache; a queued request is never treated as an applied OS fact.
-- Docking apps declare product intent with `DockPanelPlacement`, descriptor default placement, and last-known reopen placement instead of holding graph node ids in normal product code.
+- Docking apps retain one shared session and use its revision-bound `DockPlacement` actions; each View has a distinct pane identity and entity while documents and history remain application-owned.
 - Component apps project command/action metadata through `CommandIconDescriptor`, `ActionDescriptor`, and `ResolvedActionState`, then reuse that resolved state across buttons, toolbars, menus, command palettes, and sidebars.
 - `VirtualizedList` keeps stable-key state in `VirtualizedListState`; GPUI shells opt into host-owned `ScrollHandle` and custom row rendering through `gpui_adapter::VirtualizedListGpuiExt`. `bring_key_into_view` materializes the keyed row before GPUI performs final nested physical alignment through its window-owned reveal authority.
 - Form and resource apps keep long-lived state in `open-gpui-form` and `open-gpui-resource`, then project snapshots into existing UI components through `FormFieldProjection`, `ResourceCollectionProjection`, and `ResourceMutationProjection`. Devtools consumes redacted snapshots through feature-gated adapters and does not mutate app state.
@@ -95,12 +95,12 @@ See [docs/ui/command-ecosystem.md](docs/ui/command-ecosystem.md), [docs/ui/compo
 - `crates/devtools`: read-only target/domain/event capture, probe registry, serializable snapshot envelopes, artifact writer/sink APIs, command-line query/assert/follow diagnostics, command/timeline/layout adapters, and optional GPUI inspector UI; see [crates/devtools/README.md](crates/devtools/README.md)
 - `crates/motion`: renderer-neutral `open-gpui-motion` timing, spring, policy, projection, and
   frame-demand primitives; see [crates/motion/README.md](crates/motion/README.md)
-- `crates/gpui_docking`: retained docking graph, workspace, host, and viewport primitives; see
+- `crates/gpui_docking`: shared DockspaceSession, retained Views and GPUI native transport; see
   [crates/gpui_docking/README.md](crates/gpui_docking/README.md)
 - `crates/canvas`: reusable `open-gpui-canvas` model and interaction primitives for infinite canvas applications
 - `examples/canvas-notes`: native JSON Canvas note-map example
 - `examples/docking-minimal`: minimal single-window docking example using common public APIs
-- `examples/docking-native`: native docking dogfood example with viewport runtime diagnostics
+- `examples/docking-native`: explicit legacy native docking qualification and diagnostics
 - `examples/smoke-native`: native smoke example
 - `examples/ui-foundation-gallery`: native UI component gallery and conformance surface
 - `xtask`: workspace verification and import-boundary checks
@@ -110,7 +110,9 @@ Run normal-checkout examples with:
 ```sh
 cargo run -p open-gpui-canvas-notes
 cargo run -p open-gpui-docking-minimal
-cargo run -p open-gpui-docking-native
+cargo run -p open-gpui-docking-multiviewport
+cargo run -p open-gpui-dockspace-editor
+cargo run -p open-gpui-docking-native --features legacy-docking
 cargo run -p open-gpui-ui-foundation-gallery
 cargo run -p open-gpui-ui-foundation-gallery -- --page devtools
 ```

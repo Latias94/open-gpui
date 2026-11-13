@@ -18,6 +18,7 @@ path = "src/lib.rs"
 default = []
 command = ["dep:open_gpui_command"]
 docking = ["dep:open_gpui", "dep:open_gpui_docking"]
+legacy-docking = ["docking", "open_gpui_docking/legacy-docking"]
 form = ["dep:open_gpui_form"]
 gpui = ["dep:open_gpui", "ui-components"]
 motion = ["dep:open_gpui_motion"]

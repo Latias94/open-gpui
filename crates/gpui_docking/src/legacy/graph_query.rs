@@ -1,0 +1,240 @@
+use crate::legacy::{DockItemId, DockNodeId, DockSpaceId};
+
+use super::{DockGraph, DockNode, graph_tab_stack::selected_item};
+
+impl DockGraph {
+    /// Returns all dock items reachable from a dock space.
+    pub fn collect_items_in_space(&self, space: &DockSpaceId) -> Vec<DockItemId> {
+        let mut out = Vec::new();
+        if let Some(root) = self.root(space) {
+            self.collect_items_in_subtree_into(root, &mut out);
+        }
+        if let Some(floatings) = self.floatings.get(space) {
+            for floating in floatings {
+                self.collect_items_in_subtree_into(floating.node, &mut out);
+            }
+        }
+        out
+    }
+
+    /// Returns all dock items reachable from a subtree.
+    pub fn collect_items_in_subtree(&self, root: DockNodeId) -> Vec<DockItemId> {
+        let mut out = Vec::new();
+        self.collect_items_in_subtree_into(root, &mut out);
+        out
+    }
+
+    /// Returns true when a dock item is reachable from a subtree.
+    pub fn subtree_contains_item(&self, root: DockNodeId, item: &DockItemId) -> bool {
+        self.find_item_in_subtree(root, item).is_some()
+    }
+
+    pub(crate) fn nodes_in_subtree(&self, root: DockNodeId) -> Vec<DockNodeId> {
+        let mut out = Vec::new();
+        self.collect_nodes_in_subtree_into(root, &mut out);
+        out
+    }
+
+    /// Returns all tabs nodes reachable from a dock space in stable tree order.
+    pub fn tabs_in_space(&self, space: &DockSpaceId) -> Vec<DockNodeId> {
+        let mut out = Vec::new();
+        if let Some(root) = self.root(space) {
+            self.collect_tabs_in_subtree_into(root, &mut out);
+        }
+        if let Some(floatings) = self.floatings.get(space) {
+            for floating in floatings {
+                self.collect_tabs_in_subtree_into(floating.node, &mut out);
+            }
+        }
+        out
+    }
+
+    /// Returns tabs nodes reachable from a dock space root, excluding floating containers.
+    pub(crate) fn root_tabs_in_space(&self, space: &DockSpaceId) -> Vec<DockNodeId> {
+        let mut out = Vec::new();
+        if let Some(root) = self.root(space) {
+            self.collect_tabs_in_subtree_into(root, &mut out);
+        }
+        out
+    }
+
+    /// Resolves the stable tab stack used by lifecycle recovery in one dock space.
+    ///
+    /// The central region wins when it has content; otherwise recovery falls back to the first
+    /// root tab stack in stable tree order. Floating containers never become the recovery target.
+    pub(crate) fn recovery_target_tabs(&self, space: &DockSpaceId) -> Option<DockNodeId> {
+        self.central_region(space)
+            .and_then(|central| central.node)
+            .and_then(|node| self.first_tabs_in_subtree(node))
+            .or_else(|| {
+                self.root(space)
+                    .and_then(|root| self.first_tabs_in_subtree(root))
+            })
+    }
+
+    pub(crate) fn first_tabs_in_subtree(&self, root: DockNodeId) -> Option<DockNodeId> {
+        match self.node(root)? {
+            DockNode::Tabs { .. } => Some(root),
+            DockNode::Floating { child } => self.first_tabs_in_subtree(*child),
+            DockNode::Split { children, .. } => children
+                .iter()
+                .find_map(|child| self.first_tabs_in_subtree(*child)),
+        }
+    }
+
+    /// Returns true when an item is reachable from any dock space.
+    pub fn contains_item(&self, item: &DockItemId) -> bool {
+        self.spaces()
+            .iter()
+            .any(|space| self.find_item_in_space(space, item).is_some())
+    }
+
+    /// Finds an item in a dock space and returns its tabs node and tab index.
+    pub fn find_item_in_space(
+        &self,
+        space: &DockSpaceId,
+        item: &DockItemId,
+    ) -> Option<(DockNodeId, usize)> {
+        if let Some(root) = self.root(space)
+            && let Some(found) = self.find_item_in_subtree(root, item)
+        {
+            return Some(found);
+        }
+
+        self.floatings.get(space).and_then(|floatings| {
+            floatings
+                .iter()
+                .find_map(|floating| self.find_item_in_subtree(floating.node, item))
+        })
+    }
+
+    /// Returns the root that contains a node within a dock space forest.
+    pub fn root_for_node_in_space(
+        &self,
+        space: &DockSpaceId,
+        target: DockNodeId,
+    ) -> Option<DockNodeId> {
+        if let Some(root) = self.root(space)
+            && self.subtree_contains(root, target)
+        {
+            return Some(root);
+        }
+
+        self.floatings.get(space).and_then(|floatings| {
+            floatings.iter().find_map(|floating| {
+                self.subtree_contains(floating.node, target)
+                    .then_some(floating.node)
+            })
+        })
+    }
+
+    /// Returns the selected item in a tabs node.
+    pub fn selected_item_in_tabs(&self, tabs: DockNodeId) -> Option<DockItemId> {
+        let DockNode::Tabs { items, selected } = self.nodes.get(tabs)? else {
+            return None;
+        };
+        selected_item(items, selected)
+    }
+
+    pub(crate) fn is_visible_split_payload(&self, root: DockNodeId) -> bool {
+        match self.nodes.get(root) {
+            Some(DockNode::Split { .. }) => true,
+            Some(DockNode::Floating { child }) => self.is_visible_split_payload(*child),
+            Some(DockNode::Tabs { .. }) | None => false,
+        }
+    }
+
+    pub(in crate::legacy::graph) fn root_subtree_contains(
+        &self,
+        space: &DockSpaceId,
+        target: DockNodeId,
+    ) -> bool {
+        self.root(space)
+            .is_some_and(|root| self.subtree_contains(root, target))
+    }
+
+    fn find_item_in_subtree(
+        &self,
+        root: DockNodeId,
+        item: &DockItemId,
+    ) -> Option<(DockNodeId, usize)> {
+        match self.nodes.get(root)? {
+            DockNode::Tabs { items, .. } => items
+                .iter()
+                .position(|candidate| candidate == item)
+                .map(|index| (root, index)),
+            DockNode::Floating { child } => self.find_item_in_subtree(*child, item),
+            DockNode::Split { children, .. } => children
+                .iter()
+                .copied()
+                .find_map(|child| self.find_item_in_subtree(child, item)),
+        }
+    }
+
+    fn collect_items_in_subtree_into(&self, root: DockNodeId, out: &mut Vec<DockItemId>) {
+        let Some(node) = self.nodes.get(root) else {
+            return;
+        };
+        match node {
+            DockNode::Tabs { items, .. } => out.extend(items.iter().cloned()),
+            DockNode::Floating { child } => self.collect_items_in_subtree_into(*child, out),
+            DockNode::Split { children, .. } => {
+                for child in children {
+                    self.collect_items_in_subtree_into(*child, out);
+                }
+            }
+        }
+    }
+
+    fn collect_tabs_in_subtree_into(&self, root: DockNodeId, out: &mut Vec<DockNodeId>) {
+        let Some(node) = self.nodes.get(root) else {
+            return;
+        };
+        match node {
+            DockNode::Tabs { .. } => out.push(root),
+            DockNode::Floating { child } => self.collect_tabs_in_subtree_into(*child, out),
+            DockNode::Split { children, .. } => {
+                for child in children {
+                    self.collect_tabs_in_subtree_into(*child, out);
+                }
+            }
+        }
+    }
+
+    fn collect_nodes_in_subtree_into(&self, root: DockNodeId, out: &mut Vec<DockNodeId>) {
+        let Some(node) = self.nodes.get(root) else {
+            return;
+        };
+        out.push(root);
+        match node {
+            DockNode::Tabs { .. } => {}
+            DockNode::Floating { child } => self.collect_nodes_in_subtree_into(*child, out),
+            DockNode::Split { children, .. } => {
+                for child in children {
+                    self.collect_nodes_in_subtree_into(*child, out);
+                }
+            }
+        }
+    }
+
+    pub(in crate::legacy::graph) fn subtree_contains(
+        &self,
+        root: DockNodeId,
+        target: DockNodeId,
+    ) -> bool {
+        if root == target {
+            return true;
+        }
+        let Some(node) = self.nodes.get(root) else {
+            return false;
+        };
+        match node {
+            DockNode::Tabs { .. } => false,
+            DockNode::Floating { child } => self.subtree_contains(*child, target),
+            DockNode::Split { children, .. } => children
+                .iter()
+                .copied()
+                .any(|child| self.subtree_contains(child, target)),
+        }
+    }
+}

@@ -4792,12 +4792,14 @@ dependencies = [
  "slotmap",
  "smallvec",
  "thiserror 2.0.18",
+ "web-time",
 ]
 
 [[package]]
 name = "open-gpui-docking-minimal"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "open-gpui",
  "open-gpui-docking",
  "open-gpui-platform",
@@ -4807,6 +4809,8 @@ dependencies = [
 name = "open-gpui-docking-multiviewport"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
+ "env_logger",
  "log",
  "open-gpui",
  "open-gpui-docking",

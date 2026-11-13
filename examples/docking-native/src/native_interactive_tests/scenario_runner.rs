@@ -1,6 +1,6 @@
 use super::*;
 
-use open_gpui_docking::native_scenario_support::{
+use open_gpui_docking::legacy::native_scenario_support::{
     NativeDockspaceOracle as ProjectedNativeDockspaceOracle, NativeDockspaceScenario,
     NativeDockspaceStep, NativeDockspaceTarget, NativeDockspaceZone,
     load_native_dockspace_scenario,
@@ -772,7 +772,7 @@ impl NativeDockspaceWorkflow {
                     )
                 })?;
             let selected = match graph.node(tabs) {
-                Some(open_gpui_docking::model::DockNode::Tabs { selected, .. }) => selected,
+                Some(open_gpui_docking::legacy::model::DockNode::Tabs { selected, .. }) => selected,
                 node => bail!(
                     "native workflow target node is not tabs after step {}: {node:?}",
                     step.id()

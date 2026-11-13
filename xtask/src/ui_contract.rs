@@ -961,7 +961,7 @@ fn docking_visual_style_failures(root: &Path) -> Vec<String> {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or_default();
-        if file_name.contains("_test") {
+        if file_name == "tests.rs" || file_name.contains("_test") {
             continue;
         }
         let label = repo_relative_path(root, &path);

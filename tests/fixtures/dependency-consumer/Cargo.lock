@@ -4441,17 +4441,13 @@ name = "open-gpui-docking"
 version = "0.2.0"
 dependencies = [
  "anyhow",
- "arrayvec",
  "dockspace",
  "log",
  "open-gpui",
- "open-gpui-motion",
- "open-gpui-ui-core",
  "serde",
  "serde_json",
- "slotmap",
- "smallvec",
  "thiserror 2.0.21",
+ "web-time",
 ]
 
 [[package]]

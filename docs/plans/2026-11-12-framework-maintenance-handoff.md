@@ -56,6 +56,16 @@ exit 0. Continue consolidating cleanup entry points and qualifying platform
 input boundaries before deleting superseded docking owners. Keep document/View
 state in applications and docking policy in the adapter.
 
+The [November 14 default cutover](../knowledge/engineering/verification/dockspace-default-cutover-20261114.md)
+promotes the shared session to the crate root and prelude, migrates ordinary
+examples and DevTools, and isolates the displaced engine under explicit
+`legacy-docking`. The old engine is no fallback for a migrated workspace; its
+remaining native/browser qualification stays separately opted in. Continue with
+physical input qualification and the first coherent engine editing workflow
+before deleting those compatibility owners. Historical source paths below are
+relative to their recorded commits; incumbent files now live under
+`crates/gpui_docking/src/legacy/`.
+
 The continuation independently rechecks the full 564-SHA fixed upstream set,
 149 root/toolchain entries and actual final iOS/Apple/Tokio/EGL/renderer owners;
 no unexplained applicable source omission remains. `6561969d` adds the original
