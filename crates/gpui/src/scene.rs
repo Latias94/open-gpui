@@ -690,24 +690,30 @@ impl Scene {
         }) {
             self.rebuild_render_state_from_journal();
         }
-        self.shadows.sort_by_key(|shadow| shadow.order);
-        self.quads.sort_by_key(|quad| quad.order);
+        let keys = &mut Vec::new();
+        sort_in_place(&mut self.shadows, keys, |shadow| (shadow.order, 0, 0, 0));
+        sort_in_place(&mut self.quads, keys, |quad| (quad.order, 0, 0, 0));
         self.paths.sort_by_key(|path| path.order);
-        self.underlines.sort_by_key(|underline| underline.order);
+        sort_in_place(&mut self.underlines, keys, |underline| {
+            (underline.order, 0, 0, 0)
+        });
         sort_sprites(
             &mut self.monochrome_sprites,
+            keys,
             &self.legacy_sprite_order,
             |kinds| kinds.monochrome,
             |sprite| (sprite.order, &sprite.tile),
         );
         sort_sprites(
             &mut self.subpixel_sprites,
+            keys,
             &self.legacy_sprite_order,
             |kinds| kinds.subpixel,
             |sprite| (sprite.order, &sprite.tile),
         );
         sort_sprites(
             &mut self.polychrome_sprites,
+            keys,
             &self.legacy_sprite_order,
             |kinds| kinds.polychrome,
             |sprite| (sprite.order, &sprite.tile),
@@ -798,6 +804,45 @@ impl Scene {
     }
 }
 
+/// Sorts small `(key, index)` pairs; insertion indices preserve stable ties.
+/// Follows permutation cycles to move each primitive into place once.
+fn sort_in_place<T: Copy, K: Ord>(
+    primitives: &mut [T],
+    keys: &mut Vec<(K, usize)>,
+    key: impl Fn(&T) -> K,
+) {
+    if primitives.is_sorted_by_key(&key) {
+        return;
+    }
+    keys.clear();
+    keys.extend(
+        primitives
+            .iter()
+            .enumerate()
+            .map(|(index, primitive)| (key(primitive), index)),
+    );
+    keys.sort_unstable();
+
+    // Each target stores its source index; self-indices mark visited slots.
+    for start in 0..primitives.len() {
+        if keys[start].1 == start {
+            continue;
+        }
+        let displaced = primitives[start];
+        let mut target = start;
+        loop {
+            let source = keys[target].1;
+            keys[target].1 = target;
+            if source == start {
+                primitives[target] = displaced;
+                break;
+            }
+            primitives[target] = primitives[source];
+            target = source;
+        }
+    }
+}
+
 /// The depth step between consecutive quads in a frame with `quad_count` quads.
 pub fn quad_depth_scale(quad_count: usize) -> f32 {
     let denominator = (quad_count.min((1 << 24) - 1) + 1).next_power_of_two();
@@ -809,32 +854,27 @@ pub fn quad_depth(quad_id: u32, scale: f32) -> f32 {
     ((u64::from(quad_id) + 1) as f32 * scale).min(1.0)
 }
 
-fn sort_sprites<S>(
+fn sort_sprites<S: Copy>(
     sprites: &mut [S],
+    keys: &mut Vec<((DrawOrder, u32, u32, u32), usize)>,
     legacy_sprite_order: &[LegacySpriteOrder],
     needs_legacy_order: impl Fn(&LegacySpriteOrder) -> bool,
     order_and_tile: impl Fn(&S) -> (DrawOrder, &AtlasTile),
 ) {
-    let texture_key = |tile: &AtlasTile| {
-        let AtlasTextureInstanceId {
-            texture_id,
-            generation,
-        } = tile.texture_instance();
-        (texture_id.index, texture_id.kind as u32, generation)
-    };
-    sprites.sort_by(|left, right| {
-        let (left_order, left_tile) = order_and_tile(left);
-        let (right_order, right_tile) = order_and_tile(right);
-        left_order.cmp(&right_order).then_with(|| {
-            if legacy_sprite_order
-                .get(left_order as usize)
-                .is_some_and(&needs_legacy_order)
-            {
-                left_tile.tile_id.cmp(&right_tile.tile_id)
-            } else {
-                texture_key(left_tile).cmp(&texture_key(right_tile))
-            }
-        })
+    sort_in_place(sprites, keys, |sprite| {
+        let (order, tile) = order_and_tile(sprite);
+        if legacy_sprite_order
+            .get(order as usize)
+            .is_some_and(&needs_legacy_order)
+        {
+            (order, tile.tile_id.0, 0, 0)
+        } else {
+            let AtlasTextureInstanceId {
+                texture_id,
+                generation,
+            } = tile.texture_instance();
+            (order, texture_id.index, texture_id.kind as u32, generation)
+        }
     });
 }
 
@@ -1839,6 +1879,33 @@ mod tests {
     use std::mem::{align_of, offset_of, size_of};
 
     #[test]
+    fn sort_in_place_matches_stable_sort_and_reuses_scratch() {
+        let mut keys = Vec::new();
+        for orders in [
+            &[][..],
+            &[0][..],
+            &[0, 0, 1, 1, u32::MAX][..],
+            &[2, 0, 1][..],
+            &[3, 1, 2, 0, 3, 1][..],
+            &[u32::MAX, 0, u32::MAX, 0][..],
+            &[0, 0, 1][..],
+            &[][..],
+        ] {
+            let mut primitives = orders.iter().copied().enumerate().collect::<Vec<_>>();
+            let mut expected = primitives.clone();
+            expected.sort_by_key(|(_, order)| *order);
+            let capacity = keys.capacity();
+
+            sort_in_place(&mut primitives, &mut keys, |(_, order)| *order);
+
+            assert_eq!(primitives, expected);
+            if orders.is_sorted() {
+                assert_eq!(keys.capacity(), capacity);
+            }
+        }
+    }
+
+    #[test]
     fn gpu_boolean_fields_occupy_initialized_four_byte_slots() {
         assert_eq!(std::mem::size_of::<PaddedBool32>(), 4);
         assert_eq!(std::mem::align_of::<PaddedBool32>(), 4);
@@ -2442,6 +2509,53 @@ mod tests {
     }
 
     #[test]
+    fn sprite_sort_preserves_full_texture_keys_and_legacy_ties() {
+        use AtlasTextureKind::{Monochrome, Polychrome, Subpixel};
+
+        let mut sprites = [
+            (u32::MAX, 0, u32::MAX, Monochrome, u32::MAX),
+            (u32::MAX, 1, 1, Subpixel, 1),
+            (u32::MAX, 2, 1, Monochrome, u32::MAX),
+            (u32::MAX, 3, 1, Monochrome, 1),
+            (u32::MAX, 4, 1, Polychrome, 1),
+            (u32::MAX, 5, 1, Monochrome, 1),
+            (0, u32::MAX, 0, Monochrome, 1),
+            (0, 2, u32::MAX, Subpixel, u32::MAX),
+            (0, 2, 0, Polychrome, 1),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(
+            |(index, (order, tile_id, texture_index, kind, generation))| {
+                let mut sprite =
+                    monochrome_sprite(tile_id, texture_index, generation, index as f32);
+                sprite.order = order;
+                sprite.tile.texture_id.kind = kind;
+                sprite
+            },
+        )
+        .collect::<Vec<_>>();
+
+        sort_sprites(
+            &mut sprites,
+            &mut Vec::new(),
+            &[LegacySpriteOrder {
+                monochrome: true,
+                ..Default::default()
+            }],
+            |kinds| kinds.monochrome,
+            |sprite| (sprite.order, &sprite.tile),
+        );
+
+        assert!(
+            sprites
+                .iter()
+                .map(|sprite| sprite.bounds.origin.x.0)
+                .eq([7.0, 8.0, 6.0, 3.0, 5.0, 2.0, 4.0, 1.0, 0.0])
+        );
+    }
+
+    #[test]
     fn parked_scene_retains_original_atlas_textures_after_source_key_removal() -> anyhow::Result<()>
     {
         use crate::{AtlasKey, HeadlessAtlas, ImageId, RenderImageParams};
@@ -3012,6 +3126,74 @@ mod tests {
         assert_eq!(target.quads[0].order, quad_order);
         assert_eq!(target.quads[0].bounds, quad_bounds);
         assert_eq!(target.quads[0].clip, quad_clip);
+    }
+
+    #[test]
+    fn scene_finish_preserves_sprite_clips_and_retained_journal_indices() {
+        let viewport = logical_bounds(0.0, 0.0, 200.0, 200.0);
+        let invalidity = SubtreeGeometryValidity::new(None);
+        let mut scene = Scene::default();
+        for (index, x) in [20.0, 20.0, 60.0, 60.0].into_iter().enumerate() {
+            let clip = rounded_stack(
+                viewport,
+                logical_bounds(0.0, 0.0, 100.0 + index as f32, 100.0),
+            );
+            scene
+                .insert_primitive_scoped(
+                    monochrome_sprite(index as u32, 1, 1, x),
+                    &clip,
+                    1.0,
+                    (index == 3).then(|| invalidity.clone()),
+                )
+                .unwrap();
+        }
+        let original = scene.monochrome_sprites.clone();
+        let clip_shapes = scene.clip_shapes().to_vec();
+        let clip_stack_ranges = scene.clip_stack_ranges.clone();
+        assert!(original.iter().map(|sprite| sprite.order).eq([1, 2, 1, 2]));
+
+        for valid_count in [4, 3] {
+            if valid_count == 3 {
+                invalidity.invalidate(SubtreeClipError::UnrepresentableResult);
+            }
+            let mut expected = original[..valid_count].to_vec();
+            expected.sort_by_key(|sprite| sprite.order);
+            scene.finish();
+
+            assert_eq!(scene.monochrome_sprites.len(), expected.len());
+            for (actual, expected) in scene.monochrome_sprites.iter().zip(&expected) {
+                assert_eq!(
+                    (
+                        actual.order,
+                        actual.tile.tile_id,
+                        actual.bounds,
+                        actual.clip
+                    ),
+                    (
+                        expected.order,
+                        expected.tile.tile_id,
+                        expected.bounds,
+                        expected.clip
+                    )
+                );
+            }
+            assert_eq!(scene.journal_len(), original.len());
+            assert_eq!(scene.clip_shapes(), clip_shapes);
+            assert_eq!(scene.clip_stack_ranges, clip_stack_ranges);
+
+            for (index, recorded) in original.iter().take(valid_count).enumerate() {
+                let (mut fragment, _) = scene.retained_visual_fragment(index..index + 1).unwrap();
+                fragment.finish();
+                assert_eq!(fragment.monochrome_sprites.len(), 1);
+                let retained = &fragment.monochrome_sprites[0];
+                assert_eq!(retained.bounds, recorded.bounds);
+                assert_eq!(retained.tile.tile_id, recorded.tile.tile_id);
+                assert_eq!(
+                    fragment.clip_shapes_for(retained.clip).unwrap(),
+                    scene.clip_shapes_for(recorded.clip).unwrap()
+                );
+            }
+        }
     }
 
     #[test]

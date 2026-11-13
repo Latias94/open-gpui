@@ -279,6 +279,11 @@ fn scene_viewport() -> Bounds<Pixels> {
 }
 
 fn build_scene(builder: &mut SceneBuilder, rectangles: &[Rectangle]) {
+    insert_primitives(builder, rectangles);
+    builder.finish();
+}
+
+fn insert_primitives(builder: &mut SceneBuilder, rectangles: &[Rectangle]) {
     builder.clear();
     for (index, rectangle) in rectangles.iter().enumerate() {
         let bounds = rectangle.bounds;
@@ -302,7 +307,27 @@ fn build_scene(builder: &mut SceneBuilder, rectangles: &[Rectangle]) {
             }
         }
     }
-    builder.finish();
+}
+
+fn scene_finish(criterion: &mut criterion::Criterion<open_gpui::BenchMeasurement>) {
+    let mut group = criterion.benchmark_group("Primitives/finish");
+    for case in cases() {
+        let mut fixture = None;
+        group.bench_function(case.to_string(), |bencher| {
+            let rectangles = fixture.get_or_insert_with(|| rectangles(&case, 512.));
+            bencher.iter_batched_ref(
+                || {
+                    let mut scene = Scene::default();
+                    let mut builder = SceneBuilder::new(&mut scene, scene_viewport());
+                    insert_primitives(&mut builder, rectangles);
+                    scene
+                },
+                |scene| scene.finish(),
+                criterion::BatchSize::LargeInput,
+            );
+        });
+    }
+    group.finish();
 }
 
 fn scene_ordering(criterion: &mut criterion::Criterion<open_gpui::BenchMeasurement>) {
@@ -376,6 +401,6 @@ open_gpui::bench_group!(
         .warm_up_time(Duration::from_millis(500))
         .measurement_time(Duration::from_secs(1))
         .sample_size(20);
-    targets = paint_rectangles, scene_ordering
+    targets = paint_rectangles, scene_ordering, scene_finish
 );
 open_gpui::bench_main!(benches);
