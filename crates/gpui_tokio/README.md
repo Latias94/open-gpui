@@ -62,15 +62,16 @@ regular [LICENSE-APACHE](LICENSE-APACHE) file, including its existing attributio
 
 ## Workspace integration
 
-`crates/gpui_tokio` is registered in the root `[workspace].members`, with this alias in
-`[workspace.dependencies]`:
+`crates/gpui_tokio` is registered in the root `[workspace].members`. Consumers declare
+the optional dependency directly; the root does not define an unused workspace alias.
+For an application under `examples/my-app`, use:
 
 ```toml
-open_gpui_tokio = { package = "open-gpui-tokio", version = "0.2.0", path = "crates/gpui_tokio" }
+open_gpui_tokio = { package = "open-gpui-tokio", version = "0.2.0", path = "../../crates/gpui_tokio" }
 ```
 
-An application in this workspace opts in with `open_gpui_tokio.workspace = true`. An external
-application can use `open_gpui_tokio = { package = "open-gpui-tokio", path = "/path/to/open-gpui/crates/gpui_tokio" }`.
+An external application can use
+`open_gpui_tokio = { package = "open-gpui-tokio", path = "/path/to/open-gpui/crates/gpui_tokio" }`.
 The library name is `open_gpui_tokio`. Upstream consumer migration changes `gpui_tokio` to
 that alias; `init`, `init_from_handle`, `Tokio::{spawn, spawn_result, handle}` and `JoinError`
 retain their upstream signatures and behavior. No existing framework consumer must migrate.
