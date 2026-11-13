@@ -63,6 +63,7 @@ pub(super) fn qualify(cdp: &mut CdpClient, url: &str) -> Result<(), String> {
 }
 
 fn qualify_contents(cdp: &mut CdpClient, origin: &str) -> Result<(), String> {
+    let paste_modifiers = if cfg!(target_os = "macos") { 4 } else { 2 };
     cdp.evaluate("navigator.clipboard.writeText('Async 文本').then(() => true)")?;
     key(cdp, "r", 0)?;
     wait(cdp, "real async text", |state| {
@@ -73,15 +74,15 @@ fn qualify_contents(cdp: &mut CdpClient, origin: &str) -> Result<(), String> {
     })?;
 
     cdp.evaluate("navigator.clipboard.writeText(' DOM 贴').then(() => true)")?;
-    key(cdp, "v", 2)?;
+    key(cdp, "v", paste_modifiers)?;
     wait(cdp, "trusted single DOM text paste", |state| {
         state["text0"] == "Async 文本 DOM 贴" && number(state, "pastes0") == 2
     })?;
     key(cdp, "k", 0)?;
-    key(cdp, "v", 2)?;
+    key(cdp, "v", paste_modifiers)?;
     let state = cdp.evaluate(STATE)?;
     if state["text0"] != "Async 文本 DOM 贴" || number(&state, "pastes0") != 2 {
-        return Err(format!("consumed Ctrl-V inserted again: {state}"));
+        return Err(format!("consumed paste shortcut inserted again: {state}"));
     }
     key(cdp, "k", 0)?;
 
@@ -118,7 +119,7 @@ fn qualify_contents(cdp: &mut CdpClient, origin: &str) -> Result<(), String> {
             && state["entries0"] == "Png"
             && state["imageDigest0"] == image["digest"]
     })?;
-    key(cdp, "v", 2)?;
+    key(cdp, "v", paste_modifiers)?;
     wait(cdp, "real DOM image paste", |state| {
         number(state, "pastes0") == 4
             && number(state, "imageBytes0") > number(&before_dom_image, "imageBytes0")
@@ -192,7 +193,7 @@ fn qualify_contents(cdp: &mut CdpClient, origin: &str) -> Result<(), String> {
     }
 
     delay_blobs(cdp)?;
-    key(cdp, "v", 2)?;
+    key(cdp, "v", paste_modifiers)?;
     wait_for_delayed_blob(cdp)?;
     let before_switch = cdp.evaluate(STATE)?;
     key(cdp, "s", 0)?;
@@ -212,7 +213,7 @@ fn qualify_contents(cdp: &mut CdpClient, origin: &str) -> Result<(), String> {
     let before_close = cdp.evaluate(STATE)?;
 
     delay_blobs(cdp)?;
-    key(cdp, "v", 2)?;
+    key(cdp, "v", paste_modifiers)?;
     wait_for_delayed_blob(cdp)?;
     key(cdp, "x", 0)?;
     cdp.evaluate("__releaseClipboardBlobs(); true")?;
@@ -237,10 +238,13 @@ fn key(cdp: &mut CdpClient, key: &str, modifiers: u8) -> Result<(), String> {
     let code = format!("Key{}", key.to_ascii_uppercase());
     let virtual_key = key.as_bytes()[0].to_ascii_uppercase();
     for kind in ["keyDown", "keyUp"] {
-        cdp.call(
-            "Input.dispatchKeyEvent",
-            json!({"type": kind, "key": key, "code": code, "modifiers": modifiers, "windowsVirtualKeyCode": virtual_key}),
-        )?;
+        let mut event = json!({"type": kind, "key": key, "code": code, "modifiers": modifiers, "windowsVirtualKeyCode": virtual_key});
+        if cfg!(target_os = "macos") && kind == "keyDown" && key == "v" && modifiers == 4 {
+            // Chromium's macOS CDP path needs the native editing command as well
+            // as Meta+V; the browser still dispatches the real trusted paste event.
+            event["commands"] = json!(["paste"]);
+        }
+        cdp.call("Input.dispatchKeyEvent", event)?;
     }
     Ok(())
 }
