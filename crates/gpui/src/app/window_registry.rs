@@ -402,16 +402,18 @@ fn restore_taken_window(app: &mut App, id: WindowId, window: Box<Window>) {
 }
 
 pub(super) fn take_all_for_shutdown(app: &mut App) -> Vec<(WindowId, Box<Window>)> {
-    let windows = std::mem::take(&mut app.windows);
+    // Retain slot generations so old handles cannot name windows opened after shutdown.
+    let windows = app
+        .windows
+        .drain()
+        .filter_map(|(window_id, window)| window.map(|window| (window_id, window)))
+        .collect();
     app.window_handles.clear();
     app.window_profiles.clear();
     if let Some(cell) = app.this.upgrade() {
         cell.clear_native_windows();
     }
     windows
-        .into_iter()
-        .filter_map(|(window_id, window)| window.map(|window| (window_id, window)))
-        .collect()
 }
 
 pub(super) fn prepare_presentation_shutdowns(

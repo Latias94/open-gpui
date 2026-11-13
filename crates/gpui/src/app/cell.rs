@@ -5805,6 +5805,21 @@ mod tests {
             .update(|app| app.open_window(WindowOptions::default(), |_, app| app.new(|_| Empty)))
             .expect("reopen must wait for exact native retirement terminal")
             .into();
+        assert_ne!(
+            window.window_id(),
+            replacement.window_id(),
+            "shutdown must preserve slot generations so old handles cannot name a reopened window"
+        );
+        assert!(
+            window.update(cx, |_, _, _| ()).is_err(),
+            "a retired handle must not update its replacement"
+        );
+        assert!(
+            window
+                .update(cx, |_, window, cx| window.remove_window(cx))
+                .is_err(),
+            "a retired handle must not close its replacement"
+        );
         assert!(replacement.update(cx, |_, _, _| ()).is_ok());
     }
 
