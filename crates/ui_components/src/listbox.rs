@@ -1,5 +1,10 @@
 //! Listbox component and shared collection navigation state.
 
+mod content;
+
+pub use content::ListboxRowAction;
+pub(crate) use content::ListboxRowContentRenderer;
+
 use crate::geometry::gpui_px_from_ui;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -15,7 +20,9 @@ use open_gpui_ui_core::{
 };
 
 use crate::a11y::UiA11yElementExt;
-use crate::activation::{ActivationBinding, ActivationHandle, ActivationKeyPolicy};
+use crate::activation::{
+    ActivationBinding, ActivationHandle, ActivationKeyPolicy, ActivationSource,
+};
 use crate::choice::{
     self, ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection,
     SingleChoiceSelectionControl,
@@ -915,6 +922,7 @@ impl ListboxGroup {
 
 #[derive(Debug, Clone)]
 struct ListboxRuntime {
+    focus: FocusHandle,
     active_value: Option<String>,
     selected_value: Option<String>,
     typeahead: CollectionTypeaheadSession,
@@ -987,6 +995,7 @@ pub struct Listbox {
     tokens: ThemeTokens,
     on_select: Option<ListboxSelectHandler>,
     selection_transaction: Option<ListboxSelectionTransaction>,
+    row_content: Option<ListboxRowContentRenderer>,
     activation_handles: BTreeMap<String, ActivationHandle>,
 }
 
@@ -1010,6 +1019,7 @@ impl Listbox {
             tokens: ThemeTokens::default(),
             on_select: None,
             selection_transaction: None,
+            row_content: None,
             activation_handles: BTreeMap::new(),
         }
     }
@@ -1108,6 +1118,29 @@ impl Listbox {
         self
     }
 
+    /// Replaces the visible content inside each option's original row shell.
+    ///
+    /// The callback receives the resolved option, including selection, active,
+    /// disabled, and group state, and runs in that row's stable element scope.
+    /// Separators and group headings keep their original rendering. The row
+    /// retains identity, layout, focus, semantic labels, accessibility actions,
+    /// selection transactions, and scroll reveal behavior. The callback does
+    /// not participate in renderer-neutral [`ListboxState`] resolution.
+    ///
+    /// Return passive thumbnails, labels, and metadata directly. Wrap nested
+    /// interactive content in [`ListboxRowAction`] so its pointer and keyboard
+    /// gestures cannot select the row or drive list navigation. Child controls
+    /// must apply the option's disabled state when appropriate.
+    pub fn row_content<E: IntoElement>(
+        mut self,
+        render: impl Fn(&ListboxOptionState, &mut Window, &mut App) -> E + 'static,
+    ) -> Self {
+        self.row_content = Some(Rc::new(move |option, window, cx| {
+            render(option, window, cx).into_any_element()
+        }));
+        self
+    }
+
     pub(crate) fn selection_transaction(
         mut self,
         transaction: impl Fn(ListboxSelectionIntent, &mut Window, &mut App) + 'static,
@@ -1157,7 +1190,8 @@ impl RenderOnce for Listbox {
         window.with_id(scope_id, |window| {
             let theme = ThemeResolver::current(window, cx);
             let selection_controlled = self.selection.is_controlled();
-            let runtime = window.use_keyed_state("runtime", cx, |_, _| ListboxRuntime {
+            let runtime = window.use_keyed_state("runtime", cx, |_, cx| ListboxRuntime {
+                focus: cx.focus_handle(),
                 active_value: self
                     .projected_active_value
                     .clone()
@@ -1218,6 +1252,12 @@ impl RenderOnce for Listbox {
                     .collect::<Vec<_>>(),
             );
             let render_identities = Rc::new(listbox_render_identities(&debug_id, &state));
+            let focus_owner = self.focus_owner;
+            let active_focus = (focus_owner == ListboxFocusOwner::Listbox).then(|| {
+                self.active_focus
+                    .clone()
+                    .unwrap_or_else(|| runtime.read(cx).focus.clone())
+            });
             let activation_bindings = Rc::new(listbox_activation_bindings(
                 window,
                 cx,
@@ -1229,9 +1269,8 @@ impl RenderOnce for Listbox {
                 &self.activation_handles,
                 &render_identities,
                 selection_controlled,
+                active_focus.clone(),
             ));
-            let focus_owner = self.focus_owner;
-            let active_focus = self.active_focus.clone();
             let root_focus = active_focus
                 .clone()
                 .filter(|_| state.active_value().is_none());
@@ -1254,6 +1293,7 @@ impl RenderOnce for Listbox {
                 .flatten();
             let key_state = state.clone();
             let key_runtime = runtime.clone();
+            let scroll_handle = runtime.read(cx).scroll_surface.scroll_handle();
 
             div()
                 .id(id.clone())
@@ -1265,6 +1305,7 @@ impl RenderOnce for Listbox {
                 .when(!self.embedded, |this| {
                     this.max_h(gpui_px_from_ui(metrics.max_height()))
                         .overflow_y_scroll()
+                        .track_scroll(&scroll_handle)
                         .scrollbar_width(gpui_px_from_ui(ui_px(8.0)))
                 })
                 .when(self.embedded, |this| this.w_full())
@@ -1310,6 +1351,9 @@ impl RenderOnce for Listbox {
                     active_focus,
                     reveal_target,
                     &theme,
+                    self.row_content,
+                    window,
+                    cx,
                 ))
         })
     }
@@ -1368,6 +1412,7 @@ fn listbox_activation_bindings(
     activation_handles: &BTreeMap<String, ActivationHandle>,
     render_identities: &[Option<StableValueItemRenderIdentity>],
     selection_controlled: bool,
+    selection_focus: Option<FocusHandle>,
 ) -> Vec<Option<ActivationBinding>> {
     state
         .options()
@@ -1390,6 +1435,7 @@ fn listbox_activation_bindings(
                 .expect("selectable listbox options must have render identity");
             let activation_handle = activation_handles.get(option.value()).cloned();
             let selection_transaction = selection_transaction.clone();
+            let selection_focus = selection_focus.clone();
 
             Some(
                 ActivationBinding::new(
@@ -1398,13 +1444,18 @@ fn listbox_activation_bindings(
                     identity.activation_state_key.clone(),
                     option.activation_enabled(),
                     ActivationKeyPolicy::EnterOrSpace,
-                    move |_, window, cx| {
+                    move |activation, window, cx| {
                         let Some(selection) = selection.clone() else {
                             return;
                         };
                         activation_runtime.update(cx, |runtime, cx| {
                             runtime.activate(&selection, selection_controlled, cx);
                         });
+                        if activation.source() == ActivationSource::Pointer
+                            && let Some(focus) = selection_focus.as_ref()
+                        {
+                            focus.focus(window, cx);
+                        }
                         let intent = ListboxSelectionIntent::new(selection, handler.clone());
                         if let Some(selection_transaction) = selection_transaction.as_ref() {
                             selection_transaction(intent, window, cx);
@@ -1426,7 +1477,11 @@ fn handle_listbox_navigation_key_down(
     window: &mut Window,
     cx: &mut App,
 ) {
-    if state.disabled() || state.empty() || window.default_prevented() {
+    if state.disabled()
+        || state.empty()
+        || window.default_prevented()
+        || content::row_action_focused(window)
+    {
         return;
     }
 
@@ -1480,6 +1535,9 @@ fn listbox_children(
     active_focus: Option<FocusHandle>,
     reveal_target: RevealTargetHandle,
     theme: &ThemeContext,
+    row_content: Option<ListboxRowContentRenderer>,
+    window: &mut Window,
+    cx: &mut App,
 ) -> Vec<AnyElement> {
     if state.empty() {
         return vec![
@@ -1515,6 +1573,9 @@ fn listbox_children(
             active_focus.clone(),
             reveal_target,
             theme,
+            row_content.as_ref(),
+            window,
+            cx,
         ));
     }
 
@@ -1557,6 +1618,9 @@ fn listbox_children(
             active_focus.clone(),
             reveal_target,
             theme,
+            row_content.as_ref(),
+            window,
+            cx,
         ));
     }
 
@@ -1574,6 +1638,9 @@ fn listbox_option_elements(
     active_focus: Option<FocusHandle>,
     reveal_target: RevealTargetHandle,
     theme: &ThemeContext,
+    row_content: Option<&ListboxRowContentRenderer>,
+    window: &mut Window,
+    cx: &mut App,
 ) -> Vec<AnyElement> {
     states
         .into_iter()
@@ -1606,6 +1673,13 @@ fn listbox_option_elements(
                     .clone()
                     .expect("selectable listbox options must have activation binding");
                 let option_element_id = identity.element_id;
+                let content = if let Some(render) = row_content {
+                    window.with_id(option_element_id.clone(), |window| {
+                        render(&state, window, cx)
+                    })
+                } else {
+                    option_label.clone().into_any_element()
+                };
                 let option_debug_selector = identity.debug_selector;
                 let option_focus = active_focus
                     .clone()
@@ -1640,6 +1714,7 @@ fn listbox_option_elements(
                             .id(option_element_id)
                             .debug_selector(move || option_debug_selector.clone())
                             .min_h(gpui_px_from_ui(metrics.option_height()))
+                            .flex_shrink_0()
                             .px(gpui_px_from_ui(metrics.option_padding_x()))
                             .py(gpui_px_from_ui(metrics.option_padding_y()))
                             .flex()
@@ -1658,7 +1733,7 @@ fn listbox_option_elements(
                                 this.cursor_pointer()
                                     .hover(move |style| style.bg(option_hover_background))
                             })
-                            .child(option_label.clone()),
+                            .child(content),
                     )
                     .into_any_element();
                 if active {

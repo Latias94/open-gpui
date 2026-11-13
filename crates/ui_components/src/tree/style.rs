@@ -1,4 +1,85 @@
-use open_gpui_ui_core::{Size, UiPx, ui_px};
+use open_gpui_ui_core::{Size, ThemeTokens, UiPx, ui_px};
+
+use crate::{color::ColorIntent, theme::ThemeResolver};
+
+use super::TreeItemState;
+
+/// Theme-aware row paint without access to tree geometry or interaction ownership.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TreeRowAppearance {
+    background: ColorIntent,
+    foreground: ColorIntent,
+    hover_background: ColorIntent,
+    focus_ring: ColorIntent,
+}
+
+impl TreeRowAppearance {
+    /// Resolves the shared collection recipe for the item's accepted state.
+    pub fn from_item(item: &TreeItemState) -> Self {
+        let colors = ThemeResolver::listbox_colors(ThemeTokens::default());
+        Self {
+            background: if item.selected() {
+                colors.option_selected_background()
+            } else if item.focused() {
+                colors.option_active_background()
+            } else {
+                colors.option_background()
+            },
+            foreground: if item.disabled() {
+                colors.option_disabled_foreground()
+            } else {
+                colors.foreground()
+            },
+            hover_background: colors.option_hover_background(),
+            focus_ring: colors.focus_ring(),
+        }
+    }
+
+    /// Applies the row background intent, resolved in the nearest theme scope.
+    pub const fn with_background(mut self, background: ColorIntent) -> Self {
+        self.background = background;
+        self
+    }
+
+    /// Applies the row foreground intent.
+    pub const fn with_foreground(mut self, foreground: ColorIntent) -> Self {
+        self.foreground = foreground;
+        self
+    }
+
+    /// Applies the hover background intent.
+    pub const fn with_hover_background(mut self, background: ColorIntent) -> Self {
+        self.hover_background = background;
+        self
+    }
+
+    /// Applies the focus ring intent.
+    pub const fn with_focus_ring(mut self, focus_ring: ColorIntent) -> Self {
+        self.focus_ring = focus_ring;
+        self
+    }
+
+    /// Returns the row background intent.
+    pub const fn background(self) -> ColorIntent {
+        self.background
+    }
+
+    /// Returns the row foreground intent.
+    pub const fn foreground(self) -> ColorIntent {
+        self.foreground
+    }
+
+    /// Returns the hover background intent.
+    pub const fn hover_background(self) -> ColorIntent {
+        self.hover_background
+    }
+
+    /// Returns the focus ring intent.
+    pub const fn focus_ring(self) -> ColorIntent {
+        self.focus_ring
+    }
+}
+
 /// Resolved tree metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TreeMetrics {

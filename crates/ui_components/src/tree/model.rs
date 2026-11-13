@@ -123,12 +123,12 @@ impl TreeItemState {
         self.focused
     }
 
-    /// Returns the one-based position among focusable visible items.
+    /// Returns the one-based position among siblings, including disabled items.
     pub const fn position_in_set(&self) -> Option<usize> {
         self.position_in_set
     }
 
-    /// Returns the total count of focusable visible items.
+    /// Returns the total number of siblings, including disabled items.
     pub const fn size_of_set(&self) -> usize {
         self.size_of_set
     }
@@ -297,19 +297,10 @@ impl TreeState {
         });
         let selected_index = collection.selected_item().map(|item| *item.item());
         let focused_index = collection.active_item().map(|item| *item.item());
-        let focusable_count = flattened.iter().filter(|item| !item.disabled).count();
-        let mut position = 0usize;
         let items = flattened
             .into_iter()
             .enumerate()
             .map(|(index, mut item)| {
-                let position_in_set = if item.disabled {
-                    None
-                } else {
-                    position += 1;
-                    Some(position)
-                };
-
                 item.index = index;
                 item.render_identity = tree_row_render_identity(
                     item.value(),
@@ -318,8 +309,6 @@ impl TreeState {
                 );
                 item.selected = selected_index == Some(index);
                 item.focused = focused_index == Some(index);
-                item.position_in_set = position_in_set;
-                item.size_of_set = focusable_count;
                 item
             })
             .collect();
@@ -391,6 +380,20 @@ impl TreeState {
     /// Returns focused visible item.
     pub fn focused_item(&self) -> Option<&TreeItemState> {
         self.focused_index.and_then(|index| self.items.get(index))
+    }
+
+    pub(super) fn focus_value(&mut self, value: &str) {
+        let Some(index) = self
+            .item_by_value(value)
+            .filter(|item| item.focusable())
+            .map(TreeItemState::index)
+        else {
+            return;
+        };
+        self.focused_index = Some(index);
+        for item in &mut self.items {
+            item.focused = item.index == index;
+        }
     }
 
     /// Returns resolved metrics.
@@ -569,7 +572,7 @@ fn flatten_tree_items(
     depth: usize,
     flattened: &mut Vec<TreeItemState>,
 ) {
-    for item in items {
+    for (position, item) in items.iter().enumerate() {
         flattened.push(TreeItemState {
             index: flattened.len(),
             value: item.value().to_owned(),
@@ -585,8 +588,8 @@ fn flatten_tree_items(
             disabled: item.disabled_state(),
             selected: false,
             focused: false,
-            position_in_set: None,
-            size_of_set: 0,
+            position_in_set: Some(position + 1),
+            size_of_set: items.len(),
         });
 
         if item.expanded_state() {
@@ -685,8 +688,11 @@ mod tests {
         assert_eq!(state.focused_index(), Some(1));
         assert_eq!(state.items()[1].depth(), 1);
         assert_eq!(state.items()[1].parent_value(), Some("paper"));
-        assert_eq!(state.items()[3].position_in_set(), None);
-        assert_eq!(state.items()[4].position_in_set(), Some(4));
+        assert_eq!(state.items()[1].position_in_set(), Some(1));
+        assert_eq!(state.items()[1].size_of_set(), 2);
+        assert_eq!(state.items()[3].position_in_set(), Some(2));
+        assert_eq!(state.items()[4].position_in_set(), Some(3));
+        assert_eq!(state.items()[4].size_of_set(), 3);
     }
 
     #[test]

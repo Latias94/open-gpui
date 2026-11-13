@@ -40,9 +40,9 @@ declare_public_exports! {
     },
     crate::color => { ColorIntent, ColorState },
     crate::combobox => {
-        Combobox, ComboboxColors, ComboboxGroup, ComboboxGroupDescriptor, ComboboxMetrics,
+        Combobox, ComboboxColors, ComboboxFilterMode, ComboboxGroup, ComboboxGroupDescriptor, ComboboxMetrics,
         ComboboxOpenMode, ComboboxOption, ComboboxOptionDescriptor, ComboboxSelection,
-        ComboboxState, ComboboxStateRequest,
+        ComboboxQueryRequest, ComboboxQuerySession, ComboboxResults, ComboboxResultsStatus, ComboboxState, ComboboxStateRequest,
     },
     crate::command => {
         Command, CommandGroup, CommandGroupDescriptor, CommandItem, CommandItemDescriptor,
@@ -78,7 +78,8 @@ declare_public_exports! {
     },
     crate::number_input => {
         NumberInput, NumberInputChange, NumberInputColors, NumberInputMetrics, NumberInputState,
-        NumberInputStepAction,
+        NumberInputStepAction, NumberInputCancel, NumberInputCancelReason,
+        NumberInputCommit, NumberInputDraft, NumberInputDraftValue, NumberInputEditSource, NumberInputPreview,
     },
     crate::overlay => { OverlayResolvedState },
     crate::popover => { Popover, PopoverColors, PopoverMetrics, PopoverOpenMode, PopoverState },
@@ -156,7 +157,7 @@ declare_public_exports! {
     crate::tree => {
         Tree, TreeBehaviorSnapshot, TreeChildrenLoadState, TreeDropPosition, TreeFocusTarget,
         TreeItemDescriptor, TreeItemState, TreeKeyboardAction, TreeMetrics, TreeMove,
-        TreeMoveTarget, TreeRowBehaviorSnapshot, TreeSelection, TreeState, TreeToggle,
+        TreeMoveTarget, TreeRowAction, TreeRowAppearance, TreeRowBehaviorSnapshot, TreeSelection, TreeState, TreeToggle,
         apply_tree_move, tree_navigation_target,
     },
     crate::virtualized_list => {

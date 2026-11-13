@@ -6,6 +6,7 @@ use open_gpui_command::{
     CommandProviderResponse, CommandProviderSource, CommandProviderStatus,
     CommandShortcutDiagnostic,
 };
+use open_gpui_ui_components::{ComboboxFilterMode, ComboboxResultsStatus};
 
 /// One switch sample in the gallery.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1417,7 +1418,10 @@ fn combobox_state(
         label: label.to_owned(),
         placeholder: placeholder.to_owned(),
         query: query.to_owned(),
+        filter_mode: ComboboxFilterMode::Local,
+        results_status: ComboboxResultsStatus::Ready,
         selected_value: selected.map(str::to_owned),
+        selected_label: None,
         active_value: active.map(str::to_owned),
         empty_label: "No results".to_owned(),
         groups: groups.iter().map(combobox_group_descriptor).collect(),

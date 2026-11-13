@@ -4,6 +4,38 @@ Open GPUI v0.3 is an intentionally breaking, pre-release architecture release. S
 APIs are removed; explicitly adopted official migration aliases retain their upstream contract.
 This guide records each migration in the implementation unit that introduces it.
 
+## Editable And Composable Controls
+
+`NumberInput` now mounts the existing text editor. Store an optional
+`Entity<gpui_adapter::NumberInputController>` when the application needs persistent
+draft inspection or explicit submission. `on_preview` is temporary presentation;
+`on_change` proposes the value, `on_commit` marks a completed edit and `on_cancel`
+restores its accepted basis. Controlled applications accept a proposal by echoing
+it through `value`; they retain validation, units and history ownership. Home/End
+now move the text cursor; Up/Down, steppers and accessibility provide numeric
+stepping. Incomplete text such as `1.` stays a draft until submission.
+
+`Tree::selected` and `expanded_values` are controlled channels; use their
+`default_*` counterparts for initial uncontrolled state. An item's `expanded`
+descriptor seeds the initial set instead of overwriting later user toggles.
+`row_content` and `row_appearance` customize presentation inside the original
+focus, selection, virtualization and accessibility shell. Wrap nested editors or
+buttons in `TreeRowAction` to keep their interaction independent of the row.
+
+`Combobox::query`, `results` and `selected_item` are independent channels. Use
+`selected_item` to retain an identity and label outside the current result page.
+Application-owned asynchronous providers can store `ComboboxQuerySession` and
+complete only its current opaque request; cancel the session when its scope
+retires. Add `filter_mode`, `results_status` and `selected_label` to complete
+`ComboboxStateRequest` literals. Use local filtering for component-owned matching
+or external results for an already ranked/filtered provider page.
+
+`Listbox::row_content` and `Combobox::option_content` support images, secondary
+text and nested controls while retaining the original row identity and semantic
+label. Wrap independent actions in `listbox::ListboxRowAction`; pass the row's
+disabled state to children that share that policy. These callbacks belong to the
+GPUI adapter and never run during renderer-neutral state resolution.
+
 ## Blanket Element Conversion
 
 `Element` now requires `'static + Sized` and no longer requires a separate `IntoElement`

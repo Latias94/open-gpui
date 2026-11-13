@@ -1,18 +1,30 @@
-//! Number input component.
+//! Editable scalar control with local drafts and explicit preview, commit, and cancel phases.
+
+mod controller;
+mod editing;
+
+pub use controller::NumberInputController;
+pub use editing::{
+    NumberInputCancel, NumberInputCancelReason, NumberInputCommit, NumberInputDraft,
+    NumberInputDraftValue, NumberInputEditSource, NumberInputPreview,
+};
+
+use controller::{NumberInputHandlers, NumberInputMount};
 
 use crate::a11y::UiA11yElementExt;
-use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
+use crate::activation::{ActivationBinding, ActivationKeyPolicy, ActivationSource};
+use crate::focus::FocusRing;
 use crate::form_control::FormControlState;
 use crate::geometry::gpui_px_from_ui;
-use crate::slider::{
-    normalize_bounds, normalize_numeric_value, normalize_requested_numeric_value, normalize_step,
+use crate::slider::normalize_bounds;
+use crate::text_input::{
+    TextInput, TextInputColors, TextInputMetrics, adapter::TextInputController,
 };
-use crate::text_input::{TextInputColors, TextInputMetrics};
 use crate::theme::{ThemeContext, ThemeResolver};
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ElementId, IntoElement, KeyDownEvent, ParentElement, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, Window, div,
+    App, ElementId, Entity, Focusable, IntoElement, KeyDownEvent, MouseButton, ParentElement,
+    RenderOnce, SharedString, Styled, Window, canvas, div, px,
 };
 use open_gpui_ui_core::{AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeTokens};
 use std::rc::Rc;
@@ -86,7 +98,7 @@ impl NumberInputChange {
 
     /// Returns whether this change mutates the value.
     pub fn changed(self) -> bool {
-        (self.previous_value - self.value).abs() > f32::EPSILON
+        self.previous_value != self.value
     }
 }
 
@@ -120,8 +132,12 @@ impl NumberInputState {
         tokens: ThemeTokens,
     ) -> Self {
         let (min, max) = normalize_bounds(min, max);
-        let step = normalize_step(step);
-        let value = normalize_numeric_value(value, min, max, step);
+        let step = if step.is_finite() && step > 0.0 {
+            step
+        } else {
+            1.0
+        };
+        let value = normalize_number_value(value, min, max, step);
         let colors = ThemeResolver::text_input_colors(tokens, disabled, read_only, invalid);
         let control =
             FormControlState::resolve(size, disabled, read_only, invalid, required, false);
@@ -222,12 +238,7 @@ impl NumberInputState {
 
     /// Returns the text shown inside the input shell.
     pub fn display_value(&self) -> String {
-        let rounded = self.value.round();
-        if (self.value - rounded).abs() <= f32::EPSILON {
-            format!("{rounded:.0}")
-        } else {
-            format!("{}", self.value)
-        }
+        self.value.to_string()
     }
 
     /// Returns the accessibility role.
@@ -242,27 +253,30 @@ impl NumberInputState {
         }
 
         let next = match action {
-            NumberInputStepAction::Increment => self.value + self.step,
-            NumberInputStepAction::Decrement => self.value - self.step,
-            NumberInputStepAction::Minimum => self.min,
-            NumberInputStepAction::Maximum => self.max,
+            NumberInputStepAction::Increment => self.value as f64 + self.step as f64,
+            NumberInputStepAction::Decrement => self.value as f64 - self.step as f64,
+            NumberInputStepAction::Minimum => self.min as f64,
+            NumberInputStepAction::Maximum => self.max as f64,
             NumberInputStepAction::SetValue => return None,
         };
 
         Some(NumberInputChange::new(
             action,
             self.value,
-            normalize_numeric_value(next, self.min, self.max, self.step),
+            normalize_number_value(
+                next.clamp(self.min as f64, self.max as f64) as f32,
+                self.min,
+                self.max,
+                self.step,
+            ),
         ))
     }
 
-    /// Returns a keyboard step change for a key.
+    /// Returns an arrow-key step change. Home and End remain native text-selection commands.
     pub fn keyboard_change(&self, key: &str) -> Option<NumberInputChange> {
         let action = match key {
             "up" => NumberInputStepAction::Increment,
             "down" => NumberInputStepAction::Decrement,
-            "home" => NumberInputStepAction::Minimum,
-            "end" => NumberInputStepAction::Maximum,
             _ => return None,
         };
 
@@ -274,8 +288,15 @@ impl NumberInputState {
             return None;
         }
 
-        let requested_value =
-            normalize_requested_numeric_value(requested_value, self.min, self.max, self.step)?;
+        if !requested_value.is_finite() {
+            return None;
+        }
+        let requested_value = normalize_number_value(
+            requested_value.clamp(self.min as f64, self.max as f64) as f32,
+            self.min,
+            self.max,
+            self.step,
+        );
         Some(NumberInputChange::new(
             NumberInputStepAction::SetValue,
             self.value,
@@ -299,18 +320,28 @@ impl NumberInputState {
     }
 }
 
-/// A concrete GPUI number input shell.
+/// A concrete GPUI scalar editor composed with `TextInput`.
+///
+/// Drafts and scrub previews stay local until submission. For controlled inputs, a value
+/// change is a proposal: echo it through `value` on the next render to accept it. A different
+/// external value while editing cancels the draft; an unchanged value preserves it and its IME
+/// composition. Applications retain ownership of validation, units, and history grouping.
 #[derive(IntoElement)]
 pub struct NumberInput {
     id: ElementId,
     label: SharedString,
-    value: f32,
+    value: Option<f32>,
+    default_value: f32,
     min: f32,
     max: f32,
     step: f32,
     control: FormControlState,
     tokens: ThemeTokens,
-    on_change: Option<Rc<dyn Fn(NumberInputChange, &mut Window, &mut App)>>,
+    controller: Option<Entity<NumberInputController>>,
+    handlers: NumberInputHandlers,
+    scrub: bool,
+    scrub_pixels_per_step: f32,
+    stepper: bool,
 }
 
 impl NumberInput {
@@ -319,19 +350,58 @@ impl NumberInput {
         Self {
             id: id.into(),
             label: label.into(),
-            value: 0.0,
+            value: None,
+            default_value: 0.0,
             min: 0.0,
             max: 100.0,
             step: 1.0,
             control: FormControlState::default(),
             tokens: ThemeTokens::default(),
-            on_change: None,
+            controller: None,
+            handlers: NumberInputHandlers::default(),
+            scrub: true,
+            scrub_pixels_per_step: 8.0,
+            stepper: true,
         }
     }
 
     /// Sets the controlled value.
     pub fn value(mut self, value: f32) -> Self {
-        self.value = value;
+        self.value = Some(value);
+        self
+    }
+
+    /// Sets the initial value for an input whose numeric value is locally owned.
+    pub fn default_value(mut self, value: f32) -> Self {
+        self.default_value = value;
+        self
+    }
+
+    /// Uses persistent editing state owned by the application.
+    pub fn controller(mut self, controller: Entity<NumberInputController>) -> Self {
+        self.controller = Some(controller);
+        self
+    }
+
+    /// Shows or hides the horizontal scrub handle without changing text selection behavior.
+    pub fn scrub(mut self, enabled: bool) -> Self {
+        self.scrub = enabled;
+        self
+    }
+
+    /// Sets the horizontal pointer distance per numeric step; invalid distances use eight pixels.
+    pub fn scrub_pixels_per_step(mut self, pixels: f32) -> Self {
+        self.scrub_pixels_per_step = if pixels.is_finite() && pixels > 0.0 {
+            pixels
+        } else {
+            8.0
+        };
+        self
+    }
+
+    /// Shows or hides the step buttons; keyboard and accessibility stepping remain available.
+    pub fn stepper(mut self, enabled: bool) -> Self {
+        self.stepper = enabled;
         self
     }
 
@@ -389,12 +459,42 @@ impl NumberInput {
         self
     }
 
-    /// Registers a value-change handler.
+    /// Registers a normalized value proposal handler.
+    ///
+    /// Previews do not invoke this handler. A controlled owner accepts a proposal by returning
+    /// it through `value` on the next render; keeping the old value rejects the proposal.
     pub fn on_change(
         mut self,
         handler: impl Fn(NumberInputChange, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.on_change = Some(Rc::new(handler));
+        self.handlers.change = Some(Rc::new(handler));
+        self
+    }
+
+    /// Observes exact local drafts without accepting values or creating history entries.
+    pub fn on_preview(
+        mut self,
+        handler: impl Fn(NumberInputPreview, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.handlers.preview = Some(Rc::new(handler));
+        self
+    }
+
+    /// Observes the final accepted or rejected result of a commit request.
+    pub fn on_commit(
+        mut self,
+        handler: impl Fn(NumberInputCommit, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.handlers.commit = Some(Rc::new(handler));
+        self
+    }
+
+    /// Observes edit cancellation, including invalid submission and pointer capture loss.
+    pub fn on_cancel(
+        mut self,
+        handler: impl Fn(NumberInputCancel, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.handlers.cancel = Some(Rc::new(handler));
         self
     }
 
@@ -402,7 +502,7 @@ impl NumberInput {
     pub fn state(&self) -> NumberInputState {
         NumberInputState::resolve(
             self.label.to_string(),
-            self.value,
+            self.value.unwrap_or(self.default_value),
             self.min,
             self.max,
             self.step,
@@ -427,17 +527,76 @@ impl Sizable for NumberInput {
 impl RenderOnce for NumberInput {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = ThemeResolver::current(window, cx);
-        let state = Rc::new(self.state());
+        let mut state = self.state();
+        let mount = window.use_keyed_state((self.id.clone(), "number-mount"), cx, |window, cx| {
+            let controller = self.controller.clone().unwrap_or_else(|| {
+                cx.new(|cx| NumberInputController::new(state.value(), window, cx))
+            });
+            NumberInputMount::new(controller, cx)
+        });
+        let controller = mount.update(cx, |mount, cx| mount.controller(self.controller, cx));
+        controller.update(cx, |controller, cx| {
+            controller.sync(state.clone(), self.value, self.handlers, window, cx);
+        });
+        let runtime = controller.read(cx);
+        state.value = runtime.value();
+        let input = runtime.text_input().clone();
+        let capture = runtime.capture();
+        let pending = runtime.pending_submission();
+        let scrubbing = runtime.is_scrubbing();
+        let composing = runtime.is_composing(cx);
+        let draft_invalid = matches!(runtime.draft().parsed(), NumberInputDraftValue::Invalid);
         let metrics = state.metrics();
         let colors = state.colors();
-        let focus_ring = state.focus_ring();
         let disabled = state.disabled();
         let debug_id = self.id.to_string();
-        let on_change_for_keyboard = self.on_change.clone();
-        let on_change_for_increment = self.on_change.clone();
-        let on_change_for_decrement = self.on_change.clone();
-        let focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
-        let actions: &[AccessibleAction] = if self.on_change.is_some() {
+        let input_id: ElementId = (self.id.clone(), "text").into();
+        let input_label = format!("{} value", self.label);
+        let pointer_editing_enabled = state.input_enabled() && !pending && !composing;
+        let step_buttons = self.stepper.then(|| {
+            let mut step_state = state.clone();
+            step_state.control = step_state
+                .control
+                .with_disabled(!pointer_editing_enabled || scrubbing);
+            let buttons = [
+                ("number-step-up", "+", NumberInputStepAction::Increment),
+                ("number-step-down", "-", NumberInputStepAction::Decrement),
+            ]
+            .map(|(id, label, action)| {
+                let step_controller = controller.clone();
+                let activation = ActivationBinding::new(
+                    window,
+                    cx,
+                    (self.id.clone(), id),
+                    step_state.input_enabled(),
+                    ActivationKeyPolicy::EnterOrSpace,
+                    move |activation, window, cx| {
+                        let source = match activation.source() {
+                            ActivationSource::Accessibility => NumberInputEditSource::Accessibility,
+                            ActivationSource::Keyboard(_) => NumberInputEditSource::Keyboard,
+                            ActivationSource::Pointer | ActivationSource::Programmatic => {
+                                NumberInputEditSource::Stepper
+                            }
+                        };
+                        step_controller.update(cx, |controller, cx| {
+                            controller.step_from(action, source, window, cx);
+                        });
+                    },
+                );
+                number_step_button(
+                    id,
+                    label,
+                    &debug_id,
+                    &step_state,
+                    controller.clone(),
+                    activation,
+                    &theme,
+                )
+                .into_any_element()
+            });
+            div().flex().flex_col().gap_1().children(buttons)
+        });
+        let actions: &[AccessibleAction] = if state.input_enabled() {
             &[
                 AccessibleAction::Focus,
                 AccessibleAction::Increment,
@@ -453,7 +612,7 @@ impl RenderOnce for NumberInput {
             .with_min_numeric_value(state.min() as f64)
             .with_max_numeric_value(state.max() as f64)
             .with_required(state.required())
-            .with_invalid(state.invalid())
+            .with_invalid(state.invalid() || draft_invalid)
             .with_busy(state.busy())
             .with_read_only(state.read_only())
             .with_disabled(disabled)
@@ -461,7 +620,11 @@ impl RenderOnce for NumberInput {
 
         div()
             .id(self.id)
-            .debug_selector(move || format!("number-input:{debug_id}:root"))
+            .debug_selector({
+                let debug_id = debug_id.clone();
+                move || format!("number-input:{debug_id}:root")
+            })
+            .min_w(px(0.0))
             .min_h(gpui_px_from_ui(metrics.height()))
             .px(gpui_px_from_ui(metrics.padding_x()))
             .py(gpui_px_from_ui(metrics.padding_y()))
@@ -476,92 +639,132 @@ impl RenderOnce for NumberInput {
             .text_color(theme.resolve(colors.foreground()))
             .text_size(gpui_px_from_ui(metrics.text_size()))
             .line_height(gpui_px_from_ui(metrics.text_size()))
-            .focusable()
-            .tab_stop(state.tab_stop_enabled())
             .ui_semantics(&semantics)
-            .focus_visible(move |style| style.shadow(focus_shadow))
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
             .when(state.input_enabled(), |this| this.cursor_text())
-            .when_some(
-                on_change_for_keyboard.filter(|_| state.input_enabled()),
-                |this, on_change| {
-                    let key_state = Rc::clone(&state);
-                    let key_on_change = on_change.clone();
-                    this.on_key_down(move |event: &KeyDownEvent, window, cx| {
-                        if event.keystroke.modifiers.modified() {
-                            return;
+            .on_ui_a11y_action(AccessibleAction::Focus, {
+                let input = input.clone();
+                move |_, window, cx| {
+                    if !disabled {
+                        window.focus(&input.focus_handle(cx), cx);
+                    }
+                }
+            })
+            .on_mouse_down(MouseButton::Left, {
+                let input = input.clone();
+                move |_, window, cx| {
+                    if !disabled {
+                        window.focus(&input.focus_handle(cx), cx);
+                    }
+                }
+            })
+            .capture_key_down({
+                let controller = controller.clone();
+                move |event: &KeyDownEvent, window, cx| {
+                    if event.prefer_character_input
+                        || window.default_prevented()
+                        || event.keystroke.modifiers.modified()
+                        || controller.read(cx).is_composing(cx)
+                    {
+                        return;
+                    }
+                    let handled = controller.update(cx, |controller, cx| {
+                        match event.keystroke.key.as_str() {
+                            "enter" => controller.commit(window, cx),
+                            "escape" => {
+                                controller.cancel(NumberInputCancelReason::Escape, window, cx)
+                            }
+                            "up" => controller.step(NumberInputStepAction::Increment, window, cx),
+                            "down" => controller.step(NumberInputStepAction::Decrement, window, cx),
+                            _ => false,
                         }
-                        let Some(change) = key_state.keyboard_change(event.keystroke.key.as_str())
-                        else {
-                            return;
-                        };
-                        if change.changed() {
-                            key_on_change(change, window, cx);
-                        }
+                    });
+                    if handled {
+                        window.prevent_default();
                         cx.stop_propagation();
-                    })
-                    .on_ui_a11y_action(AccessibleAction::Increment, {
-                        let action_state = Rc::clone(&state);
-                        let on_change = on_change.clone();
-                        move |_, window, cx| {
-                            if let Some(change) =
-                                action_state.step_change(NumberInputStepAction::Increment)
-                                && change.changed()
-                            {
-                                on_change(change, window, cx);
-                            }
-                        }
-                    })
-                    .on_ui_a11y_action(AccessibleAction::Decrement, {
-                        let action_state = Rc::clone(&state);
-                        let on_change = on_change.clone();
-                        move |_, window, cx| {
-                            if let Some(change) =
-                                action_state.step_change(NumberInputStepAction::Decrement)
-                                && change.changed()
-                            {
-                                on_change(change, window, cx);
-                            }
-                        }
-                    })
-                    .on_ui_a11y_action(AccessibleAction::SetValue, {
-                        let action_state = Rc::clone(&state);
-                        move |data, window, cx| {
-                            let Some(open_gpui::accesskit::ActionData::NumericValue(value)) = data
-                            else {
-                                return;
-                            };
-                            if let Some(change) = action_state.set_value_change(*value)
-                                && change.changed()
-                            {
-                                on_change(change, window, cx);
-                            }
-                        }
-                    })
-                },
-            )
-            .child(div().flex_1().child(state.display_value()))
+                    }
+                }
+            })
+            .on_ui_a11y_action(AccessibleAction::Increment, {
+                let controller = controller.clone();
+                move |_, window, cx| {
+                    controller.update(cx, |controller, cx| {
+                        controller.step_from(
+                            NumberInputStepAction::Increment,
+                            NumberInputEditSource::Accessibility,
+                            window,
+                            cx,
+                        );
+                    });
+                }
+            })
+            .on_ui_a11y_action(AccessibleAction::Decrement, {
+                let controller = controller.clone();
+                move |_, window, cx| {
+                    controller.update(cx, |controller, cx| {
+                        controller.step_from(
+                            NumberInputStepAction::Decrement,
+                            NumberInputEditSource::Accessibility,
+                            window,
+                            cx,
+                        );
+                    });
+                }
+            })
+            .on_ui_a11y_action(AccessibleAction::SetValue, {
+                let controller = controller.clone();
+                move |data, window, cx| {
+                    if let Some(open_gpui::accesskit::ActionData::NumericValue(value)) = data {
+                        controller.update(cx, |controller, cx| {
+                            controller.set_accessible_value(*value, window, cx)
+                        });
+                    }
+                }
+            })
+            .when(self.scrub, |this| {
+                this.child(number_scrub_handle(
+                    &debug_id,
+                    controller.clone(),
+                    capture,
+                    pointer_editing_enabled,
+                    self.scrub_pixels_per_step,
+                ))
+            })
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(number_step_button(
-                        "number-step-up",
-                        "+",
-                        Rc::clone(&state),
-                        NumberInputStepAction::Increment,
-                        on_change_for_increment,
-                        &theme,
-                    ))
-                    .child(number_step_button(
-                        "number-step-down",
-                        "-",
-                        state,
-                        NumberInputStepAction::Decrement,
-                        on_change_for_decrement,
-                        &theme,
-                    )),
+                div().min_w(px(0.0)).flex_1().child(
+                    TextInput::new(input_id, input_label)
+                        .controller(input)
+                        .disabled(disabled)
+                        .read_only(state.read_only() || pending || scrubbing)
+                        .invalid(state.invalid() || draft_invalid)
+                        .required(state.required())
+                        .busy(state.busy())
+                        .with_size(state.size())
+                        .tokens(self.tokens),
+                ),
+            )
+            .children(step_buttons)
+            .child(
+                canvas(
+                    |_, _, _| (),
+                    move |_, _, window, _| {
+                        window.on_pointer_cancel(move |_, phase, window, cx| {
+                            if phase == open_gpui::DispatchPhase::Capture
+                                && controller.read(cx).is_scrubbing()
+                            {
+                                controller.update(cx, |controller, cx| {
+                                    controller.cancel(
+                                        NumberInputCancelReason::PointerCancelled,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            }
+                        });
+                    },
+                )
+                .absolute()
+                .size(px(0.0)),
             )
     }
 }
@@ -569,13 +772,34 @@ impl RenderOnce for NumberInput {
 fn number_step_button(
     id: &'static str,
     label: &'static str,
-    state: Rc<NumberInputState>,
-    action: NumberInputStepAction,
-    on_change: Option<Rc<dyn Fn(NumberInputChange, &mut Window, &mut App)>>,
+    debug_id: &str,
+    state: &NumberInputState,
+    controller: Entity<NumberInputController>,
+    activation: ActivationBinding,
     theme: &ThemeContext,
 ) -> impl IntoElement {
-    div()
+    let debug_selector = format!("number-input:{debug_id}:{id}");
+    let enabled = state.input_enabled();
+    let accessible_label = format!(
+        "{} {}",
+        if label == "+" {
+            "Increment"
+        } else {
+            "Decrement"
+        },
+        state.label()
+    );
+    let semantics = SemanticDescriptor::new(Role::Button)
+        .with_label(&accessible_label)
+        .with_disabled(!enabled)
+        .with_actions(if enabled {
+            &[AccessibleAction::Click]
+        } else {
+            &[]
+        });
+    let button = div()
         .id(id)
+        .debug_selector(move || debug_selector.clone())
         .size(gpui_px_from_ui(ui_px_button_size(state.size())))
         .flex()
         .items_center()
@@ -583,24 +807,99 @@ fn number_step_button(
         .rounded(gpui_px_from_ui(state.size().control_radius()))
         .border_1()
         .border_color(theme.resolve(state.colors().border()))
+        .ui_semantics(&semantics)
         .when(state.input_enabled(), |this| this.cursor_pointer())
         .when(!state.input_enabled(), |this| {
             this.opacity(0.56).cursor_not_allowed()
         })
-        .when_some(
-            on_change.filter(|_| state.input_enabled()),
-            move |this, on_change| {
-                this.on_click(move |_, window, cx| {
-                    if let Some(change) = state.step_change(action)
-                        && change.changed()
-                    {
-                        on_change(change, window, cx);
-                    }
+        .when(enabled, |this| {
+            this.on_mouse_down(MouseButton::Left, {
+                let controller = controller.clone();
+                move |_, window, cx| {
+                    window.focus(&controller.focus_handle(cx), cx);
+                    window.prevent_default();
                     cx.stop_propagation();
-                })
-            },
-        )
-        .child(label)
+                }
+            })
+        })
+        .child(label);
+    activation.bind_pointer_and_accessibility(button)
+}
+
+fn number_scrub_handle(
+    debug_id: &str,
+    controller: Entity<NumberInputController>,
+    capture: open_gpui::PointerCaptureHandle,
+    enabled: bool,
+    pixels_per_step: f32,
+) -> impl IntoElement {
+    let debug_id = debug_id.to_owned();
+    div()
+        .id("number-scrub")
+        .debug_selector(move || format!("number-input:{debug_id}:scrub"))
+        .px_1()
+        .child("↔")
+        .when(enabled, |this| {
+            this.cursor(open_gpui::CursorStyle::ResizeLeftRight)
+        })
+        .when(!enabled, |this| this.cursor_not_allowed().opacity(0.56))
+        .track_pointer_capture(&capture)
+        .on_mouse_down(MouseButton::Left, {
+            let controller = controller.clone();
+            move |event, window, cx| {
+                if enabled && !window.default_prevented() {
+                    let captured = controller.update(cx, |controller, cx| {
+                        controller.begin_scrub(
+                            f32::from(event.window_event().position.x),
+                            window,
+                            cx,
+                        )
+                    });
+                    if captured {
+                        window.focus(&controller.focus_handle(cx), cx);
+                        window.prevent_default();
+                        cx.stop_propagation();
+                    }
+                }
+            }
+        })
+        .on_mouse_move({
+            let controller = controller.clone();
+            move |event, window, cx| {
+                controller.update(cx, |controller, cx| {
+                    controller.update_scrub(
+                        f32::from(event.window_event().position.x),
+                        pixels_per_step,
+                        window,
+                        cx,
+                    );
+                });
+            }
+        })
+        .on_mouse_up(MouseButton::Left, move |event, window, cx| {
+            controller.update(cx, |controller, cx| {
+                controller.update_scrub(
+                    f32::from(event.window_event().position.x),
+                    pixels_per_step,
+                    window,
+                    cx,
+                );
+                controller.finish_scrub(window, cx);
+            });
+        })
+}
+
+fn normalize_number_value(value: f32, min: f32, max: f32, step: f32) -> f32 {
+    let value = if value.is_finite() { value } else { min };
+    let value = (value as f64).clamp(min as f64, max as f64);
+    let step = step as f64;
+    let remainder = (value.rem_euclid(step) - (min as f64).rem_euclid(step)).rem_euclid(step);
+    let adjustment = if remainder < step / 2.0 {
+        -remainder
+    } else {
+        step - remainder
+    };
+    (value + adjustment).clamp(min as f64, max as f64) as f32
 }
 
 fn ui_px_button_size(size: Size) -> open_gpui_ui_core::UiPx {
@@ -650,11 +949,13 @@ mod tests {
         assert_eq!(increment.value(), 6.0);
 
         let minimum = state
-            .keyboard_change("home")
-            .expect("home should jump to min");
+            .step_change(NumberInputStepAction::Minimum)
+            .expect("an explicit minimum action should jump to min");
         assert_eq!(minimum.action(), NumberInputStepAction::Minimum);
         assert_eq!(minimum.value(), 0.0);
         assert_eq!(state.keyboard_change("left"), None);
+        assert_eq!(state.keyboard_change("home"), None);
+        assert_eq!(state.keyboard_change("end"), None);
     }
 
     #[test]

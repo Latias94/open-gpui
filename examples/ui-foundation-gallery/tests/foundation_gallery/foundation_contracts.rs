@@ -17,6 +17,7 @@ fn gallery_sections_cover_the_foundation_slices() {
             "overlay",
             "presentation",
             "components",
+            "editor-controls",
             "devtools"
         ]
     );
@@ -46,6 +47,10 @@ fn compact_width_uses_mobile_shell_and_compact_density() {
 
 #[test]
 fn labels_are_stable_for_manual_dogfood_output() {
+    assert_eq!(
+        GalleryPage::from_id("editor-controls"),
+        Some(GalleryPage::EditorControls)
+    );
     assert_eq!(
         GalleryPage::from_id("components"),
         Some(GalleryPage::Components)

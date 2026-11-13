@@ -2,22 +2,24 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ElementId, Entity, Focusable, InteractiveElement, IntoElement, KeyDownEvent,
+    AnyElement, App, ElementId, Entity, Focusable, InteractiveElement, IntoElement, KeyDownEvent,
     ParentElement, PortalAnchorExt as _, RenderOnce, SharedString, StatefulInteractiveElement,
-    Styled, Window, div,
+    Styled, Subscription, Window, div,
 };
 use open_gpui_ui_core::{
-    AccessibleAction, DismissReason, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
-    OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, Role,
-    SemanticDescriptor, Sizable, Size, ThemeTokens, ui_px, ui_size,
+    AccessibleAction, DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent,
+    OutsidePressPolicy, OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide,
+    Role, SemanticDescriptor, Sizable, Size, ThemeTokens, ui_px, ui_size,
 };
 
 use crate::a11y::UiA11yElementExt;
-use crate::choice::{self, ChoiceSelectionOwnership, SingleChoiceSelectionControl};
+use crate::choice::{ChoiceSelectionOwnership, SingleChoiceSelectionControl};
 use crate::choice_overlay_runtime::request_registered_choice_selection;
 use crate::focus::focus_ring_shadow_with_theme;
 use crate::geometry::gpui_px_from_ui;
-use crate::listbox::Listbox;
+use crate::listbox::{
+    Listbox, ListboxGroup, ListboxOption, ListboxOptionState, ListboxRowContentRenderer,
+};
 use crate::overlay::{
     OverlayInsideRegionId, OverlayLayerBinding, OverlayLayerRegistration, OverlayOpenIntent,
     OverlayOwnership, WindowOverlayRuntime, gpui_overlay_state, gpui_portal_anchor_overlay_layer,
@@ -35,9 +37,13 @@ use super::model::{
     combobox_keyboard_action_from_value,
 };
 use super::render_plan::ComboboxRenderPlan;
+use super::{ComboboxFilterMode, ComboboxResults, ComboboxResultsStatus};
 
 type ComboboxOpenChangeHandler = Rc<dyn Fn(OverlayOpenIntent, &mut Window, &mut App)>;
 type ComboboxSelectionHandler = Rc<dyn Fn(ComboboxSelection, &mut Window, &mut App)>;
+type ComboboxQueryChangeHandler = Rc<dyn Fn(String, &mut Window, &mut App)>;
+type ComboboxResultsContent =
+    Box<dyn FnOnce(&ComboboxState, AnyElement, &mut Window, &mut App) -> AnyElement>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ComboboxInputValueSource {
@@ -51,9 +57,15 @@ struct ComboboxRuntime {
     active_value: Option<String>,
     selected_value: Option<String>,
     selection_ownership: ChoiceSelectionOwnership,
+    retained_selection: Option<ComboboxSelection>,
     observed_selected_label: Option<Option<String>>,
     observed_input_user_edit_revision: u64,
     input_value_source: ComboboxInputValueSource,
+    query_controlled: bool,
+    pending_selection_projection: bool,
+    pending_user_query: Option<String>,
+    on_query_change: Option<ComboboxQueryChangeHandler>,
+    input_subscription: Option<Rc<Subscription>>,
     overlay_binding: Option<OverlayLayerBinding>,
 }
 
@@ -65,27 +77,38 @@ impl ComboboxRuntime {
         }
     }
 
-    fn sync_selection(&mut self, selection: &SingleChoiceSelectionControl) -> bool {
+    fn sync_selection(&mut self, selection: &SingleChoiceSelectionControl) {
         let selection_ownership =
             ChoiceSelectionOwnership::from_controlled(selection.is_controlled());
         let mut changed = self.selection_ownership != selection_ownership;
         if selection.is_controlled() && self.selected_value.as_ref() != selection.value().as_ref() {
             self.selected_value = selection.value().clone();
+            self.retained_selection = None;
             changed = true;
         }
         self.selection_ownership = selection_ownership;
-        changed
+        if changed && selection.is_controlled() {
+            self.pending_selection_projection = true;
+        }
     }
 
-    fn commit_selection(&mut self, value: String, input_user_edit_revision: u64) -> bool {
+    fn commit_selection(
+        &mut self,
+        selection: ComboboxSelection,
+        input_user_edit_revision: u64,
+    ) -> bool {
+        let value = selection.value().to_owned();
         let adapter_owned = !self.selection_ownership.caller_owned();
         if adapter_owned {
             self.selected_value = Some(value.clone());
+            self.retained_selection = Some(selection);
             self.observed_input_user_edit_revision = input_user_edit_revision;
-            self.input_value_source = ComboboxInputValueSource::SelectedLabelProjection;
+            if !self.query_controlled {
+                self.input_value_source = ComboboxInputValueSource::SelectedLabelProjection;
+            }
         }
         self.active_value = Some(value);
-        adapter_owned
+        adapter_owned && !self.query_controlled
     }
 
     fn sync_selected_label(&mut self, selected_label: Option<&str>) -> bool {
@@ -103,10 +126,12 @@ impl ComboboxRuntime {
         }
     }
 
-    fn sync_input_user_edit_revision(&mut self, revision: u64) {
+    fn sync_input_user_edit_revision(&mut self, revision: u64, query: &str) {
         if self.observed_input_user_edit_revision != revision {
             self.observed_input_user_edit_revision = revision;
             self.input_value_source = ComboboxInputValueSource::UserQuery;
+            self.pending_user_query = Some(query.to_owned());
+            self.active_value = None;
         }
     }
 }
@@ -125,7 +150,11 @@ pub struct Combobox {
     open: Option<bool>,
     default_open: bool,
     default_query: String,
+    query: Option<String>,
+    filter_mode: ComboboxFilterMode,
+    results_status: ComboboxResultsStatus,
     selection: SingleChoiceSelectionControl,
+    selected_item: Option<ComboboxSelection>,
     default_active_value: Option<String>,
     empty_label: SharedString,
     placement_side: OverlayPlacementSide,
@@ -136,6 +165,9 @@ pub struct Combobox {
     tokens: ThemeTokens,
     on_open_change: Option<ComboboxOpenChangeHandler>,
     on_select: Option<ComboboxSelectionHandler>,
+    on_query_change: Option<ComboboxQueryChangeHandler>,
+    results_content: Option<ComboboxResultsContent>,
+    option_content: Option<ListboxRowContentRenderer>,
 }
 
 impl Combobox {
@@ -153,7 +185,11 @@ impl Combobox {
             open: None,
             default_open: false,
             default_query: String::new(),
+            query: None,
+            filter_mode: ComboboxFilterMode::Local,
+            results_status: ComboboxResultsStatus::Ready,
             selection: SingleChoiceSelectionControl::uncontrolled(None),
+            selected_item: None,
             default_active_value: None,
             empty_label: "No results".into(),
             placement_side: OverlayPlacementSide::Bottom,
@@ -164,6 +200,9 @@ impl Combobox {
             tokens: ThemeTokens::default(),
             on_open_change: None,
             on_select: None,
+            on_query_change: None,
+            results_content: None,
+            option_content: None,
         }
     }
 
@@ -228,9 +267,61 @@ impl Combobox {
         self
     }
 
+    /// Applies caller-owned query text, independently of selection and open state.
+    ///
+    /// User edits propose a value through [`Self::on_query_change`]. Rejected
+    /// proposals are reconciled through the existing text controller. Active IME
+    /// composition remains controller-owned until the marked text is committed.
+    pub fn query(mut self, query: impl Into<String>) -> Self {
+        self.query = Some(TextEditingPolicy::single_line().normalize_text(&query.into()));
+        self
+    }
+
+    /// Applies ownership of filtering for options supplied with the option builders.
+    pub fn filter_mode(mut self, mode: ComboboxFilterMode) -> Self {
+        self.filter_mode = mode;
+        self
+    }
+
+    /// Replaces the result page and disables local filtering.
+    ///
+    /// The caller must reject stale replies before supplying this snapshot, using
+    /// its resource owner or [`super::ComboboxQuerySession`]. This builder never
+    /// starts work or changes selected identity, query text, or open state.
+    pub fn results(mut self, results: ComboboxResults) -> Self {
+        let (status, options, groups) = results.into_parts();
+        self.filter_mode = ComboboxFilterMode::External;
+        self.results_status = status;
+        self.options = options
+            .into_iter()
+            .map(ComboboxOption::from_descriptor)
+            .collect();
+        self.groups = groups
+            .into_iter()
+            .map(ComboboxGroup::from_descriptor)
+            .collect();
+        self
+    }
+
     /// Applies the caller-owned selected option value.
     pub fn selected(mut self, value: Option<String>) -> Self {
         self.selection = SingleChoiceSelectionControl::controlled(value);
+        self.selected_item = None;
+        self
+    }
+
+    /// Applies caller-owned selection metadata independently of result membership.
+    ///
+    /// A unique result with the same value supplies its latest label. Otherwise
+    /// this payload supplies the label, including before the first page arrives.
+    /// Duplicate or disabled current results remain ineligible for activation.
+    pub fn selected_item(mut self, selection: Option<ComboboxSelection>) -> Self {
+        self.selection = SingleChoiceSelectionControl::controlled(
+            selection
+                .as_ref()
+                .map(|selection| selection.value().to_owned()),
+        );
+        self.selected_item = selection;
         self
     }
 
@@ -296,6 +387,55 @@ impl Combobox {
         self
     }
 
+    /// Observes user query edits without changing query ownership.
+    ///
+    /// Marked IME edits are published after composition ends. Selection label
+    /// projection and caller-provided query updates do not emit this callback.
+    pub fn on_query_change(
+        mut self,
+        handler: impl Fn(String, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_query_change = Some(Rc::new(handler));
+        self
+    }
+
+    /// Composes result content inside the owned popup surface.
+    ///
+    /// Render the supplied listbox viewport exactly once. It retains navigation,
+    /// selection transactions, accessibility, scrolling, and editor-owned focus.
+    /// The callback may wrap it with application content or status presentation;
+    /// it must not replace the listbox's interaction or create a second popup owner.
+    pub fn results_content<E: IntoElement>(
+        mut self,
+        render: impl FnOnce(&ComboboxState, AnyElement, &mut Window, &mut App) -> E + 'static,
+    ) -> Self {
+        self.results_content = Some(Box::new(move |state, listbox, window, cx| {
+            render(state, listbox, window, cx).into_any_element()
+        }));
+        self
+    }
+
+    /// Renders each visible result's content through the original listbox row.
+    ///
+    /// Use the stable option value to look up application thumbnails and metadata.
+    /// The descriptor label remains the filtering and accessibility label. The
+    /// original row owns selection, disabled gates, identity, focus, and scrolling;
+    /// query text and external result ownership are unaffected by this callback.
+    ///
+    /// Passive images and text remain clickable as part of the result. Wrap
+    /// interactive children in [`crate::listbox::ListboxRowAction`] and apply the
+    /// option's disabled state to those children when appropriate. The callback
+    /// runs under the original row identity and captured popup theme.
+    pub fn option_content<E: IntoElement>(
+        mut self,
+        render: impl Fn(&ListboxOptionState, &mut Window, &mut App) -> E + 'static,
+    ) -> Self {
+        self.option_content = Some(Rc::new(move |option, window, cx| {
+            render(option, window, cx).into_any_element()
+        }));
+        self
+    }
+
     /// Returns resolved combobox state.
     pub fn state(&self) -> ComboboxState {
         ComboboxState::resolve(ComboboxStateRequest {
@@ -306,8 +446,14 @@ impl Combobox {
             default_open: self.default_open,
             label: self.label.to_string(),
             placeholder: self.placeholder.to_string(),
-            query: self.default_query.to_string(),
+            query: self.query.as_ref().unwrap_or(&self.default_query).clone(),
+            filter_mode: self.filter_mode,
+            results_status: self.results_status.clone(),
             selected_value: self.selection.value().clone(),
+            selected_label: self
+                .selected_item
+                .as_ref()
+                .map(|item| item.label().to_owned()),
             active_value: self.default_active_value.clone(),
             empty_label: self.empty_label.to_string(),
             groups: self.groups.iter().map(ComboboxGroup::descriptor).collect(),
@@ -343,6 +489,7 @@ impl RenderOnce for Combobox {
             selection_ownership: ChoiceSelectionOwnership::from_controlled(
                 self.selection.is_controlled(),
             ),
+            retained_selection: self.selected_item.clone(),
             observed_selected_label: None,
             observed_input_user_edit_revision: 0,
             input_value_source: if self.default_query.is_empty() {
@@ -350,11 +497,18 @@ impl RenderOnce for Combobox {
             } else {
                 ComboboxInputValueSource::UserQuery
             },
+            query_controlled: self.query.is_some(),
+            pending_selection_projection: false,
+            pending_user_query: None,
+            on_query_change: self.on_query_change.clone(),
+            input_subscription: None,
             overlay_binding: None,
         });
         let input_state_key: ElementId = (self.id.clone(), "input-state").into();
         let input_controller = window.use_keyed_state(input_state_key, cx, |_, cx| {
-            let initial_value = if self.default_query.is_empty() {
+            let initial_value = if let Some(query) = self.query.as_ref() {
+                query.clone()
+            } else if self.default_query.is_empty() {
                 self.state().selected_label().unwrap_or_default().to_owned()
             } else {
                 self.default_query.clone()
@@ -363,21 +517,50 @@ impl RenderOnce for Combobox {
             input.set_placeholder(self.placeholder.clone(), cx);
             input
         });
-        let selection_projection_changed =
-            runtime.update(cx, |runtime, _| runtime.sync_selection(&self.selection));
-        let (query, input_user_edit_revision) = {
+        runtime.update(cx, |runtime, cx| {
+            runtime.query_controlled = self.query.is_some();
+            runtime.on_query_change = self.on_query_change.clone();
+            if runtime.input_subscription.is_none() {
+                runtime.input_subscription = Some(Rc::new(cx.observe_in(
+                    &input_controller,
+                    window,
+                    |runtime, controller, window, cx| {
+                        let input = controller.read(cx);
+                        runtime.sync_input_user_edit_revision(
+                            input.user_edit_revision(),
+                            input.value(),
+                        );
+                        if input.marked_range_utf16().is_none()
+                            && let Some(query) = runtime.pending_user_query.take()
+                            && let Some(on_query_change) = runtime.on_query_change.clone()
+                        {
+                            on_query_change(query, window, cx);
+                        }
+                        cx.notify();
+                    },
+                )));
+            }
+        });
+        runtime.update(cx, |runtime, _| runtime.sync_selection(&self.selection));
+        let (input_query, input_user_edit_revision, composing) = {
             let controller = input_controller.read(cx);
             (
                 controller.value().to_owned(),
                 controller.user_edit_revision(),
+                controller.marked_range_utf16().is_some(),
             )
         };
         runtime.update(cx, |runtime, _| {
-            runtime.sync_input_user_edit_revision(input_user_edit_revision);
+            runtime.sync_input_user_edit_revision(input_user_edit_revision, &input_query);
         });
         let runtime_state = runtime.read(cx).clone();
         let open_state = resolve_overlay_open_state(self.open, runtime_state.open);
         let resolved_open = open_state.open();
+        let query = if composing {
+            input_query
+        } else {
+            self.query.clone().unwrap_or(input_query)
+        };
 
         if open_state.runtime_changed() {
             runtime.update(cx, |runtime, _| {
@@ -387,6 +570,11 @@ impl RenderOnce for Combobox {
 
         let selected_value = runtime_state.selected_value.as_deref();
         let active_value = runtime_state.active_value.as_deref().or(selected_value);
+        let retained_selection = self.selected_item.as_ref().or_else(|| {
+            (self.filter_mode == ComboboxFilterMode::External)
+                .then_some(runtime_state.retained_selection.as_ref())
+                .flatten()
+        });
         let state = ComboboxState::resolve(ComboboxStateRequest {
             size: self.size,
             disabled: self.disabled,
@@ -396,7 +584,12 @@ impl RenderOnce for Combobox {
             label: self.label.to_string(),
             placeholder: self.placeholder.to_string(),
             query: query.clone(),
+            filter_mode: self.filter_mode,
+            results_status: self.results_status.clone(),
             selected_value: selected_value.map(str::to_owned),
+            selected_label: retained_selection
+                .filter(|item| Some(item.value()) == selected_value)
+                .map(|item| item.label().to_owned()),
             active_value: active_value.map(str::to_owned),
             empty_label: self.empty_label.to_string(),
             groups: self.groups.iter().map(ComboboxGroup::descriptor).collect(),
@@ -414,17 +607,27 @@ impl RenderOnce for Combobox {
         });
         let selected_label = state.selected_label().unwrap_or_default().to_owned();
         let selected_label_changed = runtime.update(cx, |runtime, _| {
+            if let Some(value) = state.selected_value()
+                && let Some(label) = state.selected_label()
+            {
+                runtime.retained_selection = Some(ComboboxSelection::new(value, label));
+            }
             runtime.sync_selected_label(state.selected_label())
         });
-        let controlled_selection_committed =
-            runtime_state.selection_ownership.caller_owned() && selection_projection_changed;
-        let should_project_selected_label = controlled_selection_committed
-            || (runtime_state.input_value_source
-                == ComboboxInputValueSource::SelectedLabelProjection
-                && selected_label_changed);
+        let should_project_selected_label = self.query.is_none()
+            && !composing
+            && (runtime_state.pending_selection_projection
+                || (runtime_state.input_value_source
+                    == ComboboxInputValueSource::SelectedLabelProjection
+                    && selected_label_changed));
         if should_project_selected_label {
             runtime.update(cx, |runtime, _| {
                 runtime.input_value_source = ComboboxInputValueSource::SelectedLabelProjection;
+                runtime.pending_selection_projection = false;
+            });
+        } else if self.query.is_some() {
+            runtime.update(cx, |runtime, _| {
+                runtime.pending_selection_projection = false
             });
         }
         input_controller.update(cx, |controller, cx| {
@@ -433,6 +636,16 @@ impl RenderOnce for Combobox {
             }
             if controller.placeholder() != self.placeholder.as_ref() {
                 controller.set_placeholder(self.placeholder.clone(), cx);
+            }
+            if !composing && self.query.is_some() {
+                controller.sync_adapter_state(
+                    Some(&query),
+                    None,
+                    self.disabled,
+                    false,
+                    controller.display_mode(),
+                    None,
+                );
             }
         });
 
@@ -443,9 +656,18 @@ impl RenderOnce for Combobox {
         } else {
             OverlayOwnership::Uncontrolled
         };
+        let overlay_policy = if composing {
+            state
+                .overlay()
+                .policy()
+                .clone()
+                .with_escape_key_policy(EscapeKeyPolicy::Ignore)
+        } else {
+            state.overlay().policy().clone()
+        };
         let mut registration = OverlayLayerRegistration::new(
             format!("combobox:{}", plan.debug_id),
-            state.overlay().policy().clone(),
+            overlay_policy,
             ownership,
         )
         .portal_anchored();
@@ -538,6 +760,7 @@ impl RenderOnce for Combobox {
                                     if event.prefer_character_input
                                         || event.keystroke.modifiers.modified()
                                         || window.default_prevented()
+                                        || input_controller.read(cx).marked_range_utf16().is_some()
                                     {
                                         return;
                                     }
@@ -580,8 +803,8 @@ impl RenderOnce for Combobox {
                                         ComboboxKeyboardAction::Select(selection) => {
                                             cx.stop_propagation();
                                             window.prevent_default();
-                                            let selected_value = selection.value().to_owned();
                                             let selected_label = selection.label().to_owned();
+                                            let committed_selection = selection.clone();
                                             let input_controller = input_controller.clone();
                                             let on_select = on_select.clone();
                                             let effect_runtime = runtime.clone();
@@ -597,7 +820,7 @@ impl RenderOnce for Combobox {
                                                     let committed =
                                                         effect_runtime.update(cx, |runtime, _| {
                                                             runtime.commit_selection(
-                                                                selected_value,
+                                                                committed_selection,
                                                                 input_user_edit_revision,
                                                             )
                                                         });
@@ -706,7 +929,7 @@ impl RenderOnce for Combobox {
                             .with_alignment(placement_alignment)
                             .with_offset(ui_px(4.0))
                     },
-                    move |opening_theme, _, _| {
+                    move |opening_theme, window, cx| {
                         combobox_content_element(
                             plan.content_id.clone(),
                             plan.listbox_id.clone(),
@@ -714,13 +937,15 @@ impl RenderOnce for Combobox {
                             state.clone(),
                             content_runtime,
                             content_binding,
-                            self.options,
-                            self.groups,
                             input_controller.clone(),
                             runtime.clone(),
                             self.on_select.clone(),
                             self.tokens,
                             opening_theme,
+                            self.results_content,
+                            self.option_content,
+                            window,
+                            cx,
                         )
                         .into_any_element()
                     },
@@ -737,35 +962,42 @@ fn combobox_content_element(
     state: ComboboxState,
     window_overlay_runtime: WindowOverlayRuntime,
     overlay_binding: OverlayLayerBinding,
-    options: Vec<ComboboxOption>,
-    groups: Vec<ComboboxGroup>,
     input_controller: Entity<TextInputController>,
     runtime: Entity<ComboboxRuntime>,
     on_select: Option<ComboboxSelectionHandler>,
     tokens: ThemeTokens,
     theme: &ThemeContext,
+    results_content: Option<ComboboxResultsContent>,
+    option_content: Option<ListboxRowContentRenderer>,
+    window: &mut Window,
+    cx: &mut App,
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
     let selected_value = state.selected_value().map(str::to_owned);
     let active_value = state.active_value().map(str::to_owned);
-    let query = state.query().to_owned();
-    let normalized_query = choice::normalize_query(query.as_str());
     let label = state.label().to_owned();
     let listbox_window_overlay_runtime = window_overlay_runtime.clone();
     let listbox_overlay_binding = overlay_binding.clone();
-    let listbox = options
-        .into_iter()
-        .filter(|option| option.matches_normalized_query(normalized_query.as_str()))
-        .fold(
-            Listbox::new(listbox_id, label.clone()),
-            |listbox, option| listbox.option(option.listbox_option()),
-        )
-        .groups(
-            groups
-                .into_iter()
-                .filter_map(|group| group.filtered_listbox_group(normalized_query.as_str())),
-        )
+    let listbox_state = state.listbox();
+    let standalone_count = listbox_state
+        .options()
+        .partition_point(|option| option.group_index().is_none());
+    let (standalone_options, mut grouped_options) =
+        listbox_state.options().split_at(standalone_count);
+    let project_option = |option: &ListboxOptionState| {
+        ListboxOption::new(option.value(), option.label().to_owned()).disabled(option.disabled())
+    };
+    let listbox = Listbox::new(listbox_id, label.clone())
+        .options(standalone_options.iter().map(project_option))
+        .groups(listbox_state.groups().iter().map(|group| {
+            let count = grouped_options
+                .partition_point(|option| option.group_index() == Some(group.index()));
+            let (options, remaining) = grouped_options.split_at(count);
+            grouped_options = remaining;
+            ListboxGroup::new(group.value(), group.label().to_owned())
+                .options(options.iter().map(project_option))
+        }))
         .tokens(tokens)
         .with_size(state.size())
         .empty_label(state.empty_label().to_owned())
@@ -788,7 +1020,10 @@ fn combobox_content_element(
                         let input_user_edit_revision =
                             input_controller.read(cx).user_edit_revision();
                         let committed = runtime.update(cx, |runtime, _| {
-                            runtime.commit_selection(payload_value, input_user_edit_revision)
+                            runtime.commit_selection(
+                                ComboboxSelection::new(payload_value, payload_label.clone()),
+                                input_user_edit_revision,
+                            )
                         });
                         if committed {
                             input_controller.update(cx, |controller, cx| {
@@ -817,9 +1052,41 @@ fn combobox_content_element(
     } else {
         listbox
     };
+    let listbox = listbox.when_some(option_content, |listbox, render| {
+        listbox.row_content(move |option, window, cx| render(option, window, cx))
+    });
     let scroll_viewport_id = state.scroll_area().viewport_id().to_owned();
     let content_semantics =
         SemanticDescriptor::new(state.content_role()).with_label(label.as_ref());
+    let viewport = ScrollArea::new(scroll_viewport_id, listbox)
+        .vertical()
+        .preserve_scroll()
+        .with_size(state.size())
+        .into_any_element();
+    let content = if let Some(render) = results_content {
+        render(&state, viewport, window, cx)
+    } else {
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .when_some(
+                state.results_status().message().filter(|_| !state.empty()),
+                |this, message| {
+                    this.child(
+                        div()
+                            .id((content_id.clone(), "status"))
+                            .ui_semantics(
+                                &SemanticDescriptor::new(Role::Status).with_label(message),
+                            )
+                            .child(message.to_owned()),
+                    )
+                },
+            )
+            .child(viewport)
+            .into_any_element()
+    };
 
     window_overlay_runtime.surface(
         &overlay_binding,
@@ -844,11 +1111,6 @@ fn combobox_content_element(
             ))
             .occlude()
             .ui_semantics(&content_semantics)
-            .child(
-                ScrollArea::new(scroll_viewport_id, listbox)
-                    .vertical()
-                    .preserve_scroll()
-                    .with_size(state.size()),
-            ),
+            .child(content),
     )
 }

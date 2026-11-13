@@ -139,6 +139,7 @@ pub struct GalleryShell {
     components_list_state: ListState,
     editable_text_input: open_gpui::Entity<TextInputController>,
     presentation_text_input: open_gpui::Entity<TextInputController>,
+    editor_controls: Option<open_gpui::Entity<pages::editor_controls::EditorControlsPage>>,
     presentation_scroll_handle: ScrollHandle,
     presentation_projection_progress: f32,
     presentation_state: SubtreePresentation,
@@ -208,6 +209,8 @@ impl GalleryShell {
                 controller
             }),
             presentation_scroll_handle: ScrollHandle::new(),
+            editor_controls: (selected_page == GalleryPage::EditorControls)
+                .then(|| cx.new(|cx| pages::editor_controls::EditorControlsPage::new(window, cx))),
             presentation_projection_progress: 0.0,
             presentation_state: SubtreePresentation::Visible,
             presentation_action_count: 0,
@@ -399,8 +402,12 @@ impl GalleryShell {
         .with_window_runtime(focus, overlay)
     }
 
-    fn select_page(&mut self, page: GalleryPage, cx: &mut Context<Self>) {
+    fn select_page(&mut self, page: GalleryPage, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_page != page {
+            if page == GalleryPage::EditorControls && self.editor_controls.is_none() {
+                self.editor_controls =
+                    Some(cx.new(|cx| pages::editor_controls::EditorControlsPage::new(window, cx)));
+            }
             if self.selected_page == GalleryPage::Components && page != GalleryPage::Components {
                 self.components_focus = pages::components::ComponentFocusMode::All;
                 self.components_list_state
@@ -568,8 +575,8 @@ impl GalleryShell {
                                         .py_2()
                                         .cursor_pointer()
                                         .hover(|style| style.bg(rgb(0xf1f5ee)))
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.select_page(section.page, cx);
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.select_page(section.page, window, cx);
                                         }))
                                         .child(
                                             div()
@@ -718,6 +725,12 @@ impl GalleryShell {
             }
 
             GalleryPage::Devtools => self.render_devtools_page(snapshot, cx).into_any_element(),
+            GalleryPage::EditorControls => self
+                .editor_controls
+                .as_ref()
+                .expect("Editor controls should be initialized before routing")
+                .clone()
+                .into_any_element(),
         }
     }
 

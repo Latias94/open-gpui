@@ -1,11 +1,13 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use open_gpui::{
-    Context, FocusClaimOutcome, FocusHandle, RevealTargetHandle, ScrollChainFence, Window,
+    App, Context, FocusClaimOutcome, FocusHandle, RevealTargetHandle, ScrollChainFence, Window,
 };
 
+use crate::choice::SingleChoiceSelectionControl;
 use crate::collection_typeahead::CollectionTypeaheadSession;
 use crate::scroll_surface::ScrollSurfaceRuntime;
+use open_gpui_ui_core::ControllableState;
 
 use super::TreeState;
 
@@ -48,8 +50,11 @@ pub(super) struct TreeRuntime {
     pub(super) scroll_surface: ScrollSurfaceRuntime,
     pub(super) selected_value: Option<String>,
     pub(super) focused_value: Option<String>,
-    pub(super) expanded_values: BTreeMap<String, bool>,
+    pub(super) expanded_values: BTreeSet<String>,
+    selection_controlled: bool,
+    expansion_controlled: bool,
     pub(super) focus_handles: BTreeMap<String, FocusHandle>,
+    parent_values: BTreeMap<String, String>,
     scroll_chain_anchor: Option<RevealTargetHandle>,
     pending_focus: Option<TreeFocusOperation>,
     next_focus_sequence: u64,
@@ -62,12 +67,29 @@ impl TreeRuntime {
         scroll_surface: ScrollSurfaceRuntime,
         selected_value: Option<String>,
         focused_value: Option<String>,
+        expanded_values: BTreeSet<String>,
     ) -> Self {
         Self {
             scroll_surface,
             selected_value,
             focused_value,
+            expanded_values,
             ..Self::default()
+        }
+    }
+
+    pub(super) fn sync_controls(
+        &mut self,
+        selection: &SingleChoiceSelectionControl,
+        expansion: Option<&ControllableState<BTreeSet<String>>>,
+    ) {
+        self.selection_controlled = selection.is_controlled();
+        if self.selection_controlled {
+            self.selected_value = selection.value().clone();
+        }
+        self.expansion_controlled = expansion.is_some_and(ControllableState::is_controlled);
+        if let Some(expansion) = expansion.filter(|expansion| expansion.is_controlled()) {
+            self.expanded_values = expansion.value().clone();
         }
     }
 
@@ -92,8 +114,48 @@ impl TreeRuntime {
             self.pending_focus = None;
         }
 
-        self.selected_value = state.selected_value().map(str::to_owned);
         self.focused_value = state.focused_value().map(str::to_owned);
+        self.parent_values = state
+            .items()
+            .iter()
+            .filter_map(|item| {
+                item.parent_value()
+                    .map(|parent| (item.value().to_owned(), parent.to_owned()))
+            })
+            .collect();
+    }
+
+    pub(super) fn focus_recovery_target(
+        &self,
+        state: &TreeState,
+        window: &Window,
+        cx: &App,
+    ) -> Option<String> {
+        let (value, _) = self
+            .focus_handles
+            .iter()
+            .find(|(_, handle)| handle.contains_focused(window, cx))?;
+        if state
+            .item_by_value(value)
+            .is_some_and(|item| item.focusable())
+        {
+            return None;
+        }
+
+        let mut ancestor = value.as_str();
+        for _ in 0..self.parent_values.len() {
+            let Some(parent) = self.parent_values.get(ancestor) else {
+                break;
+            };
+            if state
+                .item_by_value(parent)
+                .is_some_and(|item| item.focusable())
+            {
+                return Some(parent.clone());
+            }
+            ancestor = parent;
+        }
+        state.focused_value().map(str::to_owned)
     }
 
     pub(super) fn set_virtualized(&mut self, virtualized: bool) {
@@ -400,6 +462,9 @@ impl TreeRuntime {
     }
 
     pub(super) fn set_selected(&mut self, value: &str, cx: &mut Context<Self>) {
+        if self.selection_controlled {
+            return;
+        }
         let changed = self.selected_value.as_deref() != Some(value);
         self.selected_value = Some(value.to_owned());
         if changed {
@@ -408,8 +473,14 @@ impl TreeRuntime {
     }
 
     pub(super) fn set_expanded(&mut self, value: &str, expanded: bool, cx: &mut Context<Self>) {
-        let changed = self.expanded_values.get(value).copied() != Some(expanded);
-        self.expanded_values.insert(value.to_owned(), expanded);
+        if self.expansion_controlled {
+            return;
+        }
+        let changed = if expanded {
+            self.expanded_values.insert(value.to_owned())
+        } else {
+            self.expanded_values.remove(value)
+        };
         if changed {
             cx.notify();
         }

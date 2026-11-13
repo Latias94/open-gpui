@@ -1,7 +1,7 @@
 use open_gpui::SharedString;
 
 use crate::choice::{self, ChoiceItemProjection};
-use crate::listbox::{ListboxGroup, ListboxOption, ListboxOptionDescriptor};
+use crate::listbox::ListboxOptionDescriptor;
 
 /// Pure descriptor for one combobox option.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,6 +171,10 @@ pub struct ComboboxOption {
 }
 
 impl ComboboxOption {
+    pub(super) fn from_descriptor(descriptor: ComboboxOptionDescriptor) -> Self {
+        Self { descriptor }
+    }
+
     /// Creates a selectable combobox option.
     pub fn new(value: impl Into<String>, label: impl Into<SharedString>) -> Self {
         let label = label.into();
@@ -195,15 +199,6 @@ impl ComboboxOption {
     pub fn descriptor(&self) -> ComboboxOptionDescriptor {
         self.descriptor.clone()
     }
-
-    pub(super) fn matches_normalized_query(&self, normalized_query: &str) -> bool {
-        self.descriptor.matches_normalized_query(normalized_query)
-    }
-
-    pub(super) fn listbox_option(self) -> ListboxOption {
-        ListboxOption::new(self.descriptor.value, self.descriptor.label)
-            .disabled(self.descriptor.disabled)
-    }
 }
 
 /// A concrete GPUI combobox group.
@@ -214,6 +209,21 @@ pub struct ComboboxGroup {
 }
 
 impl ComboboxGroup {
+    pub(super) fn from_descriptor(descriptor: ComboboxGroupDescriptor) -> Self {
+        let ComboboxGroupDescriptor {
+            value,
+            label,
+            options,
+        } = descriptor;
+        Self {
+            descriptor: ComboboxGroupDescriptor::new(value, label),
+            options: options
+                .into_iter()
+                .map(ComboboxOption::from_descriptor)
+                .collect(),
+        }
+    }
+
     /// Creates an empty combobox group.
     pub fn new(value: impl Into<String>, label: impl Into<SharedString>) -> Self {
         let label = label.into();
@@ -242,17 +252,5 @@ impl ComboboxGroup {
             .fold(self.descriptor.clone(), |descriptor, option| {
                 descriptor.option(option.descriptor())
             })
-    }
-
-    pub(super) fn filtered_listbox_group(self, normalized_query: &str) -> Option<ListboxGroup> {
-        let mut group = ListboxGroup::new(self.descriptor.value, self.descriptor.label);
-        let mut has_options = false;
-        for option in self.options {
-            if option.matches_normalized_query(normalized_query) {
-                has_options = true;
-                group = group.option(option.listbox_option());
-            }
-        }
-        has_options.then_some(group)
     }
 }

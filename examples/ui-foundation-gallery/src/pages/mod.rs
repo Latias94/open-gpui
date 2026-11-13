@@ -3,6 +3,7 @@
 pub mod adaptive;
 pub mod components;
 pub mod devtools;
+pub mod editor_controls;
 pub mod focus_a11y;
 pub mod overlay;
 pub mod presentation;
@@ -26,6 +27,8 @@ pub enum GalleryPage {
     Presentation,
     /// First concrete component consumers.
     Components,
+    /// Application-owned property editing and catalog search.
+    EditorControls,
     /// Read-only local devtools inspector.
     Devtools,
 }
@@ -41,6 +44,7 @@ impl GalleryPage {
             "overlay" => Some(Self::Overlay),
             "presentation" => Some(Self::Presentation),
             "components" => Some(Self::Components),
+            "editor-controls" => Some(Self::EditorControls),
             "devtools" => Some(Self::Devtools),
             _ => None,
         }
@@ -56,6 +60,7 @@ impl GalleryPage {
             Self::Overlay => "overlay",
             Self::Presentation => "presentation",
             Self::Components => "components",
+            Self::EditorControls => "editor-controls",
             Self::Devtools => "devtools",
         }
     }
@@ -70,6 +75,7 @@ impl GalleryPage {
             Self::Overlay => overlay::TITLE,
             Self::Presentation => presentation::TITLE,
             Self::Components => components::TITLE,
+            Self::EditorControls => editor_controls::TITLE,
             Self::Devtools => devtools::TITLE,
         }
     }
@@ -84,6 +90,7 @@ impl GalleryPage {
             Self::Overlay => overlay::SUMMARY,
             Self::Presentation => presentation::SUMMARY,
             Self::Components => components::SUMMARY,
+            Self::EditorControls => editor_controls::SUMMARY,
             Self::Devtools => devtools::SUMMARY,
         }
     }
@@ -98,6 +105,7 @@ impl GalleryPage {
             Self::Overlay => overlay::SIGNALS,
             Self::Presentation => presentation::SIGNALS,
             Self::Components => components::SIGNALS,
+            Self::EditorControls => editor_controls::SIGNALS,
             Self::Devtools => devtools::SIGNALS,
         }
     }
@@ -129,7 +137,7 @@ impl GalleryPageSpec {
 }
 
 /// The canonical foundation section order.
-pub const GALLERY_SECTIONS: [GalleryPageSpec; 8] = [
+pub const GALLERY_SECTIONS: [GalleryPageSpec; 9] = [
     GalleryPageSpec::new(GalleryPage::Tokens),
     GalleryPageSpec::new(GalleryPage::SizingDensity),
     GalleryPageSpec::new(GalleryPage::Adaptive),
@@ -137,5 +145,6 @@ pub const GALLERY_SECTIONS: [GalleryPageSpec; 8] = [
     GalleryPageSpec::new(GalleryPage::Overlay),
     GalleryPageSpec::new(GalleryPage::Presentation),
     GalleryPageSpec::new(GalleryPage::Components),
+    GalleryPageSpec::new(GalleryPage::EditorControls),
     GalleryPageSpec::new(GalleryPage::Devtools),
 ];

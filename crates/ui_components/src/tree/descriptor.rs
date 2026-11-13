@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 /// Caller-owned child loading metadata for a tree item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TreeChildrenLoadState {
@@ -155,7 +155,7 @@ impl TreeItemDescriptor {
         self
     }
 
-    /// Marks this item as expanded.
+    /// Seeds expansion when the tree first mounts without an explicit expansion set.
     pub fn expanded(mut self, expanded: bool) -> Self {
         self.expanded = expanded;
         self
@@ -196,28 +196,34 @@ impl TreeItemDescriptor {
     }
 }
 
-pub(crate) fn apply_tree_expanded_overrides(
+pub(super) fn initial_tree_expanded_values(items: &[TreeItemDescriptor]) -> BTreeSet<String> {
+    fn collect(items: &[TreeItemDescriptor], values: &mut BTreeSet<String>) {
+        for item in items {
+            if item.expanded_state() {
+                values.insert(item.value().to_owned());
+            }
+            collect(item.child_descriptors(), values);
+        }
+    }
+
+    let mut values = BTreeSet::new();
+    collect(items, &mut values);
+    values
+}
+
+pub(super) fn apply_tree_expanded_values(
     items: &[TreeItemDescriptor],
-    expanded_values: &BTreeMap<String, bool>,
+    expanded_values: &BTreeSet<String>,
 ) -> Vec<TreeItemDescriptor> {
     items
         .iter()
-        .map(|item| apply_tree_expanded_override(item, expanded_values))
+        .map(|item| TreeItemDescriptor {
+            value: item.value.clone(),
+            label: item.label.clone(),
+            expanded: expanded_values.contains(item.value()),
+            children: apply_tree_expanded_values(item.child_descriptors(), expanded_values),
+            children_load_state: item.children_load_state.clone(),
+            disabled: item.disabled,
+        })
         .collect()
-}
-
-fn apply_tree_expanded_override(
-    item: &TreeItemDescriptor,
-    expanded_values: &BTreeMap<String, bool>,
-) -> TreeItemDescriptor {
-    let mut item = item.clone();
-    if let Some(expanded) = expanded_values.get(item.value()) {
-        item.expanded = *expanded;
-    }
-    item.children = item
-        .children
-        .iter()
-        .map(|child| apply_tree_expanded_override(child, expanded_values))
-        .collect();
-    item
 }

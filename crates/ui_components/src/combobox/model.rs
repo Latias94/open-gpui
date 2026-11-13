@@ -18,6 +18,7 @@ use super::descriptor::{
     ComboboxGroupDescriptor, ComboboxOptionDescriptor, flatten_combobox_choice_options,
 };
 use super::style::{ComboboxColors, ComboboxMetrics};
+use super::{ComboboxFilterMode, ComboboxResultsStatus};
 
 /// Combobox open-state ownership.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -75,6 +76,8 @@ pub struct ComboboxState {
     label: String,
     placeholder: String,
     query: String,
+    filter_mode: ComboboxFilterMode,
+    results_status: ComboboxResultsStatus,
     selected_value: Option<String>,
     selected_label: Option<String>,
     total_option_count: usize,
@@ -113,8 +116,14 @@ pub struct ComboboxStateRequest {
     pub placeholder: String,
     /// Current query text.
     pub query: String,
+    /// Whether the caller has already filtered the supplied result page.
+    pub filter_mode: ComboboxFilterMode,
+    /// Application-provided result status, independent of result membership.
+    pub results_status: ComboboxResultsStatus,
     /// Controlled selected option value.
     pub selected_value: Option<String>,
+    /// Fallback label for a selected identity absent from this result page.
+    pub selected_label: Option<String>,
     /// Active option value for this renderer-neutral state resolution.
     pub active_value: Option<String>,
     /// Empty result label.
@@ -149,7 +158,10 @@ impl ComboboxState {
             label,
             placeholder,
             query,
+            filter_mode,
+            results_status,
             selected_value,
+            selected_label,
             active_value,
             empty_label,
             groups,
@@ -173,6 +185,10 @@ impl ComboboxState {
         let open = disclosure.open();
         let open_mode = combobox_open_mode_from_disclosure(disclosure.open_mode());
         let normalized_query = choice::normalize_query(query.as_str());
+        let filter_query = match filter_mode {
+            ComboboxFilterMode::Local => normalized_query.as_str(),
+            ComboboxFilterMode::External => "",
+        };
         let raw_groups = groups;
         let raw_options = options;
         let total_option_count = raw_options.len()
@@ -195,7 +211,7 @@ impl ComboboxState {
             .collect::<BTreeSet<_>>();
         let filtered_options = raw_options
             .iter()
-            .filter(|option| option.matches_normalized_query(normalized_query.as_str()))
+            .filter(|option| option.matches_normalized_query(filter_query))
             .map(|option| {
                 option
                     .to_listbox_descriptor()
@@ -208,7 +224,7 @@ impl ComboboxState {
                 let options = group
                     .options_ref()
                     .iter()
-                    .filter(|option| option.matches_normalized_query(normalized_query.as_str()))
+                    .filter(|option| option.matches_normalized_query(filter_query))
                     .map(|option| {
                         option.to_listbox_descriptor().disabled(
                             option.disabled_state() || ambiguous_values.contains(option.value()),
@@ -226,10 +242,25 @@ impl ComboboxState {
                 .iter()
                 .map(|group| group.options_ref().len())
                 .sum::<usize>();
-        let selected_value = raw_collection.selected_value().map(str::to_owned);
+        let selected_absent = selected_value.as_deref().is_some_and(|value| {
+            !raw_collection
+                .items()
+                .iter()
+                .any(|item| item.value() == value)
+        });
+        let selected_value = raw_collection
+            .selected_value()
+            .map(str::to_owned)
+            .or(selected_value.filter(|_| selected_absent));
         let selected_label = raw_collection
             .selected_item()
-            .map(|item| item.label().to_owned());
+            .map(|item| item.label().to_owned())
+            .or(selected_label.filter(|_| selected_absent));
+        let empty_label = if filtered_option_count == 0 {
+            results_status.message().unwrap_or(&empty_label).to_owned()
+        } else {
+            empty_label
+        };
         let listbox = ListboxState::resolve(
             size,
             disabled,
@@ -272,6 +303,8 @@ impl ComboboxState {
             label,
             placeholder,
             query,
+            filter_mode,
+            results_status,
             selected_value,
             selected_label,
             total_option_count,
@@ -335,6 +368,16 @@ impl ComboboxState {
     /// Returns current query text.
     pub fn query(&self) -> &str {
         &self.query
+    }
+
+    /// Returns whether filtering belongs to the component or application.
+    pub const fn filter_mode(&self) -> ComboboxFilterMode {
+        self.filter_mode
+    }
+
+    /// Returns the application-provided result status.
+    pub const fn results_status(&self) -> &ComboboxResultsStatus {
+        &self.results_status
     }
 
     /// Returns selected option value.
