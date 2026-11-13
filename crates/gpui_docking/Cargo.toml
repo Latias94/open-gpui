@@ -2,7 +2,7 @@
 name = "open-gpui-docking"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
+rust-version = "1.95"
 authors.workspace = true
 description = "Retained docking graph and layout primitives for Open GPUI."
 repository.workspace = true
@@ -34,6 +34,8 @@ required-features = ["test-support"]
 test-support = ["open_gpui/test-support"]
 
 [dependencies]
+anyhow.workspace = true
+dockspace.workspace = true
 arrayvec.workspace = true
 open_gpui.workspace = true
 open_gpui_motion.workspace = true

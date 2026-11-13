@@ -136,6 +136,7 @@ criterion = { version = "0.8.2", features = ["html_reports"] }
 ctor = "1.0.6"
 derive_more = { version = "2.1.1", features = ["add", "add_assign", "deref", "deref_mut", "display", "from_str", "mul", "mul_assign", "not"] }
 dirs = "6.0"
+dockspace = { git = "https://github.com/Latias94/dockspace", rev = "46da973bcc8db7cb50c72aef0f65b6acd6b59338", default-features = false, features = ["serde"] }
 dunce = "1.0"
 env_logger = "0.11"
 futures = "0.3.32"
