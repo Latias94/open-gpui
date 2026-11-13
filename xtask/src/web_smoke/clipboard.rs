@@ -237,16 +237,7 @@ fn grant(cdp: &mut CdpClient, origin: &str) -> Result<(), String> {
 fn key(cdp: &mut CdpClient, key: &str, modifiers: u8) -> Result<(), String> {
     let code = format!("Key{}", key.to_ascii_uppercase());
     let virtual_key = key.as_bytes()[0].to_ascii_uppercase();
-    for kind in ["keyDown", "keyUp"] {
-        let mut event = json!({"type": kind, "key": key, "code": code, "modifiers": modifiers, "windowsVirtualKeyCode": virtual_key});
-        if cfg!(target_os = "macos") && kind == "keyDown" && key == "v" && modifiers == 4 {
-            // Chromium's macOS CDP path needs the native editing command as well
-            // as Meta+V; the browser still dispatches the real trusted paste event.
-            event["commands"] = json!(["paste"]);
-        }
-        cdp.call("Input.dispatchKeyEvent", event)?;
-    }
-    Ok(())
+    cdp.editing_key(key, &code, u32::from(virtual_key), modifiers)
 }
 
 fn number(state: &Value, field: &str) -> u64 {

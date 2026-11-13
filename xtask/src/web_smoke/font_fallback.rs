@@ -644,16 +644,7 @@ fn key(
     virtual_key: u32,
     modifiers: u8,
 ) -> Result<(), String> {
-    for kind in ["keyDown", "keyUp"] {
-        cdp.call(
-            "Input.dispatchKeyEvent",
-            json!({
-                "type": kind, "key": key, "code": code, "modifiers": modifiers,
-                "windowsVirtualKeyCode": virtual_key, "nativeVirtualKeyCode": virtual_key,
-            }),
-        )?;
-    }
-    Ok(())
+    cdp.editing_key(key, code, virtual_key, modifiers)
 }
 
 fn wait(

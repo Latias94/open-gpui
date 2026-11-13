@@ -2695,6 +2695,48 @@ impl CdpClient {
         Ok(())
     }
 
+    fn editing_key(
+        &mut self,
+        key: &str,
+        code: &str,
+        virtual_key: u32,
+        modifiers: u8,
+    ) -> Result<(), String> {
+        // Chromium's macOS CDP path needs native editor commands. Its native
+        // key codes differ from Windows virtual keys, so leave native codes unset.
+        let command = if cfg!(target_os = "macos") {
+            match (key, modifiers) {
+                ("ArrowUp", 4) => Some("moveToBeginningOfDocument"),
+                ("ArrowLeft", 0) => Some("moveLeft"),
+                ("ArrowRight", 0) => Some("moveRight"),
+                ("ArrowRight", 8) => Some("moveRightAndModifySelection"),
+                ("Backspace", 0) => Some("deleteBackward"),
+                ("Delete", 0) => Some("deleteForward"),
+                ("a", 4) => Some("selectAll"),
+                ("v", 4) => Some("paste"),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        for kind in ["keyDown", "keyUp"] {
+            let mut event = json!({
+                "type": kind,
+                "key": key,
+                "code": code,
+                "modifiers": modifiers,
+                "windowsVirtualKeyCode": virtual_key,
+            });
+            if kind == "keyDown"
+                && let Some(command) = command
+            {
+                event["commands"] = json!([command]);
+            }
+            self.call("Input.dispatchKeyEvent", event)?;
+        }
+        Ok(())
+    }
+
     fn key_press(&mut self, key: &str, code: &str, virtual_key: u32) -> Result<(), String> {
         self.call(
             "Input.dispatchKeyEvent",
