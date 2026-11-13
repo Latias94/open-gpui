@@ -6,7 +6,7 @@
 //!    inside the child-window factory to install callbacks before the first draw.
 //! 3. Call `collect(&mut session)` before `begin_native_host_frame`. Resolve native
 //!    receiver queries against U5's original presented artifacts in that frame.
-//! 4. Pass each committed report to `accept_report`. Outside every `SharedHost`
+//! 4. Move each committed report into `accept_report`. Outside every `SharedHost`
 //!    borrow, call `dispatch_effects(factory, cx)` and `drive_shutdown(cx)`.
 //! 5. Keep U5's one exact submission ticket per real window. `watch_submission`
 //!    only forwards its actual terminal snapshot; it never acknowledges outputs.
@@ -305,8 +305,32 @@ impl NativeBridge {
         Ok(callbacks)
     }
 
-    /// Installs the committed binding roster and retains affine effects in core order.
-    pub fn accept_report(&mut self, report: &mut HostFrameReport) {
+    /// Consumes one committed report, installing its roster and effects in core order.
+    ///
+    /// Admissions, close edges and placement retirement are consumed once, even
+    /// after permanent binding quiescence has reclaimed the retirement state.
+    ///
+    /// ```
+    /// use dockspace::runtime::HostFrameReport;
+    /// use open_gpui_docking::adapter::native::NativeBridge;
+    ///
+    /// fn deliver(bridge: &mut NativeBridge, report: HostFrameReport) {
+    ///     bridge.accept_report(report);
+    /// }
+    /// ```
+    ///
+    /// The consumed report cannot be replayed:
+    ///
+    /// ```compile_fail
+    /// use dockspace::runtime::HostFrameReport;
+    /// use open_gpui_docking::adapter::native::NativeBridge;
+    ///
+    /// fn replay(bridge: &mut NativeBridge, report: HostFrameReport) {
+    ///     bridge.accept_report(report);
+    ///     bridge.accept_report(report);
+    /// }
+    /// ```
+    pub fn accept_report(&mut self, mut report: HostFrameReport) {
         for continuation in report.native_root_continuations() {
             let before = continuation.predecessor();
             let after = continuation.successor();
@@ -381,6 +405,14 @@ impl NativeBridge {
     /// Drains reports independently of ingress retry failures.
     pub fn take_reports(&mut self) -> Vec<NativeReport> {
         self.reports.drain(..).collect()
+    }
+
+    pub(super) fn pop_report(&mut self) -> Option<NativeReport> {
+        self.reports.pop_front()
+    }
+
+    pub(super) fn retry_report(&mut self, report: NativeReport) {
+        self.reports.push_front(report);
     }
 
     /// Reports whether every physical and transport owner in this generation has retired.

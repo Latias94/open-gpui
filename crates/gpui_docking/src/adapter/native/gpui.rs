@@ -463,7 +463,13 @@ impl NativeCallbacks {
     }
     pub(super) fn continue_root(&self, binding: NativeWindowBinding) {
         self.0.binding.set(binding);
-        self.0.facts.set(None);
+        // Continuation retains this exact physical window. Its independent
+        // geometry and effect proofs must refresh, but inventory remains known.
+        self.0.facts.set(Some(if self.0.native_terminal.get() {
+            NativeWindowFacts::destroyed()
+        } else {
+            NativeWindowFacts::live()
+        }));
         self.0.observed.set(None);
         self.0.create.set(None);
         self.0.close.set(None);

@@ -4,6 +4,15 @@ Open GPUI v0.3 is an intentionally breaking, pre-release architecture release. S
 APIs are removed; explicitly adopted official migration aliases retain their upstream contract.
 This guide records each migration in the implementation unit that introduces it.
 
+## Native Docking Reports
+
+`adapter::native::NativeBridge::accept_report` now consumes `HostFrameReport` by
+value. Change `bridge.accept_report(&mut report)` to
+`bridge.accept_report(report)`. Read any required frame observations before that
+move. The report owns affine native effects and cannot be replayed after its
+placements retire. Managed `DockSurface` consumers already transfer reports
+through the host and need no additional event queue or historical binding set.
+
 ## Editable And Composable Controls
 
 `NumberInput` now mounts the existing text editor. Store an optional

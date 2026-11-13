@@ -73,8 +73,8 @@ fn captured_motion_keeps_its_fifo_position_while_an_update_lease_is_held(cx: &mu
         frame
             .complete_unpainted_surfaces(dockspace::runtime::SurfaceUnavailableReason::Deferred)
             .unwrap();
-        let mut report = frame.commit().unwrap();
-        bridge.accept_report(&mut report);
+        let report = frame.commit().unwrap();
+        bridge.accept_report(report);
     }
     assert!(transport.is_empty());
     let update = session
@@ -197,8 +197,8 @@ fn queued_terminal_preserves_the_next_generation(cx: &mut TestAppContext, cancel
         frame
             .complete_unpainted_surfaces(dockspace::runtime::SurfaceUnavailableReason::Deferred)
             .unwrap();
-        let mut report = frame.commit().unwrap();
-        bridge.accept_report(&mut report);
+        let report = frame.commit().unwrap();
+        bridge.accept_report(report);
     }
     assert!(transport.is_empty());
     let update = session

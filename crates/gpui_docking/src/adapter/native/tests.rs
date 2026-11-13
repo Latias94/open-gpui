@@ -107,8 +107,8 @@ pub(super) fn fixture(
         window
     });
     bridge.collect(&mut session).unwrap();
-    let mut report = commit(&mut session);
-    bridge.accept_report(&mut report);
+    let report = commit(&mut session);
+    bridge.accept_report(report);
     (session, bridge, bindings, windows)
 }
 
@@ -223,8 +223,8 @@ fn shared_root_continuation_retires_each_placement_once(cx: &mut TestAppContext)
     frame
         .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
         .unwrap();
-    let mut composed = frame.commit().unwrap();
-    bridge.accept_report(&mut composed);
+    let composed = frame.commit().unwrap();
+    bridge.accept_report(composed);
     bridge.take_reports();
     cx.set_window_frame_delivery_mode(window, PlatformFrameDeliveryMode::Deferred);
     let ticket = cx
@@ -263,7 +263,7 @@ fn shared_root_continuation_retires_each_placement_once(cx: &mut TestAppContext)
     frame
         .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
         .unwrap();
-    let mut report = frame.commit().unwrap();
+    let report = frame.commit().unwrap();
     let pairs = report.native_root_continuations().to_vec();
     assert_eq!(pairs.len(), 2);
     let successor = pairs[0].successor().window();
@@ -277,7 +277,7 @@ fn shared_root_continuation_retires_each_placement_once(cx: &mut TestAppContext)
             .iter()
             .all(|pair| pair.successor().window() == successor)
     );
-    bridge.accept_report(&mut report);
+    bridge.accept_report(report);
     let retired: Vec<_> = bridge
         .take_reports()
         .into_iter()
@@ -302,7 +302,6 @@ fn shared_root_continuation_retires_each_placement_once(cx: &mut TestAppContext)
     let callbacks = bridge.callbacks(successor).unwrap();
     assert_eq!(callbacks.binding(), successor);
     assert_eq!(callbacks.window_id(), Some(window.window_id()));
-    bridge.accept_report(&mut report);
     assert!(bridge.take_reports().is_empty());
     assert!(submission.complete(PlatformWindowPresentOutcome::Submitted));
     cx.run_until_parked();
@@ -447,7 +446,7 @@ fn failed_opens_release_staging_and_transfer_original_rollback_custody(cx: &mut 
             })
             .collect();
         assert_eq!(bindings.len(), 3, "{:?}", report.inputs());
-        bridge.accept_report(&mut report);
+        bridge.accept_report(report);
         bridge.enqueue_effects(effects);
         (session, bridge, bindings)
     });
@@ -552,8 +551,8 @@ fn native_close_defer_and_veto_preserve_the_original_real_window(cx: &mut TestAp
     let (mut session, mut bridge, _, windows) = cx.update(fixture);
     assert!(!cx.simulate_window_close(windows[1]));
     bridge.collect(&mut session).unwrap();
-    let mut report = commit(&mut session);
-    bridge.accept_report(&mut report);
+    let report = commit(&mut session);
+    bridge.accept_report(report);
     let close = bridge
         .take_reports()
         .into_iter()
@@ -570,8 +569,8 @@ fn native_close_defer_and_veto_preserve_the_original_real_window(cx: &mut TestAp
     bridge
         .decide_close(&mut session, close, NativeCloseDecision::Veto)
         .unwrap();
-    let mut report = commit(&mut session);
-    bridge.accept_report(&mut report);
+    let report = commit(&mut session);
+    bridge.accept_report(report);
     cx.update(|cx| {
         bridge
             .dispatch_effects(

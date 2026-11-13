@@ -13,9 +13,9 @@ use dockspace::{
     model::SurfaceId,
     runtime::{
         DockspaceHostFrame, DockspaceSession, HostFrameReport, HostWindowToken,
-        NativeHostCapability, NativeReceiverAnswer, NativeReceiverPurpose, NativeReceiverQuery,
-        NativeSurfaceBinding, NativeSurfaceCloseAction, NativeSurfaceCloseRequest,
-        NativeSurfacePlacement, NativeWindowBinding, NativeWindowHit,
+        NativeHostCapability, NativeHostErrorKind, NativeReceiverAnswer, NativeReceiverPurpose,
+        NativeReceiverQuery, NativeSurfaceBinding, NativeSurfaceCloseAction,
+        NativeSurfaceCloseRequest, NativeSurfacePlacement, NativeWindowBinding, NativeWindowHit,
     },
 };
 use open_gpui::{
@@ -73,9 +73,9 @@ struct NativeWake {
     _task: open_gpui::Task<()>,
 }
 
-pub(super) fn accept_owned_report(native: &mut ManagedHost, mut report: HostFrameReport) {
+pub(super) fn accept_owned_report(native: &mut ManagedHost, report: HostFrameReport) {
     if let Some(bridge) = &mut native.bridge {
-        bridge.accept_report(&mut report);
+        bridge.accept_report(report);
     } else {
         native.pending_reports.push_back(report);
     }
@@ -1015,10 +1015,10 @@ fn collect_host(
         if !pending_input && !advanced {
             return Ok(false);
         }
-        let mut report = frame.commit()?;
+        let report = frame.commit()?;
         let progressed = advanced || !report.inputs().is_empty();
         host.invalidate_report(&report);
-        bridge.accept_report(&mut report);
+        bridge.accept_report(report);
         recover_root_registrations(host, bridge, current, cx)?;
         process_reports(host, bridge, cx)?;
         if !progressed {
@@ -1086,12 +1086,23 @@ fn recover_root_registrations(
 }
 
 fn process_reports(host: &mut HostState, bridge: &mut NativeBridge, cx: &mut App) -> Result<()> {
-    for report in bridge.take_reports() {
+    while let Some(mut report) = bridge.pop_report() {
         match &report {
             NativeReport::CloseRequested(close) => {
                 let policy = host.native.as_ref().unwrap().close_policy;
-                if !host.native.as_ref().unwrap().transport.is_frozen() {
-                    bridge.decide_close(&mut host.session, *close, policy)?;
+                if !host.native.as_ref().unwrap().transport.is_frozen()
+                    && let Err(error) = bridge.decide_close(&mut host.session, *close, policy)
+                {
+                    if matches!(&error, NativeBridgeError::Core(error)
+                        if error.native_kind() == Some(NativeHostErrorKind::StaleBinding))
+                        && host.session.recognizes_native_binding(close.binding())
+                        && !host.session.is_current_native_binding(close.binding())
+                    {
+                        report = NativeReport::StaleCallback(close.binding().window());
+                    } else {
+                        bridge.retry_report(report);
+                        return Err(error.into());
+                    }
                 }
             }
             NativeReport::LogicalClosed(binding) => {
@@ -1151,8 +1162,8 @@ pub(super) fn pump(shared: &SharedHost, cx: &mut App) {
             false
         }
     };
-    while let Some(mut report) = host.native.as_mut().unwrap().pending_reports.pop_front() {
-        bridge.accept_report(&mut report);
+    while let Some(report) = host.native.as_mut().unwrap().pending_reports.pop_front() {
+        bridge.accept_report(report);
     }
     drop(host);
     let dock = DockSurface {
@@ -1168,8 +1179,8 @@ pub(super) fn pump(shared: &SharedHost, cx: &mut App) {
         shared.borrow_mut().fail(error);
     }
     let mut host = shared.borrow_mut();
-    while let Some(mut report) = host.native.as_mut().unwrap().pending_reports.pop_front() {
-        bridge.accept_report(&mut report);
+    while let Some(report) = host.native.as_mut().unwrap().pending_reports.pop_front() {
+        bridge.accept_report(report);
         more = true;
     }
     if let Err(error) = process_reports(&mut host, &mut bridge, cx) {
@@ -1203,16 +1214,20 @@ pub(super) fn pump(shared: &SharedHost, cx: &mut App) {
                 // Its live successor keeps the callback installation unsealed.
                 let _ = callbacks.seal();
             }
-            if bridge.quiesce_binding(&mut host.session, binding).is_ok() {
-                host.native.as_mut().unwrap().retired.remove(&binding);
-                if bridge.callbacks(binding.window()).is_none() {
-                    host.native
-                        .as_mut()
-                        .unwrap()
-                        .callbacks
-                        .retain(|_, callbacks| callbacks.binding() != binding.window());
+            match bridge.quiesce_binding(&mut host.session, binding) {
+                Ok(()) => {
+                    host.native.as_mut().unwrap().retired.remove(&binding);
+                    if bridge.callbacks(binding.window()).is_none() {
+                        host.native
+                            .as_mut()
+                            .unwrap()
+                            .callbacks
+                            .retain(|_, callbacks| callbacks.binding() != binding.window());
+                    }
+                    more = true;
                 }
-                more = true;
+                Err(NativeBridgeError::NotQuiescent) => {}
+                Err(error) => host.fail(error),
             }
         }
     }
