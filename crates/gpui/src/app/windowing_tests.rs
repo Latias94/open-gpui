@@ -1,9 +1,10 @@
 use super::Application;
 use crate::{
-    AppContext as _, Context, Empty, GraphicalEnvironment, InteractiveElement as _, IntoElement,
-    NativeBoundaryGeneration, NativeBoundaryKind, NativePlatformCommandKind, QuitMode, Render,
-    Styled as _, TestAppContext, Window, WindowHandle, WindowingRequest, div, px, red,
-    retained_visual, size,
+    AppContext as _, Bounds, Context, Empty, GraphicalEnvironment, InteractiveElement as _,
+    IntoElement, NativeBoundaryGeneration, NativeBoundaryKind, NativePlatformCommandKind, QuitMode,
+    Render, Styled as _, TestAppContext, Window, WindowFrameSubmissionOutcome, WindowHandle,
+    WindowMutationDispatch, WindowMutationDomain, WindowMutationOutcome, WindowOptions,
+    WindowPlacementRequest, WindowingRequest, div, point, px, red, retained_visual, size,
 };
 use anyhow::Result;
 use futures::{FutureExt as _, channel::oneshot};
@@ -330,6 +331,213 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> Option<&str> {
         .downcast_ref::<&str>()
         .copied()
         .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+}
+
+#[crate::test]
+fn root_builder_panic_settles_exact_frame_submission_before_native_retirement(
+    cx: &mut TestAppContext,
+) {
+    cx.update(|app| app.set_quit_mode(QuitMode::Explicit));
+    let submission = RefCell::new(None);
+    let platform_window = RefCell::new(None);
+    let native_drops = Rc::new(Cell::new(0));
+    let native_terminals = Rc::new(RefCell::new(Vec::new()));
+    let _subscription = cx.update(|app| {
+        app.on_window_native_terminal({
+            let native_terminals = native_terminals.clone();
+            move |_, window_id| native_terminals.borrow_mut().push(window_id)
+        })
+    });
+
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        cx.update(|app| {
+            app.open_window_detailed::<Empty>(WindowOptions::default(), |window, app| {
+                let native = cx
+                    .last_created_test_window()
+                    .expect("the root builder must own its actual platform window");
+                native.block_presentation_shutdown(true);
+                native.set_native_drop_callback({
+                    let native_drops = native_drops.clone();
+                    move || native_drops.set(native_drops.get() + 1)
+                });
+                platform_window.replace(Some(native));
+                submission.replace(Some(
+                    window
+                        .begin_exact_frame_submission(app)
+                        .expect("the live reservation must admit an exact-frame submission"),
+                ));
+                panic!("injected root-builder panic after exact-frame submission");
+            })
+        })
+    }))
+    .expect_err("the root-builder panic must propagate after retirement takes custody");
+    assert_eq!(
+        panic_message(panic.as_ref()),
+        Some("injected root-builder panic after exact-frame submission")
+    );
+    cx.run_until_parked();
+
+    let submission = submission.into_inner().unwrap();
+    let platform_window = platform_window.into_inner().unwrap();
+    assert_eq!(
+        submission.snapshot().outcome(),
+        WindowFrameSubmissionOutcome::WindowTerminal
+    );
+    assert!(cx.windows().is_empty());
+    assert_eq!(native_drops.get(), 0);
+    assert!(!platform_window.is_native_terminal());
+    assert!(native_terminals.borrow().is_empty());
+
+    platform_window.block_presentation_shutdown(false);
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_millis(512));
+    cx.run_until_parked();
+
+    assert_eq!(native_drops.get(), 1);
+    assert!(platform_window.is_native_terminal());
+    assert_eq!(
+        native_terminals.borrow().as_slice(),
+        &[submission.snapshot().window_id()]
+    );
+    assert_eq!(
+        submission.snapshot().outcome(),
+        WindowFrameSubmissionOutcome::WindowTerminal
+    );
+}
+
+#[crate::test]
+fn root_builder_panic_preserves_primary_panic_when_terminal_subscriber_panics(
+    cx: &mut TestAppContext,
+) {
+    cx.update(|app| app.set_quit_mode(QuitMode::Explicit));
+    let ticket = RefCell::new(None);
+    let subscriptions = RefCell::new(Vec::new());
+    let platform_window = RefCell::new(None);
+    let native_drops = Rc::new(Cell::new(0));
+    let sibling_deliveries = Rc::new(Cell::new(0));
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        cx.update(|app| {
+            app.open_window_detailed::<Empty>(WindowOptions::default(), |window, _| {
+                let native = cx.last_created_test_window().unwrap();
+                native.block_presentation_shutdown(true);
+                native.set_native_drop_callback({
+                    let native_drops = native_drops.clone();
+                    move || native_drops.set(native_drops.get() + 1)
+                });
+                platform_window.replace(Some(native));
+                let WindowMutationDispatch::Queued(pending) = window
+                    .request_window_placement_request(WindowPlacementRequest::windowed(
+                        Bounds::new(point(px(40.0), px(50.0)), size(px(320.0), px(200.0))),
+                    ))
+                else {
+                    panic!("the root builder must admit its placement mutation");
+                };
+                subscriptions.borrow_mut().push(pending.subscribe(|_| {
+                    panic!("injected terminal subscriber panic during creation unwind");
+                }));
+                subscriptions.borrow_mut().push(pending.subscribe({
+                    let sibling_deliveries = sibling_deliveries.clone();
+                    move |observation| {
+                        assert_eq!(observation.outcome, WindowMutationOutcome::WindowClosed);
+                        sibling_deliveries.set(sibling_deliveries.get() + 1);
+                    }
+                }));
+                ticket.replace(Some(pending));
+                panic!("injected primary root-builder panic with pending mutation");
+            })
+        })
+    }))
+    .expect_err("rollback must preserve the primary root-builder panic");
+    assert_eq!(
+        panic_message(panic.as_ref()),
+        Some("injected primary root-builder panic with pending mutation")
+    );
+    cx.run_until_parked();
+
+    let ticket = ticket.into_inner().unwrap();
+    assert_eq!(
+        ticket.observation().unwrap().outcome,
+        WindowMutationOutcome::WindowClosed
+    );
+    assert_eq!(sibling_deliveries.get(), 1);
+    assert!(cx.windows().is_empty());
+    assert_eq!(native_drops.get(), 0);
+
+    let platform_window = platform_window.into_inner().unwrap();
+    platform_window.block_presentation_shutdown(false);
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_millis(512));
+    cx.run_until_parked();
+    assert_eq!(native_drops.get(), 1);
+    assert!(platform_window.is_native_terminal());
+    assert_eq!(sibling_deliveries.get(), 1);
+}
+
+#[crate::test]
+fn shutdown_settles_pending_window_mutation_before_native_retirement(cx: &mut TestAppContext) {
+    cx.update(|app| app.set_quit_mode(QuitMode::Explicit));
+    let window = cx.open_window(size(px(160.0), px(100.0)), |_, _| Empty);
+    let platform_window = cx.test_window(window.into());
+    platform_window.block_presentation_shutdown(true);
+    let terminal = cx.hold_window_native_terminal(window.into());
+    let native_drops = Rc::new(Cell::new(0));
+    platform_window.set_native_drop_callback({
+        let native_drops = native_drops.clone();
+        move || native_drops.set(native_drops.get() + 1)
+    });
+    let ticket = window
+        .update(cx, |_, window, _| {
+            match window.request_window_placement_request(WindowPlacementRequest::windowed(
+                Bounds::new(point(px(40.0), px(50.0)), size(px(320.0), px(200.0))),
+            )) {
+                WindowMutationDispatch::Queued(ticket) => ticket,
+                dispatch => panic!("expected a queued placement mutation, got {dispatch:?}"),
+            }
+        })
+        .expect("the live window must admit a pending placement mutation");
+    assert!(ticket.observation().is_none());
+    let deliveries = Rc::new(RefCell::new(Vec::new()));
+    let _subscription = ticket.subscribe({
+        let deliveries = deliveries.clone();
+        let native_drops = native_drops.clone();
+        move |observation| {
+            assert_eq!(native_drops.get(), 0);
+            deliveries.borrow_mut().push(observation.outcome);
+        }
+    });
+
+    cx.update(|app| app.shutdown());
+    cx.run_until_parked();
+
+    assert_eq!(
+        ticket.observation().unwrap().outcome,
+        WindowMutationOutcome::WindowClosed
+    );
+    assert_eq!(
+        deliveries.borrow().as_slice(),
+        &[WindowMutationOutcome::WindowClosed]
+    );
+    assert!(cx.windows().contains(&window.into()));
+    assert_eq!(native_drops.get(), 0);
+    assert!(!platform_window.is_native_terminal());
+    assert!(!platform_window.flush_window_mutation(WindowMutationDomain::Placement));
+
+    platform_window.block_presentation_shutdown(false);
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_millis(512));
+    cx.run_until_parked();
+    assert!(cx.windows().is_empty());
+    assert_eq!(native_drops.get(), 1);
+    assert!(terminal.release());
+    cx.run_until_parked();
+    assert_eq!(
+        deliveries.borrow().as_slice(),
+        &[WindowMutationOutcome::WindowClosed]
+    );
+    assert_eq!(
+        ticket.observation().unwrap().outcome,
+        WindowMutationOutcome::WindowClosed
+    );
 }
 
 /// Exercises retirement handoff with an actual Window whose ticket has not been prepared.

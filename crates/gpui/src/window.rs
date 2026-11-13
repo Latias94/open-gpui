@@ -2986,6 +2986,7 @@ impl Window {
 
     pub(crate) fn claim_presentation_shutdown(&mut self) -> PreparedPlatformPresentationShutdown {
         self.cancel_deferred_submission();
+        self.settle_logical_window_terminal();
         if self.presentation_shutdown.is_none() {
             self.retire_retained_visuals();
         }
@@ -4347,19 +4348,8 @@ impl Window {
             "presentation-shutdown claim",
         );
         let preparation = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.terminate_provisional_presentation_for_window_close();
-            self.invalidate_platform_window_mutations();
-            let deliveries = self.window_mutations.settle_all(
-                &self.window_mutation_authority,
-                WindowMutationOutcome::WindowClosed,
-                &self.platform_facts,
-            );
-            let ticket_delivery =
-                Self::deliver_window_mutation_ticket_deliveries_panic_safe(deliveries);
+            self.settle_logical_window_terminal();
             self.a11y.clear_announcements_for_window_close();
-            if let Err(payload) = ticket_delivery {
-                std::panic::resume_unwind(payload);
-            }
         }));
         retain_first_window_cleanup_panic(
             &mut first_panic,
@@ -4634,8 +4624,6 @@ impl Window {
         self.should_close_handler.terminate();
         let mut first_panic = None;
 
-        self.terminate_provisional_presentation_for_window_close();
-
         retain_first_window_cleanup_panic(
             &mut first_panic,
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -4647,35 +4635,10 @@ impl Window {
         retain_first_window_cleanup_panic(
             &mut first_panic,
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                self.invalidate_platform_window_mutations();
+                self.settle_logical_window_terminal();
             })),
-            "platform mutation invalidation",
+            "logical window terminal cleanup",
         );
-
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.window_mutations.settle_all(
-                &self.window_mutation_authority,
-                WindowMutationOutcome::WindowClosed,
-                &self.platform_facts,
-            )
-        })) {
-            Ok(deliveries) => {
-                for delivery in deliveries {
-                    retain_first_window_cleanup_panic(
-                        &mut first_panic,
-                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            delivery.deliver();
-                        })),
-                        "window mutation ticket delivery",
-                    );
-                }
-            }
-            Err(payload) => retain_first_window_cleanup_panic(
-                &mut first_panic,
-                Err(payload),
-                "window mutation settlement",
-            ),
-        }
 
         retain_first_window_cleanup_panic(
             &mut first_panic,
@@ -4709,6 +4672,37 @@ impl Window {
         self.pending_focus_completion = None;
         self.focus_claim_resolutions.clear();
         self.removed = true;
+        if let Some(payload) = first_panic {
+            std::panic::resume_unwind(payload);
+        }
+    }
+
+    fn settle_logical_window_terminal(&mut self) {
+        self.terminate_provisional_presentation_for_window_close();
+        let mut first_panic = None;
+        retain_first_window_cleanup_panic(
+            &mut first_panic,
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.invalidate_platform_window_mutations();
+            })),
+            "platform mutation invalidation",
+        );
+        retain_first_window_cleanup_panic(
+            &mut first_panic,
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let deliveries = self.window_mutations.settle_all(
+                    &self.window_mutation_authority,
+                    WindowMutationOutcome::WindowClosed,
+                    &self.platform_facts,
+                );
+                if let Err(payload) =
+                    Self::deliver_window_mutation_ticket_deliveries_panic_safe(deliveries)
+                {
+                    std::panic::resume_unwind(payload);
+                }
+            })),
+            "window mutation terminal cleanup",
+        );
         if let Some(payload) = first_panic {
             std::panic::resume_unwind(payload);
         }

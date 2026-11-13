@@ -74,7 +74,22 @@ impl Drop for WindowCreationRollback {
         };
 
         if let Some(cell) = self.app_cell.upgrade() {
-            cell.enqueue_native_window_retirement(self.window_id, Box::new(window));
+            let retirement = catch_unwind(AssertUnwindSafe(|| {
+                cell.enqueue_native_window_retirement(self.window_id, Box::new(window));
+            }));
+            if let Err(payload) = retirement {
+                if std::thread::panicking() {
+                    // Retirement retains the owner before propagating preparation failures.
+                    // Preserve the original creation panic, including against payload Drop.
+                    log::error!(
+                        "suppressed secondary panic while retiring failed window {:?}",
+                        self.window_id
+                    );
+                    std::mem::forget(payload);
+                } else {
+                    resume_unwind(payload);
+                }
+            }
         } else {
             // The app cell should outlive every synchronous open transaction. If that invariant
             // is broken, leak the native owner rather than dropping a live backend window without
