@@ -142,8 +142,11 @@ fn test_display_observation(state: &TestWindowState) -> Option<PlatformPhysicalD
 }
 
 fn test_physical_geometry(state: &TestWindowState) -> Option<PlatformWindowPhysicalGeometry> {
-    let geometry =
-        PlatformWindowPhysicalGeometry::try_new(state.physical_client_bounds?, state.scale_factor)?;
+    let bounds = state.physical_client_bounds?;
+    // TestWindow models an undecorated native window, so its observed outer
+    // bounds equal its client bounds. Production backends observe their own frame.
+    let geometry = PlatformWindowPhysicalGeometry::try_new(bounds, state.scale_factor)?
+        .with_outer_bounds(bounds)?;
     match state.physical_display_observation {
         Some(display) => geometry.with_display_observation(display),
         None => Some(geometry),
@@ -3174,6 +3177,7 @@ mod window_mutation_tests {
         let geometry = platform_window
             .physical_geometry()
             .expect("explicit test physical geometry should be observable");
+        assert_eq!(geometry.outer_bounds(), Some(geometry.client_bounds()));
         assert_eq!(
             geometry.client_bounds(),
             Bounds::new(

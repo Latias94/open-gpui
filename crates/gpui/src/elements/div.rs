@@ -6245,6 +6245,8 @@ mod tests {
         .unwrap();
         let initial_geometry = PlatformWindowPhysicalGeometry::try_new(initial_bounds, 2.0)
             .unwrap()
+            .with_outer_bounds(initial_bounds)
+            .unwrap()
             .with_display_observation(initial_display)
             .unwrap();
         let initial_hysteresis =
