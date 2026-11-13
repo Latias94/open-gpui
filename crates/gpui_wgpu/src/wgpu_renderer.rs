@@ -66,11 +66,15 @@ pub enum WgpuSceneColorSpace {
     LinearSrgb,
 }
 
+const COMPOSITING_PREMULTIPLIED_ALPHA: u32 = 1 << 0;
+const COMPOSITING_LINEAR_SRGB: u32 = 1 << 1;
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GlobalParams {
     viewport_size: [f32; 2],
-    premultiplied_alpha: u32,
+    /// Bit 0 premultiplies output RGB by alpha; bit 1 selects linear-sRGB composition.
+    compositing_flags: u32,
     clip_shape_count: u32,
     path_paint_base: u32,
     path_curve_base: u32,
@@ -718,7 +722,6 @@ impl WgpuRendererCore {
             alpha_mode,
             dual_source_blending,
             uses_webgl_instance_data,
-            color_space,
         );
 
         let atlas_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -1032,7 +1035,6 @@ impl WgpuRendererCore {
         alpha_mode: wgpu::CompositeAlphaMode,
         dual_source_blending: bool,
         uses_webgl_instance_data: bool,
-        color_space: WgpuSceneColorSpace,
     ) -> WgpuPipelines {
         // Diagnostic guard: verify the device actually has
         // DUAL_SOURCE_BLENDING. We have a crash report (ZED-5G1) where a
@@ -1088,14 +1090,6 @@ impl WgpuRendererCore {
             blend: Some(blend_mode),
             write_mask: wgpu::ColorWrites::ALL,
         };
-        let constants = [(
-            "LINEAR_SRGB",
-            match color_space {
-                WgpuSceneColorSpace::SrgbEncoded => 0.0,
-                WgpuSceneColorSpace::LinearSrgb => 1.0,
-            },
-        )];
-
         let create_pipeline = |name: &str,
                                vs_entry: &str,
                                fs_entry: &str,
@@ -1121,19 +1115,13 @@ impl WgpuRendererCore {
                     module,
                     entry_point: Some(vs_entry),
                     buffers: &[],
-                    compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: &constants,
-                        ..Default::default()
-                    },
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
                     module,
                     entry_point: Some(fs_entry),
                     targets: color_targets,
-                    compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: &constants,
-                        ..Default::default()
-                    },
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                 }),
                 primitive: wgpu::PrimitiveState {
                     topology,
@@ -1399,7 +1387,6 @@ impl WgpuRenderer {
             let surface_config = self.surface_config.clone();
             let dual_source_blending = self.core().dual_source_blending;
             let uses_webgl_instance_data = self.core().uses_webgl_instance_data;
-            let color_space = self.core().color_space;
             self.surface_lifecycle.request_reconfigure();
             let resources = self.resources_mut();
             resources.pipelines = WgpuRendererCore::create_pipelines(
@@ -1409,7 +1396,6 @@ impl WgpuRenderer {
                 surface_config.alpha_mode,
                 dual_source_blending,
                 uses_webgl_instance_data,
-                color_space,
             );
         }
     }
@@ -1855,12 +1841,19 @@ impl WgpuRendererCore {
             .context("scene instance data exceeds WGPU buffer limits")?;
         self.prepare_texture_bind_groups(atlas_presentation);
         let depth_scale = quad_depth_scale(scene.quads.len());
+        let mut compositing_flags = 0;
+        if self.premultiplied_alpha {
+            compositing_flags |= COMPOSITING_PREMULTIPLIED_ALPHA;
+        }
+        if self.color_space == WgpuSceneColorSpace::LinearSrgb {
+            compositing_flags |= COMPOSITING_LINEAR_SRGB;
+        }
         let globals = GlobalParams {
             viewport_size: [
                 self.frame_size.width.0 as f32,
                 self.frame_size.height.0 as f32,
             ],
-            premultiplied_alpha: self.premultiplied_alpha as u32,
+            compositing_flags,
             clip_shape_count: self.clip_shape_count,
             path_paint_base: instance_bindings.path_tiles.paint_base,
             path_curve_base: instance_bindings.path_tiles.curve_base,
@@ -3194,6 +3187,7 @@ mod abi_layout_tests {
     #[test]
     fn exact_clip_types_have_canonical_renderer_abi() {
         assert_eq!(size_of::<GlobalParams>(), 32);
+        assert_eq!(offset_of!(GlobalParams, compositing_flags), 8);
         assert_eq!(offset_of!(GlobalParams, clip_shape_count), 12);
 
         assert_eq!(align_of::<GpuClipShape>(), align_of::<f32>());
@@ -3216,6 +3210,58 @@ mod abi_layout_tests {
         assert_eq!(offset_of!(SurfaceParams, clip), 16);
         assert_eq!(offset_of!(SurfaceParams, _pad), 40);
         assert_eq!(size_of::<SurfaceParams>(), 48);
+    }
+
+    #[test]
+    fn compositing_uniform_matches_shader_layouts() {
+        let expected = [
+            (
+                Some("viewport_size"),
+                offset_of!(GlobalParams, viewport_size),
+            ),
+            (
+                Some("compositing_flags"),
+                offset_of!(GlobalParams, compositing_flags),
+            ),
+            (
+                Some("clip_shape_count"),
+                offset_of!(GlobalParams, clip_shape_count),
+            ),
+            (
+                Some("path_paint_base"),
+                offset_of!(GlobalParams, path_paint_base),
+            ),
+            (
+                Some("path_curve_base"),
+                offset_of!(GlobalParams, path_curve_base),
+            ),
+            (Some("depth_scale"), offset_of!(GlobalParams, depth_scale)),
+            (Some("quad_count"), offset_of!(GlobalParams, quad_count)),
+        ];
+        for source in [STORAGE_BUFFER_SHADERS, WEBGL_SHADERS, SUBPIXEL_SHADERS] {
+            let module = naga::front::wgsl::parse_str(source).expect("shader must parse");
+            let globals = module
+                .global_variables
+                .iter()
+                .find_map(|(_, global)| {
+                    global
+                        .binding
+                        .as_ref()
+                        .is_some_and(|binding| binding.group == 0 && binding.binding == 0)
+                        .then_some(global)
+                })
+                .expect("the globals uniform must be bound at group 0, binding 0");
+            assert_eq!(globals.space, naga::AddressSpace::Uniform);
+            let naga::TypeInner::Struct { members, span } = &module.types[globals.ty].inner else {
+                panic!("the globals uniform must be a parameter struct");
+            };
+            assert_eq!(*span as usize, size_of::<GlobalParams>());
+            let actual = members
+                .iter()
+                .map(|member| (member.name.as_deref(), member.offset as usize))
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected);
+        }
     }
 
     #[test]
@@ -3290,6 +3336,116 @@ mod abi_layout_tests {
 mod tests {
     use super::*;
     use open_gpui::{PlatformHeadlessRenderer as _, size};
+
+    #[test]
+    fn compositing_flags_preserve_alpha_and_color_space_pixels() -> anyhow::Result<()> {
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let target_size = size(DevicePixels(1), DevicePixels(1));
+        renderer.ensure_render_target(target_size)?;
+        let view = renderer.render_target.as_ref().unwrap().view.clone();
+        let device = renderer.context.device.clone();
+        let source = format!(
+            "{STORAGE_BUFFER_SHADERS}\n{}",
+            r#"
+@vertex
+fn vs_compositing_flags(@builtin(vertex_index) vertex_id: u32) -> @builtin(position) vec4<f32> {
+    let position = vec2<f32>(f32((vertex_id << 1u) & 2u), f32(vertex_id & 2u));
+    return vec4<f32>(position * 2.0 - vec2<f32>(1.0), 0.0, 1.0);
+}
+
+@fragment
+fn fs_compositing_flags() -> @location(0) vec4<f32> {
+    return blend_color(vec4<f32>(0.5, 0.25, 0.75, 0.5), 1.0);
+}
+"#,
+        );
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("compositing flags pixel probe"),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(source)),
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("compositing flags pixel probe"),
+            bind_group_layouts: &[Some(&renderer.core.resources.bind_group_layouts.globals)],
+            immediate_size: 0,
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("compositing flags pixel probe"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vs_compositing_flags"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs_compositing_flags"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: renderer.core.target_format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
+        for (color_space, premultiplied_alpha, expected) in [
+            (
+                WgpuSceneColorSpace::SrgbEncoded,
+                false,
+                [128u8, 64, 191, 128],
+            ),
+            (WgpuSceneColorSpace::SrgbEncoded, true, [64, 32, 96, 128]),
+            (WgpuSceneColorSpace::LinearSrgb, false, [55, 13, 133, 128]),
+            (WgpuSceneColorSpace::LinearSrgb, true, [27, 6, 67, 128]),
+        ] {
+            renderer.core.color_space = color_space;
+            renderer.core.render_frame(
+                &Scene::default(),
+                &view,
+                target_size,
+                premultiplied_alpha,
+                wgpu::Color::TRANSPARENT,
+            )?;
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("compositing flags pixel probe"),
+            });
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("compositing flags pixel probe"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    ..Default::default()
+                });
+                pass.set_pipeline(&pipeline);
+                pass.set_bind_group(0, &renderer.core.resources.globals_bind_group, &[]);
+                pass.draw(0..3, 0..1);
+            }
+            renderer.last_submission = Some(renderer.context.queue.submit([encoder.finish()]));
+            let image = renderer.read_image()?;
+            let actual = image.get_pixel(0, 0).0;
+            assert!(
+                actual
+                    .into_iter()
+                    .zip(expected)
+                    .all(|(actual, expected)| actual.abs_diff(expected) <= 1),
+                "color_space={color_space:?}, premultiplied_alpha={premultiplied_alpha}: {actual:?} != {expected:?}"
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn headless_submission_reuses_target_and_reads_padded_rows() -> anyhow::Result<()> {
@@ -3441,7 +3597,6 @@ mod tests {
             wgpu::CompositeAlphaMode::Opaque,
             dual_source_blending,
             false,
-            WgpuSceneColorSpace::SrgbEncoded,
         );
 
         assert_eq!(pipelines.subpixel_sprites.is_some(), dual_source_blending);

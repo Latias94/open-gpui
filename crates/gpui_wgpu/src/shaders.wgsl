@@ -79,7 +79,7 @@ fn apply_contrast_and_gamma_correction3(sample: vec3<f32>, color: vec3<f32>, enh
 
 struct GlobalParams {
     viewport_size: vec2<f32>,
-    premultiplied_alpha: u32,
+    compositing_flags: u32,
     clip_shape_count: u32,
     path_paint_base: u32,
     path_curve_base: u32,
@@ -103,7 +103,8 @@ struct GammaParams {
 const M_PI_F: f32 = 3.1415926;
 const GRAYSCALE_FACTORS: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
 
-override LINEAR_SRGB: bool = false;
+const COMPOSITING_PREMULTIPLIED_ALPHA: u32 = 1u << 0u;
+const COMPOSITING_LINEAR_SRGB: u32 = 1u << 1u;
 const SIMPLE_PRIMITIVE_FLAG: u32 = 0x80000000u;
 const CULLED_POSITION: vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, 1.0);
 
@@ -543,7 +544,7 @@ fn blend_color(color: vec4<f32>, alpha_factor: f32) -> vec4<f32> {
 }
 
 fn srgb_to_scene(color: vec4<f32>) -> vec4<f32> {
-    if (LINEAR_SRGB) {
+    if ((globals.compositing_flags & COMPOSITING_LINEAR_SRGB) != 0u) {
         return srgba_to_linear(color);
     }
     return color;
@@ -551,7 +552,7 @@ fn srgb_to_scene(color: vec4<f32>) -> vec4<f32> {
 
 fn blend_scene_color(color: vec4<f32>, alpha_factor: f32) -> vec4<f32> {
     let alpha = color.a * alpha_factor;
-    let multiplier = select(1.0, alpha, globals.premultiplied_alpha != 0u);
+    let multiplier = select(1.0, alpha, (globals.compositing_flags & COMPOSITING_PREMULTIPLIED_ALPHA) != 0u);
     return vec4<f32>(color.rgb * multiplier, alpha);
 }
 
@@ -1648,8 +1649,10 @@ fn vs_poly_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
 
 @fragment
 fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
+    // Atlas and imported image textures have one mip level. Explicit LOD keeps
+    // both branches valid when sprite flags or exact clips diverge per fragment.
     if ((input.sprite_id & SIMPLE_PRIMITIVE_FLAG) != 0u) {
-        let sample = textureSample(t_sprite, s_sprite, input.tile_position);
+        let sample = textureSampleLevel(t_sprite, s_sprite, input.tile_position, 0.0);
         let clip = ClipEnvelope(Bounds(input.clip_bounds.xy, input.clip_bounds.zw), input.clip_range.x, input.clip_range.y);
         if (!clip_envelope_contains(input.position.xy, clip)) {
             return vec4<f32>(0.0);
@@ -1665,7 +1668,7 @@ fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
         let last = vec2<f32>(sprite.tile.bounds.origin + sprite.tile.bounds.size) - vec2<f32>(0.5);
         position = clamp(position, first / dimensions, last / dimensions);
     }
-    let filtered = textureSample(t_sprite, s_sprite, position);
+    let filtered = textureSampleLevel(t_sprite, s_sprite, position, 0.0);
     if (!clip_envelope_contains(input.position.xy, sprite.clip)) {
         return vec4<f32>(0.0);
     }
@@ -1684,7 +1687,7 @@ fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
         }
     }
     if ((sprite.pad & 1u) != 0u) {
-        if (!LINEAR_SRGB) {
+        if ((globals.compositing_flags & COMPOSITING_LINEAR_SRGB) == 0u) {
             sample = linear_to_srgba(sample);
         }
     } else {
