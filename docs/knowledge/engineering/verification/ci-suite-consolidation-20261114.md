@@ -381,7 +381,7 @@ while waiting for a Pending token; after acquisition every original token and
 retirement assertion remains unchanged. Both changes receive independent source
 review, and the Windows all-target/all-feature SDK check passes in 6.580 seconds.
 Log: `/tmp/open-gpui-ci-default-work-area-msvc-20261114.log`. Owning Windows execution
-of both corrections remains required.
+of both corrections remains required at this pre-publication checkpoint.
 
 The complete Windows GPU-host job passes at `cc43c195`: WGPU **149/149**, the
 independent atlas **1/1**, the application-supplied native renderer **1/1**, and
@@ -391,6 +391,45 @@ routing, resize, cancelled-token refusal, exact prefix quiescence and typed
 Detached completion while the host continues to its own `WM_QUIT`. Log:
 `/tmp/open-gpui-ci-followup2-gpu-success-20261114.log`. The Mac complete Core step
 also passes at this same revision before proceeding to its feature variants.
+
+At the subsequent published source
+`6eb51e6ab477a33027a8e593773d6f249af78d0b`,
+[Verify run 43576687839](https://github.com/Latias94/open-gpui/actions/runs/43576687839)
+passes the complete Windows backend step at **09:01:22 UTC**, including both the
+ordinary default-window and deferred-token retirement regressions. FXC and both
+native animation cases pass earlier in the same job. Its desktop and tracking
+cohorts continue separately. The complete Windows GPU-host job also passes again.
+The exact-head native step snapshot is
+`/tmp/open-gpui-ci-default-and-deferred-native-passed-20261114.json`.
+
+### Mac Sheet Recheck
+
+The shared default-size change receives an additional actual AppKit sheet check
+at `6eb51e6a`. The freshly rebuilt offline-Metal probe first exits **1** after a
+five-second first-scene timeout; the runtime-shader rebuild also exits **1** at
+the same stage. Both report the first window visible and initial presentation
+Completed, but no accepted or submitted frame. The host reports active user and
+display-power assertions, so no unavailable-GUI conclusion follows. Neither
+attempt aborts or leaves its native process or temporary App behind.
+
+Commit `0635075f` only adds scene rejection logs and timeout-time bounds,
+viewport and rendered-generation diagnostics. A subsequent runtime-shader build
+completes every sheet stage and exits with actual **OS wait status 0**: explicit
+and nested owners, parent retirement, hidden submission/activation and titlebar
+checks. Its executable SHA-256 is
+`f213cd2d125c58055c61cb22580b6a9e9489080ed2d5ce48704a96fe185e0aa3`.
+This is one successful execution after two failures, not a causal repair or a
+stable-repetition claim. Independent source inspection finds no demonstrated
+production defect and leaves the transient first-frame timeout unresolved. No
+timeout or assertion is relaxed, and no production draw path changes.
+
+The exact build/working-tree receipt is
+`/tmp/open-gpui-ci-work-area-native-mac-final-receipt-20261114.json`. Failure and
+success logs are `/tmp/open-gpui-ci-work-area-native-mac-sheet-20261114.log`,
+`/tmp/open-gpui-ci-work-area-native-mac-sheet-diagnostic-20261114.log` and
+`/tmp/open-gpui-ci-work-area-native-mac-sheet-geometry-20261114.log`. Final inventory
+has zero native probe processes and the last temporary App is removed. Physical
+input and fullscreen pixels remain outside this receipt.
 
 ## Consumer Follow-up
 
