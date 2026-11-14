@@ -1,5 +1,21 @@
 # Verification
 
+## November 14 CI Suite Consolidation
+
+The [CI consolidation record](knowledge/engineering/verification/ci-suite-consolidation-20261114.md)
+owns the current workflow layout, the reproduced 45-minute job timeouts and the
+mapping from per-fix filters to complete package suites. Stable Core/platform and
+independently locked consumers run on all three desktop hosts. Windows desktop
+and GPU-host tests and the real browser workflow have independent jobs. Default
+and complete features, instrumentation-free APIs, explicit ignored native tests
+and environment-sensitive handle tracking retain their separate gates.
+
+At exact `2890cd30`, production FXC compilation and the complete Linux browser
+smoke pass. All three stable-platform jobs then hit their job timeouts; this is
+not a complete Verify pass. The restructured workflow still needs its own remote
+execution result. Physical-input runner availability and unpublished dockspace
+source remain separate follow-ups in the linked record.
+
 ## November 14 Retained SVG and CI Follow-up
 
 Official `aff99ecc3249cfa95e720c4d6c1eb4a72105a3ee` is adopted at the fixed

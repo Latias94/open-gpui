@@ -149,12 +149,22 @@ run results in the ledger before claiming a complete remote Verify pass.
 `3f9e1ec2` adds Windows FXC compilation of the four changed sprite entries and a
 real retained-SVG animation scenario alongside the existing generic animation
 test. MSVC-target all-feature compilation, SDK-backed Clippy and independent
-source review pass; actual FXC/native execution awaits the owning Windows job.
+source review pass. The owning Windows job at `2890cd30` subsequently passes FXC;
+its native animation step is not reached before the 45-minute job timeout.
 Remote `a607b3d7` already passes both Windows compiler floors, dependency health,
 packageability and the full Linux browser smoke step. The separate physical-input
 workflow has zero registered self-hosted runners: supply its documented ephemeral
 interactive runner before treating that gate as executable. The obsolete queued
 `6017e2a3` run is cancelled; newer candidates retain their original exact SHA.
+
+The subsequent [CI consolidation](../knowledge/engineering/verification/ci-suite-consolidation-20261114.md)
+replaces the accumulated per-fix filters and nested local rollup with complete
+package suites, preserving distinct compiler/feature/consumer/native gates.
+All three stable jobs at `2890cd30` exhaust their 45-minute cold-build limits;
+browser, native, GPU-host and consumer checks now have independent jobs. Read the
+new record for actual execution receipts before treating the workflow as green.
+It also records dockspace's unpublished `5ff5c2c2` release-retirement correction:
+publish and qualify its explicit source range before moving the framework pin.
 
 Continue with the actual remaining integration boundaries:
 
