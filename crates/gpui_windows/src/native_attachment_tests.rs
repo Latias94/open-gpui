@@ -416,6 +416,7 @@ fn native_external_host_releases_owned_window_input_services_before_ole_shutdown
     let handle = app.update(|cx| {
         cx.open_window(
             WindowOptions {
+                window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
                 show: false,
                 focus_on_appearing: false,
                 ..Default::default()

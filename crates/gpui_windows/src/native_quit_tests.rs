@@ -15,6 +15,7 @@ fn native_session_quit_preserves_registered_authority_and_terminal_fence() {
     app.update_for_test(|cx| {
         cx.open_window(
             WindowOptions {
+                window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
                 show: false,
                 focus_on_appearing: false,
                 ..WindowOptions::default()

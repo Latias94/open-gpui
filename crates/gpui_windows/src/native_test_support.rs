@@ -8018,6 +8018,75 @@ fn failed_dialog_construction_rolls_back_hwnd_drag_drop_and_modal_parent() {
 }
 
 #[test]
+fn native_default_window_bounds_map_and_retire_exactly() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
+    );
+    let platform_hwnd = platform.handle;
+    let platform_inner = platform.inner.clone();
+    let lifecycle_probe = platform.lifecycle_test_probe.clone();
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let window = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    show: false,
+                    focus_on_appearing: false,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("default native window bounds must map exactly");
+    let hwnd = lifecycle_probe
+        .last_created_hwnd()
+        .expect("default native window should retain its original HWND");
+    let registration = platform
+        .raw_window_handles
+        .read()
+        .iter()
+        .find(|registration| registration.window_id() == window.window_id())
+        .copied()
+        .expect("default native window should retain its exact registration");
+    assert_eq!(registration.as_raw(), hwnd);
+    assert!(unsafe { IsWindow(Some(hwnd)).as_bool() });
+    assert!(!unsafe { IsWindowVisible(hwnd).as_bool() });
+    let native = platform
+        .window_from_hwnd(hwnd)
+        .expect("default native window should resolve its original HWND");
+    assert!(native.registration.matches(registration));
+
+    app.update_for_test(|cx| window.update(cx, |_, window, cx| window.remove_window(cx)))
+        .expect("default native window should close normally");
+    pump_messages_until(
+        &Rc::downgrade(&platform_inner),
+        "default native window retirement",
+        || !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd),
+    );
+    assert!(native.is_native_window_terminal());
+    drop(native);
+    assert!(platform.raw_window_handles.read().is_empty());
+    app.update_for_test(|cx| assert!(cx.windows().is_empty()));
+
+    drop(app);
+    drop(platform);
+    pump_messages_until(
+        &Rc::downgrade(&platform_inner),
+        "default native window platform and OLE finalization",
+        || {
+            !unsafe { IsWindow(Some(platform_hwnd)).as_bool() }
+                && lifecycle_probe.ole_uninitialize_count() == 1
+        },
+    );
+    assert!(platform_inner.native_retirement_is_settled());
+    drop(platform_inner);
+    discard_stale_quit_messages();
+}
+
+#[test]
 fn app_and_platform_drop_destroy_child_and_message_windows_synchronously() {
     discard_stale_quit_messages();
 
@@ -8213,6 +8282,7 @@ fn returning_application_quit_waits_for_observers_and_retryable_window_retiremen
     app.run_returning_for_test(move |cx| {
         cx.open_window(
             WindowOptions {
+                window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
                 show: false,
                 focus_on_appearing: false,
                 ..WindowOptions::default()
