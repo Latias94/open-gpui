@@ -132,6 +132,8 @@ const SMOKE_STATE_EXPRESSION: &str = r#"
         },
         webgpuUnavailableControl:
             globalThis.__OPEN_GPUI_WEBGPU_UNAVAILABLE_CONTROL__ === true,
+        webglUnavailableControl:
+            globalThis.__OPEN_GPUI_WEBGL_UNAVAILABLE_CONTROL__ === true,
         navigatorGpuAvailable: navigator.gpu !== undefined,
         canvas: canvas ? {
             count: document.querySelectorAll("canvas").length,
@@ -340,16 +342,44 @@ fn qualify_browser(cdp: &mut CdpClient, url: &str, allow_unavailable: bool) -> R
         if webgl { "Gl" } else { "WebGPU" },
     )?;
     if webgl {
-        expect_graphics_refusal(
+        let registration = cdp.call(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({ "source": r#"
+                const getContext = HTMLCanvasElement.prototype.getContext;
+                HTMLCanvasElement.prototype.getContext = function (...args) {
+                    if (["webgl", "webgl2"].includes(args[0])) return null;
+                    return Reflect.apply(getContext, this, args);
+                };
+                globalThis.__OPEN_GPUI_WEBGL_UNAVAILABLE_CONTROL__ = true;
+            "# }),
+        )?;
+        let identifier = registration
+            .get("identifier")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                format!(
+                    "WebGL unavailability control returned no script identifier: {registration}"
+                )
+            })?;
+        let result = expect_graphics_refusal(
             cdp,
-            &format!("{url}&backend=webgl&software=true"),
+            &format!("{url}&backend=webgl&software=true&case=webgl-unavailable-control"),
             "webgl",
             "Only WebGl was tried",
             true,
-            false,
-        )?;
+        );
+        let removal = cdp.call(
+            "Page.removeScriptToEvaluateOnNewDocument",
+            json!({ "identifier": identifier }),
+        );
+        if let Err(error) = result {
+            return Err(format!(
+                "WebGL-unavailable test control failed: {error}; init-script removal: {removal:?}"
+            ));
+        }
+        removal?;
         println!(
-            "web smoke preserved explicit WebGL software-adapter refusal; GL success cases request software=false"
+            "web smoke explicit WebGL initialization refusal passed with context creation disabled by test control; software adapter availability is browser-dependent"
         );
         let registration = cdp.call(
             "Page.addScriptToEvaluateOnNewDocument",
@@ -377,7 +407,6 @@ fn qualify_browser(cdp: &mut CdpClient, url: &str, allow_unavailable: bool) -> R
                 "webgpu",
                 "Only WebGpu was tried",
                 false,
-                true,
             )?;
             navigate_case(
                 cdp,
@@ -552,7 +581,6 @@ fn expect_graphics_refusal(
     requested: &str,
     reason: &str,
     force_fallback_adapter: bool,
-    unavailable_control: bool,
 ) -> Result<(), String> {
     let navigation = cdp.call("Page.navigate", json!({ "url": url }))?;
     if let Some(error) = navigation.get("errorText").and_then(Value::as_str) {
@@ -593,8 +621,12 @@ fn expect_graphics_refusal(
         || state
             .get("webgpuUnavailableControl")
             .and_then(Value::as_bool)
-            != Some(unavailable_control)
-        || (unavailable_control
+            != Some(requested == "webgpu")
+        || state
+            .get("webglUnavailableControl")
+            .and_then(Value::as_bool)
+            != Some(requested == "webgl")
+        || (requested == "webgpu"
             && state.get("navigatorGpuAvailable").and_then(Value::as_bool) != Some(false))
         || !state
             .pointer("/probe/graphicsBackend")
