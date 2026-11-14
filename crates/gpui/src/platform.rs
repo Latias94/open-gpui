@@ -4064,8 +4064,12 @@ pub trait Platform: 'static {
     /// Removes the delivered or pending notification with this tag, where supported.
     ///
     /// Retraction is best-effort; some platforms only let notifications age out.
-    fn dismiss_system_notification(&self, tag: &str) {
+    /// The task completes after the platform calls return, not after any
+    /// asynchronous work inside the operating system. Dropping it does not
+    /// cancel dismissal.
+    fn dismiss_system_notification(&self, tag: &str) -> Task<()> {
         _ = tag;
+        Task::ready(())
     }
 
     /// Registers the main-thread callback for body or action-button activation.

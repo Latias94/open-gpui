@@ -2552,8 +2552,11 @@ impl App {
     /// Removes the delivered or pending notification with this tag, where supported.
     ///
     /// Retraction is best-effort; some platforms only let notifications age out.
-    pub fn dismiss_system_notification(&self, tag: &str) {
-        self.platform.dismiss_system_notification(tag);
+    /// The task completes after the platform calls return, not after any
+    /// asynchronous work inside the operating system. Dropping it does not
+    /// cancel dismissal.
+    pub fn dismiss_system_notification(&self, tag: &str) -> Task<()> {
+        self.platform.dismiss_system_notification(tag)
     }
 
     /// Registers the handler for system notification body or action-button activation.

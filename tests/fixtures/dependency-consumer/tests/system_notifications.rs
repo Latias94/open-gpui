@@ -3,7 +3,7 @@
 //! Actual App delivery and entity notification belong to the separate TestPlatform consumer.
 
 use open_gpui::{
-    App, Platform, SystemNotification, SystemNotificationAction, SystemNotificationResponse,
+    App, Platform, SystemNotification, SystemNotificationAction, SystemNotificationResponse, Task,
 };
 use std::{collections::HashSet, fmt::Debug};
 
@@ -73,24 +73,24 @@ fn downstream_constructs_distinct_body_and_action_responses() {
 fn downstream_unexecuted_app_and_platform_signatures_accept_owned_mutable_handlers() {
     let _: fn(&App, &str, &str) = App::set_app_identity;
     let _: fn(&App, SystemNotification) = App::show_system_notification;
-    let _: fn(&App, &str) = App::dismiss_system_notification;
+    let _: fn(&App, &str) -> Task<()> = App::dismiss_system_notification;
     let _: fn(&App, fn(SystemNotificationResponse, &mut App)) =
         App::on_system_notification_response::<fn(SystemNotificationResponse, &mut App)>;
 
     let _unexecuted_app_calls = |app: &App, notification: SystemNotification| {
         let (): () = app.set_app_identity("org.open-gpui.consumer", "Ordinary consumer");
         let (): () = app.show_system_notification(notification);
-        let (): () = app.dismiss_system_notification("build/日本語:42");
+        let _: Task<()> = app.dismiss_system_notification("build/日本語:42");
         let mut responses = Vec::new();
         let (): () = app.on_system_notification_response(move |response, app: &mut App| {
-            app.dismiss_system_notification(&response.tag);
+            app.dismiss_system_notification(&response.tag).detach();
             responses.push(response);
         });
     };
     let _unexecuted_platform_calls = |platform: &dyn Platform, notification: SystemNotification| {
         let (): () = platform.set_app_identity("org.open-gpui.consumer", "Ordinary consumer");
         let (): () = platform.show_system_notification(notification);
-        let (): () = platform.dismiss_system_notification("build/日本語:42");
+        let _: Task<()> = platform.dismiss_system_notification("build/日本語:42");
         let mut responses = Vec::new();
         let callback: Box<dyn FnMut(SystemNotificationResponse)> = Box::new(move |response| {
             responses.push(response);

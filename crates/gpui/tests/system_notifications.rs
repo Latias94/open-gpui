@@ -57,7 +57,7 @@ fn route_responses(app: &App, inbox: &Entity<NotificationInbox>) {
     let inbox = inbox.downgrade();
     app.on_system_notification_response(move |response, app| {
         if response.action_id.as_deref() == Some("open") {
-            app.dismiss_system_notification(&response.tag);
+            app.dismiss_system_notification(&response.tag).detach();
         }
         inbox
             .update(app, |inbox, cx| {
@@ -183,7 +183,7 @@ fn public_test_platform_workflow_notifies_and_reconstructs_the_consuming_view() 
     assert_eq!(cx.delivered_system_notifications(), [background]);
     assert_eq!(cx.dismissed_system_notifications(), ["build:foreground"]);
 
-    cx.read(|app| app.dismiss_system_notification("build:background"));
+    cx.read(|app| app.dismiss_system_notification("build:background").detach());
     assert!(cx.delivered_system_notifications().is_empty());
     assert_eq!(
         cx.dismissed_system_notifications(),
@@ -243,7 +243,7 @@ fn public_response_handler_replaces_itself_during_delivery_and_releases_its_capt
                     let responses = Rc::clone(&responses);
                     move |response, app| {
                         assert_eq!(Rc::strong_count(&capture), 1);
-                        app.dismiss_system_notification(&response.tag);
+                        app.dismiss_system_notification(&response.tag).detach();
                         responses.borrow_mut().push(response);
                     }
                 });

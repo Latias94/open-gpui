@@ -59,6 +59,19 @@ for executed checks and the platform scenarios still required before deleting
 the compatibility engine. Earlier incumbent API migrations in this guide apply
 inside the explicit `legacy` namespace.
 
+## System Notification Completion
+
+`App::dismiss_system_notification` and `Platform::dismiss_system_notification`
+now return `Task<()>`. Await the task when subsequent application work depends
+on completion, or call `.detach()` for fire-and-forget use. Custom platform
+implementations can return `Task::ready(())` after their existing dismissal.
+
+On macOS, one dedicated worker serializes notification posting and dismissal so
+the UI thread does not wait for the notification service. Completion means the
+native platform calls returned, not that asynchronous OS work finished. Dropping
+the returned task does not cancel an already queued dismissal. Response handlers
+still run through the foreground executor.
+
 ## Native Docking Reports
 
 `adapter::native::NativeBridge::accept_report` now consumes `HostFrameReport` by

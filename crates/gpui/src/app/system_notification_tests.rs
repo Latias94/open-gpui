@@ -60,7 +60,7 @@ async fn test_system_notifications_require_identity_and_replace_matching_tags(
             }],
         }]
     );
-    cx.update(|cx| cx.dismiss_system_notification("thread-1"));
+    cx.update(|cx| cx.dismiss_system_notification("thread-1").detach());
     assert!(cx.delivered_system_notifications().is_empty());
     assert_eq!(cx.dismissed_system_notifications(), ["thread-1"]);
 }
@@ -131,7 +131,7 @@ async fn test_system_notification_response_handler_can_reenter_app(cx: &mut Test
             actions: Vec::new(),
         });
         cx.on_system_notification_response(|response, cx| {
-            cx.dismiss_system_notification(&response.tag);
+            cx.dismiss_system_notification(&response.tag).detach();
         });
     });
     cx.simulate_system_notification_response(SystemNotificationResponse {

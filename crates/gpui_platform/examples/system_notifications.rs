@@ -67,7 +67,7 @@ impl Render for SystemNotificationExample {
                     )))
                     .child(
                         button("dismiss", "Dismiss").on_click(cx.listener(|this, _, _, cx| {
-                            cx.dismiss_system_notification(NOTIFICATION_TAG);
+                            cx.dismiss_system_notification(NOTIFICATION_TAG).detach();
                             this.status = "Requested notification dismissal".into();
                             cx.notify();
                         })),

@@ -959,12 +959,13 @@ impl Platform for TestPlatform {
         state.shown.push(notification);
     }
 
-    fn dismiss_system_notification(&self, tag: &str) {
+    fn dismiss_system_notification(&self, tag: &str) -> Task<()> {
         let mut state = self.system_notifications.borrow_mut();
         state
             .delivered
             .retain(|notification| notification.tag != tag);
         state.dismissed.push(tag.to_owned().into());
+        Task::ready(())
     }
 
     fn on_system_notification_response(

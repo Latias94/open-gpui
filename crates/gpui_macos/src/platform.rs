@@ -5,6 +5,7 @@ use crate::{
     main_thread_marker,
     pasteboard::Pasteboard,
     renderer,
+    system_notifications::NotificationCommand,
     window::{
         macos_supports_focus_on_appearing, macos_supports_toplevel_creation_state,
         validate_macos_window_kind,
@@ -1429,14 +1430,27 @@ impl Platform for MacPlatform {
 
     fn show_system_notification(&self, notification: open_gpui::SystemNotification) {
         let mut state = self.0.lock();
-        let executor = state.foreground_executor.clone();
-        state.system_notifications.show(&executor, notification);
+        let foreground_executor = state.foreground_executor.clone();
+        let background_executor = state.background_executor.clone();
+        state
+            .system_notifications
+            .send(
+                &foreground_executor,
+                &background_executor,
+                NotificationCommand::Show(notification),
+            )
+            .detach();
     }
 
-    fn dismiss_system_notification(&self, tag: &str) {
+    fn dismiss_system_notification(&self, tag: &str) -> Task<()> {
         let mut state = self.0.lock();
-        let executor = state.foreground_executor.clone();
-        state.system_notifications.dismiss(&executor, tag);
+        let foreground_executor = state.foreground_executor.clone();
+        let background_executor = state.background_executor.clone();
+        state.system_notifications.send(
+            &foreground_executor,
+            &background_executor,
+            NotificationCommand::Dismiss(open_gpui::SharedString::from(tag.to_owned())),
+        )
     }
 
     fn on_system_notification_response(

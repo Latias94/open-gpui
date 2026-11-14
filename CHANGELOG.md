@@ -111,6 +111,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Breaking Changes and Migration Notes
 
+- System notification dismissal now returns `Task<()>`; await completion or detach the task. Dropping it does not cancel an already queued dismissal. Migrate `App::dismiss_system_notification` callers and custom `Platform::dismiss_system_notification` implementations to the task return type; synchronous backends can use `Task::ready(())`.
+
 - `open_gpui_docking::DockSurface` and its prelude now use the shared `DockspaceSession`. Replace `DockSurface::builder` with shared-core layout/session construction and retained `DockPane` registrations; use `new_managed` / `open_native_root` for native workspaces and `persistence::DockWorkspaceDocument` for save/restore. The displaced `model`, `runtime`, `advanced`, `DockSurfaceBuilder`, `DockVisualStyleResolver` and related facade types require `legacy-docking` under `open_gpui_docking::legacy`. DevTools' ordinary `docking` module uses non-consuming `DockSurface::inspection`; its old runtime projection moves to `legacy_docking` with the explicit `legacy-docking` feature. Root and prelude types stay stable when Cargo unifies that feature. The native dogfood example requires `--features legacy-docking`; default examples and the independently locked consumer use the shared session. See the [migration guide](docs/ui/migration-v0.3.md#default-shared-docking-session).
 - Shared-session applications register `DockSurface::set_close_handler` to decide the original tab/root/native pane plans. Ordinary native roots default to retaining layout; child windows recover their original presentation. Closing a View retains its registration and does not discard an application document automatically. The adapter clock now uses GPUI's cross-platform `web_time::Instant`, including WebAssembly.
 - `Element` now requires `'static + Sized` and supplies `IntoElement` through `impl<T: Element> IntoElement for T`. Delete explicit or derived `IntoElement` implementations on types that also implement `Element`; they conflict with the blanket implementation. Keep conversions for component builders that do not implement `Element`, and keep `IntoElement` in scope for its extension methods.
@@ -305,6 +307,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `open-gpui-devtools` now projects Table behavior through a pre-capture allowlist with session-scoped opaque table, column, and row ordinals plus derived cell ids; raw ids, values, diagnostic source identities, selectors, and deterministic hashes are excluded from live, history, diff, Inspector, export, artifact, report, and Gallery fixture output, while sanitized diagnostic kinds and counts remain observable.
 
 ### Fixed
+
+- macOS notification posting and dismissal use a dedicated FIFO worker, keeping notification-service waits off the UI thread while preserving foreground response callbacks.
+- macOS native close queries isolate application callback panics and veto that close; terminal callback panics still complete native cleanup and the original renderer-shutdown lifecycle.
+- Shared docking window mounts release their application-wide close listeners after ordinary closure or failed initial presentation, avoiding accumulation across reopen cycles.
+- Web safe-area probes use per-property CSSOM writes so strict inline-style CSP policies do not disable their layout.
 
 - WGPU encodes each frame using the acquired surface texture size and omits the path composite when its batch did not rasterize. Metal uploads the frame's surface geometry together, while each video surface retains and binds its own two planes.
 

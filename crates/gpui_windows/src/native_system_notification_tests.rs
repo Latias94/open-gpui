@@ -70,7 +70,9 @@ fn native_system_notification_callbacks_preserve_order_main_thread_and_replaceme
             .borrow_mut()
             .push((1, notification_response, thread::current().id()));
         let platform = callback_platform.upgrade().expect("live response platform");
-        platform.dismiss_system_notification("queued-action");
+        platform
+            .dismiss_system_notification("queued-action")
+            .detach();
         let replacement_delivered = first_delivered.clone();
         let replacement_capture = replacement_capture.clone();
         platform.on_system_notification_response(Box::new(move |notification_response| {
@@ -176,7 +178,9 @@ fn native_system_notification_retirement_cancels_queued_delivery_before_native_r
         body: "Retirement rejects native construction".into(),
         actions: Vec::new(),
     });
-    platform.dismiss_system_notification("retired-no-display");
+    platform
+        .dismiss_system_notification("retired-no-display")
+        .detach();
 
     assert_eq!(platform.inner.run_foreground_task(), Some(0));
     assert!(!unsafe { IsWindow(Some(hwnd)).as_bool() });
