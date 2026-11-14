@@ -25,7 +25,8 @@ No new runner script, source parser or generated workflow is introduced.
 | Suite | Scope |
 | --- | --- |
 | Windows compiler floors | Keep the independently locked Rust 1.93 framework and Rust 1.95 docking/tooling checks. |
-| Workspace and libraries | Formatting, default workspace targets, default Core, default and full component/DevTools/docking libraries, doctests, repository contracts and release embedded assets. |
+| Workspace and default libraries | Formatting, default workspace targets, default Core, default component/DevTools/docking libraries and repository contracts. |
+| Complete Windows libraries | Full-feature component/DevTools/docking libraries, public doctests and release embedded assets in an independent job. |
 | Core/platform matrix | Linux/macOS/Windows complete Core and utility tests; separate instrumentation-free and conditional hot-reload builds; host Web/font fallback, component platform/motion consumers and owning backend checks. |
 | Independent consumer matrix | Separate manifest/lockfile, minimal API, benchmark support without framework test support, complete features, logging without Tracy and additive support. Windows additionally runs the existing benchmark smoke workloads. |
 | Windows native | Production FXC and retained-SVG native tests run first. Complete ordinary backend tests, the explicit desktop-only cohort and all three handle-tracking environment controls remain separate. |
@@ -40,8 +41,10 @@ feature selection must still preserve a distinct default docking build and the
 instrumentation-free Core/consumer builds.
 
 Native/package jobs retain one Cargo build worker and one test thread. Their
-90-minute limits allow cold dependency compilation; browser and compiler-floor
-jobs retain their existing 45-minute limits. Different hosted jobs have their own
+initial 90-minute limits allow cold dependency compilation; the Core/platform
+matrix subsequently gains a 105-minute limit for measured cache-finalization
+cost, as recorded below. Browser and compiler-floor jobs retain their existing
+45-minute limits. Different hosted jobs have their own
 ordinary target directory and cache. The local development checkout continues
 to serialize Cargo and reuse its original target directory.
 
@@ -214,6 +217,12 @@ Verify pass.
 | `64408b97` | Allow actual DX12/Vulkan selection in the custom-renderer fixture. | SDK compilation and independent review; actual adapter and native trajectory remain to be collected. |
 | `213fee64` | Verify benchmark event ownership against the actual trace interval. | **6/6** related tests and independent review. |
 | `3d88ffc0` | Pair imported read timeouts with an untimed body control. | Complete HTTP **9/9** and independent review. |
+| `f427cfd8` | Save ordinary dependency caches after a failing check. | Workflow lint and inspection of the existing action's cache-on-failure contract. |
+| `b0fa2224` | Derive ordinary default window geometry from the display work area. | Portable red/green regression, **8/8** related display tests, SDK compilation and independent review. |
+| `2f89e323` | Request a replacement native frame before acquiring the test's deferred token. | SDK compilation and independent review; both new native regressions subsequently pass at `6eb51e6a`. |
+| `0635075f`, `340ea69f` | Include scene, geometry and frame-source facts in Mac sheet timeout diagnostics. | Example compilation and bounded native execution; the intermittent first-scene failure remains unexplained. |
+| `da7c45b5` | Validate the public randomized-tree ChildText mutation result. | Same-seed failure followed by all **68/68** local benchmark smoke scenarios and independent review. |
+| `2b7519b1` | Move the existing complete-library commands out of the default workspace job. | Exact Cargo-command multiset comparison, workflow lint and independent review; owning final-workflow CI tracked below. |
 
 ### Complete Local Rerun
 
@@ -431,6 +440,19 @@ success logs are `/tmp/open-gpui-ci-work-area-native-mac-sheet-20261114.log`,
 has zero native probe processes and the last temporary App is removed. Physical
 input and fullscreen pixels remain outside this receipt.
 
+At clean published source
+`2b7519b17b1610eb70190079ae0cab16d66612fb`, a fresh runtime-shader build includes
+both diagnostic commits. One bounded sheet launch passes all stages in **8.051
+seconds**, from 18:23:25 to 18:23:33 UTC+8 on November 14, with actual **OS wait
+status 0**. The binary SHA-256 is
+`71ce59d738a4d89d5424081f6ad6c5f571d9b62659016761381d10dc78d1d9bc`.
+The unchanged clean-head receipt and complete log are
+`/tmp/open-gpui-ci-sheet-current-receipt-20261114.json` and
+`/tmp/open-gpui-ci-sheet-current-native-20261114.log`. The helper removes its
+temporary App, and the post-run process inventory is empty. This qualifies one
+execution of the final diagnostic source, without establishing the cause or
+resolution of the earlier intermittent timeout.
+
 ### Cold-build Suite Ownership
 
 The Windows workspace job at `6eb51e6a` starts at 08:37:39 UTC. Its default Core
@@ -478,6 +500,53 @@ smoke takes 6.064 seconds including the incremental build. Logs:
 `/tmp/open-gpui-ci-public-bench-child-text-{red,after-fix}-20261114.log`.
 Independent review finds no blocking issue. This is executed correctness smoke,
 not a performance comparison; the corrected owning Windows run remains required.
+
+At published source `2b7519b17b1610eb70190079ae0cab16d66612fb`, the complete
+Windows consumer job subsequently passes in **45 minutes 37 seconds** in
+[Verify run 43583250223](https://github.com/Latias94/open-gpui/actions/runs/43583250223).
+Its final benchmark step executes all **68/68** distinct public mutation cases,
+including both ChildText seeds in ordinary and cached modes. Its independent
+minimal, benchmark-support and complete-feature suites pass **124/124**,
+**158/158** and **161/161** respectively, with three pre-existing ignored
+Windows Vulkan-surface cases. The complete-feature command excludes the
+GPU-atlas binary, which passes in its separate owning GPU-host job; the actual
+Vulkan-surface trajectories remain outside this receipt. The
+logging, optional-feature boundaries and dedicated support gates also pass.
+Complete log: `/tmp/open-gpui-ci-final-head-consumers-windows-20261114.log`.
+This closes the owning Windows correctness-smoke requirement for `da7c45b5`.
+
+### Final-Workflow Cache Budget
+
+At the same `2b7519b1` source, twelve of thirteen jobs in Verify run
+`43583250223` complete successfully. Both newly separated Windows jobs pass:
+workspace/default libraries in **67 minutes 56 seconds**, and complete libraries
+in **60 minutes 25 seconds**. The latter executes **3,647/3,647** library tests
+with thirteen skipped cases, **47** passing public doctests with two ignored,
+and the release embedded-asset test **1/1**. The workspace runs default Core
+**1,781/1,781**, default libraries **1,633/1,633** with one skipped, and every
+repository scan successfully. Logs are
+`/tmp/open-gpui-ci-final-head-{libraries,workspace}-windows-20261114.log`.
+
+The remaining Windows Core/platform job passes all verification steps: complete
+Core/utility **2,564/2,564**, instrumentation-free Core **1,917/1,917**, hot reload
+**10/10**, host Web/font fallback **64/64**, component/motion **15/15** and the
+final native font-kit compilation. Verification finishes at **11:21:08 UTC**,
+roughly 75 minutes after the job starts. The cache action then spends about
+fifteen minutes packing a **6,518,845,261-byte** archive; the upload itself takes
+about 23 seconds. Its post step finishes successfully at **11:36:54 UTC**, but
+the job is cancelled for exceeding **90 minutes**. This is not a green complete
+Verify run and not a failing Rust test. Exact run/step receipt:
+`/tmp/open-gpui-ci-final-initial-receipt-20261114.json`; complete log:
+`/tmp/open-gpui-ci-final-head-core-windows-20261114.log`.
+
+The correction changes only the existing Core/platform matrix timeout from 90
+to **105 minutes**, covering this observed 91-minute cold job with cleanup
+headroom. Other job budgets, cache keys, suite commands, features and assertions
+remain unchanged. No runner wrapper or retry policy is added. Workflow lint and
+an exact command comparison qualify the configuration change; a complete run
+of its published workflow remains required. The measured durations include
+setup, compilation, test execution and cache cleanup; they are not a controlled
+performance comparison or a guarantee about later cold-cache runs.
 
 ## Consumer Follow-up
 

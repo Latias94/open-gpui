@@ -147,7 +147,7 @@ jobs:
   verify:
     name: verify (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 105
     strategy:
       fail-fast: false
       matrix:
