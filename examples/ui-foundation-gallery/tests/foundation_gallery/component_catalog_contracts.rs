@@ -1466,7 +1466,10 @@ fn components_page_state_contract_samples_expose_tree_and_virtualized_list_contr
     );
     assert_eq!(tree.selected_index(), Some(1));
     assert_eq!(tree.focused_index(), Some(2));
-    assert_eq!(tree.items()[3].position_in_set(), None);
+    assert!(tree.items()[3].disabled());
+    assert!(!tree.items()[3].focusable());
+    assert_eq!(tree.items()[3].position_in_set(), Some(2));
+    assert_eq!(tree.items()[3].size_of_set(), 3);
     assert_eq!(
         tree.navigation_target("down").map(|item| item.value()),
         Some("notes")
