@@ -88,6 +88,8 @@ mod native_composite_focus_tests;
 pub(super) mod native_credentials_tests;
 #[path = "native_custom_renderer_tests.rs"]
 mod native_custom_renderer_tests;
+#[path = "native_deferred_frame_tests.rs"]
+mod native_deferred_frame_tests;
 #[path = "native_dialog_tests.rs"]
 mod native_dialog_tests;
 #[path = "native_display_observation_tests.rs"]

@@ -45,6 +45,7 @@ use windows::{
 };
 
 use crate::direct_manipulation::DirectManipulationHandler;
+use crate::renderer::WindowsFrameSubmission;
 use crate::*;
 use open_gpui::*;
 
@@ -855,6 +856,7 @@ pub struct WindowsWindowState {
     pub direct_manipulation: DirectManipulationHandler,
 
     pub(crate) renderer: RefCell<WindowsWindowRenderer>,
+    frame_submission: Rc<WindowsFrameSubmission>,
 
     pub click_state: ClickState,
     pub current_cursor: Cell<Option<HCURSOR>>,
@@ -1095,6 +1097,7 @@ impl WindowsWindowState {
             last_visibility: Cell::new(None),
             visibility_report_pending: Cell::new(false),
             last_client_pointer_position: Cell::new(None),
+            frame_submission: renderer.frame_submission(),
             renderer: RefCell::new(renderer),
             click_state,
             current_cursor: Cell::new(current_cursor),
@@ -1538,9 +1541,8 @@ impl WindowsWindowInner {
             && RegisteredWindowAuthority::capture(self).is_ok()
         {
             self.state
-                .renderer
-                .borrow_mut()
-                .invalidate_current_submission(PlatformWindowPresentOutcome::RepaintRequired);
+                .frame_submission
+                .invalidate(PlatformWindowPresentOutcome::RepaintRequired);
         }
     }
 
@@ -1617,12 +1619,11 @@ impl WindowsWindowInner {
         if self.native_window_lifecycle.get() != NativeWindowLifecycle::Live {
             return;
         }
-        self.state
-            .renderer
-            .borrow_mut()
-            .invalidate_current_submission(PlatformWindowPresentOutcome::Rejected);
         self.native_window_lifecycle
             .set(NativeWindowLifecycle::Destroying);
+        self.state
+            .frame_submission
+            .invalidate(PlatformWindowPresentOutcome::Rejected);
         self.dialog_owner.close();
         self.state.interaction_gate.quiesce();
         self.settle_pointer_capture_before_native_teardown();
@@ -1890,11 +1891,11 @@ impl WindowsWindowInner {
             return current.same_authority(shutdown);
         }
         current.replace(shutdown.clone());
-        self.state
-            .renderer
-            .borrow_mut()
-            .invalidate_current_submission(PlatformWindowPresentOutcome::Rejected);
+        drop(current);
         self.stop_frame_signal();
+        self.state
+            .frame_submission
+            .invalidate(PlatformWindowPresentOutcome::Rejected);
         true
     }
 
@@ -1910,11 +1911,11 @@ impl WindowsWindowInner {
             return Some(current.clone());
         }
         current.replace(candidate.clone());
-        self.state
-            .renderer
-            .borrow_mut()
-            .invalidate_current_submission(PlatformWindowPresentOutcome::Rejected);
+        drop(current);
         self.stop_frame_signal();
+        self.state
+            .frame_submission
+            .invalidate(PlatformWindowPresentOutcome::Rejected);
         Some(candidate)
     }
 
@@ -7356,7 +7357,7 @@ impl WindowsWindowInner {
         }
         anyhow::ensure!(
             request.matches_geometry(observed),
-            "native physical client geometry did not converge exactly on the target display"
+            "native physical client geometry did not converge exactly on the target display: requested={request:?}, observed={observed:?}"
         );
         Ok(observed)
     }

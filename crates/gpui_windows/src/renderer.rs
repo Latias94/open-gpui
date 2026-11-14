@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     num::NonZeroIsize,
     panic::{AssertUnwindSafe, catch_unwind},
     rc::Rc,
@@ -188,7 +189,7 @@ impl WindowsRendererSource {
         Ok(WindowsWindowRenderer {
             backend,
             pending_resize: None,
-            pending_submission: None,
+            pending_submission: Rc::default(),
             quiesced_for: None,
         })
     }
@@ -199,10 +200,38 @@ enum WindowsRendererBackend {
     Custom(Box<dyn WindowsRenderer>),
 }
 
+/// Keeps the original submission revocable while the GPU renderer is borrowed.
+#[derive(Default)]
+pub(crate) struct WindowsFrameSubmission {
+    current: RefCell<Option<PlatformFrameSubmission>>,
+}
+
+impl WindowsFrameSubmission {
+    fn pending(&self) -> Option<PlatformFrameSubmission> {
+        let submission = self.current.borrow().clone()?;
+        if submission.is_pending() {
+            Some(submission)
+        } else {
+            let retired = self.current.borrow_mut().take_if(|current| {
+                current.status() != open_gpui::PlatformFrameSubmissionStatus::Pending
+            });
+            drop(retired);
+            None
+        }
+    }
+
+    pub(crate) fn invalidate(&self, outcome: PlatformWindowPresentOutcome) {
+        let submission = self.current.borrow_mut().take();
+        if let Some(submission) = submission {
+            submission.complete(outcome);
+        }
+    }
+}
+
 pub(crate) struct WindowsWindowRenderer {
     backend: WindowsRendererBackend,
     pending_resize: Option<Size<DevicePixels>>,
-    pending_submission: Option<PlatformFrameSubmission>,
+    pending_submission: Rc<WindowsFrameSubmission>,
     quiesced_for: Option<WindowPresentationShutdownTicket>,
 }
 
@@ -233,21 +262,12 @@ impl WindowsWindowRenderer {
         self.renderer().frame_delivery_mode()
     }
 
-    fn clear_completed_submission(&mut self) {
-        if self
-            .pending_submission
-            .as_ref()
-            .is_some_and(|submission| !submission.is_pending())
-        {
-            self.pending_submission = None;
-        }
+    pub(crate) fn frame_submission(&self) -> Rc<WindowsFrameSubmission> {
+        self.pending_submission.clone()
     }
 
     pub(crate) fn invalidate_current_submission(&mut self, outcome: PlatformWindowPresentOutcome) {
-        if let Some(submission) = self.pending_submission.as_ref() {
-            submission.complete(outcome);
-        }
-        self.clear_completed_submission();
+        self.pending_submission.invalidate(outcome);
     }
 
     pub(crate) fn resize(&mut self, size: Size<DevicePixels>) -> Result<()> {
@@ -271,8 +291,7 @@ impl WindowsWindowRenderer {
         scene: &Scene,
         background: WindowBackgroundAppearance,
     ) -> Result<PlatformWindowPresentOutcome> {
-        self.clear_completed_submission();
-        if self.quiesced_for.is_some() || self.pending_submission.is_some() {
+        if self.quiesced_for.is_some() || self.pending_submission.pending().is_some() {
             return Ok(PlatformWindowPresentOutcome::Rejected);
         }
         if let Some(size) = self.pending_resize {
@@ -287,11 +306,10 @@ impl WindowsWindowRenderer {
         background: WindowBackgroundAppearance,
         submission: &PlatformFrameSubmission,
     ) -> Result<PlatformWindowPresentOutcome> {
-        self.clear_completed_submission();
         if self.quiesced_for.is_some() || !submission.is_pending() {
             return Ok(PlatformWindowPresentOutcome::Rejected);
         }
-        if self.pending_submission.as_ref().is_some_and(|current| {
+        if self.pending_submission.pending().is_some_and(|current| {
             current.window_id() != submission.window_id()
                 || current.frame_generation() != submission.frame_generation()
                 || current.attempt_id() != submission.attempt_id()
@@ -301,11 +319,15 @@ impl WindowsWindowRenderer {
         if let Some(size) = self.pending_resize {
             self.resize(size)?;
         }
-        self.pending_submission = Some(submission.clone());
+        let previous = self
+            .pending_submission
+            .current
+            .replace(Some(submission.clone()));
+        drop(previous);
         let result = self
             .renderer_mut()
             .draw_with_submission(scene, background, submission);
-        self.clear_completed_submission();
+        let _ = self.pending_submission.pending();
         result
     }
 
