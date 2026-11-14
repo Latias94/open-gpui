@@ -550,49 +550,69 @@ mod tests {
 
     #[test]
     fn test_imported_client_redirect_policies_preserve_proxy_user_agent_and_read_timeout() {
+        // Reqwest's header read timer also covers both connections in a redirect.
+        // Keep it above loopback scheduling latency, below the fixture watchdog,
+        // and well below the total request deadline.
+        const READ_TIMEOUT: Duration = Duration::from_secs(1);
+        const FIXTURE_TIMEOUT: Duration = Duration::from_secs(5);
+        const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let proxy = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        let [control_client, client] = [None, Some(READ_TIMEOUT)].map(|read_timeout| {
+            let mut builder = reqwest::Client::builder()
+                .proxy(reqwest::Proxy::all(proxy.clone()).unwrap().no_proxy(None))
+                .user_agent("imported-agent")
+                .redirect_policy(reqwest::redirect::Policy::none());
+            if let Some(read_timeout) = read_timeout {
+                builder = builder.read_timeout(read_timeout);
+            }
+            ReqwestClient::from(builder.build().unwrap())
+        });
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (release_body_tx, release_body_rx) = std::sync::mpsc::channel();
         let server = std::thread::spawn(move || {
             for follow in [false, false, true, true] {
-                let (mut stream, headers) = read_request(&listener);
-                assert!(headers[0].starts_with("GET http://127.0.0.1:1/redirect "));
-                assert!(
-                    headers
-                        .iter()
-                        .any(|header| header.eq_ignore_ascii_case("user-agent: imported-agent\r\n"))
-                );
-                let content_length = if follow { 0 } else { 1 };
-                let response = format!(
-                    "HTTP/1.1 302 Found\r\nlocation: http://127.0.0.1:1/target\r\ncontent-length: {content_length}\r\nconnection: close\r\n\r\n"
-                );
-                stream.write_all(response.as_bytes()).unwrap();
-                let stream = if follow {
-                    drop(stream);
+                ready_tx.send(()).unwrap();
+                let [mut control_stream, timed_stream] = [(); 2].map(|_| {
                     let (mut stream, headers) = read_request(&listener);
-                    assert!(headers[0].starts_with("GET http://127.0.0.1:1/target "));
+                    assert!(headers[0].starts_with("GET http://127.0.0.1:1/redirect "));
                     assert!(headers.iter().any(|header| {
                         header.eq_ignore_ascii_case("user-agent: imported-agent\r\n")
                     }));
-                    stream
-                        .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 1\r\n\r\n")
-                        .unwrap();
-                    stream
-                } else {
-                    stream
-                };
-                assert_connection_closed(stream);
+                    let content_length = if follow { 0 } else { 1 };
+                    let response = format!(
+                        "HTTP/1.1 302 Found\r\nlocation: http://127.0.0.1:1/target\r\ncontent-length: {content_length}\r\nconnection: close\r\n\r\n"
+                    );
+                    stream.write_all(response.as_bytes()).unwrap();
+                    if follow {
+                        drop(stream);
+                        let (mut stream, headers) = read_request(&listener);
+                        assert!(headers[0].starts_with("GET http://127.0.0.1:1/target "));
+                        assert!(headers.iter().any(|header| {
+                            header.eq_ignore_ascii_case("user-agent: imported-agent\r\n")
+                        }));
+                        stream
+                            .write_all(
+                                b"HTTP/1.1 200 OK\r\ncontent-length: 1\r\nconnection: close\r\n\r\n",
+                            )
+                            .unwrap();
+                        stream
+                    } else {
+                        stream
+                    }
+                });
+
+                // Hold both bodies open until the timed read fails. Without
+                // its imported read timeout, the client sees this watchdog
+                // close the socket before its total request deadline instead.
+                release_body_rx
+                    .recv_timeout(FIXTURE_TIMEOUT)
+                    .expect("the imported read timeout should fire while the body is withheld");
+                assert_connection_closed(timed_stream);
+                control_stream.write_all(b"x").unwrap();
             }
         });
-
-        let client = ReqwestClient::from(
-            reqwest::Client::builder()
-                .proxy(reqwest::Proxy::all(proxy).unwrap().no_proxy(None))
-                .user_agent("imported-agent")
-                .read_timeout(Duration::from_millis(100))
-                .redirect_policy(reqwest::redirect::Policy::none())
-                .build()
-                .unwrap(),
-        );
 
         for (policy, expected_status) in [
             (None, StatusCode::FOUND),
@@ -600,27 +620,56 @@ mod tests {
             (Some(RedirectPolicy::FollowLimit(3)), StatusCode::OK),
             (Some(RedirectPolicy::FollowAll), StatusCode::OK),
         ] {
-            let request = HttpRequest::get("http://127.0.0.1:1/redirect")
-                .when_some(policy, |request, policy| request.follow_redirects(policy))
-                .timeout(Duration::from_secs(3))
-                .body(AsyncBody::default())
-                .unwrap();
-            let mut response = futures::executor::block_on(client.send(request)).unwrap();
-            assert_eq!(response.status(), expected_status);
-            let mut body = Vec::new();
-            let started_at = Instant::now();
-            let error = futures::executor::block_on(response.body_mut().read_to_end(&mut body))
-                .unwrap_err();
-            assert!(
-                error
-                    .get_ref()
+            ready_rx.recv_timeout(FIXTURE_TIMEOUT).unwrap();
+            let request = || {
+                HttpRequest::get("http://127.0.0.1:1/redirect")
+                    .when_some(policy.clone(), |request, policy| {
+                        request.follow_redirects(policy)
+                    })
+                    .timeout(REQUEST_TIMEOUT)
+                    .body(AsyncBody::default())
                     .unwrap()
-                    .downcast_ref::<reqwest::Error>()
-                    .unwrap()
-                    .is_timeout()
-            );
-            assert!(started_at.elapsed() < Duration::from_secs(1));
-            drop(response);
+            };
+            let mut control_response =
+                futures::executor::block_on(control_client.send(request())).unwrap();
+            assert_eq!(control_response.status(), expected_status);
+            let mut control_body = Vec::new();
+            futures::executor::block_on(async {
+                // Start the untimed control read before its timed peer, on the
+                // same executor used by callers outside Tokio.
+                let mut control_read =
+                    std::pin::pin!(control_response.body_mut().read_to_end(&mut control_body));
+                assert!(futures::poll!(&mut control_read).is_pending());
+
+                let mut response = client.send(request()).await.unwrap();
+                assert_eq!(response.status(), expected_status);
+                let mut body = Vec::new();
+                let started_at = Instant::now();
+                let error = response
+                    .body_mut()
+                    .read_to_end(&mut body)
+                    .await
+                    .unwrap_err();
+                assert!(
+                    error
+                        .get_ref()
+                        .unwrap()
+                        .downcast_ref::<reqwest::Error>()
+                        .unwrap()
+                        .is_timeout()
+                );
+                assert!(started_at.elapsed() < FIXTURE_TIMEOUT);
+                assert!(body.is_empty());
+                drop(response);
+
+                assert!(
+                    futures::poll!(&mut control_read).is_pending(),
+                    "the client without a read timeout should still wait for the body"
+                );
+                release_body_tx.send(()).unwrap();
+                control_read.await.unwrap();
+            });
+            assert_eq!(control_body, b"x");
         }
         server.join().unwrap();
     }
