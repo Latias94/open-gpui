@@ -1749,6 +1749,76 @@ struct TrafficLightButtons {
     zoom: Retained<NSButton>,
 }
 
+struct MacWindowCallbackRetirement {
+    request_frame_callback: Option<Rc<dyn Fn(RequestFrameOptions)>>,
+    event_callback: PlatformInputCallbackSlot,
+    input_handler: PlatformInputHandlerSlot,
+    should_close_callback: PlatformShouldCloseCallbackSlot,
+    mutation_callback: Option<Rc<dyn Fn(PlatformWindowMutationObservation)>>,
+    activate_callback: Option<Rc<dyn Fn(PlatformWindowActiveStatusObservation)>>,
+    active_source_callback: Option<Rc<dyn Fn() -> Option<PlatformWindowActiveStatusSource>>>,
+    resize_callback: Option<Rc<dyn Fn(Size<Pixels>, f32)>>,
+    moved_callback: Option<Rc<dyn Fn()>>,
+    display_changed_callback: Option<Box<dyn FnMut()>>,
+    window_state_change_callback: Option<Rc<dyn Fn()>>,
+    appearance_changed_callback: Option<Rc<dyn Fn()>>,
+    visibility_observer: MacWindowVisibilityObserver,
+    external_drag: Option<Rc<MacExternalDrag>>,
+    simple_fullscreen_state: Option<SimpleFullscreenState>,
+    deferred_frame: Option<MacDeferredFrame>,
+    accesskit_adapter: Option<accesskit_macos::SubclassingAdapter>,
+    blurred_view: Option<Retained<NSView>>,
+}
+
+impl MacWindowCallbackRetirement {
+    fn retire(self, panic_boundary: &mut MacWindowCallbackPanicBoundary) {
+        // Split ownership before entering any catch. One callback's unwinding must never
+        // automatically drop the remaining callbacks before their own isolation boundary.
+        let Self {
+            request_frame_callback,
+            event_callback,
+            input_handler,
+            should_close_callback,
+            mutation_callback,
+            activate_callback,
+            active_source_callback,
+            resize_callback,
+            moved_callback,
+            display_changed_callback,
+            window_state_change_callback,
+            appearance_changed_callback,
+            visibility_observer,
+            external_drag,
+            simple_fullscreen_state,
+            deferred_frame,
+            accesskit_adapter,
+            blurred_view,
+        } = self;
+        panic_boundary.deliver(move || {
+            deferred_frame::complete(deferred_frame, PlatformWindowPresentOutcome::Rejected)
+        });
+        panic_boundary.deliver(move || event_callback.terminate());
+        panic_boundary.deliver(move || input_handler.terminate());
+        panic_boundary.deliver(move || should_close_callback.terminate());
+        panic_boundary.deliver(move || drop(request_frame_callback));
+        panic_boundary.deliver(move || drop(mutation_callback));
+        panic_boundary.deliver(move || drop(activate_callback));
+        panic_boundary.deliver(move || drop(active_source_callback));
+        panic_boundary.deliver(move || drop(resize_callback));
+        panic_boundary.deliver(move || drop(moved_callback));
+        panic_boundary.deliver(move || drop(display_changed_callback));
+        panic_boundary.deliver(move || drop(window_state_change_callback));
+        panic_boundary.deliver(move || drop(appearance_changed_callback));
+        panic_boundary.deliver(move || drop(external_drag));
+        panic_boundary.deliver(move || drop(visibility_observer));
+        panic_boundary.deliver(move || {
+            release_simple_fullscreen_presentation_options(simple_fullscreen_state)
+        });
+        panic_boundary.deliver(move || drop(accesskit_adapter));
+        panic_boundary.deliver(move || drop(blurred_view));
+    }
+}
+
 struct MacWindowState {
     handle: AnyWindowHandle,
     window_registry: MacWindowRegistry,
@@ -1850,17 +1920,7 @@ impl MacWindowState {
             && self.creation_facts.transient_for.is_none()
     }
 
-    fn mark_closed(
-        &mut self,
-    ) -> (
-        PlatformInputCallbackSlot,
-        PlatformInputHandlerSlot,
-        PlatformShouldCloseCallbackSlot,
-        MacWindowVisibilityObserver,
-        Option<Rc<MacExternalDrag>>,
-        Option<SimpleFullscreenState>,
-        Option<MacDeferredFrame>,
-    ) {
+    fn mark_closed(&mut self) -> MacWindowCallbackRetirement {
         self.closed.store(true, Ordering::Release);
         self.interaction_quiesced.store(true, Ordering::Release);
         self.stop_display_link();
@@ -1876,25 +1936,27 @@ impl MacWindowState {
         self.observation_commit.cancel();
         self.observation_effects.cancel();
         self.mutations.clear();
-        self.mutation_callback = None;
-        self.request_frame_callback = None;
-        self.activate_callback = None;
-        self.active_source_callback = None;
-        self.resize_callback = None;
-        self.moved_callback = None;
-        self.display_changed_callback = None;
-        self.window_state_change_callback = None;
-        self.appearance_changed_callback = None;
         self.display_topology_subscription.take();
-        (
-            self.event_callback.clone(),
-            self.input_handler.clone(),
-            self.should_close_callback.clone(),
-            mem::take(&mut self.visibility_observer),
-            self.external_drag.take(),
-            self.simple_fullscreen_state.take(),
-            self.deferred_frame.take(),
-        )
+        MacWindowCallbackRetirement {
+            request_frame_callback: self.request_frame_callback.take(),
+            event_callback: self.event_callback.clone(),
+            input_handler: self.input_handler.clone(),
+            should_close_callback: self.should_close_callback.clone(),
+            mutation_callback: self.mutation_callback.take(),
+            activate_callback: self.activate_callback.take(),
+            active_source_callback: self.active_source_callback.take(),
+            resize_callback: self.resize_callback.take(),
+            moved_callback: self.moved_callback.take(),
+            display_changed_callback: self.display_changed_callback.take(),
+            window_state_change_callback: self.window_state_change_callback.take(),
+            appearance_changed_callback: self.appearance_changed_callback.take(),
+            visibility_observer: mem::take(&mut self.visibility_observer),
+            external_drag: self.external_drag.take(),
+            simple_fullscreen_state: self.simple_fullscreen_state.take(),
+            deferred_frame: self.deferred_frame.take(),
+            accesskit_adapter: self.accesskit_adapter.take(),
+            blurred_view: self.blurred_view.take(),
+        }
     }
 
     fn move_traffic_light(&mut self) {
@@ -3110,58 +3172,19 @@ impl MacWindow {
         self.2 = true;
         self.3.take();
 
-        let (
-            event_callback,
-            input_handler,
-            should_close_callback,
-            visibility_observer,
-            external_drag,
-            simple_fullscreen_state,
-            deferred_frame,
-            accesskit_adapter,
-            blurred_view,
-            window,
-            foreground_executor,
-        ) = {
+        let (retirement, window, foreground_executor) = {
             let mut state = self.0.lock();
-            let (
-                event_callback,
-                input_handler,
-                should_close_callback,
-                visibility_observer,
-                external_drag,
-                simple_fullscreen_state,
-                deferred_frame,
-            ) = state.mark_closed();
+            let retirement = state.mark_closed();
             state.renderer.destroy();
             let window = state.native_window;
             unsafe {
                 let _: () =
                     msg_send![state.native_window, setDelegate: ptr::null_mut::<AnyObject>()];
             }
-            (
-                event_callback,
-                input_handler,
-                should_close_callback,
-                visibility_observer,
-                external_drag,
-                simple_fullscreen_state,
-                deferred_frame,
-                state.accesskit_adapter.take(),
-                state.blurred_view.take(),
-                window,
-                state.foreground_executor.clone(),
-            )
+            (retirement, window, state.foreground_executor.clone())
         };
-        deferred_frame::complete(deferred_frame, PlatformWindowPresentOutcome::Rejected);
-        event_callback.terminate();
-        input_handler.terminate();
-        should_close_callback.terminate();
-        drop(external_drag);
-        drop(visibility_observer);
-        release_simple_fullscreen_presentation_options(simple_fullscreen_state);
-        drop(accesskit_adapter);
-        drop(blurred_view);
+        let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
+        retirement.retire(&mut panic_boundary);
         let sheets = sheet::detach_related(&self.0);
         unsafe {
             detach_native_transient_relationships(window);
@@ -3186,6 +3209,7 @@ impl MacWindow {
                 })
                 .detach();
         }
+        panic_boundary.isolate_at_native_boundary("a macOS native window disposal");
     }
 
     pub fn open(
@@ -5622,6 +5646,7 @@ impl PlatformWindow for MacWindow {
         });
         serde_json::json!({
             "window_number": window.windowNumber(),
+            "native_close_phase": unsafe { native_close::phase(window) },
             "occlusion_state_visible": window
                 .occlusionState()
                 .contains(NSWindowOcclusionState::Visible),
@@ -6864,7 +6889,17 @@ extern "C" fn window_should_close(this: &AnyObject, _: Sel, _: *mut AnyObject) -
         }
         lock.should_close_callback.clone()
     };
-    should_close_callback.invoke().to_objc()
+    invoke_should_close_callback(&should_close_callback).to_objc()
+}
+
+fn invoke_should_close_callback(callback: &PlatformShouldCloseCallbackSlot) -> bool {
+    let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
+    let mut should_close = false;
+    // Commit the answer only after invoke has restored or retired its callback checkout.
+    // A panic in either the callback or that checkout's destructor must veto native close.
+    panic_boundary.deliver(|| should_close = callback.invoke());
+    panic_boundary.isolate_at_native_boundary("a macOS window close query");
+    should_close
 }
 
 extern "C" fn close_window(this: &AnyObject, _: Sel) {
@@ -6875,7 +6910,7 @@ fn quiesce_presentation_surface(
     window_state: &Arc<Mutex<MacWindowState>>,
     shutdown: &WindowPresentationShutdownTicket,
 ) -> PlatformPresentationShutdownOutcome {
-    let (native_view, deferred_frame) = {
+    let (native_view, request_frame_callback, deferred_frame) = {
         let Some(mut state) = window_state.try_lock() else {
             return PlatformPresentationShutdownOutcome::Rejected;
         };
@@ -6891,10 +6926,19 @@ fn quiesce_presentation_surface(
         let native_view = unsafe { Retained::retain(state.native_view.as_ptr()) }
             .expect("presentation shutdown retains its native view");
         state.stop_display_link();
-        state.request_frame_callback = None;
-        (native_view, state.deferred_frame.take())
+        (
+            native_view,
+            state.request_frame_callback.take(),
+            state.deferred_frame.take(),
+        )
     };
-    deferred_frame::complete(deferred_frame, PlatformWindowPresentOutcome::Rejected);
+    let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
+    panic_boundary.deliver(move || drop(request_frame_callback));
+    panic_boundary.deliver(move || {
+        deferred_frame::complete(deferred_frame, PlatformWindowPresentOutcome::Rejected)
+    });
+    // Retire arbitrary panic payloads before any later quiescence rejection can return.
+    panic_boundary.isolate_at_native_boundary("a macOS presentation surface quiescence");
 
     // AppKit may synchronously ask the view to make its backing layer. That callback
     // needs the same window-state mutex, so no Objective-C message is sent while it is
@@ -6923,18 +6967,7 @@ fn finish_native_close(
     shutdown: &WindowPresentationShutdownTicket,
 ) -> bool {
     unsafe {
-        let (
-            event_callback,
-            input_handler,
-            should_close_callback,
-            visibility_observer,
-            external_drag,
-            simple_fullscreen_state,
-            deferred_frame,
-            accesskit_adapter,
-            blurred_view,
-            close_callback,
-        ) = {
+        let (retirement, close_callback) = {
             let Some(mut lock) = window_state.try_lock() else {
                 return false;
             };
@@ -6950,46 +6983,20 @@ fn finish_native_close(
                 );
                 return false;
             }
-            let (
-                event_callback,
-                input_handler,
-                should_close_callback,
-                visibility_observer,
-                external_drag,
-                simple_fullscreen_state,
-                deferred_frame,
-            ) = lock.mark_closed();
-            (
-                event_callback,
-                input_handler,
-                should_close_callback,
-                visibility_observer,
-                external_drag,
-                simple_fullscreen_state,
-                deferred_frame,
-                lock.accesskit_adapter.take(),
-                lock.blurred_view.take(),
-                lock.close_callback.take(),
-            )
+            (lock.mark_closed(), lock.close_callback.take())
         };
 
-        deferred_frame::complete(deferred_frame, PlatformWindowPresentOutcome::Rejected);
-        event_callback.terminate();
-        input_handler.terminate();
-        should_close_callback.terminate();
-        drop(external_drag);
-        drop(visibility_observer);
-        release_simple_fullscreen_presentation_options(simple_fullscreen_state);
-        drop(accesskit_adapter);
-        drop(blurred_view);
+        let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
+        retirement.retire(&mut panic_boundary);
         let _sheets = sheet::detach_related(window_state);
         detach_native_transient_relationships(this as *const AnyObject as *mut AnyObject);
         if let Some(callback) = close_callback {
-            callback();
+            panic_boundary.deliver(callback);
         }
 
         let superclass = window_callback_superclass(this);
         let _: () = msg_send![super(this, superclass), close];
+        panic_boundary.isolate_at_native_boundary("a macOS native window close");
     }
     true
 }
@@ -8099,6 +8106,85 @@ mod creation_projection_tests {
         }
 
         panic_boundary.isolate_at_native_boundary("a test callback");
+        assert_eq!(drops.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn should_close_panic_denies_close_and_restores_callback_checkout() {
+        let callback = PlatformShouldCloseCallbackSlot::default();
+        let calls = Rc::new(Cell::new(0));
+        callback.set(Box::new({
+            let calls = calls.clone();
+            move || {
+                calls.set(calls.get() + 1);
+                if calls.get() == 1 {
+                    panic!("injected close-query panic");
+                }
+                true
+            }
+        }));
+
+        assert!(!invoke_should_close_callback(&callback));
+        assert!(invoke_should_close_callback(&callback));
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn should_close_checkout_drop_panic_denies_close_and_preserves_replacement() {
+        struct PanicOnDrop(Rc<Cell<usize>>);
+
+        impl Drop for PanicOnDrop {
+            fn drop(&mut self) {
+                self.0.set(self.0.get() + 1);
+                panic!("injected close-query checkout destructor panic");
+            }
+        }
+
+        let callback = PlatformShouldCloseCallbackSlot::default();
+        let drops = Rc::new(Cell::new(0));
+        let replacement_calls = Rc::new(Cell::new(0));
+        callback.set(Box::new({
+            let callback = callback.clone();
+            let guard = PanicOnDrop(drops.clone());
+            let replacement_calls = replacement_calls.clone();
+            move || {
+                let _guard = &guard;
+                callback.set(Box::new({
+                    let calls = replacement_calls.clone();
+                    move || {
+                        calls.set(calls.get() + 1);
+                        true
+                    }
+                }));
+                true
+            }
+        }));
+
+        assert!(!invoke_should_close_callback(&callback));
+        assert_eq!(drops.get(), 1);
+        assert!(invoke_should_close_callback(&callback));
+        assert_eq!(replacement_calls.get(), 1);
+    }
+
+    #[test]
+    fn should_close_panic_never_drops_an_arbitrary_payload() {
+        struct PanicPayload(Arc<AtomicU64>);
+
+        impl Drop for PanicPayload {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                panic!("close-query panic payload must not be dropped");
+            }
+        }
+
+        let callback = PlatformShouldCloseCallbackSlot::default();
+        let drops = Arc::new(AtomicU64::new(0));
+        callback.set(Box::new({
+            let drops = drops.clone();
+            move || std::panic::panic_any(PanicPayload(drops.clone()))
+        }));
+
+        assert!(!invoke_should_close_callback(&callback));
         assert_eq!(drops.load(Ordering::Relaxed), 0);
     }
 

@@ -4,7 +4,8 @@
 //! The app bundle and LaunchServices identity are required for activation on macOS 27.
 //!
 //! Run each mode in a fresh process: `default`, `windowed`, `headless`, `accessory`, `direct`,
-//! `activity`, `sheet`, `native-close`. The activity mode exercises the real headless platform acquisition/drop path.
+//! `activity`, `sheet`, `native-close`, `native-close-panic`.
+//! The activity mode exercises the real headless platform acquisition/drop path.
 //! The first four enter the real GPUIApplication run loop and launch delegate. `direct` only
 //! checks stored policy and native resource refusal without launching the application. Neither
 //! path creates a Core App or qualifies Core retirement, external event pumping, or Dock pixels.
@@ -14,11 +15,17 @@
 //! presentation, retirement, hidden creation, submitted scenes, titlebar visibility and debug JSON.
 //! Its input controls use AppKit event dispatch; physical input and fullscreen pixels remain manual.
 //! `native-close` checks exact renderer-shutdown receipts and repeated/reentrant native closes.
+//! `native-close-panic` also injects typed query, checkout-drop, frame/resize retirement,
+//! and terminal callback panics.
 
 #[cfg(target_os = "macos")]
 fn main() {
+    let inject_close_panics = std::env::args().nth(1).as_deref() == Some("native-close-panic");
     let panic_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        if inject_close_panics && macos::is_expected_close_panic(info.payload()) {
+            return;
+        }
         panic_hook(info);
         std::process::exit(1);
     }));
@@ -130,6 +137,33 @@ mod macos {
     impl Drop for ObserveCallbackDrop {
         fn drop(&mut self) {
             self.0.set(true);
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum NativeClosePanic {
+        QueryCallback,
+        QueryCheckoutDrop,
+        QueryRetirementDrop,
+        FrameCallbackDrop,
+        ResizeCallbackDrop,
+        TerminalCallback,
+        TerminalCallbackDrop,
+    }
+
+    pub(super) fn is_expected_close_panic(payload: &(dyn std::any::Any + Send)) -> bool {
+        payload.is::<NativeClosePanic>()
+    }
+
+    struct InjectClosePanicOnDrop {
+        panic: NativeClosePanic,
+        drops: Rc<Cell<usize>>,
+    }
+
+    impl Drop for InjectClosePanicOnDrop {
+        fn drop(&mut self) {
+            self.drops.set(self.drops.get() + 1);
+            std::panic::panic_any(self.panic);
         }
     }
 
@@ -1033,7 +1067,7 @@ mod macos {
         assert!(cx.update(|cx| cx.windows().is_empty()));
     }
 
-    async fn exercise_native_close(platform: &Rc<MacPlatform>) {
+    async fn exercise_native_close(platform: &Rc<MacPlatform>, panic: Option<NativeClosePanic>) {
         let window = open_native_window(platform);
         let raw = window
             .window_handle()
@@ -1060,28 +1094,187 @@ mod macos {
         drain_main_queue(platform).await;
         native.contentView().unwrap().setWantsLayer(true);
 
+        let retirement_drops = Rc::new(Cell::new(0));
+        if panic.is_some() {
+            wait_for_native(
+                platform,
+                || native.isVisible(),
+                "the close-panic probe must begin with a visible native window",
+            )
+            .await;
+            assert_eq!(window.debug_state()["native_close_phase"], "open");
+        }
+
+        if panic == Some(NativeClosePanic::TerminalCallback) {
+            let calls = Rc::new(Cell::new(0));
+            window.on_should_close(Box::new({
+                let calls = calls.clone();
+                move || {
+                    calls.set(calls.get() + 1);
+                    if calls.get() == 1 {
+                        std::panic::panic_any(NativeClosePanic::QueryCallback);
+                    }
+                    true
+                }
+            }));
+            let should_close: objc2::runtime::Bool =
+                unsafe { objc2::msg_send![&*native, windowShouldClose: &*native] };
+            assert!(
+                !should_close.as_bool(),
+                "a panicking close query must veto close"
+            );
+            assert!(native.isVisible());
+            let should_close: objc2::runtime::Bool =
+                unsafe { objc2::msg_send![&*native, windowShouldClose: &*native] };
+            assert!(
+                should_close.as_bool(),
+                "the callback checkout must be restored"
+            );
+            assert_eq!(calls.get(), 2);
+
+            let checkout_drops = Rc::new(Cell::new(0));
+            let replacement_calls = Rc::new(Cell::new(0));
+            window.on_should_close(Box::new({
+                let window = Rc::downgrade(&window);
+                let replacement_calls = replacement_calls.clone();
+                let guard = InjectClosePanicOnDrop {
+                    panic: NativeClosePanic::QueryCheckoutDrop,
+                    drops: checkout_drops.clone(),
+                };
+                move || {
+                    let _guard = &guard;
+                    window.upgrade().unwrap().on_should_close(Box::new({
+                        let calls = replacement_calls.clone();
+                        move || {
+                            calls.set(calls.get() + 1);
+                            true
+                        }
+                    }));
+                    true
+                }
+            }));
+            let should_close: objc2::runtime::Bool =
+                unsafe { objc2::msg_send![&*native, windowShouldClose: &*native] };
+            assert!(
+                !should_close.as_bool(),
+                "a callback checkout destructor panic must veto close"
+            );
+            assert_eq!(checkout_drops.get(), 1);
+            assert!(native.isVisible());
+            let should_close: objc2::runtime::Bool =
+                unsafe { objc2::msg_send![&*native, windowShouldClose: &*native] };
+            assert!(should_close.as_bool());
+            assert_eq!(replacement_calls.get(), 1);
+            assert_eq!(window.debug_state()["native_close_phase"], "open");
+
+            let combined_drops = Rc::new(Cell::new(0));
+            let combined_replacement_calls = Rc::new(Cell::new(0));
+            window.on_should_close(Box::new({
+                let window = Rc::downgrade(&window);
+                let replacement_calls = combined_replacement_calls.clone();
+                let guard = InjectClosePanicOnDrop {
+                    panic: NativeClosePanic::QueryCheckoutDrop,
+                    drops: combined_drops.clone(),
+                };
+                move || {
+                    let _guard = &guard;
+                    window.upgrade().unwrap().on_should_close(Box::new({
+                        let calls = replacement_calls.clone();
+                        move || {
+                            calls.set(calls.get() + 1);
+                            true
+                        }
+                    }));
+                    std::panic::panic_any(NativeClosePanic::QueryCallback);
+                }
+            }));
+            let should_close: objc2::runtime::Bool =
+                unsafe { objc2::msg_send![&*native, windowShouldClose: &*native] };
+            assert!(!should_close.as_bool());
+            assert!(native.isVisible());
+            assert_eq!(combined_drops.get(), 1);
+            let should_close: objc2::runtime::Bool =
+                unsafe { objc2::msg_send![&*native, windowShouldClose: &*native] };
+            assert!(should_close.as_bool());
+            assert_eq!(combined_replacement_calls.get(), 1);
+
+            window.on_should_close(Box::new({
+                let guard = InjectClosePanicOnDrop {
+                    panic: NativeClosePanic::QueryRetirementDrop,
+                    drops: retirement_drops.clone(),
+                };
+                move || {
+                    let _guard = &guard;
+                    true
+                }
+            }));
+        }
+
         // Preparation only claims the authority; the native close must perform its effects.
         let ticket = WindowPresentationShutdownTicket::new(WindowId::from(1), 1);
         let shutdown = window.prepare_presentation_shutdown(ticket.clone());
         assert!(!shutdown.snapshot().quiesced());
         let callbacks = Rc::new(Cell::new(0));
+        let callback_drops = Rc::new(Cell::new(0));
+        let frame_drops = Rc::new(Cell::new(0));
+        let resize_drops = Rc::new(Cell::new(0));
+        if panic.is_some() {
+            window.on_request_frame(Box::new({
+                let guard = InjectClosePanicOnDrop {
+                    panic: NativeClosePanic::FrameCallbackDrop,
+                    drops: frame_drops.clone(),
+                };
+                move |_| {
+                    let _guard = &guard;
+                }
+            }));
+            window.on_resize(Box::new({
+                let guard = InjectClosePanicOnDrop {
+                    panic: NativeClosePanic::ResizeCallbackDrop,
+                    drops: resize_drops.clone(),
+                };
+                move |_, _| {
+                    let _guard = &guard;
+                }
+            }));
+        }
         window.on_close(Box::new({
             let native = native.clone();
             let ticket = ticket.clone();
             let callbacks = callbacks.clone();
+            let frame_drops = frame_drops.clone();
+            let resize_drops = resize_drops.clone();
+            let guard = (panic == Some(NativeClosePanic::TerminalCallbackDrop)).then(|| {
+                InjectClosePanicOnDrop {
+                    panic: NativeClosePanic::TerminalCallbackDrop,
+                    drops: callback_drops.clone(),
+                }
+            });
             move || {
+                let _guard = &guard;
                 let snapshot = ticket.snapshot();
                 assert!(snapshot.quiesced() && snapshot.native_terminal());
                 assert!(!snapshot.protocol_violation());
+                assert_eq!(frame_drops.get(), usize::from(panic.is_some()));
+                assert_eq!(resize_drops.get(), usize::from(panic.is_some()));
                 callbacks.set(callbacks.get() + 1);
                 // A native callback may synchronously request the same close again.
                 native.close();
+                if panic == Some(NativeClosePanic::TerminalCallback) {
+                    std::panic::panic_any(NativeClosePanic::TerminalCallback);
+                }
             }
         }));
         native.close();
         wait_for_native(
             platform,
-            || shutdown.snapshot().native_terminal() && callbacks.get() == 1,
+            || {
+                shutdown.snapshot().native_terminal()
+                    && callbacks.get() == 1
+                    && (panic.is_none()
+                        || (!native.isVisible()
+                            && window.debug_state()["native_close_phase"] == "closed"))
+            },
             "native close must quiesce the exact renderer before one terminal callback",
         )
         .await;
@@ -1092,8 +1285,27 @@ mod macos {
         assert!(snapshot.quiesced() && snapshot.native_terminal());
         assert!(!snapshot.protocol_violation());
         assert_eq!(callbacks.get(), 1);
+        if let Some(panic) = panic {
+            assert_eq!(snapshot.window_id(), WindowId::from(1));
+            assert_eq!(snapshot.generation(), 1);
+            assert!(
+                !native.isVisible(),
+                "superclass close must finish after a callback panic"
+            );
+            assert_eq!(window.debug_state()["native_close_phase"], "closed");
+            assert_eq!(
+                retirement_drops.get(),
+                usize::from(panic == NativeClosePanic::TerminalCallback),
+            );
+            assert_eq!(
+                callback_drops.get(),
+                usize::from(panic == NativeClosePanic::TerminalCallbackDrop),
+            );
+        }
         drop(window);
         drain_main_queue(platform).await;
+        assert_eq!(frame_drops.get(), usize::from(panic.is_some()));
+        assert_eq!(resize_drops.get(), usize::from(panic.is_some()));
         view.setNeedsLayout(true);
         view.layoutSubtreeIfNeeded();
         view.setNeedsDisplay(true);
@@ -1105,17 +1317,25 @@ mod macos {
             !metal.as_bool(),
             "retired native close must not restore a Metal surface"
         );
-        println!(
-            "native close gate passed: quiesced, terminal, no protocol violation, callback exactly once"
-        );
+        if panic.is_none() {
+            println!(
+                "native close gate passed: quiesced, terminal, no protocol violation, callback exactly once"
+            );
+        }
     }
 
     pub(super) fn run() {
         let _main_thread =
             MainThreadMarker::new().expect("native windowing must run on the process main thread");
         let mode = std::env::args().nth(1).unwrap_or_else(|| "default".into());
-        if mode == "sheet" || mode == "native-close" {
-            struct SheetLog(std::sync::atomic::AtomicUsize);
+        if mode == "sheet" || mode == "native-close" || mode == "native-close-panic" {
+            struct SheetLog {
+                errors: AtomicUsize,
+                query_panics: AtomicUsize,
+                surface_quiescence_panics: AtomicUsize,
+                terminal_panics: AtomicUsize,
+                expect_close_panics: std::sync::atomic::AtomicBool,
+            }
             impl log::Log for SheetLog {
                 fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
                     metadata.target().starts_with("open_gpui_macos::window")
@@ -1124,13 +1344,44 @@ mod macos {
                     if self.enabled(record.metadata()) {
                         eprintln!("SHEET native: {}", record.args());
                         if record.level() == log::Level::Error {
-                            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if self.expect_close_panics.load(Ordering::Relaxed) {
+                                match record.args().to_string().as_str() {
+                                    "isolated a panic from a macOS window close query at the native callback boundary" =>
+                                    {
+                                        self.query_panics.fetch_add(1, Ordering::Relaxed);
+                                        return;
+                                    }
+                                    "isolated a panic from a macOS presentation surface quiescence at the native callback boundary" =>
+                                    {
+                                        self.surface_quiescence_panics
+                                            .fetch_add(1, Ordering::Relaxed);
+                                        return;
+                                    }
+                                    "isolated a panic from a macOS native window close at the native callback boundary" =>
+                                    {
+                                        self.terminal_panics.fetch_add(1, Ordering::Relaxed);
+                                        return;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            self.errors.fetch_add(1, Ordering::Relaxed);
                         }
                     }
                 }
                 fn flush(&self) {}
             }
-            static NATIVE_LOG: SheetLog = SheetLog(std::sync::atomic::AtomicUsize::new(0));
+            static NATIVE_LOG: SheetLog = SheetLog {
+                errors: AtomicUsize::new(0),
+                query_panics: AtomicUsize::new(0),
+                surface_quiescence_panics: AtomicUsize::new(0),
+                terminal_panics: AtomicUsize::new(0),
+                expect_close_panics: std::sync::atomic::AtomicBool::new(false),
+            };
+            let close_panic_mode = mode == "native-close-panic";
+            NATIVE_LOG
+                .expect_close_panics
+                .store(close_panic_mode, Ordering::Relaxed);
             log::set_logger(&NATIVE_LOG).unwrap();
             log::set_max_level(log::LevelFilter::Debug);
             let platform = Rc::new(MacPlatform::new(false));
@@ -1146,13 +1397,29 @@ mod macos {
                     if mode == "sheet" {
                         exercise_sheets(&platform, cx).await;
                         println!("native windowing sheet gate passed; physical input and fullscreen pixels remain manual");
+                    } else if mode == "native-close-panic" {
+                        for panic in [NativeClosePanic::TerminalCallback, NativeClosePanic::TerminalCallbackDrop] {
+                            exercise_native_close(&platform, Some(panic)).await;
+                        }
                     } else {
-                        exercise_native_close(&platform).await;
+                        exercise_native_close(&platform, None).await;
                     }
-                    assert_eq!(NATIVE_LOG.0.load(std::sync::atomic::Ordering::Relaxed), 0, "native close must not violate the renderer shutdown protocol");
+                    assert_eq!(NATIVE_LOG.errors.load(Ordering::Relaxed), 0, "native close must not violate the renderer shutdown protocol");
                     stop_application(&app);
                 }).detach();
             });
+            if close_panic_mode {
+                assert_eq!(NATIVE_LOG.errors.load(Ordering::Relaxed), 0);
+                assert_eq!(NATIVE_LOG.query_panics.load(Ordering::Relaxed), 3);
+                assert_eq!(
+                    NATIVE_LOG.surface_quiescence_panics.load(Ordering::Relaxed),
+                    2,
+                );
+                assert_eq!(NATIVE_LOG.terminal_panics.load(Ordering::Relaxed), 2);
+                println!(
+                    "native windowing native-close-panic gate passed: query veto and checkout recovery, frame and resize retirement, terminal callbacks and drops isolated, exact shutdown, native close, retired layer fallback"
+                );
+            }
             return;
         }
         if mode == "activity" {

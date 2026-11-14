@@ -145,6 +145,27 @@ pub(super) unsafe fn drop_owner(window: &AnyObject) {
     }
 }
 
+/// Reads the close owner's phase without advancing native retirement.
+///
+/// # Safety
+///
+/// The caller must keep a GPUI native window alive on the AppKit main thread.
+pub(super) unsafe fn phase(window: &AnyObject) -> Option<&'static str> {
+    unsafe {
+        let raw = *window
+            .class()
+            .instance_variable(OWNER_IVAR)
+            .expect("GPUI native close owner ivar")
+            .load::<*mut c_void>(window);
+        let owner = raw.cast::<NativeCloseOwner>().as_ref()?;
+        Some(match owner.phase.get() {
+            NativeClosePhase::Open => "open",
+            NativeClosePhase::Closing => "closing",
+            NativeClosePhase::Closed => "closed",
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
