@@ -625,6 +625,8 @@ mod macos {
                         "SHEET scene timeout: window={:?}, facts={facts:?}, geometry={geometry:?}",
                         window.window_id()
                     );
+                    let windows = cx.update(|cx| cx.debug_state()["windows"].clone());
+                    eprintln!("SHEET native frame sources: {windows}");
                 }
                 submitted
             },
