@@ -37,6 +37,10 @@ use super::{
 #[path = "host_native_tests.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "receiver_tests.rs"]
+mod receiver_tests;
+
 type WindowFactory = dyn Fn(
     &DockSurface,
     NativeWindowRequest,
@@ -895,8 +899,9 @@ fn resolve_in_window(
                         NativeReceiverAnswer::ClearHoverLane,
                     )
                 } else {
+                    // A frontmost control blocks delivery lanes it does not implement.
                     query.bind_receiver(descriptor).map_or(
-                        NativeReceiverAnswer::NoReceiver(query.presented_surface()),
+                        NativeReceiverAnswer::Blocked(query.presented_surface()),
                         NativeReceiverAnswer::Dock,
                     )
                 }
