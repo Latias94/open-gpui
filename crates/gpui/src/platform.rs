@@ -5030,7 +5030,26 @@ impl PlatformShouldCloseCallbackSlot {
             }
         };
 
-        (checkout.callback_mut())()
+        // Stop callback unwinding before retiring a replaced checkout: that
+        // callback's captures may also panic when dropped.
+        let answer =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (checkout.callback_mut())()));
+        let retired = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(checkout)));
+        match answer {
+            Ok(answer) => {
+                if let Err(panic) = retired {
+                    std::panic::resume_unwind(panic);
+                }
+                answer
+            }
+            Err(panic) => {
+                if let Err(secondary) = retired {
+                    // An arbitrary secondary payload can itself panic in Drop.
+                    std::mem::forget(secondary);
+                }
+                std::panic::resume_unwind(panic)
+            }
+        }
     }
 
     /// Permanently retires this window's callback slot.
@@ -10146,6 +10165,61 @@ mod platform_should_close_callback_slot_tests {
         assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| slot.invoke())).is_err());
         assert!(!slot.invoke());
         assert_eq!(invocation.get(), 2);
+    }
+
+    #[test]
+    fn query_and_retired_callback_panics_preserve_the_first_panic_and_replacement() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct PanicPayload(Arc<AtomicUsize>);
+
+        impl Drop for PanicPayload {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                panic!("secondary panic payload must not be dropped");
+            }
+        }
+
+        struct PanicOnDrop(Rc<Cell<usize>>, Arc<AtomicUsize>);
+
+        impl Drop for PanicOnDrop {
+            fn drop(&mut self) {
+                self.0.set(self.0.get() + 1);
+                std::panic::panic_any(PanicPayload(self.1.clone()));
+            }
+        }
+
+        let slot = PlatformShouldCloseCallbackSlot::default();
+        let drops = Rc::new(Cell::new(0));
+        let payload_drops = Arc::new(AtomicUsize::new(0));
+        let replacement_calls = Rc::new(Cell::new(0));
+        slot.set(Box::new({
+            let slot = slot.clone();
+            let guard = PanicOnDrop(drops.clone(), payload_drops.clone());
+            let replacement_calls = replacement_calls.clone();
+            move || {
+                let _guard = &guard;
+                slot.set(Box::new({
+                    let calls = replacement_calls.clone();
+                    move || {
+                        calls.set(calls.get() + 1);
+                        true
+                    }
+                }));
+                panic!("original close-query failure");
+            }
+        }));
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| slot.invoke()))
+            .expect_err("the original query failure remains observable to the Rust caller");
+        assert_eq!(
+            panic.downcast_ref::<&'static str>(),
+            Some(&"original close-query failure")
+        );
+        assert_eq!(drops.get(), 1);
+        assert_eq!(payload_drops.load(Ordering::Relaxed), 0);
+        assert!(slot.invoke());
+        assert_eq!(replacement_calls.get(), 1);
     }
 }
 
