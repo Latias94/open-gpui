@@ -17,7 +17,7 @@ use dockspace::{
     },
 };
 use open_gpui::{
-    AnyWindowHandle, App, Entity, NativeCapturedDragReleaseBarrier,
+    AnyWindowHandle, App, AppContext as _, Entity, NativeCapturedDragReleaseBarrier,
     PlatformWindowActivationSupport, Render, Subscription, Window, WindowActivationTerminal,
     WindowActivationTicket, WindowFrameSubmissionTicket, WindowInitialPresentationStatus,
     WindowMutationDispatch, WindowMutationOutcome, WindowMutationTicket, WindowOpenError,
@@ -29,6 +29,10 @@ use super::{
     NativeBridge, NativeBridgeError, NativeReport, NativeTransport, NativeWindowFactory,
     input::NativeCapture, transport::Inbound,
 };
+
+#[cfg(test)]
+#[path = "geometry_tests.rs"]
+mod geometry_tests;
 
 type OuterBounds = dyn Fn(&WindowPlatformFacts) -> Option<PhysicalRect>;
 type ClientPlacement = dyn Fn(PhysicalRect, &Window) -> Option<WindowPhysicalPlacementRequest>;
@@ -111,6 +115,7 @@ struct CallbackState {
     window: Cell<Option<AnyWindowHandle>>,
     transport: NativeTransport,
     geometry: Option<Rc<NativeGeometry>>,
+    bounds_observer: RefCell<Option<Entity<Subscription>>>,
     subscriptions: RefCell<Vec<Subscription>>,
     facts: Cell<Option<NativeWindowFacts>>,
     observed: Cell<Option<NativeWindowFacts>>,
@@ -151,6 +156,7 @@ impl NativeCallbacks {
             window: Cell::new(None),
             transport,
             geometry,
+            bounds_observer: RefCell::new(None),
             subscriptions: RefCell::new(Vec::new()),
             facts: Cell::new(None),
             observed: Cell::new(None),
@@ -281,10 +287,31 @@ impl NativeCallbacks {
                 NativeCallbacks(state).observe(window, cx);
             }
         });
+        let weak = Rc::downgrade(&self.0);
+        let bounds = cx.new(|cx| {
+            cx.observe_window_bounds(window, move |_, window, cx| {
+                if let Some(state) = weak.upgrade() {
+                    NativeCallbacks(state).observe(window, cx);
+                }
+            })
+        });
+        self.0.bounds_observer.replace(Some(bounds));
+        let weak = Rc::downgrade(&self.0);
+        let display = window.observe_window_display(move |window, cx| {
+            if let Some(state) = weak.upgrade() {
+                NativeCallbacks(state).observe(window, cx);
+            }
+        });
+        let weak = Rc::downgrade(&self.0);
+        let visibility = window.observe_window_visibility(move |_, window, cx| {
+            if let Some(state) = weak.upgrade() {
+                NativeCallbacks(state).observe(window, cx);
+            }
+        });
         self.0
             .subscriptions
             .borrow_mut()
-            .extend([logical, terminal, initial]);
+            .extend([logical, terminal, initial, display, visibility]);
         self.observe(window, cx);
         Ok(())
     }
@@ -351,6 +378,7 @@ impl NativeCallbacks {
             return Err(NativeBridgeError::NotQuiescent);
         }
         self.0.sealed.set(true);
+        self.0.bounds_observer.borrow_mut().take();
         self.0.subscriptions.borrow_mut().clear();
         Ok(())
     }
@@ -627,6 +655,8 @@ impl NativeCallbacks {
             )
             .ok()?
         };
+        // Presentation visibility includes occlusion on macOS. An occluded but
+        // shown source can still own captured input for a cross-window drag.
         let visible = presentation.native_visible && !platform.is_minimized;
         let prepared = self.0.placement_ready.get()
             && visible
@@ -647,7 +677,7 @@ impl NativeCallbacks {
             )
             .with_presentation(if platform.is_minimized {
                 NativeWindowPresentationState::Minimized
-            } else if presentation.native_visible {
+            } else if visible {
                 NativeWindowPresentationState::Visible
             } else {
                 NativeWindowPresentationState::Hidden
