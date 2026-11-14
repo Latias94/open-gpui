@@ -4269,9 +4269,9 @@ pub trait PlatformDisplay: Debug {
         self.bounds()
     }
 
-    /// Get the default bounds for this display to place a window
+    /// Get the default window bounds within this display's usable work area.
     fn default_bounds(&self) -> Bounds<Pixels> {
-        let bounds = self.bounds();
+        let bounds = self.visible_bounds();
         let center = bounds.center();
         let clipped_window_size = DEFAULT_WINDOW_SIZE.min(&bounds.size);
 
@@ -10515,6 +10515,59 @@ mod frame_signal_tests {
             );
         }
         assert_eq!(signal.take(), None);
+    }
+}
+
+#[cfg(test)]
+mod default_display_bounds_tests {
+    use super::*;
+
+    #[derive(Debug)]
+    struct WorkAreaDisplay {
+        bounds: Bounds<Pixels>,
+        work_area: Bounds<Pixels>,
+    }
+
+    impl PlatformDisplay for WorkAreaDisplay {
+        fn id(&self) -> DisplayId {
+            DisplayId(1)
+        }
+
+        fn uuid(&self) -> Result<Uuid> {
+            Ok(Uuid::nil())
+        }
+
+        fn bounds(&self) -> Bounds<Pixels> {
+            self.bounds
+        }
+
+        fn visible_bounds(&self) -> Bounds<Pixels> {
+            self.work_area
+        }
+
+        fn refresh_interval(&self) -> Option<Duration> {
+            None
+        }
+    }
+
+    #[test]
+    fn default_bounds_reserve_work_area_and_keep_display_coordinates() {
+        let mut display = WorkAreaDisplay {
+            bounds: Bounds::new(point(px(0.), px(0.)), size(px(1024.), px(768.))),
+            work_area: Bounds::new(point(px(0.), px(0.)), size(px(1024.), px(720.))),
+        };
+        assert_eq!(display.default_bounds(), display.work_area);
+
+        display.bounds = Bounds::new(point(px(-1920.), px(0.)), size(px(1920.), px(1080.)));
+        display.work_area = Bounds::new(point(px(-1872.), px(24.)), size(px(1872.), px(1056.)));
+        assert_eq!(
+            display.default_bounds(),
+            Bounds::new(point(px(-1704.), px(24.)), size(px(1536.), px(1056.)))
+        );
+
+        display.bounds = Bounds::new(point(px(0.), px(0.)), size(px(1024.), px(768.)));
+        display.work_area = display.bounds;
+        assert_eq!(display.default_bounds(), display.bounds);
     }
 }
 
