@@ -635,6 +635,74 @@ mod macos {
         .await;
     }
 
+    async fn exercise_idle_frame_wake(
+        platform: &MacPlatform,
+        cx: &mut AsyncApp,
+        window: WindowHandle<SheetProbe>,
+    ) {
+        let has_metal_link = objc2::runtime::AnyClass::get(c"CAMetalDisplayLink").is_some();
+        for refresh in [false, true] {
+            if has_metal_link {
+                wait_for_native(
+                    platform,
+                    || {
+                        let debug = cx.update(|cx| cx.debug_state());
+                        let source = debug["windows"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .find(|entry| entry["id"].as_u64() == Some(window.window_id().as_u64()))
+                            .map(|entry| &entry["platform"]["frame_source"])
+                            .unwrap();
+                        source["attached"] == true
+                            && source["paused"] == true
+                            && source["woken"] == false
+                    },
+                    "a static visible window must park its Metal frame source before the wake control",
+                )
+                .await;
+            }
+            let before = window
+                .update(cx, |_, window, _| {
+                    window
+                        .presentation_facts()
+                        .present_submitted_generation
+                        .unwrap()
+                })
+                .unwrap();
+            window
+                .update(cx, |_, window, cx| {
+                    if refresh {
+                        window.refresh();
+                    } else {
+                        cx.notify();
+                    }
+                })
+                .unwrap();
+            wait_for_native(
+                platform,
+                || {
+                    window
+                        .update(cx, |_, window, _| {
+                            let facts = window.presentation_facts();
+                            facts.native_visible
+                                && facts
+                                    .present_submitted_generation
+                                    .is_some_and(|generation| generation > before)
+                                && facts.non_empty_presented_generation
+                                    == facts.present_submitted_generation
+                        })
+                        .unwrap()
+                },
+                "notifying or refreshing an idle view must submit a newer non-empty native scene",
+            )
+            .await;
+            eprintln!(
+                "SHEET idle wake: refresh={refresh}, metal_link={has_metal_link}, previous_submitted={before}"
+            );
+        }
+    }
+
     fn assert_sheet(parent: &NSWindow, child: &NSWindow) {
         assert!(child.isSheet() && child.isVisible());
         assert!(
@@ -684,6 +752,8 @@ mod macos {
             1,
             "the parent input control must be live"
         );
+        eprintln!("SHEET stage=idle-frame-wake");
+        exercise_idle_frame_wake(platform, cx, owner).await;
 
         let (unrelated, native_unrelated, unrelated_clicks) = cx.update(|cx| {
             open_sheet_probe(
