@@ -1220,7 +1220,7 @@ dependencies = [
 [[package]]
 name = "dockspace"
 version = "0.1.0"
-source = "git+https://github.com/Latias94/dockspace?rev=c200977d0f34943284a125c492919791650e1bff#c200977d0f34943284a125c492919791650e1bff"
+source = "git+https://github.com/Latias94/dockspace?rev=dcd65e983220e17662b1f02929fcf84348cd8eb3#dcd65e983220e17662b1f02929fcf84348cd8eb3"
 dependencies = [
  "blake3",
  "serde",
@@ -3329,16 +3329,11 @@ name = "open-gpui-docking"
 version = "0.2.0"
 dependencies = [
  "anyhow",
- "arrayvec",
  "dockspace",
  "log",
  "open-gpui",
- "open-gpui-motion",
- "open-gpui-ui-core",
  "serde",
  "serde_json",
- "slotmap",
- "smallvec",
  "thiserror 2.0.18",
  "web-time",
 ]
@@ -3581,13 +3576,6 @@ dependencies = [
 [[package]]
 name = "open-gpui-tracing-macro"
 version = "0.2.0"
-
-[[package]]
-name = "open-gpui-ui-core"
-version = "0.2.0"
-dependencies = [
- "open-gpui-motion",
-]
 
 [[package]]
 name = "open-gpui-util"

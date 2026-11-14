@@ -20,7 +20,14 @@ The stable browser proof lives in `crates/gpui_web/examples/smoke_web` and is ex
 cargo run -p xtask -- web-smoke
 ```
 
-The smoke builds a single-threaded web example with Trunk, serves it locally, opens a headless Chrome/Chromium/Edge browser, and verifies app readiness, canvas initialization, focus/input delivery, a single-window shell interaction, explicit unsupported platform viewport windows, and a `DockSurface` viewport probe that returns typed `backend_unsupported` without opening a browser popout window.
+The smoke builds a single-threaded web example with Trunk, serves it locally, opens a headless Chrome/Chromium/Edge browser, and verifies app readiness, canvas initialization, focus/input delivery, a single-window shell interaction and explicit unsupported platform viewport windows. Its default shared `DockSurface` actually requests a second native root and requires the Web backend's `PlatformCreateOrMap` refusal, with the original window/binding intact and no extra callbacks or registrations.
+
+The example's build script gives its wasm binary an 8 MiB linear-memory stack.
+The shared docking engine's unoptimized transactional frame preparation exceeds
+the linker's 1 MiB default when nested in a GPUI paint commit. Other wasm
+applications embedding this path should configure their final binary's linker
+stack as well; a library cannot set its consumer's final stack allocation.
+This is a debug-build capacity requirement, not a browser native-window capability.
 
 The older `hello_web` example remains useful for local shared-memory and atomics experiments, but it is not the required CI smoke path.
 

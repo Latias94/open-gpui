@@ -1,17 +1,30 @@
-use std::{cell::Cell, rc::Rc, sync::Arc, time::Duration};
+use std::{
+    cell::{Cell, OnceCell},
+    rc::Rc,
+    sync::Arc,
+    time::Duration,
+};
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, Application, Bounds, Context, DispatchPhase, FocusHandle, Image, ImageFormat,
-    InteractiveElement, KeyDownEvent, MouseButton, MouseDownEvent, PathBuilder, PointerCancelEvent,
-    PointerCancelReason, PointerCaptureHandle, RenderImage, SubtreeTransform, SubtreeTransformExt,
-    SubtreeTransformOrigin, SvgRenderer, TargetedEvent, Window, WindowActivationPolicy,
-    WindowBounds, WindowOptions, canvas, div, fill, img, point, px, rgb, rgba, size,
+    AnyWindowHandle, App, Application, Bounds, Context, DispatchPhase, FocusHandle, Image,
+    ImageFormat, InteractiveElement, KeyDownEvent, MouseButton, MouseDownEvent, PathBuilder,
+    PointerCancelEvent, PointerCancelReason, PointerCaptureHandle, RenderImage, SubtreeTransform,
+    SubtreeTransformExt, SubtreeTransformOrigin, SvgRenderer, TargetedEvent, Window,
+    WindowActivationPolicy, WindowBounds, WindowOpenFailureStage, WindowOptions, canvas, div, fill,
+    img, point, px, rgb, rgba, size,
 };
-use open_gpui_docking::legacy::prelude::{
-    DockPanelPlacement, DockSurface, DockSurfacePrimaryWindowOpenOutcome,
-    DockSurfaceViewportOpenOutcome, DockSurfaceViewportReadinessStatus,
-    DockSurfaceViewportUnavailable, DockSurfaceWindowSessionStatus,
+use open_gpui_docking::{
+    DockPane, DockSurface, DockSurfaceInspection, GpuiDockspaceConfig,
+    dockspace::{
+        model::{
+            DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, ItemId,
+            RootId, SurfaceId,
+        },
+        policy::DockPolicy,
+        runtime::{DockspaceSession, NativeHostCapability},
+    },
+    native::NativeBridge,
 };
 use open_gpui_web::{CanvasFontFallback, WebPlatform, WebPlatformOptions};
 use open_gpui_wgpu::{WebBackendPreference, WgpuBackend};
@@ -28,6 +41,8 @@ const GRID_ROWS: usize = 128;
 const GRID_CELL: f32 = 2.0;
 const GRID_RED: u32 = 0xe63946;
 const GRID_CYAN: u32 = 0x2ec4b6;
+const SMOKE_SURFACE: SurfaceId = SurfaceId::new(1);
+const PROBE_SURFACE: SurfaceId = SurfaceId::new(2);
 
 #[derive(Clone, Copy)]
 struct BrowserConfig {
@@ -203,15 +218,19 @@ fn publish_startup_probe(graphics: GraphicsProbe, stage: &str) {
     }
 }
 
-#[derive(Clone, Copy)]
 struct DockingProbe {
-    readiness: &'static str,
+    native_window_lifecycle_supported: bool,
     outcome: &'static str,
     opened: bool,
-    window_delta: u64,
-    registered_spaces: u64,
-    app_window_count: u64,
-    session_status: DockSurfaceWindowSessionStatus,
+    failure_stage: Option<WindowOpenFailureStage>,
+    error: Option<String>,
+    root_binding_error: Option<String>,
+    has_retirement_ticket: bool,
+    primary_binding_unchanged: bool,
+    before_windows: Vec<u64>,
+    after_windows: Vec<u64>,
+    before: DockSurfaceInspection,
+    after: DockSurfaceInspection,
 }
 
 #[derive(Clone, Copy)]
@@ -241,7 +260,7 @@ struct SmokeWeb {
     window_deactivated_events: u64,
     shell_interactions: u64,
     platform_viewport_windows: bool,
-    docking_probe: Rc<Cell<Option<DockingProbe>>>,
+    docking_probe: Rc<OnceCell<DockingProbe>>,
     activation_probe: Option<ActivationProbeState>,
     graphics_probe: GraphicsProbe,
     frame_probe: Rc<FrameProbe>,
@@ -252,7 +271,7 @@ struct SmokeWeb {
 impl SmokeWeb {
     fn new(
         platform_viewport_windows: bool,
-        docking_probe: Rc<Cell<Option<DockingProbe>>>,
+        docking_probe: Rc<OnceCell<DockingProbe>>,
         activation_probe: Option<ActivationProbeConfig>,
         graphics_probe: GraphicsProbe,
         cx: &mut Context<Self>,
@@ -421,40 +440,57 @@ impl SmokeWeb {
             &JsValue::from_bool(self.platform_viewport_windows),
         );
         if let Some(docking) = self.docking_probe.get() {
-            let _ = js_sys::Reflect::set(
-                &probe,
-                &"dockingViewportReadiness".into(),
-                &JsValue::from_str(docking.readiness),
-            );
-            let _ = js_sys::Reflect::set(
-                &probe,
-                &"dockingViewportOutcome".into(),
-                &JsValue::from_str(docking.outcome),
-            );
-            let _ = js_sys::Reflect::set(
-                &probe,
-                &"dockingViewportOpened".into(),
-                &JsValue::from_bool(docking.opened),
-            );
-            let _ = js_sys::Reflect::set(
-                &probe,
-                &"dockingViewportWindowDelta".into(),
-                &JsValue::from_f64(docking.window_delta as f64),
-            );
-            let _ = js_sys::Reflect::set(
-                &probe,
-                &"dockingViewportRegisteredSpaces".into(),
-                &JsValue::from_f64(docking.registered_spaces as f64),
-            );
             for (name, value) in [
-                ("appWindowCount", (docking.app_window_count as f64).into()),
                 (
-                    "dockingSessionPhase",
-                    format!("{:?}", docking.session_status.phase()).into(),
+                    "dockingNativeWindowLifecycleSupported",
+                    docking.native_window_lifecycle_supported.into(),
+                ),
+                ("dockingNativeOpenOutcome", docking.outcome.into()),
+                ("dockingNativeOpenSucceeded", docking.opened.into()),
+                (
+                    "dockingNativeOpenWindowDelta",
+                    ((docking.after_windows.len() as f64) - (docking.before_windows.len() as f64))
+                        .into(),
                 ),
                 (
-                    "dockingSessionGeneration",
-                    (docking.session_status.generation() as f64).into(),
+                    "appWindowCount",
+                    (docking.after_windows.len() as f64).into(),
+                ),
+                (
+                    "dockingNativeOpenFailureStage",
+                    docking
+                        .failure_stage
+                        .map_or(JsValue::NULL, |stage| format!("{stage:?}").into()),
+                ),
+                (
+                    "dockingNativeOpenError",
+                    docking
+                        .error
+                        .as_deref()
+                        .map_or(JsValue::NULL, JsValue::from_str),
+                ),
+                (
+                    "dockingNativeRootBindingError",
+                    docking
+                        .root_binding_error
+                        .as_deref()
+                        .map_or(JsValue::NULL, JsValue::from_str),
+                ),
+                (
+                    "dockingNativeOpenHasRetirementTicket",
+                    docking.has_retirement_ticket.into(),
+                ),
+                (
+                    "dockingPrimaryBindingUnchanged",
+                    docking.primary_binding_unchanged.into(),
+                ),
+                (
+                    "dockingBeforeOpen",
+                    docking_inspection_probe(&docking.before, &docking.before_windows),
+                ),
+                (
+                    "dockingAfterOpen",
+                    docking_inspection_probe(&docking.after, &docking.after_windows),
                 ),
             ] {
                 let _ = js_sys::Reflect::set(&probe, &name.into(), &value);
@@ -924,54 +960,144 @@ fn renderer_expectations() -> JsValue {
     .expect("fixed smoke renderer expectations must be valid JSON")
 }
 
-fn docking_probe(surface: &DockSurface, cx: &mut App) -> DockingProbe {
-    let spec =
-        open_gpui_docking::legacy::prelude::DockSurfaceViewportSpec::new("main", WindowOptions::default());
-    let readiness = surface.viewports().readiness(&spec, cx);
-    let readiness = match readiness.status() {
-        DockSurfaceViewportReadinessStatus::Openable => "openable",
-        DockSurfaceViewportReadinessStatus::SessionInactive { .. } => "session_inactive",
-        DockSurfaceViewportReadinessStatus::PolicyDisabled(_) => "policy_disabled",
-        DockSurfaceViewportReadinessStatus::BackendUnsupported => "backend_unsupported",
-        DockSurfaceViewportReadinessStatus::FlagUnsupported { .. } => "flag_unsupported",
-        DockSurfaceViewportReadinessStatus::InvalidPlacement { .. } => "invalid_placement",
-    };
-
-    let before_windows = cx.windows().len();
-    let outcome = surface.viewports().open_spec(spec, cx);
-    let after_windows = cx.windows().len();
-    let opened = outcome.opened();
-    let outcome = match outcome {
-        DockSurfaceViewportOpenOutcome::Opened(_) => "opened",
-        DockSurfaceViewportOpenOutcome::Unavailable(
-            DockSurfaceViewportUnavailable::SessionInactive { .. },
-        ) => "session_inactive",
-        DockSurfaceViewportOpenOutcome::Unavailable(
-            DockSurfaceViewportUnavailable::PolicyDisabled(_),
-        ) => "policy_disabled",
-        DockSurfaceViewportOpenOutcome::Unavailable(
-            DockSurfaceViewportUnavailable::BackendUnsupported,
-        ) => "backend_unsupported",
-        DockSurfaceViewportOpenOutcome::Unavailable(
-            DockSurfaceViewportUnavailable::FlagUnsupported { .. },
-        ) => "flag_unsupported",
-        DockSurfaceViewportOpenOutcome::Unavailable(
-            DockSurfaceViewportUnavailable::InvalidPlacement { .. },
-        ) => "invalid_placement",
-        DockSurfaceViewportOpenOutcome::Unavailable(
-            DockSurfaceViewportUnavailable::OpenFailed(_),
-        ) => "open_failed",
-    };
-
-    DockingProbe {
-        readiness,
-        outcome,
-        opened,
-        window_delta: after_windows.saturating_sub(before_windows) as u64,
-        registered_spaces: surface.registered_viewport_spaces(cx).len() as u64,
-        app_window_count: after_windows as u64,
-        session_status: surface.window_session_status(cx),
+fn docking_probe(
+    surface: &DockSurface,
+    primary: AnyWindowHandle,
+    cx: &mut App,
+) -> Option<DockingProbe> {
+    surface.pump_native(cx);
+    let native_window_lifecycle_supported =
+        NativeBridge::gpui_capabilities(cx).supports(NativeHostCapability::NativeWindowLifecycle);
+    let before = surface
+        .inspection()
+        .expect("smoke managed host should be inspectable");
+    if before.update_pending
+        || before.pending_native_input
+        || before
+            .native
+            .as_ref()
+            .is_some_and(|native| !native.transport_empty)
+    {
+        return None;
     }
+    let before_windows = cx
+        .windows()
+        .into_iter()
+        .map(|window| window.window_id().as_u64())
+        .collect();
+    let primary_binding = surface.native_binding_for_window(primary.window_id());
+    let result = surface.open_native_root(PROBE_SURFACE, false, WindowOptions::default(), cx);
+    let after_windows = cx
+        .windows()
+        .into_iter()
+        .map(|window| window.window_id().as_u64())
+        .collect();
+    let after = surface
+        .inspection()
+        .expect("smoke managed host should remain inspectable");
+    let opened = result.is_ok();
+    let failure = result.err();
+
+    Some(DockingProbe {
+        native_window_lifecycle_supported,
+        outcome: if opened { "opened" } else { "open_failed" },
+        opened,
+        failure_stage: failure.as_ref().and_then(|failure| failure.stage),
+        error: failure.as_ref().map(ToString::to_string),
+        root_binding_error: failure
+            .as_ref()
+            .and_then(|failure| failure.root_binding.as_ref())
+            .map(ToString::to_string),
+        has_retirement_ticket: failure
+            .as_ref()
+            .is_some_and(|failure| failure.retirement_ticket.is_some()),
+        primary_binding_unchanged: primary_binding.is_some()
+            && surface.native_binding_for_window(primary.window_id()) == primary_binding,
+        before_windows,
+        after_windows,
+        before,
+        after,
+    })
+}
+
+fn docking_inspection_probe(inspection: &DockSurfaceInspection, windows: &[u64]) -> JsValue {
+    js_object(&[
+        ("windowCount", (windows.len() as f64).into()),
+        (
+            "windowIds",
+            js_sys::Array::from_iter(
+                windows
+                    .iter()
+                    .map(|window| JsValue::from_str(&window.to_string())),
+            )
+            .into(),
+        ),
+        (
+            "modelSurfaceCount",
+            (inspection.model_surface_count as f64).into(),
+        ),
+        ("openPaneCount", (inspection.open_pane_count as f64).into()),
+        (
+            "registeredPaneCount",
+            (inspection.registered_pane_count as f64).into(),
+        ),
+        ("mountCount", (inspection.mounts.len() as f64).into()),
+        (
+            "nativeWindowBindingCount",
+            (inspection.native_window_binding_count as f64).into(),
+        ),
+        (
+            "pendingNativeCreate",
+            inspection.pending_native_create.into(),
+        ),
+        ("pendingNativeInput", inspection.pending_native_input.into()),
+        (
+            "queuedNativeEffectCount",
+            (inspection.queued_native_effect_count as f64).into(),
+        ),
+        (
+            "lastError",
+            inspection
+                .last_error
+                .as_deref()
+                .map_or(JsValue::NULL, JsValue::from_str),
+        ),
+        (
+            "native",
+            inspection.native.as_ref().map_or(JsValue::NULL, |native| {
+                js_object(&[
+                    ("admissionFrozen", native.admission_frozen.into()),
+                    ("bridgeAvailable", native.bridge_available.into()),
+                    ("transportEmpty", native.transport_empty.into()),
+                    (
+                        "retainedReportCount",
+                        (native.retained_report_count as f64).into(),
+                    ),
+                    (
+                        "pendingHostReportCount",
+                        (native.pending_host_report_count as f64).into(),
+                    ),
+                    (
+                        "callbackWindowCount",
+                        (native.callback_window_count as f64).into(),
+                    ),
+                    ("rootWindowCount", (native.root_window_count as f64).into()),
+                    (
+                        "retiringBindingCount",
+                        (native.retiring_binding_count as f64).into(),
+                    ),
+                    (
+                        "pendingRootRegistrationCount",
+                        (native.pending_root_registration_count as f64).into(),
+                    ),
+                    (
+                        "rootRetirementCount",
+                        (native.root_retirement_count as f64).into(),
+                    ),
+                ])
+            }),
+        ),
+    ])
 }
 
 fn activation_probe_config() -> Option<ActivationProbeConfig> {
@@ -1044,7 +1170,7 @@ fn main() {
         }
         publish_startup_probe(graphics_probe, "platform-ready");
         let platform_viewport_windows = cx.viewport_capabilities().platform_viewport_windows;
-        let docking_result = Rc::new(Cell::new(None));
+        let docking_result = Rc::new(OnceCell::new());
         let activation_probe = activation_probe_config();
         let smoke = cx.new(|cx| {
             SmokeWeb::new(
@@ -1055,33 +1181,77 @@ fn main() {
                 cx,
             )
         });
-        let panel = smoke.clone();
-        let surface = DockSurface::builder("main")
-            .panel_placements([DockPanelPlacement::center("editor")])
-            .panel_factory("editor", "Editor", move |_| panel.clone().into())
-            .allow_platform_viewports(true)
-            .build(cx)
-            .expect("smoke docking surface should validate");
-        let bounds = Bounds::centered(None, size(px(640.0), px(420.0)), cx);
-        let _primary = match surface.open_primary_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                focus_on_appearing: activation_probe.is_none(),
-                activation_policy: activation_probe
-                    .map(|probe| probe.policy)
-                    .unwrap_or_default(),
-                ..Default::default()
-            },
+        let editor = ItemId::new(1);
+        let layout = DockspaceLayout::new([
+            DockspaceSurfaceLayout::new(
+                SMOKE_SURFACE,
+                DockspaceRootLayout::new(RootId::new(1), DockspaceNode::central_tabs([editor])),
+            ),
+            DockspaceSurfaceLayout::new(
+                PROBE_SURFACE,
+                DockspaceRootLayout::new(RootId::new(2), DockspaceNode::central_tabs([])),
+            ),
+        ])
+        .expect("smoke docking layout should validate");
+        let mut policy = DockPolicy::default();
+        policy.set_allow_native_surfaces(true);
+        let surface = DockSurface::new_managed(
+            DockspaceSession::from_layout(layout, policy)
+                .expect("smoke should own one shared docking session"),
+            [DockPane::new(editor, "Editor", smoke.clone())],
+            GpuiDockspaceConfig::default(),
             cx,
-        ) {
-            DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened,
-            outcome => panic!("smoke docking primary should open: {outcome:?}"),
-        };
-        docking_result.set(Some(docking_probe(&surface, cx)));
-        smoke.update(cx, |smoke, cx| {
-            smoke.publish_probe();
-            cx.notify();
-        });
+        )
+        .expect("smoke shared docking surface should validate");
+        let bounds = Bounds::centered(None, size(px(640.0), px(420.0)), cx);
+        let primary = cx
+            .open_window_detailed(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    focus_on_appearing: activation_probe.is_none(),
+                    activation_policy: activation_probe
+                        .map(|probe| probe.policy)
+                        .unwrap_or_default(),
+                    ..Default::default()
+                },
+                |window, cx| {
+                    surface
+                        .bind_native_root(SMOKE_SURFACE, true, window, cx)
+                        .expect("smoke primary should bind to its shared docking session");
+                    smoke.clone()
+                },
+            )
+            .expect("smoke docking primary should open")
+            .into();
+        cx.spawn(async move |cx| {
+            for _ in 0..1800 {
+                let completed = cx.update(|cx| {
+                    let Some(probe) = docking_probe(&surface, primary, cx) else {
+                        return false;
+                    };
+                    assert!(
+                        docking_result.set(probe).is_ok(),
+                        "smoke docking probe should initialize once"
+                    );
+                    smoke.update(cx, |smoke, cx| {
+                        smoke.publish_probe();
+                        cx.notify();
+                    });
+                    true
+                });
+                if completed {
+                    return;
+                }
+                cx.background_executor()
+                    .timer(Duration::from_millis(16))
+                    .await;
+            }
+            panic!(
+                "smoke native transport did not settle: {:?}",
+                surface.inspection()
+            );
+        })
+        .detach();
         cx.activate(true);
     });
 }

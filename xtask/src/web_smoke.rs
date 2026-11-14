@@ -668,6 +668,96 @@ fn expect_graphics_refusal(
     Ok(())
 }
 
+fn check_docking_probe(state: &Value) -> Result<(), String> {
+    for (path, expected) in [
+        ("/probe/platformViewportWindows", json!(false)),
+        ("/probe/dockingNativeWindowLifecycleSupported", json!(false)),
+        ("/probe/dockingNativeOpenOutcome", json!("open_failed")),
+        ("/probe/dockingNativeOpenSucceeded", json!(false)),
+        ("/probe/dockingNativeOpenWindowDelta", json!(0)),
+        ("/probe/appWindowCount", json!(1)),
+        (
+            "/probe/dockingNativeOpenFailureStage",
+            json!("PlatformCreateOrMap"),
+        ),
+        (
+            "/probe/dockingNativeOpenError",
+            json!(
+                "window open failed during PlatformCreateOrMap: GPUI web supports only one top-level window"
+            ),
+        ),
+        ("/probe/dockingNativeRootBindingError", Value::Null),
+        ("/probe/dockingNativeOpenHasRetirementTicket", json!(false)),
+        ("/probe/dockingPrimaryBindingUnchanged", json!(true)),
+    ] {
+        if state.pointer(path) != Some(&expected) {
+            return Err(format!(
+                "web smoke expected a real Web backend native-open refusal at {path}={expected}: {state}"
+            ));
+        }
+    }
+    let before = state
+        .pointer("/probe/dockingBeforeOpen")
+        .filter(|snapshot| snapshot.is_object())
+        .ok_or_else(|| {
+            format!("web smoke missing managed DockSurface pre-open inspection: {state}")
+        })?;
+    let after = state
+        .pointer("/probe/dockingAfterOpen")
+        .filter(|snapshot| snapshot.is_object())
+        .ok_or_else(|| {
+            format!("web smoke missing managed DockSurface post-open inspection: {state}")
+        })?;
+    if before != after {
+        return Err(format!(
+            "web smoke rejected native open changed the managed DockSurface or window roster: {state}"
+        ));
+    }
+    for (path, expected) in [
+        ("/windowCount", json!(1)),
+        ("/modelSurfaceCount", json!(2)),
+        ("/openPaneCount", json!(1)),
+        ("/registeredPaneCount", json!(1)),
+        ("/mountCount", json!(0)),
+        ("/nativeWindowBindingCount", json!(1)),
+        ("/pendingNativeCreate", json!(false)),
+        ("/pendingNativeInput", json!(false)),
+        ("/queuedNativeEffectCount", json!(0)),
+        ("/lastError", Value::Null),
+        ("/native/admissionFrozen", json!(false)),
+        ("/native/bridgeAvailable", json!(true)),
+        ("/native/transportEmpty", json!(true)),
+        ("/native/pendingHostReportCount", json!(0)),
+        ("/native/callbackWindowCount", json!(1)),
+        ("/native/rootWindowCount", json!(1)),
+        ("/native/retiringBindingCount", json!(0)),
+        ("/native/pendingRootRegistrationCount", json!(0)),
+        ("/native/rootRetirementCount", json!(0)),
+    ] {
+        if after.pointer(path) != Some(&expected) {
+            return Err(format!(
+                "web smoke expected one managed Dock primary without ghost native state at {path}={expected}: {state}"
+            ));
+        }
+    }
+    if !after
+        .get("windowIds")
+        .and_then(Value::as_array)
+        .is_some_and(|windows| {
+            windows.len() == 1 && windows[0].as_str().is_some_and(|window| !window.is_empty())
+        })
+        || after
+            .pointer("/native/retainedReportCount")
+            .and_then(Value::as_u64)
+            .is_none()
+    {
+        return Err(format!(
+            "web smoke missing exact window identity or retained native report count: {state}"
+        ));
+    }
+    Ok(())
+}
+
 fn check_backend_state(
     state: &Value,
     requested: &str,
@@ -690,20 +780,13 @@ fn check_backend_state(
             .pointer("/probe/appWindowCount")
             .and_then(Value::as_u64)
             != Some(1)
-        || state
-            .pointer("/probe/dockingSessionPhase")
-            .and_then(Value::as_str)
-            != Some("Active")
-        || !state
-            .pointer("/probe/dockingSessionGeneration")
-            .and_then(Value::as_u64)
-            .is_some_and(|generation| generation > 0)
         || !canvas_ready(state)
     {
         return Err(format!(
-            "web smoke expected requested={requested}, actual={actual}, one active Dock primary and one canvas: {state}"
+            "web smoke expected requested={requested}, actual={actual}, one managed Dock primary and one canvas: {state}"
         ));
     }
+    check_docking_probe(state)?;
     if state
         .get("webgpuUnavailableControl")
         .and_then(Value::as_bool)
@@ -1888,59 +1971,7 @@ fn run_browser_smoke(cdp: &mut CdpClient) -> Result<(), String> {
             && state.pointer("/probe/clickEvents").and_then(Value::as_u64) == Some(1)
     })?;
 
-    if final_state
-        .pointer("/probe/platformViewportWindows")
-        .and_then(Value::as_bool)
-        != Some(false)
-    {
-        return Err(
-            "web smoke expected platform viewport windows to be an unsupported capability"
-                .to_string(),
-        );
-    }
-
-    if final_state
-        .pointer("/probe/dockingViewportReadiness")
-        .and_then(Value::as_str)
-        != Some("backend_unsupported")
-    {
-        return Err(
-            "web smoke expected DockSurface viewport readiness to report backend_unsupported"
-                .to_string(),
-        );
-    }
-
-    if final_state
-        .pointer("/probe/dockingViewportOutcome")
-        .and_then(Value::as_str)
-        != Some("backend_unsupported")
-    {
-        return Err(
-            "web smoke expected DockSurface viewport open outcome to report backend_unsupported"
-                .to_string(),
-        );
-    }
-
-    if final_state
-        .pointer("/probe/dockingViewportOpened")
-        .and_then(Value::as_bool)
-        != Some(false)
-        || final_state
-            .pointer("/probe/dockingViewportWindowDelta")
-            .and_then(Value::as_u64)
-            != Some(0)
-        || final_state
-            .pointer("/probe/dockingViewportRegisteredSpaces")
-            .and_then(Value::as_u64)
-            != Some(0)
-    {
-        return Err(
-            "web smoke expected unsupported DockSurface viewport request to avoid windows and registrations"
-                .to_string(),
-        );
-    }
-
-    Ok(())
+    check_docking_probe(&final_state)
 }
 
 fn run_activation_policy_smoke(
@@ -2911,6 +2942,124 @@ fn parse_ws_url(url: &str) -> Result<(String, u16, String), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn managed_docking_probe_state() -> Value {
+        let inspection = json!({
+            "windowCount": 1,
+            "windowIds": ["42"],
+            "modelSurfaceCount": 2,
+            "openPaneCount": 1,
+            "registeredPaneCount": 1,
+            "mountCount": 0,
+            "nativeWindowBindingCount": 1,
+            "pendingNativeCreate": false,
+            "pendingNativeInput": false,
+            "queuedNativeEffectCount": 0,
+            "lastError": null,
+            "native": {
+                "admissionFrozen": false,
+                "bridgeAvailable": true,
+                "transportEmpty": true,
+                "retainedReportCount": 1,
+                "pendingHostReportCount": 0,
+                "callbackWindowCount": 1,
+                "rootWindowCount": 1,
+                "retiringBindingCount": 0,
+                "pendingRootRegistrationCount": 0,
+                "rootRetirementCount": 0,
+            },
+        });
+        json!({ "probe": {
+            "platformViewportWindows": false,
+            "dockingNativeWindowLifecycleSupported": false,
+            "dockingNativeOpenOutcome": "open_failed",
+            "dockingNativeOpenSucceeded": false,
+            "dockingNativeOpenWindowDelta": 0,
+            "appWindowCount": 1,
+            "dockingNativeOpenFailureStage": "PlatformCreateOrMap",
+            "dockingNativeOpenError": "window open failed during PlatformCreateOrMap: GPUI web supports only one top-level window",
+            "dockingNativeRootBindingError": null,
+            "dockingNativeOpenHasRetirementTicket": false,
+            "dockingPrimaryBindingUnchanged": true,
+            "dockingBeforeOpen": inspection.clone(),
+            "dockingAfterOpen": inspection,
+        } })
+    }
+
+    #[test]
+    fn docking_probe_requires_the_backend_open_refusal_and_original_primary() {
+        let state = managed_docking_probe_state();
+        check_docking_probe(&state).unwrap();
+        for (path, invalid) in [
+            ("/probe/dockingNativeWindowLifecycleSupported", json!(true)),
+            ("/probe/dockingNativeOpenSucceeded", json!(true)),
+            (
+                "/probe/dockingNativeOpenFailureStage",
+                json!("ClosedDuringBuild"),
+            ),
+            (
+                "/probe/dockingNativeOpenError",
+                json!(
+                    "window open failed during PlatformCreateOrMap: browser graphics initialization failed"
+                ),
+            ),
+            (
+                "/probe/dockingNativeRootBindingError",
+                json!("native binding is unavailable"),
+            ),
+            ("/probe/dockingNativeOpenHasRetirementTicket", json!(true)),
+            ("/probe/dockingPrimaryBindingUnchanged", json!(false)),
+            ("/probe/dockingBeforeOpen", Value::Null),
+        ] {
+            let mut invalid_state = state.clone();
+            *invalid_state.pointer_mut(path).unwrap() = invalid;
+            assert!(
+                check_docking_probe(&invalid_state).is_err(),
+                "{path}: {invalid_state}"
+            );
+        }
+    }
+
+    #[test]
+    fn docking_probe_rejects_ghost_owners_and_nonempty_transport_even_when_unchanged() {
+        for (path, invalid) in [
+            ("/windowCount", json!(2)),
+            ("/windowIds", json!([])),
+            ("/nativeWindowBindingCount", json!(2)),
+            ("/pendingNativeCreate", json!(true)),
+            ("/pendingNativeInput", json!(true)),
+            ("/queuedNativeEffectCount", json!(1)),
+            ("/lastError", json!("managed host failed")),
+            ("/native", Value::Null),
+            ("/native/transportEmpty", json!(false)),
+            ("/native/pendingHostReportCount", json!(1)),
+            ("/native/callbackWindowCount", json!(2)),
+            ("/native/rootWindowCount", json!(2)),
+            ("/native/retiringBindingCount", json!(1)),
+            ("/native/pendingRootRegistrationCount", json!(1)),
+            ("/native/rootRetirementCount", json!(1)),
+        ] {
+            let mut state = managed_docking_probe_state();
+            for snapshot in ["dockingBeforeOpen", "dockingAfterOpen"] {
+                *state["probe"][snapshot].pointer_mut(path).unwrap() = invalid.clone();
+            }
+            assert!(check_docking_probe(&state).is_err(), "{path}: {state}");
+        }
+    }
+
+    #[test]
+    fn docking_probe_rejects_window_replacement_and_new_reports_without_a_count_delta() {
+        for (path, invalid) in [
+            ("/windowIds", json!(["43"])),
+            ("/native/retainedReportCount", json!(2)),
+        ] {
+            let mut state = managed_docking_probe_state();
+            *state["probe"]["dockingAfterOpen"]
+                .pointer_mut(path)
+                .unwrap() = invalid;
+            assert!(check_docking_probe(&state).is_err(), "{path}: {state}");
+        }
+    }
 
     #[test]
     fn request_path_maps_root_to_index() {
