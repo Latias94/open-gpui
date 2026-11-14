@@ -718,6 +718,12 @@ replacement previews, preserve the source child/View, then allow another drag.
 This is a source gap with no new native reproduction receipt. No sibling files
 or unpublished objects are changed or pushed by this CI task.
 
+The subsequent [fixed-source qualification](dockspace-source-qualification-20261114.md)
+extends the inventory through `31366dbf`, executes archived candidates locally
+and repairs an independently reproduced GPUI receiver-lane defect at the current
+pin. It preserves the publication boundary and distinguishes the actual GPUI
+unsubmitted-target cancellation from the sibling's pending-preview scenario.
+
 ### Independent Mac Workbench Close
 
 At Open-GPUI `10254c62684d1f7f69dcbb4bcb1735f2fa768415` and sibling dockspace

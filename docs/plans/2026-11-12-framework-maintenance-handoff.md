@@ -179,6 +179,16 @@ intermittent first-scene timeout. Production wake/pause policy remains aligned
 with the official source; retain frame-source and exact-submission diagnostics
 if the timeout recurs before considering a scheduling change.
 
+The [dockspace source qualification](../knowledge/engineering/verification/dockspace-source-qualification-20261114.md)
+then inventories the fixed 42-commit range from `c200977d` to `31366dbf` and
+tests archived candidate sources without moving the published dependency. It
+also fixes a reproduced GPUI native receiver distinction: a frontmost drag-only
+splitter blocks click rather than asserting an empty lane. The deterministic
+release control preserves the source child and View when the destination has
+not submitted; it does not reproduce the sibling's pending-preview defect.
+After source publication, prefer the complete candidate's authority/resize
+corrections with its explicit empty-lane API migration and owning native tests.
+
 Continue with the actual remaining integration boundaries:
 
 1. Run Nara's canonical Dialogue Session/file and complete native trajectory on

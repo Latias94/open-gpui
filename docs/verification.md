@@ -1,5 +1,19 @@
 # Verification
 
+## November 14 Dockspace Candidate Qualification
+
+The [fixed-source inventory](knowledge/engineering/verification/dockspace-source-qualification-20261114.md)
+classifies all 42 dockspace commits from production pin `c200977d` to candidate
+`31366dbf`, separately qualifying minimum release correction `5ff5c2c2`. A GPUI
+native receiver bug is reproduced and corrected independently: a frontmost
+drag-only splitter blocks click while accepting drag; exposed empty background
+and unknown presentation authority keep their distinct results. The additional
+release control verifies cancellation before an unsubmitted destination can
+transfer a View or retire its native child. These are deterministic platform
+tests, not physical-input qualification. The production dependency remains
+fetchable at its original pin; candidate executions and temporary API changes
+have separate source receipts in the linked record.
+
 ## November 14 CI Suite Consolidation
 
 The [CI consolidation record](knowledge/engineering/verification/ci-suite-consolidation-20261114.md)
