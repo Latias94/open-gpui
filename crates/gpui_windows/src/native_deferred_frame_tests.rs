@@ -10,8 +10,8 @@ use crate::{
 use anyhow::{Context as _, Result};
 use open_gpui::{
     NoopTextSystem, PlatformAtlas, PlatformFrameDeliveryMode, PlatformFrameSubmission,
-    PlatformFrameSubmissionStatus, PlatformPresentationShutdownOutcome, Scene, Size,
-    WindowBackgroundAppearance, WindowPresentationShutdownTicket, rgb,
+    PlatformFrameSubmissionStatus, PlatformPresentationShutdownOutcome, RequestFrameOptions, Scene,
+    Size, WindowBackgroundAppearance, WindowPresentationShutdownTicket, rgb,
 };
 use raw_window_handle::RawWindowHandle;
 
@@ -162,6 +162,15 @@ fn native_deferred_token_revocation_survives_renderer_borrow_and_retires_origina
         || {
             let submission = observations.pending.borrow().clone();
             pending = submission.filter(PlatformFrameSubmission::is_pending);
+            if pending.is_none() {
+                // Initial placement notifications can revoke the first candidate. A hidden
+                // HWND has no ordinary paint pump, so request its next real frame explicitly.
+                native.request_frame(RequestFrameOptions {
+                    force_render: true,
+                    require_presentation: true,
+                    ..Default::default()
+                });
+            }
             pending.is_some()
         },
     );
