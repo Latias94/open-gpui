@@ -212,7 +212,7 @@ fn an_exposed_empty_background_keeps_both_delivery_lanes_without_receivers(
         };
         assert_eq!(
             answer,
-            NativeReceiverAnswer::NoReceiver(query.presented_surface())
+            NativeReceiverAnswer::EmptyLane(query.presented_surface())
         );
     }
     result.unwrap();

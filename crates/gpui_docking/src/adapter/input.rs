@@ -33,11 +33,11 @@ impl QueuedPointer {
             if self.clear {
                 facts = match &self.delivery {
                     Some(receiver) => facts.with_delivery(receiver),
-                    None => facts.with_no_delivery(surface),
+                    None => facts.with_empty_delivery_lane(surface),
                 };
                 facts = match &self.drag {
                     Some(receiver) => facts.with_drag_delivery(receiver),
-                    None => facts.with_no_drag_delivery(surface),
+                    None => facts.with_empty_drag_delivery_lane(surface),
                 };
             } else {
                 facts = facts.with_blocked_delivery(surface);

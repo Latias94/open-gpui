@@ -210,6 +210,12 @@ impl DockSurface {
     }
 
     /// Reads the session's published model without exposing a second mutable owner.
+    ///
+    /// `with_view(|view| view.to_layout())` copies the committed logical layout
+    /// for reconstruction in a fresh session. The copy excludes live gestures,
+    /// queued input, native bindings, GPUI entities and presentation authority.
+    /// Use [`Self::capture_document`] when external View keys and document
+    /// generations must also survive; a logical checkpoint does not replace it.
     pub fn with_view<R>(&self, inspect: impl FnOnce(DockspaceView<'_>) -> R) -> R {
         inspect(self.host.borrow().session.view())
     }

@@ -910,7 +910,7 @@ fn resolve_in_window(
                 .iter()
                 .any(|hitbox| target_rank(*hitbox, point) == Some(0))
             {
-                NativeReceiverAnswer::NoReceiver(query.presented_surface())
+                NativeReceiverAnswer::EmptyLane(query.presented_surface())
             } else {
                 NativeReceiverAnswer::Blocked(query.presented_surface())
             }
