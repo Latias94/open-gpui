@@ -232,6 +232,7 @@ Verify pass.
 | `da7c45b5` | Validate the public randomized-tree ChildText mutation result. | Same-seed failure followed by all **68/68** local benchmark smoke scenarios and independent review. |
 | `2b7519b1` | Move the existing complete-library commands out of the default workspace job. | Exact Cargo-command multiset comparison, workflow lint and independent review; owning final-workflow CI tracked below. |
 | `2f971395` | Allow measured cache finalization within the Core/platform job budget. | All original verification steps pass; workflow lint, exact command comparison and independent review confirm that only the matrix timeout changes. |
+| `1ebea5f3` | Exercise native frame wake after the Metal source parks, through both entity notification and window refresh. | Injected wake failure is detected; restored offline/runtime shader executions, complete Apple/macOS **199/199**, formatting, example Clippy and independent diff review pass. Earlier intermittent first-scene failures remain unexplained. |
 
 ### Complete Local Rerun
 
@@ -469,6 +470,91 @@ this record changed since its build source. The source-delta receipt and log are
 `/tmp/open-gpui-ci-sheet-cache-budget-native-20261114.log`. The helper removes
 the App and the post-run process inventory is empty. This additional success
 does not resolve the unexplained earlier failures.
+
+### Native Idle Frame Wake Control
+
+The continuation from `d68c9b20` runs six more bounded sheet baselines before
+changing the probe. All six pass with actual OS wait status **0**:
+
+| Shader configuration | Source and executable | Three sequential executions |
+| --- | --- | --- |
+| Runtime shaders | Reuse the unchanged `2b7519b1` executable recorded above; the intervening changes are CI and documentation. | **8.006 s**, **7.650 s**, **7.604 s**. |
+| Offline Metal | Rebuild `d68c9b20` with `test-support`; SHA-256 `6e2d53a28e1c75683815f47380953f11dee72c4eb49008dd05c527955eda3e25`. | **8.024 s**, **7.489 s**, **7.497 s**. |
+
+The two receipts are
+`/tmp/open-gpui-mac-first-scene-baseline-receipt-20261114.json` and
+`/tmp/open-gpui-mac-first-scene-offline-receipt-20261114.json`. These successful
+repetitions do not reproduce or explain the two earlier first-scene failures.
+
+Commit `1ebea5f3` adds `exercise_idle_frame_wake` after the owner's first scene
+and native input control in the sheet probe. On systems with `CAMetalDisplayLink`,
+it waits for that window's actual source to be attached, paused and unwoken. It records
+the last Submitted generation, calls `cx.notify()`, and requires a newer
+Submitted generation whose non-empty generation is exactly the same. It repeats
+the complete park/request/submission sequence with `window.refresh()`. Both
+controls retain the existing five-second deadline. The older CVDisplayLink path
+retains the newer non-empty submission check but has no Metal pause assertion;
+that fallback is not executed on this host.
+
+The mechanism comparison stays at official endpoint
+`5bd59e2e439aff9b9203b9dd3c9bcb04159f701c`:
+
+| Official mechanism and provenance | Current fork owner | Disposition |
+| --- | --- | --- |
+| `0373366f` introduces Metal drawable delivery; `3d42ca7c` supplies frame-source diagnostics. `gpui_macos/src/display_link.rs`, `MetalFrames::{wake,begin_frame,end_frame}`, resumes on wake and pauses only without a used drawable or a new wake. | `gpui_apple/src/display_link.rs`, `MetalFrames::{request_frame,begin_frame,end_frame}` and `display_link/metal_state.rs`. | Wake/pause policy retained; the fork adds generation retirement and merged frame requirements. The native control covers the Core-to-source-to-submission integration. |
+| `gpui_apple/src/display_link.rs` attaches the native source to the main run loop's common modes. | Shared Apple `MetalFrameSource`. | Retained; no new timer or watchdog is added. |
+| `gpui_macos/src/window.rs`, `start_display_link` and `metal_frame`, bind visibility, the renderer layer and drawable delivery. | `MacWindowState::start_display_link`, `metal_frame`, initial presentation and deferred-frame owners. | Native delivery retained with the fork's delayed visibility, explicit transient owner, exact submission and shutdown contracts. A source being attached alone does not prove that a scene was submitted. |
+
+The fixed-target `gpui_macos/src/{window,display_link}.rs` and
+`gpui_apple/src/{display_link,metal_renderer}.rs` are content-checked against
+their local reference blobs. This adds native integration qualification to the
+existing [per-commit reconciliation](../../../imports/zed-gpui-commit-reconciliation-2026-11-12.md)
+without moving its source endpoint or establishing the earlier timeout's cause.
+
+A temporary negative control changes only `MetalFrames::request_frame` from
+`source.set_paused(false)` to `source.set_paused(true)`. The native owner still
+submits its initial scene and passes its input control. Execution then reaches
+`SHEET stage=idle-frame-wake` and fails the new newer-scene assertion on the
+first notify control after five seconds, with actual OS wait status **256**
+(normal exit **1**, no abort). This demonstrates detection of an injected wake
+failure, not reproduction of the original intermittent first-scene defect.
+The precise temporary hunk is then removed; no production display-link change
+is retained. Healthy offline-Metal runs pass before and after the negative
+control. A subsequent runtime-shader build also passes both wake controls and
+every remaining sheet stage in **8.070 s**, with actual OS wait status **0**.
+Its executable SHA-256 is
+`f772818fc9434d719ceb7936b514ba91fe78f6bfe82932780a50168c6b90afe4`.
+
+Evidence is retained in
+`/tmp/open-gpui-mac-idle-wake-negative-control-20261114.patch`,
+`/tmp/open-gpui-mac-idle-wake-negative-20261114.log`,
+`/tmp/open-gpui-mac-idle-wake-restored-20261114.log` and
+`/tmp/open-gpui-mac-idle-wake-runtime-receipt-20261114.json` with its linked
+process log. The combined receipt is
+`/tmp/open-gpui-mac-idle-wake-final-receipt-20261114.json`; its example source
+blob matches `1ebea5f3`. Each native launch is serial, bounded and cleans its
+temporary App.
+The final process inventory contains zero probe processes, and all four new
+launches' temporary Apps are absent. The complete Apple/macOS library and test
+cohort with `font-kit,screen-capture` passes **199/199**, with zero skipped,
+nextest run `85e528cc-89f7-45eb-8dd5-a7f71c6cd8d9`. Package formatting and the
+changed example's Clippy check pass, including `-D clippy::correctness` and
+`-D clippy::suspicious`; advisory warnings remain. Independent diff review finds
+no blocking code or verification-record issue. The executable checks are:
+
+```sh
+CARGO_BUILD_JOBS=1 cargo build --locked -p open-gpui-macos --example native_windowing --features test-support,runtime_shaders
+python3 scripts/run_macos_native_probe.py target/debug/examples/native_windowing sheet
+CARGO_BUILD_JOBS=1 cargo nextest run --locked -p open-gpui-apple -p open-gpui-macos --features font-kit,screen-capture --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
+cargo fmt --package open-gpui-macos --check
+CARGO_BUILD_JOBS=1 cargo clippy --locked -p open-gpui-macos --example native_windowing --features test-support,runtime_shaders -- -D clippy::correctness -D clippy::suspicious
+```
+
+This qualifies native submission and AppKit-dispatched input; physical input,
+scanout pixels, performance and the cause of the earlier first-frame timeout
+remain outside the result. If that timeout returns, preserve the existing
+frame-source, geometry and journal diagnostics before changing production
+scheduling or drawing conclusions about its cause.
 
 ### Cold-build Suite Ownership
 

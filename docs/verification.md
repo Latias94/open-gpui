@@ -19,6 +19,15 @@ cache-finalization budget correction. Physical-input runner availability,
 ignored Vulkan-surface trajectories, unexplained intermittent Mac sheet
 timeouts and unpublished dockspace source remain separate follow-ups.
 
+The [native idle wake continuation](knowledge/engineering/verification/ci-suite-consolidation-20261114.md#native-idle-frame-wake-control)
+adds six passing sheet baselines across offline and runtime Metal shaders, then
+checks that a paused native frame source resumes through both `cx.notify()` and
+`window.refresh()` and submits a newer exact non-empty generation. An injected
+pause-on-wake defect fails the new notify control; removing that temporary hunk
+restores passing native executions in both shader configurations. Production
+scheduling is unchanged. The earlier intermittent first-scene timeout is still
+unexplained; the native regression does not qualify physical input or performance.
+
 ## November 14 Retained SVG and CI Follow-up
 
 Official `aff99ecc3249cfa95e720c4d6c1eb4a72105a3ee` is adopted at the fixed

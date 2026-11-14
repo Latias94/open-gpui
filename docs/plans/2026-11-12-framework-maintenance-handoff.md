@@ -171,6 +171,14 @@ cases and unexplained intermittent Mac sheet timeouts. It also records
 dockspace's unpublished `5ff5c2c2` release-retirement correction:
 publish and qualify its explicit source range before moving the framework pin.
 
+The [native idle wake follow-up](../knowledge/engineering/verification/ci-suite-consolidation-20261114.md#native-idle-frame-wake-control)
+adds a real paused-source `notify`/`refresh` submission control, with an injected
+wake failure and restored healthy runs in both Metal shader configurations.
+Six additional baseline sheet launches pass, but do not explain the earlier
+intermittent first-scene timeout. Production wake/pause policy remains aligned
+with the official source; retain frame-source and exact-submission diagnostics
+if the timeout recurs before considering a scheduling change.
+
 Continue with the actual remaining integration boundaries:
 
 1. Run Nara's canonical Dialogue Session/file and complete native trajectory on
