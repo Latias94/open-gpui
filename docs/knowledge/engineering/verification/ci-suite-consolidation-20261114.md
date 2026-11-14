@@ -54,6 +54,14 @@ contracts. A hosted DirectX result does not establish the physical-input gate.
 
 ## Qualification
 
+The final published workflow at
+`2f971395e9ffee6c10b9f5889a19d44b6786bd3d` passes **all thirteen jobs** in
+[Verify run 43591362851](https://github.com/Latias94/open-gpui/actions/runs/43591362851).
+Dependency Health and Publish Check also pass at this exact revision. The
+earlier failures and incomplete runs below remain part of the record; the
+final-workflow receipt and remaining native limits are detailed under
+Final Published Workflow Result.
+
 `actionlint .github/workflows/verify.yml` and the existing document-link, API,
 import, release, theme and UI contract checks pass. The exact consolidated
 Core/utility command passes **2587/2587**, zero skipped, on the Mac host in
@@ -223,6 +231,7 @@ Verify pass.
 | `0635075f`, `340ea69f` | Include scene, geometry and frame-source facts in Mac sheet timeout diagnostics. | Example compilation and bounded native execution; the intermittent first-scene failure remains unexplained. |
 | `da7c45b5` | Validate the public randomized-tree ChildText mutation result. | Same-seed failure followed by all **68/68** local benchmark smoke scenarios and independent review. |
 | `2b7519b1` | Move the existing complete-library commands out of the default workspace job. | Exact Cargo-command multiset comparison, workflow lint and independent review; owning final-workflow CI tracked below. |
+| `2f971395` | Allow measured cache finalization within the Core/platform job budget. | All original verification steps pass; workflow lint, exact command comparison and independent review confirm that only the matrix timeout changes. |
 
 ### Complete Local Rerun
 
@@ -453,6 +462,14 @@ temporary App, and the post-run process inventory is empty. This qualifies one
 execution of the final diagnostic source, without establishing the cause or
 resolution of the earlier intermittent timeout.
 
+A later bounded launch at clean `2f971395` reuses that exact executable and
+passes in **8.113 seconds**, with OS wait status **0**. Only the workflow and
+this record changed since its build source. The source-delta receipt and log are
+`/tmp/open-gpui-ci-sheet-cache-budget-receipt-20261114.json` and
+`/tmp/open-gpui-ci-sheet-cache-budget-native-20261114.log`. The helper removes
+the App and the post-run process inventory is empty. This additional success
+does not resolve the unexplained earlier failures.
+
 ### Cold-build Suite Ownership
 
 The Windows workspace job at `6eb51e6a` starts at 08:37:39 UTC. Its default Core
@@ -547,6 +564,49 @@ an exact command comparison qualify the configuration change; a complete run
 of its published workflow remains required. The measured durations include
 setup, compilation, test execution and cache cleanup; they are not a controlled
 performance comparison or a guarantee about later cold-cache runs.
+
+### Final Published Workflow Result
+
+The correction is published as
+`2f971395e9ffee6c10b9f5889a19d44b6786bd3d`.
+[Verify run 43591362851](https://github.com/Latias94/open-gpui/actions/runs/43591362851)
+completes successfully with **13/13 jobs**. Its final job finishes at
+**12:53:03 UTC** on November 14, 2026. The exact-head job/step receipt is
+`/tmp/open-gpui-ci-cache-budget-final-receipt-20261114.json`. Dependency Health
+`43591362923` and Publish Check `43591362874` also succeed at this revision.
+
+| Owning job | Actual qualification | Total job duration |
+| --- | --- | --- |
+| Windows workspace/default libraries | Default Core **1,781/1,781**, default libraries **1,633/1,633** with one skipped; formatting, targets and all repository contracts pass. | 33m31s |
+| Windows complete libraries | **3,647/3,647**, thirteen skipped; **47** doctests pass with two ignored; release assets **1/1**. | 35m27s |
+| Windows Core/platform | Complete Core/utilities **2,564/2,564**, minimal **1,917/1,917**; hot reload, host Web/fonts, component/motion and native font-kit all pass. | 42m24s |
+| Mac Core/platform | Complete Core/utilities **2,588/2,588**, minimal **1,918/1,918**, offline Apple/Metal **199/199**; other feature and backend checks pass. | 51m57s |
+| Linux Core/platform | Complete Core, feature variants, backend boundaries, backend/headless/clipboard tests and font-kit all pass. | 41m00s |
+| Windows native | Ordinary backend **336/336**, twelve declared skipped; FXC, two native animation tests, desktop retirement and every tracking configuration pass. | 53m19s |
+| Windows GPU hosts | Complete WGPU, independent atlas, application-supplied renderer and all seven existing native host trajectories pass. | 35m55s |
+| Windows independent consumers | API, feature boundaries and dedicated support pass; all benchmark smokes, including **68/68** public mutation cases, pass. | 69m42s |
+| Mac independent consumers | Every independently locked API, feature, logging and support cohort passes. | 26m34s |
+| Linux independent consumers | Every independently locked API, feature, logging and support cohort passes. | 26m50s |
+| Browser | Stable wasm checks and complete browser smoke pass. | 15m38s |
+| Windows Rust 1.93 floor | Framework, test-support and hot-reload consumers compile. | 17m32s |
+| Windows Rust 1.95 floor | Docking/tooling and independent consumers compile. | 18m06s |
+
+Complete logs for the changed ownership and previously failing boundaries are
+`/tmp/open-gpui-ci-cache-budget-{libraries-windows,workspace-windows,core-windows,core-macos,native-windows,consumers-windows}-20261114.log`.
+The Windows Core job restores the previously packed cache in about 4m47s and
+finishes without repeating that save. These are observed job durations with
+different cache states and hosts, not measured speedups. Actionlint, the exact
+Cargo-command comparison, document links and independent source/evidence review
+also pass for the timeout-only correction.
+
+The separate Windows physical-input workflow still has zero registered
+self-hosted runners and remains pending. Three declared ignored independent
+Vulkan-surface cases are not executed by this receipt. Mac sheet has two bounded
+successful executions of the diagnostic source, while its earlier intermittent
+first-scene timeouts remain unexplained. The unpublished dockspace correction
+and Nara's owning Windows trajectory remain separate integration follow-ups.
+No physical-input, real Vulkan-surface, stable Mac repetition or performance
+claim follows from the green hosted workflow.
 
 ## Consumer Follow-up
 

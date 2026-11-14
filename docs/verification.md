@@ -10,11 +10,14 @@ and GPU-host tests and the real browser workflow have independent jobs. Default
 and complete features, instrumentation-free APIs, explicit ignored native tests
 and environment-sensitive handle tracking retain their separate gates.
 
-At exact `2890cd30`, production FXC compilation and the complete Linux browser
-smoke pass. All three stable-platform jobs then hit their job timeouts; this is
-not a complete Verify pass. The restructured workflow still needs its own remote
-execution result. Physical-input runner availability and unpublished dockspace
-source remain separate follow-ups in the linked record.
+The final restructured workflow passes **13/13 jobs** at exact
+`2f971395e9ffee6c10b9f5889a19d44b6786bd3d` in
+[Verify run 43591362851](https://github.com/Latias94/open-gpui/actions/runs/43591362851).
+Dependency Health and Publish Check also pass there. The linked record retains
+the earlier `2890cd30` timeouts, subsequent regression fixes and the measured
+cache-finalization budget correction. Physical-input runner availability,
+ignored Vulkan-surface trajectories, unexplained intermittent Mac sheet
+timeouts and unpublished dockspace source remain separate follow-ups.
 
 ## November 14 Retained SVG and CI Follow-up
 

@@ -161,9 +161,14 @@ The subsequent [CI consolidation](../knowledge/engineering/verification/ci-suite
 replaces the accumulated per-fix filters and nested local rollup with complete
 package suites, preserving distinct compiler/feature/consumer/native gates.
 All three stable jobs at `2890cd30` exhaust their 45-minute cold-build limits;
-browser, native, GPU-host and consumer checks now have independent jobs. Read the
-new record for actual execution receipts before treating the workflow as green.
-It also records dockspace's unpublished `5ff5c2c2` release-retirement correction:
+browser, native, GPU-host and consumer checks now have independent jobs. The
+final workflow passes **13/13 jobs** at
+`2f971395e9ffee6c10b9f5889a19d44b6786bd3d` in
+[Verify run 43591362851](https://github.com/Latias94/open-gpui/actions/runs/43591362851),
+alongside Dependency Health and Publish Check. The new record retains the
+actual suite counts, cache-finalization budget correction, ignored Vulkan
+cases and unexplained intermittent Mac sheet timeouts. It also records
+dockspace's unpublished `5ff5c2c2` release-retirement correction:
 publish and qualify its explicit source range before moving the framework pin.
 
 Continue with the actual remaining integration boundaries:
