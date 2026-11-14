@@ -614,8 +614,15 @@ mod macos {
                         && facts.non_empty_presented_generation.is_some()
                 });
                 if !submitted && Instant::now() >= deadline {
+                    let geometry = window.update(cx, |_, window, _| {
+                        (
+                            window.bounds(),
+                            window.viewport_size(),
+                            window.rendered_frame_revision(),
+                        )
+                    });
                     eprintln!(
-                        "SHEET scene timeout: window={:?}, facts={facts:?}",
+                        "SHEET scene timeout: window={:?}, facts={facts:?}, geometry={geometry:?}",
                         window.window_id()
                     );
                 }
@@ -1339,6 +1346,7 @@ mod macos {
             impl log::Log for SheetLog {
                 fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
                     metadata.target().starts_with("open_gpui_macos::window")
+                        || metadata.target() == "open_gpui::scene"
                 }
                 fn log(&self, record: &log::Record<'_>) {
                     if self.enabled(record.metadata()) {
