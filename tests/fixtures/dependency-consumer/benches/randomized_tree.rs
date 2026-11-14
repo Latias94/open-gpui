@@ -398,6 +398,12 @@ impl Drop for TreeRun<'_, '_> {
                     self.initial.element_ids().into_iter().collect(),
                 );
             }
+            (Kind::ChildText, Applied::ChildText { element_id }) => {
+                let element_ids = snapshot.element_ids();
+                assert_eq!(element_ids, self.initial.element_ids());
+                assert!(element_ids.contains(&element_id));
+                assert_ne!(snapshot, self.initial, "child text must change tree state");
+            }
             (Kind::RootColor, Applied::RootColor)
             | (Kind::RootOpacity, Applied::RootOpacity)
             | (Kind::RootBorder, Applied::RootBorder)
