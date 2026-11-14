@@ -2,6 +2,8 @@
 
 #[path = "recovery_tests.rs"]
 mod recovery;
+#[path = "release_tests.rs"]
+mod release;
 
 use std::{
     cell::{Cell, RefCell},
