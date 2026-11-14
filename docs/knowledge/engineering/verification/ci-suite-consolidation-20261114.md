@@ -322,6 +322,31 @@ The four real body timeouts consume 4.177 seconds. The original Mac failure and
 HTTP rerun logs are `/tmp/open-gpui-ci-followup-core-mac-failure-20261114.log` and
 `/tmp/open-gpui-ci-http-imported-after-fix-20261114.log`.
 
+At published `cc43c195955dfe63fe02297119910b81e0a9780f`, the complete local
+Core/utility command subsequently passes **2,587/2,587**, zero skipped, across 66
+binaries, in 455.966 seconds including compilation (219.715 seconds execution),
+nextest `a2ed4eeb-c9d7-470f-a652-8088514fc30b`. Log and exact-head receipt:
+`/tmp/open-gpui-ci-core-complete-after-timing-fix-20261114.log` and
+`/tmp/open-gpui-ci-core-complete-after-timing-fix-receipt-20261114.json`.
+[Verify run 43573290297](https://github.com/Latias94/open-gpui/actions/runs/43573290297)
+uses this source. Dependency Health, Publish Check and both Windows compiler
+floors pass there; remaining owning-platform execution is still being collected.
+
+The previous `5a4245af` Windows default-library step also passes before the next
+push supersedes its still-running complete-library step. Its final step receipt
+is `/tmp/open-gpui-ci-followup-ended-jobs-20261114.json`. No complete remote
+library result is inferred from that successful default-library step.
+
+Failed native and Mac jobs also skip the cache action's post step, causing later
+corrections to repeat otherwise completed dependency compilation. The existing
+action explicitly supports [`cache-on-failure`](https://github.com/Swatinem/rust-cache/blob/v2/action.yml),
+with a post condition of `success() || env.CACHE_ON_FAILURE == 'true'`. The Verify
+workflow now enables that input at its eight existing cache sites. Ordinary job,
+OS and Rust-environment keys remain unchanged, as do every test and failure
+condition. No cache manager or extra script is introduced. This adds sixteen
+configuration lines to the earlier 393-line rewrite; step/test-command counts
+are unchanged. Actionlint passes; cold/warm runtime savings remain unmeasured.
+
 ## Consumer Follow-up
 
 Read-only inspection finds Nara at `8666a83371f4511cdb0943c47459966997b5bfbf`,
