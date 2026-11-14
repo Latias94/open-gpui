@@ -1715,14 +1715,16 @@ fn subpixel_grayscale_fallback_preserves_records_and_clips_for_both_transports()
             reference.underlines.clear();
             reference.monochrome_sprites.clear();
             reference.polychrome_sprites.clear();
-            for (left, top, color) in [
-                (48.0, 0.0, 0xffffff),
-                (0.0, 0.0, 0x00ff00),
-                (32.0, 20.0, 0xff00ff),
-                (84.0, 44.0, 0x00ffff),
+            // Keep the prelude on the monochrome atlas, then compare both record
+            // layouts against the same color tile, including its filtered border.
+            for (left, top, color, tile) in [
+                (48.0, 0.0, 0xffffff, tiles[0]),
+                (0.0, 0.0, 0x00ff00, tiles[1]),
+                (32.0, 20.0, 0xff00ff, tiles[1]),
+                (84.0, 44.0, 0x00ffff, tiles[1]),
             ] {
                 let mut sprite = template;
-                sprite.tile = tiles[0];
+                sprite.tile = tile;
                 sprite.bounds = Bounds::new(point(px(left), px(top)), size(px(24.0), px(24.0)))
                     .scale(scale_factor);
                 sprite.clip = clip;
@@ -1791,7 +1793,7 @@ fn subpixel_grayscale_fallback_preserves_records_and_clips_for_both_transports()
                             let fixture = SubpixelFixture {
                                 order: sprite.order,
                                 pad: 0,
-                                tile: tiles[1],
+                                tile: sprite.tile,
                                 bounds: sprite.bounds,
                                 clip: sprite.clip,
                                 color: sprite.color,
