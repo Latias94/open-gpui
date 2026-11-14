@@ -347,6 +347,51 @@ condition. No cache manager or extra script is introduced. This adds sixteen
 configuration lines to the earlier 393-line rewrite; step/test-command counts
 are unchanged. Actionlint passes; cold/warm runtime savings remain unmeasured.
 
+### Exact Default Geometry And Final GPU Hosts
+
+At `cc43c195`, the Windows ordinary backend reaches **334/336**, with twelve
+ignored cases. All seven failures from the previous run now pass, including
+the renderer-borrow retirement and profiler regressions. The two remaining
+failures are the newly added default-window and deferred-token fixture cases.
+Log: `/tmp/open-gpui-ci-native-followup2-failure-20261114.log`.
+
+The default-window diagnostics show a requested client rectangle of **1024×768**
+at `(0, 0)`, but the system returns **1024×749**, with outer rectangle
+`(-8, -31, 1040×788)`. The same display observation has a **1024×768** screen and
+**1024×720** work area, at scale 1.0. The shared default-size implementation uses
+the complete screen while the existing cascade uses the work area only for its
+origin. The fixed official implementation contains that same default-size
+behavior; Open-GPUI's strict native mapping exposes the resulting discrepancy.
+
+Correction `b0fa2224` generates default size and center from `visible_bounds()`.
+It preserves the exact native mapping contract, work areas with negative desktop
+origins and unchanged full-screen work areas. Explicit Core `window_bounds`
+continues to bypass that computation; Windows' existing out-of-display-center
+fallback still uses the same default helper. A portable regression fails before
+the correction with 768 versus 720 height, nextest
+`db6e1fc8-d538-4a0d-a8fd-b1ef49aee720`; afterward all **8/8** related display tests
+pass, run `9d142901-52a4-4a68-9167-306a3f304c14`, in 81.167 seconds including
+compilation. Logs:
+`/tmp/open-gpui-ci-default-work-area-{red,after-fix}-20261114.log`.
+
+The new deferred-token test originally waits passively after initial placement
+can revoke its first candidate. Its hidden HWND has no ordinary paint pump.
+Correction `2f89e323` requests a real replacement frame through the native callback
+while waiting for a Pending token; after acquisition every original token and
+retirement assertion remains unchanged. Both changes receive independent source
+review, and the Windows all-target/all-feature SDK check passes in 6.580 seconds.
+Log: `/tmp/open-gpui-ci-default-work-area-msvc-20261114.log`. Owning Windows execution
+of both corrections remains required.
+
+The complete Windows GPU-host job passes at `cc43c195`: WGPU **149/149**, the
+independent atlas **1/1**, the application-supplied native renderer **1/1**, and
+all seven existing ordinary/external/deferred/logical-root host trajectories.
+The actual external-host receipts include submitted GPU pixels, native input
+routing, resize, cancelled-token refusal, exact prefix quiescence and typed
+Detached completion while the host continues to its own `WM_QUIT`. Log:
+`/tmp/open-gpui-ci-followup2-gpu-success-20261114.log`. The Mac complete Core step
+also passes at this same revision before proceeding to its feature variants.
+
 ## Consumer Follow-up
 
 Read-only inspection finds Nara at `8666a83371f4511cdb0943c47459966997b5bfbf`,
