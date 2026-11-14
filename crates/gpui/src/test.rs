@@ -169,7 +169,7 @@ pub fn observe<T: 'static>(entity: &Entity<T>, cx: &mut TestAppContext) -> Obser
     let (tx, rx) = async_channel::unbounded();
     let _subscription = cx.update(|cx| {
         cx.observe(entity, move |_, _| {
-            let _ = open_gpui::block_on(tx.send(()));
+            let _ = tx.try_send(());
         })
     });
     let rx = Box::pin(rx);

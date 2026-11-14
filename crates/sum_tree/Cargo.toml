@@ -25,12 +25,18 @@ open_gpui_tracing.workspace = true
 tracing.workspace = true
 proptest = { workspace = true, optional = true }
 
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+proptest = { workspace = true, optional = true, features = ["fork", "timeout"] }
+
 [dev-dependencies]
 ctor.workspace = true
 log.workspace = true
 open_gpui_log.workspace = true
 rand.workspace = true
 proptest.workspace = true
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+proptest = { workspace = true, features = ["fork", "timeout"] }
 
 
 [package.metadata.cargo-machete]

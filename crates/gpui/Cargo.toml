@@ -149,6 +149,7 @@ uuid = { workspace = true, features = ["js"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 async-channel = { workspace = true, features = ["std"] }
+proptest = { workspace = true, optional = true, features = ["fork", "timeout"] }
 
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
@@ -182,7 +183,7 @@ trybuild.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 open_gpui_http_client = { workspace = true, features = ["test-support"] }
-proptest.workspace = true
+proptest = { workspace = true, features = ["fork", "timeout"] }
 
 [build-dependencies]
 embed-resource = { version = "3.0.11", optional = true }
