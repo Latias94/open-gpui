@@ -209,6 +209,11 @@ Verify pass.
 | `d5995867` | Preserve disabled-tree sibling metadata in the Gallery contract. | Reproduced failure, then **5/5** related contracts with the same package graph. |
 | `d4648a1e` | Establish a post-show initialization frame before SVG measurements. | Real MSVC SDK all-target/all-feature compilation; native rerun remains required. |
 | `40ff32b6` | Keep the repeated-close test application alive across cycles. | Complete default docking library **66/66**; owning Windows rerun remains required. |
+| `18cbf3ae` | Revoke the original deferred-frame token while its GPU renderer is busy. | Original native failures, SDK checks and correctness Clippy; new real-token retirement regression compiled and independently reviewed. |
+| `4003c51e` | Separate bounded lifecycle fixtures from the ordinary-default-window regression. | SDK all-target/all-feature check and independent review; exact default native mapping remains required. |
+| `64408b97` | Allow actual DX12/Vulkan selection in the custom-renderer fixture. | SDK compilation and independent review; actual adapter and native trajectory remain to be collected. |
+| `213fee64` | Verify benchmark event ownership against the actual trace interval. | **6/6** related tests and independent review. |
+| `3d88ffc0` | Pair imported read timeouts with an untimed body control. | Complete HTTP **9/9** and independent review. |
 
 ### Complete Local Rerun
 
@@ -231,6 +236,91 @@ The exact-head step snapshot is
 `/tmp/open-gpui-ci-followup-native-step-20261114.json`.
 The physical-input workflow still has no registered self-hosted runner. None of
 these pending platform results is implied by the complete local-library pass.
+
+### Native Backend Follow-up
+
+The same Windows native job subsequently reaches the complete ordinary backend
+suite: **327/334 pass**, seven fail and twelve remain ignored. Four failures
+exercise a deliberately borrowed renderer during retirement or native messaging;
+new submission invalidation calls use `borrow_mut()` before the existing
+retryable-quiescence path can run. One platform-finalization test consequently
+aborts during destructor unwinding. The original failing lines were introduced
+by fork commit `69d0992f`, the external-host deferred-frame integration. The
+read-only official Windows reference has no corresponding submission or shutdown
+ticket mechanism; this is a fork integration regression, not an unported official
+fix. Log: `/tmp/open-gpui-ci-native-followup-failure-20261114.log`.
+
+The correction `18cbf3ae` shares the original pending-token slot between the native window
+and its renderer wrapper. Native geometry changes and shutdown can revoke the
+exact token without borrowing the GPU renderer. Quiescence still refuses while
+that renderer is busy, and the existing exact-ticket retirement owner retries
+later; no surface or HWND is released early. Slot and shutdown-ticket borrows
+end before completion notification. Independent source review finds no blocking
+issue, and the Windows all-target/all-feature SDK check passes in 6.212 seconds.
+Log: `/tmp/open-gpui-ci-native-borrow-msvc-20261114.log`. Native execution of the
+correction and its deferred-token regression remains required. The new native
+regression obtains a real nonempty Window's original pending token through a
+deferred provider, claims shutdown while its renderer is still borrowed, checks
+immediate rejection and late-Submitted refusal, then verifies the original ticket,
+HWND, atlas and platform/OLE retirement after the borrow ends. Including that
+regression, all-target/all-feature SDK compilation passes in 4.343 seconds; log:
+`/tmp/open-gpui-ci-native-borrow-regression-msvc-20261114.log`.
+SDK-backed Clippy with `-D clippy::correctness -D clippy::suspicious` also passes
+in 16.504 seconds, including the default-window geometry regression; log:
+`/tmp/open-gpui-ci-native-borrow-clippy-msvc-20261114.log`.
+
+Three other failures open default-sized hidden lifecycle windows and fail exact
+native geometry convergence. The existing log lacks requested and observed
+geometry, DPI and target-display observations, so it does not establish which
+dimension or display condition differs. Those lifecycle fixtures now select a
+small centered window while retaining every original assertion. Production
+geometry errors additionally report the complete request and observation. The
+strict physical-placement contract remains unchanged; default-size behavior
+still needs its own production investigation and native qualification.
+The separate `native_default_window_bounds_map_and_retire_exactly` case retains
+ordinary default `WindowOptions` so the next native run cannot hide that gap
+behind the smaller lifecycle fixtures.
+
+The corrected Windows complete WGPU step also passes at this same checkpoint,
+finishing **149/149**, zero skipped, at 07:19:12 UTC. Its independent GPU-atlas
+consumer then passes **1/1**. The custom-renderer test fails before creating its
+native surface because its fixture requests Vulkan only, unavailable on this
+hosted runner. It now allows the Windows DX12 and Vulkan backends and records the
+actual adapter/backend; all imported-image, submitted-pixel, resize and retirement
+assertions remain unchanged. A DX12 result does not qualify Vulkan. Logs and
+snapshot: `/tmp/open-gpui-ci-followup-gpu-failure-20261114.log` and
+`/tmp/open-gpui-ci-followup-gpu-step-20261114.json`. With the default-window and
+adapter tests included, the MSVC all-target/all-feature check passes in 2.497
+seconds; log: `/tmp/open-gpui-ci-native-default-and-adapter-msvc-20261114.log`.
+
+### Mac Timing Follow-up
+
+The Mac Core/utility job at the same source checkpoint runs **2,587** tests:
+**2,585 pass and two fail**, with zero skipped. The first inherited benchmark
+test assumes a 10-millisecond sleep finishes within 40 milliseconds; its reported
+maximum is 80.347135 milliseconds. The log has no poll identity establishing
+that this is the earlier setup poll. Existing runnable guards synchronously
+record completion before the setup task returns. The correction observes that
+setup poll through an early collector, checks every measured event against the
+actual scope boundaries and requires the measured task's own poll in the summary.
+No production measurement logic changes. The six related official benchmark
+tests pass locally in 139.997 seconds including compilation (2.444 seconds
+execution), run `b6c38928-97f5-47d1-a862-ffb13c77c4a5`. Log:
+`/tmp/open-gpui-ci-bench-scope-after-fix-20261114.log`.
+
+The imported Reqwest client test instead fails during redirected `send()`, before
+its intended body-read timeout assertion. Its 100-millisecond read timer covers
+the initial request, redirect connection and response headers. The replacement
+fixture pairs the timed client with an untimed client for all four policies. Both
+bodies are withheld; the timed body must fail with the read timeout while the
+untimed body stays Pending, then succeeds only after explicit release. Read,
+fixture and total-request deadlines are one, five and ten seconds respectively,
+so losing the imported read timeout cannot pass through the later total deadline.
+The complete HTTP cohort passes **9/9**, zero skipped, in 80.233 seconds including
+compilation (5.774 seconds execution), run `90585031-3cc5-46c0-8563-7e3b2d2585de`.
+The four real body timeouts consume 4.177 seconds. The original Mac failure and
+HTTP rerun logs are `/tmp/open-gpui-ci-followup-core-mac-failure-20261114.log` and
+`/tmp/open-gpui-ci-http-imported-after-fix-20261114.log`.
 
 ## Consumer Follow-up
 
