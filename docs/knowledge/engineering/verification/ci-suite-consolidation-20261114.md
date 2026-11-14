@@ -73,6 +73,26 @@ belongs to the Windows GPU job, not the three-host CPU consumer matrix. Final
 review reports no remaining P1/P2. Owning-platform CI execution remains required
 before claiming that the new full suites pass remotely.
 
+### Independent Loopback Follow-up
+
+At workflow checkpoint `04acc73022a5f4f78b551f0f52ca6b8219383b7f`, the complete
+minimal consumer passes **120/120**, zero skipped, in 91.723 seconds including
+compilation. The complete-feature consumer initially passes 158/159: its HTTP
+redirect fixture receives `WouldBlock` while reading request headers, then
+resets the connection. The nonblocking listener's accepted stream can retain
+nonblocking mode on macOS; setting a read timeout does not change that mode.
+The production Reqwest implementation is unchanged, and its existing unit-test
+loopback helper already resets accepted streams correctly.
+
+The independent fixture now likewise calls `set_nonblocking(false)` before
+blocking reads. The original redirect/header assertions remain intact. A
+20-iteration targeted stress run reproduces one failure before the fix and
+passes all 20 afterward. The final complete-feature consumer passes **159/159**,
+zero skipped, in 2.809 seconds including the incremental build; test execution
+is 1.903 seconds. Logs are
+`/tmp/open-gpui-ci-http-{before,after}-fix-20261114.log` and
+`/tmp/open-gpui-ci-independent-complete-after-fix-20261114.log`.
+
 The exact timeout job logs are retained as
 `/tmp/open-gpui-ci-timeout-{windows,macos,linux}-20261114.log`; the GitHub job and
 annotation API snapshots use `/tmp/open-gpui-continuation-*-20261114.json`.
