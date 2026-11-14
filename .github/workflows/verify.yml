@@ -103,12 +103,6 @@ jobs:
       - name: Test default libraries and default docking
         run: cargo nextest run --locked -p open-gpui-motion -p open-gpui-form -p open-gpui-resource -p open-gpui-devtools -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery -p open-gpui-docking --test-threads=1 --no-fail-fast --no-tests fail
 
-      - name: Test complete libraries and legacy docking
-        run: cargo nextest run --locked -p open-gpui-form -p open-gpui-resource -p open-gpui-devtools -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery -p open-gpui-docking -p open-gpui-docking-native -p open-gpui-canvas -p open-gpui-command -p open-gpui-bench-metrics -p open-gpui-macros -p xtask --all-features --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
-
-      - name: Test public library documentation
-        run: cargo test --locked -p open-gpui-motion -p open-gpui-devtools -p open-gpui-ui-core -p open-gpui-ui-components --all-features --doc
-
       - name: Check repository contracts
         run: |
           cargo run --locked -p xtask -- verify-release-docs
@@ -124,6 +118,28 @@ jobs:
           cargo run --locked -p xtask -- scan-public-api --check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo run --locked -p xtask -- scan-ui-contract
+
+  libraries-windows:
+    name: verify complete libraries (windows)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      GPUI_LEAK_DETECTION: '1'
+      GPUI_TEST_EXPECT_LEAK_DETECTION: 'on'
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@nextest
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Test complete libraries and legacy docking
+        run: cargo nextest run --locked -p open-gpui-form -p open-gpui-resource -p open-gpui-devtools -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery -p open-gpui-docking -p open-gpui-docking-native -p open-gpui-canvas -p open-gpui-command -p open-gpui-bench-metrics -p open-gpui-macros -p xtask --all-features --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test public library documentation
+        run: cargo test --locked -p open-gpui-motion -p open-gpui-devtools -p open-gpui-ui-core -p open-gpui-ui-components --all-features --doc
 
       - name: Test release embedded assets
         run: cargo nextest run --locked -p open-gpui-util --release --test embedded_assets --test-threads=1 --no-fail-fast --no-tests fail

@@ -431,6 +431,54 @@ success logs are `/tmp/open-gpui-ci-work-area-native-mac-sheet-20261114.log`,
 has zero native probe processes and the last temporary App is removed. Physical
 input and fullscreen pixels remain outside this receipt.
 
+### Cold-build Suite Ownership
+
+The Windows workspace job at `6eb51e6a` starts at 08:37:39 UTC. Its default Core
+finishes at 09:14:39 UTC; default libraries are still running at 09:46 UTC, and
+the complete-feature, doctest and release-asset cohorts have not begun. The
+complete-feature step begins only after roughly seventy minutes of a ninety-minute
+job. Passing native/GPU jobs do not resolve this remaining cold-build tail.
+
+The final workflow moves the existing complete-library, public-doctest and
+release-embedded-asset commands verbatim into `libraries-windows`. The original
+`quality` job keeps its ID and displayed check name, workspace compilation,
+default suites and repository contracts. Both preserve their leak-detection
+environment, one build worker, one test thread and independent ordinary caches.
+No Rust test, feature selection or Cargo command changes in this move. A command
+multiset comparison and actionlint pass; independent review finds no blocking
+issue. The final workflow is **425 lines, 81 step definitions and 38 literal
+nextest calls**, compared with the original 710/134/135. Four setup steps account
+for the new job; there is no new script or suite registry. Its owning remote run
+remains required before claiming complete final-workflow success.
+
+The completed Mac job at `6eb51e6a` passes full Core **2,588/2,588**, minimal Core
+**1,918/1,918**, and offline Metal **199/199**, all with zero skipped. Complete log:
+`/tmp/open-gpui-ci-final-core-mac-success-complete-20261114.log`. The completed
+Windows native job passes **336/336**, with twelve declared ignored cases, plus
+FXC, both animations, desktop controls and all three tracking configurations.
+Both added default-window and deferred-token regressions pass explicitly. Log:
+`/tmp/open-gpui-ci-final-native-success-20261114.log`.
+
+### Public Mutation Benchmark Follow-up
+
+The Windows consumer job passes every API/feature/support step, then its final
+randomized-tree benchmark smoke reaches `ordinary/ChildText/seed-7` and panics:
+`requested ordinary/ChildText but applied ChildText { element_id: 13 }`. The
+seventeen-kind public enum already includes the adopted text mutation, and the
+fixture enumerates `ALL`; its Drop-time result validator omits that one matching
+kind. Production applies the requested mutation correctly. Original log:
+`/tmp/open-gpui-ci-final-consumers-windows-failure-20261114.log`.
+
+Correction `da7c45b5` adds the exact ChildText result pair, requires stable ordered
+element identities, a valid reported target and a changed tree snapshot, and
+retains the existing fresh-scene, generation, activation and release checks.
+The same seed reproduces the old panic locally; afterward all **68/68** scenarios
+pass: seventeen mutations, ordinary/cached modes and seeds 7/23. The complete
+smoke takes 6.064 seconds including the incremental build. Logs:
+`/tmp/open-gpui-ci-public-bench-child-text-{red,after-fix}-20261114.log`.
+Independent review finds no blocking issue. This is executed correctness smoke,
+not a performance comparison; the corrected owning Windows run remains required.
+
 ## Consumer Follow-up
 
 Read-only inspection finds Nara at `8666a83371f4511cdb0943c47459966997b5bfbf`,
