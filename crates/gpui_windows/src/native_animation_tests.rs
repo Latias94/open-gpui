@@ -5,6 +5,8 @@
 //! progression, reduced-motion endpoints, restoration and retirement while a delayed frame is pending.
 //! Synthetic input enters the existing native callback; this does not qualify OS input injection,
 //! physical foreground focus, frame-rate budgets, compositor scanout or display latency.
+//! Retained SVG coverage observes synchronous DirectX submissions and cancels paced frame demand;
+//! it does not qualify deferred submission tokens or driver-level texture residency accounting.
 
 use super::*;
 use crate::native_test_observation::{
@@ -12,8 +14,9 @@ use crate::native_test_observation::{
 };
 use open_gpui::{
     Animation, AnimationExt, AnyWindowHandle, FocusHandle, InteractiveElement, KeyDownEvent,
-    Keystroke, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, WeakEntity, WindowFrameCapture,
-    WindowHandle, WindowInitialPresentationStatus, black, fill, rgb,
+    Keystroke, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, SpriteAnimationId,
+    TimedTransformation, Transformation, TransformationMatrix, WeakEntity, WindowFrameCapture,
+    WindowHandle, WindowInitialPresentationStatus, black, fill, rgb, svg,
 };
 
 const ANIMATION_DURATION: Duration = Duration::from_millis(1200);
@@ -257,86 +260,46 @@ impl NativeAnimationWindow {
                 submitted = app
                     .update_for_test(|cx| {
                         self.handle.update(cx, |root, window, _| {
-                        let facts = window.presentation_facts();
-                        let paints = self.paints.each_ref().map(|paint| paint.get());
-                        last_state = Some((facts, window.rendered_frame_revision(), paints));
-                        let [Some(first), Some(second), Some(oneshot)] = paints else {
-                            return None;
-                        };
-                        let paints = [first, second, oneshot];
-                        let attempt = facts.latest_present_attempt?;
-                        let diagnostics = window.submitted_frame_diagnostics_for_test()?;
-                        if !(attempt.generation > previous
-                            && attempt.outcome == PlatformWindowPresentOutcome::Submitted
-                            && attempt.contained_valid_primitives
-                            && facts.initial_presentation
-                                == WindowInitialPresentationStatus::Completed
-                            && facts.native_visible
-                            && facts.frame_accepted_generation == Some(attempt.generation)
-                            && facts.present_submitted_generation == Some(attempt.generation)
-                            && facts.non_empty_presented_generation == Some(attempt.generation)
-                            && window.rendered_frame_revision() == attempt.generation
-                            && diagnostics.generation() == attempt.generation
-                            && paints.iter().all(|paint| {
-                                paint.window_id == self.handle.window_id()
-                                    && paint.source == source
-                                    && paint.previous_revision.checked_add(1)
-                                        == Some(attempt.generation)
-                                    && paint.bounds.size.width > px(0.)
-                                    && paint.bounds.size.height > px(0.)
+                            let facts = window.presentation_facts();
+                            let paints = self.paints.each_ref().map(|paint| paint.get());
+                            last_state = Some((facts, window.rendered_frame_revision(), paints));
+                            let [Some(first), Some(second), Some(oneshot)] = paints else {
+                                return None;
+                            };
+                            let paints = [first, second, oneshot];
+                            let attempt = facts.latest_present_attempt?;
+                            let diagnostics = window.submitted_frame_diagnostics_for_test()?;
+                            if !(attempt.generation > previous
+                                && attempt.outcome == PlatformWindowPresentOutcome::Submitted
+                                && attempt.contained_valid_primitives
+                                && facts.initial_presentation
+                                    == WindowInitialPresentationStatus::Completed
+                                && facts.native_visible
+                                && facts.frame_accepted_generation == Some(attempt.generation)
+                                && facts.present_submitted_generation == Some(attempt.generation)
+                                && facts.non_empty_presented_generation == Some(attempt.generation)
+                                && window.rendered_frame_revision() == attempt.generation
+                                && diagnostics.generation() == attempt.generation
+                                && paints.iter().all(|paint| {
+                                    paint.window_id == self.handle.window_id()
+                                        && paint.source == source
+                                        && paint.previous_revision.checked_add(1)
+                                            == Some(attempt.generation)
+                                        && paint.bounds.size.width > px(0.)
+                                        && paint.bounds.size.height > px(0.)
+                                })
+                                && wanted(&paints))
+                            {
+                                return None;
+                            }
+                            assert!(root.focus.is_focused(window));
+                            let capture = native_animation_capture(window);
+                            Some(NativeAnimationSubmission {
+                                generation: attempt.generation,
+                                paints,
+                                capture,
                             })
-                            && wanted(&paints))
-                        {
-                            return None;
-                        }
-                        assert!(root.focus.is_focused(window));
-                        let image = window
-                            .render_to_image()
-                            .expect("actual native animated Scene GPU readback");
-                        let capture = window.capture_frame();
-                        assert!(capture.unsupported_reason.is_none(), "{capture:?}");
-                        assert_eq!(capture.metadata.window_id, self.handle.window_id());
-                        assert_eq!(
-                            capture.metadata.framework_frame_generation,
-                            attempt.generation
-                        );
-                        assert_eq!(capture.metadata.scale_factor, window.scale_factor());
-                        assert!(capture.metadata.scale_factor.is_finite());
-                        assert!(capture.metadata.scale_factor > 0.);
-                        assert_eq!(
-                            capture.metadata.logical_viewport_size,
-                            window.viewport_size()
-                        );
-                        assert_eq!(
-                            capture.metadata.physical_viewport_size,
-                            window
-                                .viewport_size()
-                                .to_device_pixels(window.scale_factor())
-                        );
-                        assert_eq!(
-                            image.dimensions(),
-                            (
-                                capture.metadata.physical_viewport_size.width.0 as u32,
-                                capture.metadata.physical_viewport_size.height.0 as u32,
-                            )
-                        );
-                        assert_eq!(
-                            capture.image.as_ref(),
-                            Some(&image),
-                            "both public GPU capture paths must read the same accepted Scene"
-                        );
-                        assert_eq!(window.rendered_frame_revision(), attempt.generation);
-                        assert_eq!(
-                            window.presentation_facts().latest_present_attempt,
-                            facts.latest_present_attempt,
-                            "GPU readback must preserve the real native presentation observation"
-                        );
-                        Some(NativeAnimationSubmission {
-                            generation: attempt.generation,
-                            paints,
-                            capture,
                         })
-                    })
                     })
                     .expect("the native animation consumer must remain live through capture");
                 submitted.is_some()
@@ -356,77 +319,169 @@ impl NativeAnimationWindow {
         observation: &NativeWindowTestObservation,
         pending_since: Instant,
     ) {
-        let native_lifetime = Rc::downgrade(&self.native);
-        assert!(self.root.upgrade().is_some());
-        assert!(
-            platform
-                .raw_window_handles
-                .read()
-                .contains(&self.registration)
+        assert_eq!(self.native.registration, self.registration);
+        retire_native_animation_window(
+            self.handle,
+            self.native,
+            self.root,
+            app,
+            platform,
+            observation,
+            pending_since,
         );
-        app.update_for_test(|cx| {
-            self.handle.update(cx, |_, window, cx| {
-                assert!(
-                    pending_since.elapsed() < PENDING_FRAME_INTERVAL,
-                    "logical removal must precede the new animation timer's earliest deadline"
-                );
-                window.remove_window(cx);
-            })
-        })
-        .expect("the animation window must close through its existing public owner");
-        pump_messages_until_with_delay(
-            &Rc::downgrade(&platform.inner),
-            "animation exact HWND, registration and view retirement",
-            Duration::from_millis(5),
-            || {
-                !unsafe { IsWindow(Some(self.registration.as_raw())).as_bool() }
-                    && !platform
-                        .raw_window_handles
-                        .read()
-                        .contains(&self.registration)
-                    && platform.inner.native_retirement_is_settled()
-                    && self.root.upgrade().is_none()
-            },
-        );
-        let lifecycle = observation
-            .events()
-            .into_iter()
-            .filter(|event| {
-                event.window().window_id() == self.registration.window_id()
-                    && event.window().native_generation() == self.registration.generation()
-            })
-            .filter_map(|event| match event.kind() {
-                NativeWindowTestEventKind::WindowMessage { disposition, .. } => {
-                    assert_ne!(disposition, NativeWindowTestMessageDisposition::Panicked);
-                    None
-                }
-                lifecycle => Some(lifecycle),
-            })
-            .collect::<Vec<_>>();
-        let [
-            NativeWindowTestEventKind::PresentationQuiesced {
-                ticket_generation: quiesced,
-            },
-            NativeWindowTestEventKind::DestroyEntered {
-                ticket_generation: destroyed,
-            },
-            NativeWindowTestEventKind::NativeTerminal {
-                ticket_generation: terminal,
-            },
-        ] = lifecycle.as_slice()
-        else {
-            panic!("unexpected animation consumer retirement sequence: {lifecycle:?}");
-        };
-        assert_eq!(quiesced, destroyed);
-        assert_eq!(destroyed, terminal);
-        assert!(app.update_for_test(|cx| {
-            assert!(self.handle.update(cx, |_, _, _| ()).is_err());
-            cx.windows().is_empty()
-        }));
-        assert!(platform.raw_window_handles.read().is_empty());
-        drop(self);
-        assert!(native_lifetime.upgrade().is_none());
     }
+}
+
+fn native_animation_capture(window: &Window) -> WindowFrameCapture {
+    let facts = window.presentation_facts();
+    let generation = window.rendered_frame_revision();
+    let image = window
+        .render_to_image()
+        .expect("actual native animated Scene GPU readback");
+    let capture = window.capture_frame();
+    assert!(capture.unsupported_reason.is_none(), "{capture:?}");
+    assert_eq!(
+        capture.metadata.window_id,
+        window.window_handle().window_id()
+    );
+    assert_eq!(capture.metadata.framework_frame_generation, generation);
+    assert_eq!(capture.metadata.scale_factor, window.scale_factor());
+    assert!(capture.metadata.scale_factor.is_finite());
+    assert!(capture.metadata.scale_factor > 0.);
+    assert_eq!(
+        capture.metadata.logical_viewport_size,
+        window.viewport_size()
+    );
+    assert_eq!(
+        capture.metadata.physical_viewport_size,
+        window
+            .viewport_size()
+            .to_device_pixels(window.scale_factor())
+    );
+    assert_eq!(
+        image.dimensions(),
+        (
+            capture.metadata.physical_viewport_size.width.0 as u32,
+            capture.metadata.physical_viewport_size.height.0 as u32,
+        )
+    );
+    assert_eq!(
+        capture.image.as_ref(),
+        Some(&image),
+        "both public GPU capture paths must read the same accepted Scene"
+    );
+    assert_eq!(window.rendered_frame_revision(), generation);
+    assert_eq!(window.presentation_facts(), facts);
+    capture
+}
+
+fn retire_native_animation_window<View: Render + 'static>(
+    handle: WindowHandle<View>,
+    native: Rc<WindowsWindowInner>,
+    root: WeakEntity<View>,
+    app: &mut Application,
+    platform: &WindowsPlatform,
+    observation: &NativeWindowTestObservation,
+    pending_since: Instant,
+) {
+    let registration = native.registration;
+    let native_lifetime = Rc::downgrade(&native);
+    let atlas_lifetime = Arc::downgrade(&native.state.renderer.borrow().sprite_atlas());
+    assert!(root.upgrade().is_some());
+    assert!(platform.raw_window_handles.read().contains(&registration));
+    app.update_for_test(|cx| {
+        handle.update(cx, |_, window, cx| {
+            assert!(
+                pending_since.elapsed() < PENDING_FRAME_INTERVAL,
+                "logical removal must precede the next animation deadline"
+            );
+            window.remove_window(cx);
+        })
+    })
+    .expect("the animation window must close through its existing public owner");
+    pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
+        "animation exact HWND, registration and view retirement",
+        Duration::from_millis(5),
+        || {
+            !unsafe { IsWindow(Some(registration.as_raw())).as_bool() }
+                && !platform.raw_window_handles.read().contains(&registration)
+                && platform.inner.native_retirement_is_settled()
+                && root.upgrade().is_none()
+        },
+    );
+    let lifecycle = observation
+        .events()
+        .into_iter()
+        .filter(|event| {
+            event.window().window_id() == registration.window_id()
+                && event.window().native_generation() == registration.generation()
+        })
+        .filter_map(|event| match event.kind() {
+            NativeWindowTestEventKind::WindowMessage { disposition, .. } => {
+                assert_ne!(disposition, NativeWindowTestMessageDisposition::Panicked);
+                None
+            }
+            lifecycle => Some(lifecycle),
+        })
+        .collect::<Vec<_>>();
+    let [
+        NativeWindowTestEventKind::PresentationQuiesced {
+            ticket_generation: quiesced,
+        },
+        NativeWindowTestEventKind::DestroyEntered {
+            ticket_generation: destroyed,
+        },
+        NativeWindowTestEventKind::NativeTerminal {
+            ticket_generation: terminal,
+        },
+    ] = lifecycle.as_slice()
+    else {
+        panic!("unexpected animation consumer retirement sequence: {lifecycle:?}");
+    };
+    assert_eq!(quiesced, destroyed);
+    assert_eq!(destroyed, terminal);
+    assert!(native.presentation_shutdown_claimed());
+    assert!(native.state.frame_signal.take().is_none());
+    assert!(app.update_for_test(|cx| {
+        assert!(handle.update(cx, |_, _, _| ()).is_err());
+        cx.windows().is_empty()
+    }));
+    assert!(platform.raw_window_handles.read().is_empty());
+    drop(native);
+    assert!(native_lifetime.upgrade().is_none());
+    assert!(atlas_lifetime.upgrade().is_none());
+}
+
+fn finish_native_animation(
+    mut app: Application,
+    mut weak_app: open_gpui::AsyncApp,
+    platform: Rc<WindowsPlatform>,
+    handle: AnyWindowHandle,
+) {
+    let platform_hwnd = platform.handle;
+    let platform_lifetime = Rc::downgrade(&platform);
+    let lifecycle_probe = platform.lifecycle_test_probe.clone();
+    app.update_for_test(|cx| cx.shutdown());
+    drop(app);
+    let released = weak_app
+        .update_window(handle, |_, _, _| ())
+        .expect_err("animation frame demand must not retain the App");
+    assert_eq!(released.to_string(), "app was released");
+    drop(weak_app);
+    let pump_platform = Rc::downgrade(&platform.inner);
+    drop(platform);
+    pump_messages_until_with_delay(
+        &pump_platform,
+        "native animation platform HWND, App and OLE release",
+        Duration::from_millis(5),
+        || {
+            !unsafe { IsWindow(Some(platform_hwnd)).as_bool() }
+                && platform_lifetime.upgrade().is_none()
+        },
+    );
+    assert_eq!(lifecycle_probe.platform_destroy_attempts(), 1);
+    assert_eq!(lifecycle_probe.ole_uninitialize_count(), 1);
 }
 
 struct NativeAnimationSubmission {
@@ -478,11 +533,8 @@ fn native_generic_animations_progress_reduce_restore_and_retire_pending_frames()
     let (_observation_guard, observation) = begin_native_window_test_observation();
     let platform =
         Rc::new(WindowsPlatform::new_windowed_for_test().expect("native animation backend"));
-    let platform_hwnd = platform.handle;
-    let platform_lifetime = Rc::downgrade(&platform);
-    let lifecycle_probe = platform.lifecycle_test_probe.clone();
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
-    let mut weak_app = app.update_for_test(|cx| cx.to_async());
+    let weak_app = app.update_for_test(|cx| cx.to_async());
     platform
         .begin_vsync_thread()
         .expect("native vsync provider should start");
@@ -646,24 +698,288 @@ fn native_generic_animations_progress_reduce_restore_and_retire_pending_frames()
             Instant::now() >= timer_deadline_upper_bound + Duration::from_millis(120)
         },
     );
-    app.update_for_test(|cx| cx.shutdown());
-    drop(app);
-    let released = weak_app
-        .update_window(AnyWindowHandle::from(handle), |_, _, _| ())
-        .expect_err("delayed animations must not retain the App behind its weak async context");
-    assert_eq!(released.to_string(), "app was released");
-    drop(weak_app);
-    let pump_platform = Rc::downgrade(&platform.inner);
-    drop(platform);
+    finish_native_animation(app, weak_app, platform, handle.into());
+}
+
+#[derive(Default)]
+struct NativeRetainedSvgRoot {
+    render_count: usize,
+    long_delay: bool,
+}
+
+impl Render for NativeRetainedSvgRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.render_count += 1;
+        let max_fps = if self.long_delay {
+            1. / PENDING_FRAME_INTERVAL.as_secs_f32()
+        } else {
+            12.
+        };
+        div()
+            .relative()
+            .size_full()
+            .bg(black())
+            .child(
+                svg()
+                    .data(br#"<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><path d="M28 20H44V60H72V76H28Z"/></svg>"#)
+                    .absolute()
+                    .left(px(24.))
+                    .top(px(24.))
+                    .size(px(96.))
+                    .text_color(white())
+                    .with_timed_transformation(
+                        TimedTransformation::rotation(
+                            ANIMATION_DURATION,
+                            Transformation::alpha(0.4),
+                        )
+                        .with_max_fps(max_fps),
+                    ),
+            )
+    }
+}
+
+fn retained_svg_pixel(capture: &WindowFrameCapture, logical_x: f32, logical_y: f32) -> [u8; 4] {
+    let image = capture.image.as_ref().expect("native retained SVG RGBA");
+    let physical_x = (logical_x * capture.metadata.scale_factor).floor() as u32;
+    let physical_y = (logical_y * capture.metadata.scale_factor).floor() as u32;
+    assert!(physical_x < image.width() && physical_y < image.height());
+    image.get_pixel(physical_x, physical_y).0
+}
+
+fn retained_svg_pixels_changed(first: &WindowFrameCapture, second: &WindowFrameCapture) -> bool {
+    (0..12)
+        .flat_map(|row| (0..12).map(move |column| (column, row)))
+        .filter(|&(column, row)| {
+            let logical_x = 28. + column as f32 * 8.;
+            let logical_y = 28. + row as f32 * 8.;
+            let before = retained_svg_pixel(first, logical_x, logical_y)[0];
+            let after = retained_svg_pixel(second, logical_x, logical_y)[0];
+            (before <= 8 && after >= 80) || (after <= 8 && before >= 80)
+        })
+        .take(4)
+        .count()
+        == 4
+}
+
+#[track_caller]
+fn retained_svg_submitted(
+    handle: WindowHandle<NativeRetainedSvgRoot>,
+    platform: &WindowsPlatform,
+    app: &mut Application,
+    mut wanted: impl FnMut(&NativeRetainedSvgRoot, &WindowFrameCapture) -> bool,
+) -> (usize, TransformationMatrix, WindowFrameCapture) {
+    let mut submitted = None;
+    let mut last_pose = None;
     pump_messages_until_with_delay(
-        &pump_platform,
-        "native animation platform HWND, App and OLE release",
+        &Rc::downgrade(&platform.inner),
+        "native retained SVG nonempty Submitted scene and sampled GPU pixels",
         Duration::from_millis(5),
         || {
-            !unsafe { IsWindow(Some(platform_hwnd)).as_bool() }
-                && platform_lifetime.upgrade().is_none()
+            submitted = app
+                .update_for_test(|cx| {
+                    handle.update(cx, |root, window, cx| {
+                        let facts = window.presentation_facts();
+                        let attempt = facts.latest_present_attempt?;
+                        let diagnostics = window.submitted_frame_diagnostics_for_test()?;
+                        if !(attempt.outcome == PlatformWindowPresentOutcome::Submitted
+                            && attempt.contained_valid_primitives
+                            && facts.initial_presentation
+                                == WindowInitialPresentationStatus::Completed
+                            && facts.native_visible
+                            && facts.frame_accepted_generation == Some(attempt.generation)
+                            && facts.present_submitted_generation == Some(attempt.generation)
+                            && facts.non_empty_presented_generation == Some(attempt.generation)
+                            && window.rendered_frame_revision() == attempt.generation
+                            && diagnostics.generation() == attempt.generation)
+                        {
+                            return None;
+                        }
+                        let sprites = &window.rendered_scene().monochrome_sprites;
+                        assert_eq!(sprites.len(), 1);
+                        let sprite = sprites[0];
+                        if (sprite.animation == SpriteAnimationId::NONE) != cx.reduce_motion() {
+                            return None;
+                        }
+                        assert!((sprite.color.a - 0.4).abs() < 1e-6);
+                        let pose = (attempt.generation, root.render_count, sprite.transformation);
+                        if last_pose == Some(pose) {
+                            return None;
+                        }
+                        last_pose = Some(pose);
+                        let capture = native_animation_capture(window);
+                        assert_eq!(
+                            window.rendered_scene().monochrome_sprites[0].transformation,
+                            sprite.transformation
+                        );
+                        assert_eq!(retained_svg_pixel(&capture, 144., 144.), [0, 0, 0, 255]);
+                        wanted(root, &capture).then_some((
+                            root.render_count,
+                            sprite.transformation,
+                            capture,
+                        ))
+                    })
+                })
+                .expect("the retained SVG window must remain live through capture");
+            submitted.is_some()
         },
     );
-    assert_eq!(lifecycle_probe.platform_destroy_attempts(), 1);
-    assert_eq!(lifecycle_probe.ole_uninitialize_count(), 1);
+    submitted.expect("the retained SVG must reach the requested actual Submitted pixels")
+}
+
+#[test]
+#[ignore = "requires an interactive Windows desktop and a DirectX GPU"]
+fn native_retained_svg_progresses_without_render_reduces_restores_and_retires_pending_frames() {
+    discard_stale_quit_messages();
+    let (_observation_guard, observation) = begin_native_window_test_observation();
+    let platform =
+        Rc::new(WindowsPlatform::new_windowed_for_test().expect("native retained SVG backend"));
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let weak_app = app.update_for_test(|cx| cx.to_async());
+    platform
+        .begin_vsync_thread()
+        .expect("the retained SVG must use the production native vsync provider");
+    let handle = app
+        .update_for_test(|cx| {
+            assert!(!cx.is_test());
+            assert!(!cx.background_executor().is_test());
+            assert!(!cx.to_async().is_test());
+            assert!(!cx.reduce_motion());
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(168.), px(168.)), cx)),
+                    focus_on_appearing: false,
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| NativeRetainedSvgRoot::default()),
+            )
+        })
+        .expect("the actual retained SVG consumer window must open");
+    let registration = platform
+        .raw_window_handles
+        .read()
+        .iter()
+        .copied()
+        .find(|entry| entry.window_id() == handle.window_id())
+        .expect("the SVG window must have its exact HWND registration");
+    let native = platform
+        .window_from_hwnd(registration.as_raw())
+        .expect("the SVG HWND must have its original native owner");
+    assert_eq!(native.registration, registration);
+    assert!(native.state.renderer.borrow().uses_directx());
+    let frame_requests = observe_frame_requests(&native);
+    let root_lifetime = app
+        .update_for_test(|cx| handle.root(cx))
+        .expect("the SVG root must be accessible")
+        .downgrade();
+    let mut generation = 0;
+    for reduced_motion in [false, true, false] {
+        app.update_for_test(|cx| cx.set_reduce_motion(reduced_motion));
+        let (renders, pose, first) =
+            retained_svg_submitted(handle, &platform, &mut app, |_, capture| {
+                capture.metadata.framework_frame_generation > generation
+            });
+        generation = first.metadata.framework_frame_generation;
+        let requests_before = frame_requests.get();
+        if reduced_motion {
+            assert_eq!(pose, TransformationMatrix::unit());
+            for (logical_x, logical_y, expected) in
+                [(60., 64., 102u8), (88., 92., 102), (88., 56., 0)]
+            {
+                let actual = retained_svg_pixel(&first, logical_x, logical_y);
+                assert!(
+                    actual[..3]
+                        .iter()
+                        .all(|channel| channel.abs_diff(expected) <= 2)
+                );
+                assert_eq!(actual[3], 255);
+            }
+            let static_since = Instant::now();
+            pump_messages_until_with_delay(
+                &Rc::downgrade(&platform.inner),
+                "reduced-motion SVG starting pose remains frozen through native frame callbacks",
+                Duration::from_millis(5),
+                || {
+                    static_since.elapsed() >= Duration::from_millis(220)
+                        && frame_requests.get() > requests_before
+                },
+            );
+        }
+        let (_, next_pose, next) =
+            retained_svg_submitted(handle, &platform, &mut app, |root, capture| {
+                assert_eq!(root.render_count, renders);
+                assert_eq!(capture.metadata.framework_frame_generation, generation);
+                frame_requests.get() > requests_before
+                    && (reduced_motion || retained_svg_pixels_changed(&first, capture))
+            });
+        if reduced_motion {
+            assert_eq!(pose, next_pose);
+            assert_eq!(first.image, next.image);
+        } else {
+            assert_ne!(pose, next_pose);
+            assert_ne!(first.image, next.image);
+        }
+    }
+
+    let pending_since = Instant::now();
+    app.update_for_test(|cx| {
+        handle.update(cx, |root, _, cx| {
+            root.long_delay = true;
+            cx.notify();
+        })
+    })
+    .expect("the existing SVG consumer must accept a long presentation interval");
+    let (pending_renders, pending_pose, pending) =
+        retained_svg_submitted(handle, &platform, &mut app, |root, capture| {
+            root.long_delay && capture.metadata.framework_frame_generation > generation
+        });
+    let pending_deadline_upper_bound = Instant::now() + PENDING_FRAME_INTERVAL;
+    let requests_before = frame_requests.get();
+    pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
+        "native SVG callback leaves animation demand paced before its next presentation",
+        Duration::from_millis(5),
+        || {
+            app.update_for_test(|cx| {
+                handle.update(cx, |root, window, _| {
+                    assert!(pending_since.elapsed() < PENDING_FRAME_INTERVAL);
+                    assert_eq!(root.render_count, pending_renders);
+                    assert_eq!(
+                        window.rendered_frame_revision(),
+                        pending.metadata.framework_frame_generation
+                    );
+                    let sprite = window.rendered_scene().monochrome_sprites[0];
+                    assert_ne!(sprite.animation, SpriteAnimationId::NONE);
+                    assert_eq!(sprite.transformation, pending_pose);
+                })
+            })
+            .expect("the SVG must remain live while its next presentation is paced");
+            frame_requests.get() > requests_before
+        },
+    );
+    retire_native_animation_window(
+        handle,
+        native,
+        root_lifetime,
+        &mut app,
+        &platform,
+        &observation,
+        pending_since,
+    );
+    let retired_requests = frame_requests.get();
+    pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
+        "retired SVG stays released beyond its paced presentation deadline",
+        Duration::from_millis(10),
+        || {
+            assert!(app.update_for_test(|cx| {
+                assert!(handle.update(cx, |_, _, _| ()).is_err());
+                cx.windows().is_empty()
+            }));
+            assert!(platform.raw_window_handles.read().is_empty());
+            assert_eq!(frame_requests.get(), retired_requests);
+            Instant::now() >= pending_deadline_upper_bound + Duration::from_millis(120)
+        },
+    );
+    finish_native_animation(app, weak_app, platform, handle.into());
 }

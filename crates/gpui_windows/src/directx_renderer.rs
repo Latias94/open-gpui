@@ -2066,6 +2066,28 @@ pub(crate) mod shader_resources {
             }
         }
     }
+
+    #[cfg(all(test, debug_assertions))]
+    mod tests {
+        use super::*;
+        use anyhow::Context as _;
+
+        #[test]
+        fn sprite_shader_entry_points_compile_with_fxc() -> Result<()> {
+            // Exercise the production FXC path without creating a device or native window.
+            for module in [ShaderModule::MonochromeSprite, ShaderModule::SubpixelSprite] {
+                for target in [ShaderTarget::Vertex, ShaderTarget::Fragment] {
+                    let shader = RawShaderBytes::new(module, target)
+                        .with_context(|| format!("compiling {module:?} {target:?}"))?;
+                    assert!(
+                        !shader.as_bytes().is_empty(),
+                        "empty {module:?} {target:?} bytecode"
+                    );
+                }
+            }
+            Ok(())
+        }
+    }
 }
 
 mod nvidia {

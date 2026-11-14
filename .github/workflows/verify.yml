@@ -144,6 +144,10 @@ jobs:
         if: matrix.name == 'linux'
         run: cargo nextest run -p open-gpui-web --locked
 
+      - name: Test native FXC compilation of SVG and text shaders
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(=directx_renderer::shader_resources::tests::sprite_shader_entry_points_compile_with_fxc)' --test-threads=1 --no-fail-fast --no-tests fail
+
       - name: Run verification gate
         if: matrix.name == 'windows'
         shell: pwsh
@@ -197,9 +201,9 @@ jobs:
       - name: Test retained SVG poses and accepted animation demand
         run: cargo nextest run --locked -p open-gpui --all-features --lib -E 'test(elements::svg::) | test(scene::tests::) | test(window::timed_svg_tests::)' --test-threads=1 --no-fail-fast --no-tests fail
 
-      - name: Test native generic animation pixels and retirement
+      - name: Test native generic and SVG animation pixels and retirement
         if: matrix.name == 'windows'
-        run: cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(=platform::native_test_support::native_animation_tests::native_generic_animations_progress_reduce_restore_and_retire_pending_frames)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(platform::native_test_support::native_animation_tests::)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test system notification values, App responses and native transport
         run: cargo nextest run --locked -p open-gpui -p open-gpui-windows -p open-gpui-linux --all-features --lib --test system_notifications -E 'test(system_notification) | test(notification_simulation_) | binary(system_notifications)' --test-threads=1 --no-fail-fast --no-tests fail
