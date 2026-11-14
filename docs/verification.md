@@ -62,6 +62,40 @@ task-local wasm-bindgen 0.2.130 CLI, leaving the shared installation unchanged.
 Windows HLSL/native output, Linux native output, physical input, mixed-DPI and
 numerical baseline/candidate performance retain their own qualification scope.
 
+### Windows retained SVG gates
+
+`3f9e1ec2` adds production FXC entry compilation and extends the existing real
+Windows animation consumer. Run these on Windows, serially:
+
+```text
+cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(=directx_renderer::shader_resources::tests::sprite_shader_entry_points_compile_with_fxc)' --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(platform::native_test_support::native_animation_tests::)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+The first compiles all four mono/subpixel vertex/fragment entries without a
+window or GPU; the second retains the generic animation scenario and adds
+asymmetric SVG pixels advancing without a view render or new accepted generation,
+reduced-motion freeze/restore, and exact window/renderer/atlas retirement while
+the next presentation is paced. These native tests require an interactive
+Windows desktop and DirectX. GPU readback does not establish scanout; paced
+demand does not establish deferred in-flight token behavior.
+
+The final Mac-host MSVC all-target/all-feature cross-check passes in **2.062 s**,
+and SDK-backed correctness/suspicious Clippy passes in **2.409 s**. Neither test
+has a Windows execution receipt at this commit. Independent review corrects a
+static-pose capture wait race; the final bounded wait observes the original
+callback before applying pose deduplication. Source review also confirms distinct
+144-byte mono and 120-byte subpixel layouts and SVG-before-parent projection.
+
+Remote `a607b3d7` passes both Windows compiler-floor jobs, dependency audit,
+packaging and the complete Linux browser smoke step in run
+[43555245395](https://github.com/Latias94/open-gpui/actions/runs/43555245395).
+The remaining matrix was still running when recorded. The dedicated interactive
+workflow has no registered self-hosted runner (API count zero); canceling its
+obsolete `6017e2a3` queued run releases concurrency but does not supply the missing
+`open-gpui-windows-native-interactive-ephemeral` provider. Keep that physical-input
+gate distinct from the hosted matrix's ordinary native animation checks.
+
 ## November 14 Correctness Follow-up
 
 The [follow-up ledger](imports/zed-gpui-incremental-sync-2026-11-14.md) records

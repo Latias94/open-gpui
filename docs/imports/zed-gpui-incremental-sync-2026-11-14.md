@@ -247,6 +247,64 @@ Its fourteen existing host tests and independent read-only review pass. The
 complete local Chromium invocation above executes the new control and final SVG
 source together; remote Verify status remains separate from that host receipt.
 
+## Windows qualification continuation
+
+`3f9e1ec270ade95b27163ddc3f302fb6148014c6` adds two owning-platform gates without
+changing production behavior.
+`directx_renderer::shader_resources::tests::sprite_shader_entry_points_compile_with_fxc`
+compiles monochrome/subpixel vertex and fragment entries through the production
+`D3DCompileFromFile` path (`vs_4_1` / `ps_4_1`), without constructing a native
+window or GPU device. CI runs it before the general verification gate. It does
+not qualify release `/O3` shader bytes.
+
+The existing native animation consumer additionally runs
+`native_retained_svg_progresses_without_render_reduces_restores_and_retires_pending_frames`.
+It uses a real Application, native VSync and the synchronous DirectX renderer.
+Actual Submitted observations and GPU readback must show changed asymmetric SVG
+pixels with unchanged render count and accepted generation. Reduced motion must
+hold the initial pose/alpha and resume periodic sampling when disabled. Closing
+while the next presentation is paced must retire the original window/ticket,
+release the view/native/atlas owners and leave no callbacks beyond the paced
+deadline. This covers queued frame demand, not deferred in-flight submissions,
+driver-side texture residency or compositor scanout.
+
+Independent review identifies and corrects a fixture wait race before commit:
+static-pose deduplication could skip subsequent capture attempts if the first
+attempt preceded the observed callback. The bounded static wait now requires
+both the 220 ms interval and an actual original callback before capture. Shared
+capture, generic-animation assertions and native retirement/drop order are
+independently re-reviewed without remaining P1/P2 findings.
+
+Final locked MSVC-target all-target/all-feature compilation passes in **2.062 s**
+after the review correction; correctness/suspicious Clippy passes in **2.409 s**
+with the real SDK through cargo-xwin. The first full compile takes 30.647 s.
+A direct Clippy attempt without the xwin SDK environment fails in unchanged
+zstd C compilation on missing `string.h`; the corrected xwin invocation passes.
+Root formatting, whitespace, public API/import boundaries and release/document
+gates pass. These Mac-host cross-checks compile both new tests but execute
+neither FXC nor the native Windows trajectory.
+
+Remote run [43555245395](https://github.com/Latias94/open-gpui/actions/runs/43555245395)
+at exact `a607b3d7234831d2a99cad9578a11e2cd70ab73f` passes both Windows minimum
+compiler jobs, Dependency Health, Publish Check and the complete Linux browser
+smoke step (04:13:58–04:27:04 UTC). Its remaining matrix jobs were still running
+at this observation; this is not a complete Verify pass. The browser result
+qualifies the final SVG source, including the deterministic backend refusal fix,
+independently of the local Chromium result.
+
+The dedicated physical-input workflow cannot start on the current repository:
+the GitHub runners API reports **zero registered self-hosted runners**. Its
+required `open-gpui-windows-native-interactive-ephemeral` label has no provider.
+Obsolete queued run `43539009220` at `6017e2a3` is cancelled to release the
+concurrency group; the current candidate remains queued. This external gate
+still needs its documented interactive runner and attestation. The FXC and
+ordinary native animation gates above use the existing hosted Windows matrix;
+they do not supply the dedicated physical-input receipt.
+
+Local command logs use `/tmp/open-gpui-windows-svg-*-20261114.log`; the exact
+remote step observation is retained in
+`/tmp/open-gpui-windows-svg-ci-a607b3d7-20261114.json`.
+
 ## Remaining qualification and next work
 
 The fixed fourteen-row source inventory is complete. Continue qualifying the

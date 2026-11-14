@@ -146,6 +146,16 @@ software-adapter-refusal assumption is replaced by an explicit unavailable-conte
 control. The complete local browser run passes; continue reading actual remote
 run results in the ledger before claiming a complete remote Verify pass.
 
+`3f9e1ec2` adds Windows FXC compilation of the four changed sprite entries and a
+real retained-SVG animation scenario alongside the existing generic animation
+test. MSVC-target all-feature compilation, SDK-backed Clippy and independent
+source review pass; actual FXC/native execution awaits the owning Windows job.
+Remote `a607b3d7` already passes both Windows compiler floors, dependency health,
+packageability and the full Linux browser smoke step. The separate physical-input
+workflow has zero registered self-hosted runners: supply its documented ephemeral
+interactive runner before treating that gate as executable. The obsolete queued
+`6017e2a3` run is cancelled; newer candidates retain their original exact SHA.
+
 Continue with the actual remaining integration boundaries:
 
 1. Run Nara's canonical Dialogue Session/file and complete native trajectory on
