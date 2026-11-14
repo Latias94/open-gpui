@@ -210,6 +210,28 @@ Verify pass.
 | `d4648a1e` | Establish a post-show initialization frame before SVG measurements. | Real MSVC SDK all-target/all-feature compilation; native rerun remains required. |
 | `40ff32b6` | Keep the repeated-close test application alive across cycles. | Complete default docking library **66/66**; owning Windows rerun remains required. |
 
+### Complete Local Rerun
+
+At the published source checkpoint
+`5a4245af68e134a25a5bd6cc747c5b6a87318f71`, the original combined-library command
+passes **3,639/3,639**, with two pre-existing ignored cases, across 68 binaries.
+The run takes 487.566 seconds including compilation and 464.429 seconds of test
+execution, nextest `4238c2fb-f6ef-4be1-9037-06e00c6df905`. This complete rerun
+includes both the Gallery contract correction and the explicit-quit docking
+fixture. Log and exact-head receipt are
+`/tmp/open-gpui-ci-full-libraries-after-fix-20261114.log` and
+`/tmp/open-gpui-ci-full-libraries-after-fix-receipt-20261114.json`.
+
+[Verify run 43568685481](https://github.com/Latias94/open-gpui/actions/runs/43568685481)
+uses the same source checkpoint. Dependency Health and Publish Check pass there;
+its Windows production FXC step passes at 07:09:55 UTC and the generic plus
+retained-SVG native animation step passes at 07:10:08 UTC. The native job's
+remaining backend/desktop suites and WGPU execution are still in progress.
+The exact-head step snapshot is
+`/tmp/open-gpui-ci-followup-native-step-20261114.json`.
+The physical-input workflow still has no registered self-hosted runner. None of
+these pending platform results is implied by the complete local-library pass.
+
 ## Consumer Follow-up
 
 Read-only inspection finds Nara at `8666a83371f4511cdb0943c47459966997b5bfbf`,
@@ -241,6 +263,11 @@ At Open-GPUI `10254c62684d1f7f69dcbb4bcb1735f2fa768415` and sibling dockspace
 `integration/gpui-harness` rebuilds in 69.756 seconds with one build worker and
 the existing Open-GPUI target. Compiler JSON identifies the actual executable;
 the receipt records its SHA-256 and both source heads, unchanged after build.
+The sibling is a local worktree with 33 pre-existing modified or untracked paths,
+including engine and presentation-authority sources; that status inventory is
+recorded before and after the run. The tested executable's SHA-256 is
+`301a8a1e7dd1ab3e038ed2cc02060d89aed2e1f387fa1947da6fa51344f396c5`.
+This result qualifies that local build, not the clean dockspace commit alone.
 
 One `gpui-workbench --smoke-close` launch through the existing bounded signed-App
 helper completes in **2.421 seconds**, with actual OS wait status **0**. The
