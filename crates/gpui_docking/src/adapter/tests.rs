@@ -225,6 +225,7 @@ fn an_accepted_but_deferred_pane_cannot_receive_content_clicks(cx: &mut TestAppC
 
 #[open_gpui::test]
 fn closing_repeated_mounts_releases_their_global_window_listeners(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_quit_mode(open_gpui::QuitMode::Explicit));
     let (dock, _, _) = fixture(cx);
     let baseline = Rc::weak_count(&dock.host);
     for _ in 0..3 {
