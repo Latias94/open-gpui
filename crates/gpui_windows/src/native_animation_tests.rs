@@ -872,7 +872,44 @@ fn native_retained_svg_progresses_without_render_reduces_restores_and_retires_pe
         .update_for_test(|cx| handle.root(cx))
         .expect("the SVG root must be accessible")
         .downgrade();
-    let mut generation = 0;
+    retained_svg_submitted(handle, &platform, &mut app, |_, _| true);
+
+    // The hidden first submission can still be current when the initial show completes.
+    // Observe a post-show native paint and consume initialization refreshes in a newer
+    // Submitted scene before fixing the render count for animation-only presents.
+    let initial_paint_cursor = observation.cursor();
+    assert!(
+        unsafe { RedrawWindow(Some(registration.as_raw()), None, None, RDW_INVALIDATE).as_bool() },
+        "the retained SVG window must accept its post-show initialization paint"
+    );
+    pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
+        "retained SVG post-show initialization WM_PAINT",
+        Duration::from_millis(5),
+        || {
+            observation.any_after(initial_paint_cursor, |event| {
+                event.window().window_id() == registration.window_id()
+                    && event.window().native_generation() == registration.generation()
+                    && matches!(
+                        event.kind(),
+                        NativeWindowTestEventKind::WindowMessage {
+                            message: NativeWindowTestMessage::Other(WM_PAINT),
+                            disposition: NativeWindowTestMessageDisposition::Returned(0),
+                            ..
+                        }
+                    )
+            })
+        },
+    );
+    let mut generation = app
+        .update_for_test(|cx| {
+            handle.update(cx, |_, window, _| {
+                let generation = window.rendered_frame_revision();
+                window.refresh();
+                generation
+            })
+        })
+        .expect("the shown SVG must submit its initialization refresh before measurements");
     for reduced_motion in [false, true, false] {
         app.update_for_test(|cx| cx.set_reduce_motion(reduced_motion));
         let (renders, pose, first) =
