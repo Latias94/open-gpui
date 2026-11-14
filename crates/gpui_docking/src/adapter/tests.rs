@@ -224,8 +224,35 @@ fn an_accepted_but_deferred_pane_cannot_receive_content_clicks(cx: &mut TestAppC
 }
 
 #[open_gpui::test]
+fn closing_repeated_mounts_releases_their_global_window_listeners(cx: &mut TestAppContext) {
+    let (dock, _, _) = fixture(cx);
+    let baseline = Rc::weak_count(&dock.host);
+    for _ in 0..3 {
+        let window = cx.open_window(size(px(800.0), px(600.0)), |_, _| Root {
+            dock: dock.clone(),
+            surfaces: vec![FIRST],
+        });
+        frames(
+            &mut VisualTestContext::from_window(window.into(), cx),
+            &dock,
+        );
+        cx.update_window(window.into(), |_, window, cx| window.remove_window(cx))
+            .unwrap();
+        cx.run_until_parked();
+        assert!(dock.host.borrow().mounts.is_empty());
+        assert_eq!(
+            Rc::weak_count(&dock.host),
+            baseline,
+            "closed mounts must release their application-wide callback captures"
+        );
+        assert!(dock.error().is_none(), "{:?}", dock.error());
+    }
+}
+
+#[open_gpui::test]
 fn failed_initial_presentation_retires_its_mount_before_retry(cx: &mut TestAppContext) {
     let (dock, _, _) = fixture(cx);
+    let baseline = Rc::weak_count(&dock.host);
     cx.set_next_window_present_outcome(PlatformWindowPresentOutcome::Rejected);
     let error = cx.update(|cx| {
         cx.open_window_detailed(open_gpui::WindowOptions::default(), |_, cx| {
@@ -250,6 +277,11 @@ fn failed_initial_presentation_retires_its_mount_before_retry(cx: &mut TestAppCo
     assert!(
         dock.host.borrow().owners.is_empty(),
         "rollback releases the logical surface owner"
+    );
+    assert_eq!(
+        Rc::weak_count(&dock.host),
+        baseline,
+        "native rollback must release its application-wide callback captures"
     );
     let retry = cx.open_window(size(px(800.0), px(600.0)), |_, _| Root {
         dock: dock.clone(),

@@ -18,7 +18,7 @@ use dockspace::{
 };
 use open_gpui::{
     AnyView, AnyWindowHandle, App, Bounds, FocusHandle, GlobalElementId, IntoElement, Pixels,
-    SharedString, Window, WindowId,
+    SharedString, Subscription, Window, WindowId,
 };
 use web_time::Instant;
 
@@ -348,6 +348,7 @@ pub(super) struct HostState {
 
 pub(super) struct WindowMount {
     pub(super) window: AnyWindowHandle,
+    pub(super) _close_observers: Option<Subscription>,
     pub(super) element: Option<GlobalElementId>,
     pub(super) regions: BTreeMap<SurfaceId, RegionState>,
     pub(super) pending: Option<presentation::PendingSubmission>,
@@ -454,6 +455,7 @@ impl HostState {
             owner,
             WindowMount {
                 window: handle,
+                _close_observers: None,
                 element: id.cloned(),
                 regions,
                 pending: None,

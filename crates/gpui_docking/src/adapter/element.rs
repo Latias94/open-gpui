@@ -166,24 +166,30 @@ impl Element for DockspaceElement {
                 let weak = Rc::downgrade(&self.host);
                 let terminal_host = weak.clone();
                 let owner = window.window_handle().window_id();
-                cx.on_window_closed(move |cx, closed| {
+                let closed = cx.on_window_closed(move |cx, closed| {
                     if closed == owner {
                         if let Some(host) = weak.upgrade() {
                             presentation::close(&mut host.borrow_mut(), owner, cx);
                         }
                     }
-                })
-                .detach();
+                });
                 // Reservation rollback has no ordinary logical-close event.
                 // The original native terminal retires its provisional mount.
-                cx.on_window_native_terminal(move |cx, closed| {
+                let terminal = cx.on_window_native_terminal(move |cx, closed| {
                     if closed == owner {
                         if let Some(host) = terminal_host.upgrade() {
                             presentation::close(&mut host.borrow_mut(), owner, cx);
                         }
                     }
-                })
-                .detach();
+                });
+                // Both application-wide subscriptions leave with their mount,
+                // including removal from inside either terminal callback.
+                self.host
+                    .borrow_mut()
+                    .mounts
+                    .get_mut(&owner)
+                    .unwrap()
+                    ._close_observers = Some(open_gpui::Subscription::join(closed, terminal));
             }
             Ok(false) => {}
             Err(error) => {
