@@ -28,6 +28,18 @@ The November continuation applies the
 Record retained differences and their consumer/verification basis here; an unimplemented
 official mechanism remains queued until it receives an explicit disposition.
 
+## November 14 Correctness Follow-up
+
+The [fourteen-row follow-up ledger](zed-gpui-incremental-sync-2026-11-14.md)
+starts at Open-GPUI `6017e2a3` and separately fixes the newly observed official
+range `27bbbc1cc480a7500cec122f120e796d1fb8500c..5bd59e2e439aff9b9203b9dd3c9bcb04159f701c`.
+It adopts strict-CSP safe-area probes, the off-UI macOS notification worker and
+the applicable font-cache cleanup while retaining the declared compiler floors.
+The SVG timed-transformation optimization is applicable and **still queued**;
+the new endpoint is not source-complete. Earlier zero-open ledger conclusions
+retain their own fixed endpoints. Fork docking-listener and inherited native
+close-panic repairs have separate provenance in the follow-up.
+
 ## November 13 Incremental Continuation
 
 Following the request to check remaining upstream commits and execute available

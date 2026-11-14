@@ -98,6 +98,26 @@ known environment-reconstruction warning; the task used an isolated 0.9.151
 runner without changing that shared installation. New allocator and DropGuard
 APIs do not justify silently raising package floors or replacing typed owners.
 
+The subsequent [November 14 correctness follow-up](../imports/zed-gpui-incremental-sync-2026-11-14.md)
+repairs per-mount close-listener accumulation and native close panic boundaries.
+It also inventories fourteen newer official commits through `5bd59e2e`, adopts
+the macOS notification worker and strict-CSP Web fix, and keeps the Rust 1.93/1.95
+floors. Notification dismissal now returns `Task<()>`; await it or call
+`.detach()`. The newer official SVG timed-transformation contribution remains
+explicitly queued: adapt it through accepted/replayed Scene and submission
+owners before claiming source closure at that endpoint. No new compositor or
+global state rewrite is selected.
+
+The correctness checkpoint is `eef07bd0`. Default/all-feature docking pass
+66/1,542 cases, final Core/Apple/macOS pass 1,904, the public notification
+workflow passes two and the independently locked Rust 1.95 consumer passes
+three. Rust 1.93 all-target compilation, wasm smoke compilation and strict
+correctness/suspicious Clippy pass. Rebuilt ordinary native close, typed panic
+injection and editor smoke each finish with actual OS exit 0; the final
+inventory contains zero probe processes/apps. Windows/Linux notification
+native qualification and strict-CSP browser execution retain their separate
+unexecuted scope in the ledger.
+
 Continue with the actual remaining integration boundaries:
 
 1. Run Nara's canonical Dialogue Session/file and complete native trajectory on

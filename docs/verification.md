@@ -1,5 +1,14 @@
 # Verification
 
+## November 14 Correctness Follow-up
+
+The [follow-up ledger](imports/zed-gpui-incremental-sync-2026-11-14.md) records
+the exact source range, independently reproduced listener/checkout failures,
+corrected tests, native cleanup and compiler receipts. It includes the official
+notification FIFO worker and strict-CSP safe-area fix. Its SVG optimization is
+still queued; neither source closure at the newer endpoint nor physical-input
+qualification follows from these correctness repairs.
+
 ## November 14 Default Docking Cutover
 
 The shared session is now the root/prelude API. Default library checks exercise
