@@ -192,7 +192,8 @@ impl Render for PaintedOutputProbe {
                         ));
                         let _ = window.insert_scene_primitive(MonochromeSprite {
                             order: 0,
-                            pad: 0,
+                            animation: Default::default(),
+                            transformation: Default::default(),
                             bounds: window.device_local_bounds(Bounds::new(
                                 point(px(80.), px(20.)),
                                 size(px(1.), px(1.)),

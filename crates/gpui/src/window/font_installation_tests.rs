@@ -46,7 +46,8 @@ impl Render for FontCandidateRoot {
                     });
                     window.insert_scene_primitive(MonochromeSprite {
                         order: 0,
-                        pad: 0,
+                        animation: Default::default(),
+                        transformation: Default::default(),
                         bounds: window.device_local_bounds(bounds),
                         clip: Default::default(),
                         color: crate::red(),

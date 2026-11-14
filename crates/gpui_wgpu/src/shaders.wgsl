@@ -195,6 +195,11 @@ struct PrimitiveTransform {
     translation_y: f32,
 }
 
+struct TransformationMatrix {
+    rotation_scale: mat2x2<f32>,
+    translation: vec2<f32>,
+}
+
 fn apply_primitive_transform(position: vec2<f32>, transform: PrimitiveTransform) -> vec2<f32> {
     return position * vec2<f32>(transform.scale_x, transform.scale_y) +
         vec2<f32>(transform.translation_x, transform.translation_y);
@@ -1560,12 +1565,13 @@ fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
 
 struct MonochromeSprite {
     order: u32,
-    pad: u32,
+    animation: u32,
     tile: AtlasTile,
     bounds: Bounds,
     clip: ClipEnvelope,
     color: Hsla,
     transform: PrimitiveTransform,
+    transformation: TransformationMatrix,
 }
 
 struct MonoSpriteVarying {
@@ -1580,7 +1586,17 @@ struct MonoSpriteVarying {
 fn vs_mono_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> MonoSpriteVarying {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
     let sprite = load_mono_sprite(instance_id);
-    let clipped = clip_to_mask(unit_vertex, sprite.bounds, sprite.clip, sprite.transform);
+    let transformation = sprite.transformation;
+    var clipped = ClippedVertex();
+    if (all(transformation.rotation_scale[0] == vec2<f32>(1.0, 0.0)) &&
+        all(transformation.rotation_scale[1] == vec2<f32>(0.0, 1.0)) &&
+        all(transformation.translation == vec2<f32>(0.0))) {
+        clipped = clip_to_mask(unit_vertex, sprite.bounds, sprite.clip, sprite.transform);
+    } else {
+        let local_position = unit_vertex * sprite.bounds.size + sprite.bounds.origin;
+        let position = transpose(transformation.rotation_scale) * local_position + transformation.translation;
+        clipped = ClippedVertex(apply_primitive_transform(position, sprite.transform), local_position, unit_vertex);
+    }
 
     var out = MonoSpriteVarying();
     out.position = to_device_position_impl(clipped.position);
@@ -1603,6 +1619,31 @@ fn fs_mono_sprite(input: MonoSpriteVarying) -> @location(0) vec4<f32> {
     }
 
     return blend_color(input.color, alpha_corrected);
+}
+
+struct SubpixelSprite {
+    order: u32,
+    pad: u32,
+    tile: AtlasTile,
+    bounds: Bounds,
+    clip: ClipEnvelope,
+    color: Hsla,
+    transform: PrimitiveTransform,
+}
+
+@vertex
+fn vs_subpixel_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> MonoSpriteVarying {
+    let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
+    let sprite = load_subpixel_sprite(instance_id);
+    let clipped = clip_to_mask(unit_vertex, sprite.bounds, sprite.clip, sprite.transform);
+
+    var out = MonoSpriteVarying();
+    out.position = to_device_position_impl(clipped.position);
+    out.tile_position = to_tile_position(clipped.unit_vertex, sprite.tile);
+    out.color = hsla_to_rgba(sprite.color);
+    out.clip_bounds = vec4<f32>(sprite.clip.conservative_bounds.origin, sprite.clip.conservative_bounds.size);
+    out.clip_range = vec2<u32>(sprite.clip.first_clip, sprite.clip.clip_count);
+    return out;
 }
 
 // --- polychrome sprites --- //

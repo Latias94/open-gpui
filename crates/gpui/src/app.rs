@@ -2769,6 +2769,7 @@ impl App {
                         if !window.deferred_frame_delivery_is_parked()
                             && (window.invalidator.is_dirty()
                                 || window.needs_present.get()
+                                || window.has_scene_animations()
                                 || !window.next_frame_callbacks.borrow().is_empty())
                         {
                             window.platform_window.schedule_frame();

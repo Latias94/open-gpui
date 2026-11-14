@@ -192,7 +192,10 @@ jobs:
 
       - name: Test independent animation API without optional features
         if: matrix.name == 'windows'
-        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test animation --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test animation --test timed_svg --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test retained SVG poses and accepted animation demand
+        run: cargo nextest run --locked -p open-gpui --all-features --lib -E 'test(elements::svg::) | test(scene::tests::) | test(window::timed_svg_tests::)' --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test native generic animation pixels and retirement
         if: matrix.name == 'windows'
@@ -241,7 +244,9 @@ jobs:
 
       - name: Check macOS main-thread windowing consumer
         if: matrix.name == 'macos'
-        run: cargo check --locked -p open-gpui-macos --all-features --example native_windowing
+        run: |
+          cargo check --locked -p open-gpui-macos --all-features --example native_windowing
+          cargo check --locked -p open-gpui-platform --all-features --example svg_animation
 
       - name: Test independent native appearance API
         run: |

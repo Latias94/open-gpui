@@ -12,6 +12,7 @@ fn limits() -> FrameThrottleFacts {
         inactive_frame_interval: options.inactive_frame_interval,
         low_power_frame_interval: options.low_power_frame_interval,
         thermal_frame_interval: options.thermal_frame_interval,
+        animation_frame_interval: None,
     }
 }
 

@@ -65,7 +65,8 @@ impl Render for InnerDependencyCanvas {
                     let bounds = window.device_local_bounds(bounds);
                     let _ = window.insert_scene_primitive(MonochromeSprite {
                         order: 1,
-                        pad: 0,
+                        animation: Default::default(),
+                        transformation: Default::default(),
                         bounds,
                         clip: Default::default(),
                         color: red(),
@@ -148,7 +149,8 @@ impl Render for OuterDependencyCanvas {
                     let bounds = window.device_local_bounds(bounds);
                     let _ = window.insert_scene_primitive(MonochromeSprite {
                         order: 1,
-                        pad: 0,
+                        animation: Default::default(),
+                        transformation: Default::default(),
                         bounds,
                         clip: Default::default(),
                         color: red(),
@@ -1305,7 +1307,8 @@ impl Render for RefusedHoverOpacityRoot {
                         let bounds = window.device_local_bounds(bounds);
                         let _ = window.insert_scene_primitive(MonochromeSprite {
                             order: 1,
-                            pad: 0,
+                            animation: Default::default(),
+                            transformation: Default::default(),
                             bounds,
                             clip: Default::default(),
                             color: red(),

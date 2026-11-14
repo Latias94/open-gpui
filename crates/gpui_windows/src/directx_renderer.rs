@@ -1428,6 +1428,12 @@ impl OpaqueQuadPipeline {
 
 const _: () = {
     assert!(std::mem::size_of::<PrimitiveTransform>() == 16);
+    assert!(std::mem::align_of::<TransformationMatrix>() == std::mem::align_of::<f32>());
+    assert!(std::mem::size_of::<TransformationMatrix>() == 24);
+    assert!(std::mem::offset_of!(TransformationMatrix, rotation_scale) == 0);
+    assert!(std::mem::offset_of!(TransformationMatrix, translation) == 16);
+    assert!(std::mem::align_of::<SpriteAnimationId>() == std::mem::align_of::<u32>());
+    assert!(std::mem::size_of::<SpriteAnimationId>() == 4);
     const IDENTITY_COMPONENTS: [f32; 4] = PrimitiveTransform::IDENTITY.components();
     assert!(IDENTITY_COMPONENTS[0].to_bits() == 0x3f80_0000);
     assert!(IDENTITY_COMPONENTS[1].to_bits() == 0x3f80_0000);
@@ -1437,7 +1443,7 @@ const _: () = {
     assert!(std::mem::size_of::<Quad>() == 184);
     assert!(std::mem::size_of::<Shadow>() == 136);
     assert!(std::mem::size_of::<Underline>() == 88);
-    assert!(std::mem::size_of::<MonochromeSprite>() == 120);
+    assert!(std::mem::size_of::<MonochromeSprite>() == 144);
     assert!(std::mem::size_of::<SubpixelSprite>() == 120);
     assert!(std::mem::size_of::<PolychromeSprite>() == 128);
     assert!(std::mem::size_of::<PathCurve>() == 40);
@@ -1472,10 +1478,12 @@ const _: () = {
     assert!(std::mem::offset_of!(GlobalParams, clip_shape_count) == 36);
     assert!(std::mem::offset_of!(GlobalParams, depth_scale) == 40);
 
+    assert!(std::mem::offset_of!(MonochromeSprite, animation) == 4);
     assert!(std::mem::offset_of!(MonochromeSprite, tile) == 8);
     assert!(std::mem::offset_of!(MonochromeSprite, bounds) == 48);
     assert!(std::mem::offset_of!(MonochromeSprite, clip) == 64);
     assert!(std::mem::offset_of!(MonochromeSprite, color) == 88);
+    assert!(std::mem::offset_of!(MonochromeSprite, transformation) == 120);
     assert!(std::mem::offset_of!(SubpixelSprite, tile) == 8);
     assert!(std::mem::offset_of!(SubpixelSprite, bounds) == 48);
     assert!(std::mem::offset_of!(SubpixelSprite, clip) == 64);

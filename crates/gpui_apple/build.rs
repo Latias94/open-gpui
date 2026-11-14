@@ -49,6 +49,8 @@ mod apple_build {
             "GpuClipShape".into(),
             "ClipEnvelope".into(),
             "PrimitiveTransform".into(),
+            "TransformationMatrix".into(),
+            "SpriteAnimationId".into(),
             "Uniforms".into(),
             "AtlasTile".into(),
             "GlobalInputIndex".into(),

@@ -3,6 +3,7 @@
 **Status**: Accepted
 **Date**: 2026-07-18
 **Amended**: 2026-11-05 (deferred opacity inheritance and bounded cached-view repaint)
+**Amended**: 2026-11-14 (restore official SVG raster poses and retained scene animation)
 
 ## Context
 
@@ -31,9 +32,18 @@ entry point. Layout, measurement, flex/grid placement, scroll extent, and siblin
 unchanged. GPUI resolves the origin after layout and privately normalizes every declaration to one
 invertible `scale * source + offset` mapping. A child mapping is composed before its parent.
 
-Rotation, skew, perspective, reflection, zero or negative scale, arbitrary matrices, and 3D are
-not accepted. Supporting those forms would first require non-rectangular clipping and hit testing,
+Interactive subtree declarations reject rotation, skew, perspective, reflection, zero or negative
+scale, arbitrary matrices, and 3D. Supporting those forms would first require non-rectangular clipping and hit testing,
 text/native-surface policy, and complete platform/accessibility semantics.
+
+SVGs also support the official `Transformation` and `TimedTransformation` raster APIs. These
+affect only the SVG's pixels; layout, hitboxes, descendant geometry, IME and accessibility still
+use the checked subtree authority. A retained SVG pose is composed before the parent subtree's
+raster projection. Scene-local animation entries survive cache replay with fresh IDs and publish
+frame demand only when their candidate is accepted. Deferred renderers receive an independently
+leased snapshot sampled before delivery; its original submission token publishes that raster
+sample without accepting another semantic frame. An in-flight scene is never mutated. Reduced motion
+uses the initial pose and retires animation demand after that static candidate is accepted.
 
 ## Public Geometry And Input
 
@@ -141,8 +151,9 @@ source ratios.
 
 ## Consequences
 
-- The SVG-only `Transformation`, `TransformationMatrix`, and `with_transformation` APIs are
-  deleted without aliases. SVG rotation has no replacement in this restricted contract.
+- The official SVG-only `Transformation`, `TransformationMatrix`, and `with_transformation`
+  APIs are retained for raster effects, alongside `with_timed_transformation`. They are
+  not methods on arbitrary elements and do not implement an interactive subtree mapping.
 - Applications use `SubtreeTransform` for interactive axis-aligned presentation and
   `ElementGeometry`, `Window::try_element_geometry`, or `TargetedEvent` for coordinate conversion.
 - Backends, Motion, SVG, Canvas, Gallery, and components cannot introduce a second public subtree

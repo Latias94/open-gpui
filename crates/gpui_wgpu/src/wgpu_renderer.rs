@@ -164,7 +164,7 @@ struct WgpuPipelines {
     path_tiles: wgpu::RenderPipeline,
     underlines: wgpu::RenderPipeline,
     mono_sprites: wgpu::RenderPipeline,
-    subpixel_sprites: Option<wgpu::RenderPipeline>,
+    subpixel_sprites: wgpu::RenderPipeline,
     poly_sprites: wgpu::RenderPipeline,
     #[allow(dead_code)]
     surfaces: wgpu::RenderPipeline,
@@ -1244,7 +1244,7 @@ impl WgpuRendererCore {
                 },
             };
 
-            Some(create_pipeline(
+            create_pipeline(
                 "subpixel_sprites",
                 "vs_subpixel_sprite",
                 "fs_subpixel_sprite",
@@ -1259,9 +1259,20 @@ impl WgpuRendererCore {
                 })],
                 false,
                 subpixel_module,
-            ))
+            )
         } else {
-            None
+            create_pipeline(
+                "subpixel_sprites_grayscale",
+                "vs_subpixel_sprite",
+                "fs_mono_sprite",
+                &layouts.globals,
+                &layouts.instances,
+                Some(&layouts.texture),
+                wgpu::PrimitiveTopology::TriangleStrip,
+                &[Some(color_target.clone())],
+                false,
+                &shader_module,
+            )
         };
 
         let poly_sprites = create_pipeline(
@@ -1975,11 +1986,7 @@ impl WgpuRendererCore {
                     PrimitiveBatch::SubpixelSprites { texture, range } => self.draw_sprites(
                         &instance_bindings.subpixel_sprites,
                         texture,
-                        self.resources
-                            .pipelines
-                            .subpixel_sprites
-                            .as_ref()
-                            .unwrap_or(&self.resources.pipelines.mono_sprites),
+                        &self.resources.pipelines.subpixel_sprites,
                         instance_range(range),
                         &mut pass,
                     )?,
@@ -3135,7 +3142,8 @@ impl RenderingParameters {
 mod abi_layout_tests {
     use super::*;
     use open_gpui::{
-        MonochromeSprite, PaddedBool32, PolychromeSprite, Quad, Shadow, SubpixelSprite, Underline,
+        MonochromeSprite, PaddedBool32, PolychromeSprite, Quad, Shadow, SpriteAnimationId,
+        SubpixelSprite, TransformationMatrix, Underline,
     };
     use std::mem::{align_of, offset_of, size_of};
 
@@ -3159,13 +3167,19 @@ mod abi_layout_tests {
     }
 
     #[test]
-    fn primitive_transform_has_wgsl_storage_layout() {
+    fn primitive_and_svg_transforms_have_wgsl_storage_layouts() {
         assert_eq!(align_of::<PrimitiveTransform>(), align_of::<f32>());
         assert_eq!(size_of::<PrimitiveTransform>(), 4 * size_of::<f32>());
         assert_eq!(
             PrimitiveTransform::IDENTITY.components(),
             [1.0, 1.0, 0.0, 0.0]
         );
+        assert_eq!(align_of::<TransformationMatrix>(), align_of::<f32>());
+        assert_eq!(size_of::<TransformationMatrix>(), 6 * size_of::<f32>());
+        assert_eq!(offset_of!(TransformationMatrix, rotation_scale), 0);
+        assert_eq!(offset_of!(TransformationMatrix, translation), 16);
+        assert_eq!(align_of::<SpriteAnimationId>(), align_of::<u32>());
+        assert_eq!(size_of::<SpriteAnimationId>(), size_of::<u32>());
     }
 
     /// Transparent `u32` flags have no padding, so their complete upload bytes are initialized.
@@ -3265,7 +3279,7 @@ mod abi_layout_tests {
     }
 
     #[test]
-    fn transformed_primitive_fields_are_terminal_in_wgsl_storage_abi() {
+    fn transformed_primitives_preserve_wgsl_storage_abi() {
         assert_eq!(offset_of!(Quad, clip), 24);
         assert_eq!(size_of::<Quad>(), 184);
 
@@ -3277,9 +3291,13 @@ mod abi_layout_tests {
         assert_eq!(offset_of!(Underline, wavy), 68);
         assert_eq!(size_of::<Underline>(), 88);
 
+        assert_eq!(offset_of!(MonochromeSprite, animation), 4);
         assert_eq!(offset_of!(MonochromeSprite, tile), 8);
+        assert_eq!(offset_of!(MonochromeSprite, bounds), 48);
         assert_eq!(offset_of!(MonochromeSprite, clip), 64);
-        assert_eq!(size_of::<MonochromeSprite>(), 120);
+        assert_eq!(offset_of!(MonochromeSprite, color), 88);
+        assert_eq!(offset_of!(MonochromeSprite, transformation), 120);
+        assert_eq!(size_of::<MonochromeSprite>(), 144);
 
         assert_eq!(offset_of!(SubpixelSprite, tile), 8);
         assert_eq!(offset_of!(SubpixelSprite, clip), 64);
@@ -3590,7 +3608,7 @@ fn fs_compositing_flags() -> @location(0) vec4<f32> {
             .features()
             .contains(wgpu::Features::DUAL_SOURCE_BLENDING);
 
-        let pipelines = WgpuRendererCore::create_pipelines(
+        let _pipelines = WgpuRendererCore::create_pipelines(
             &device,
             &layouts,
             surface_format,
@@ -3598,8 +3616,6 @@ fn fs_compositing_flags() -> @location(0) vec4<f32> {
             dual_source_blending,
             false,
         );
-
-        assert_eq!(pipelines.subpixel_sprites.is_some(), dual_source_blending);
 
         Ok(())
     }

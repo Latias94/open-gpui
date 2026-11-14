@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- SVGs support the official static and timed raster transformations, including rotation, independent easing, alpha, heartbeat and FPS caps. Native retained scenes animate without re-rendering their views; reduced motion uses the initial pose. Custom renderer monochrome records now include an SVG matrix and animation ID, while subpixel records retain their existing layout.
 - Optional `open-gpui-tokio` bridges Tokio futures into GPUI tasks with application-owned or caller-provided runtimes and task-drop cancellation. Optional `open-gpui-ios` supplies the UIKit application backend through `open-gpui-platform`, using the shared Apple renderer. The [Tokio](crates/gpui_tokio/README.md#verification) and [iOS](crates/gpui_ios/README.md#validation) READMEs record integration and current verification limits.
 - `App::on_app_lifecycle` and `App::on_memory_warning` expose mobile scene and memory-pressure subscriptions through the ordered native ingress. Retain the returned subscriptions; desktop platforms emit neither event. `PlatformInputHandler::focus_id` exposes the handler's original focus identity to backend adapters.
 - Additive Window/test APIs include `Window::touch_prediction_enabled`, scale-factor simulation, accepted-frame quad/underline inspection and passive image-cache/atlas queries. The test platform now retains owned menu snapshots for `App::get_menus`. `ElementId` accepts `u64`, `ImageFormat::extension` returns canonical file extensions, and `hsla` / `opaque_grey` support constant construction. See the [migration guide](docs/ui/migration-v0.3.md#additive-window-and-test-apis) for feature gates and observation limits.
@@ -111,6 +112,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Breaking Changes and Migration Notes
 
+- Custom renderers must replace `MonochromeSprite.pad` with `MonochromeSprite.animation` and append `MonochromeSprite.transformation`, for a 144-byte record. Keep `SubpixelSprite` at 120 bytes with its own vertex decoder, including grayscale fallback.
 - System notification dismissal now returns `Task<()>`; await completion or detach the task. Dropping it does not cancel an already queued dismissal. Migrate `App::dismiss_system_notification` callers and custom `Platform::dismiss_system_notification` implementations to the task return type; synchronous backends can use `Task::ready(())`.
 
 - `open_gpui_docking::DockSurface` and its prelude now use the shared `DockspaceSession`. Replace `DockSurface::builder` with shared-core layout/session construction and retained `DockPane` registrations; use `new_managed` / `open_native_root` for native workspaces and `persistence::DockWorkspaceDocument` for save/restore. The displaced `model`, `runtime`, `advanced`, `DockSurfaceBuilder`, `DockVisualStyleResolver` and related facade types require `legacy-docking` under `open_gpui_docking::legacy`. DevTools' ordinary `docking` module uses non-consuming `DockSurface::inspection`; its old runtime projection moves to `legacy_docking` with the explicit `legacy-docking` feature. Root and prelude types stay stable when Cargo unifies that feature. The native dogfood example requires `--features legacy-docking`; default examples and the independently locked consumer use the shared session. See the [migration guide](docs/ui/migration-v0.3.md#default-shared-docking-session).
@@ -308,6 +310,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- Dependency and packaging checks use patched QUIC dependencies, explicit versions for Git pins, and target-correct wasm test support. Release uploads reject Git dependencies whose source would be lost during packaging. Browser smoke uses deterministic unavailable-context controls and direct SwiftShader Vulkan initialization.
 - macOS notification posting and dismissal use a dedicated FIFO worker, keeping notification-service waits off the UI thread while preserving foreground response callbacks.
 - macOS native close queries isolate application callback panics and veto that close; terminal callback panics still complete native cleanup and the original renderer-shutdown lifecycle.
 - Shared docking window mounts release their application-wide close listeners after ordinary closure or failed initial presentation, avoiding accumulation across reopen cycles.

@@ -60,6 +60,13 @@ trees without engine-private types. Those trees
 are not laid out or painted by this target; actual layout and cropped GPU output are covered by
 the affected framework/renderer gates in the verification guide.
 
+The feature-free `timed_svg` target composes the official static and timed SVG raster poses,
+property-specific easing, FPS caps, heartbeat and ordinary animation with the checked interactive
+subtree transform. It runs the public heartbeat curve without starting an App. The independently
+locked Rust 1.95 run passes both cases; retained rendering, exact clips and native submission have
+separate framework/renderer receipts. Run
+`cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test timed_svg --target-dir target --test-threads=1 --no-fail-fast --no-tests fail`.
+
 The application pins Taffy 0.15.0 and, on macOS, Core Foundation 0.10.1 to exercise
 application-owned compatible dependency choices independently of the library workspace.
 Its direct WGPU dependency selects upstream gfx-rs revision

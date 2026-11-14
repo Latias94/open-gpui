@@ -604,6 +604,34 @@ fn pixel_at(pixels: &image::RgbaImage, scale_factor: f32, left: f32, top: f32) -
         .0
 }
 
+fn assert_matching_pixels(actual: &image::RgbaImage, expected: &image::RgbaImage, context: &str) {
+    assert_eq!(
+        actual.dimensions(),
+        expected.dimensions(),
+        "{context}: dimensions"
+    );
+    let mut first_difference = None;
+    let mut differing_pixels = 0;
+    let mut max_channel_delta = 0u8;
+    for ((left, top, actual_pixel), expected_pixel) in
+        actual.enumerate_pixels().zip(expected.pixels())
+    {
+        if actual_pixel != expected_pixel {
+            differing_pixels += 1;
+            first_difference.get_or_insert((left, top, actual_pixel.0, expected_pixel.0));
+            for (actual_channel, expected_channel) in actual_pixel.0.iter().zip(&expected_pixel.0) {
+                max_channel_delta =
+                    max_channel_delta.max(actual_channel.abs_diff(*expected_channel));
+            }
+        }
+    }
+    let total_pixels = u64::from(actual.width()) * u64::from(actual.height());
+    assert!(
+        differing_pixels == 0,
+        "{context}: {differing_pixels}/{total_pixels} pixels differ, first={first_difference:?}, max_channel_delta={max_channel_delta}"
+    );
+}
+
 fn assert_window_clip(scene: &Scene, clip: ClipEnvelope, scale_factor: f32) {
     assert!(clip.clip_count >= 2);
     let first = clip.first_clip as usize;
@@ -1505,7 +1533,7 @@ fn packed_texture_transport_matches_native_storage_for_complete_mixed_scene() ->
             assert!(renderer.core.clip_buffer_capacity > 0);
             assert_eq!(renderer.core.resources.submitted_scene_count, 1);
             assert_eq!(renderer.atlas_bind_group_cache_counts(), (2, 0));
-            assert!(renderer.core.resources.pipelines.subpixel_sprites.is_none());
+            assert!(!renderer.core.dual_source_blending);
             let submissions = renderer.core.resources.submitted_scene_count;
             let maximum = renderer.core.max_clip_buffer_size;
             renderer.core.max_clip_buffer_size = 0;
@@ -1517,6 +1545,276 @@ fn packed_texture_transport_matches_native_storage_for_complete_mixed_scene() ->
                 renderer.render_scene_to_image(scene, target_size)?,
                 expected
             );
+            Ok(())
+        },
+    )
+}
+
+#[test]
+fn rotated_monochrome_preserves_uv_parent_transform_and_exact_clip_for_both_transports()
+-> anyhow::Result<()> {
+    let mut renderer = WgpuHeadlessRenderer::new()?;
+    with_unleased_window_scene(
+        &mut renderer,
+        WindowFixture::mixed()?,
+        |scene, scale_factor, renderer| {
+            let mask = [
+                255, 255, 255, 255, 0, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 255, 255, 255, 255,
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            ];
+            let params = open_gpui::RenderGlyphParams {
+                font_id: FontId(0),
+                glyph_id: GlyphId(u32::MAX - 1),
+                font_size: px(8.0),
+                subpixel_variant: point(0, 0),
+                scale_factor: 1.0,
+                is_emoji: false,
+                subpixel_rendering: false,
+                dilation: 0,
+            };
+            let tile =
+                renderer
+                    .core
+                    .atlas
+                    .get_or_insert_with(AtlasKey::Glyph(params), &mut || {
+                        Ok(Some((
+                            size(DevicePixels(8), DevicePixels(4)),
+                            Cow::Borrowed(mask.as_slice()),
+                        )))
+                    })?;
+            let mut sprite = scene.monochrome_sprites[0];
+            assert_ne!(
+                Primitive::MonochromeSprite(sprite).transform(),
+                PrimitiveTransform::IDENTITY
+            );
+            sprite.tile = tile.context("the rotated mask must allocate an atlas tile")?;
+            sprite.bounds = Bounds::new(point(px(20.0), px(12.0)), size(px(32.0), px(16.0)))
+                .scale(scale_factor);
+            sprite.transformation = open_gpui::TransformationMatrix {
+                rotation_scale: [[0.0, -1.0], [1.0, 0.0]],
+                translation: [28.0 * scale_factor, -20.0 * scale_factor],
+            };
+            sprite.color = rgb(0xffffff).into();
+            assert_window_clip(scene, sprite.clip, scale_factor);
+            let mut rotated = scene.clone();
+            rotated.shadows.clear();
+            rotated.quads.clear();
+            rotated.paths.clear();
+            rotated.underlines.clear();
+            rotated.monochrome_sprites = vec![sprite];
+            rotated.subpixel_sprites.clear();
+            rotated.polychrome_sprites.clear();
+            let target_size = render_size(scale_factor, 112.0, 80.0);
+            let mut storage_pixels = None;
+            for texture_transport in [false, true] {
+                renderer.core = WgpuRendererCore::new_with_transport(
+                    &renderer.context,
+                    renderer.core.atlas.clone(),
+                    renderer.core.target_format,
+                    wgpu::CompositeAlphaMode::Opaque,
+                    texture_transport,
+                )?;
+                if texture_transport {
+                    let (instances, capacity) = narrow_packed_texture(
+                        &renderer.context.device,
+                        "rotated_monochrome_cross_row_instances",
+                        5,
+                        256,
+                    );
+                    renderer.core.resources.instance_buffer = instances;
+                    renderer.core.instance_buffer_capacity = capacity;
+                }
+                let pixels = renderer.render_scene_to_image(&rotated, target_size)?;
+                for (left, top, expected) in [
+                    (6.0, 6.0, [255, 255, 255, 255]),
+                    (16.0, 8.0, [255, 255, 255, 255]),
+                    (8.0, 30.0, [255, 255, 255, 255]),
+                    (16.0, 30.0, [0, 0, 0, 255]),
+                    (4.0, 4.0, [0, 0, 0, 255]),
+                    (2.0, 12.0, [0, 0, 0, 255]),
+                    (24.0, 12.0, [0, 0, 0, 255]),
+                ] {
+                    assert_eq!(
+                        pixel_at(&pixels, scale_factor, left, top),
+                        expected,
+                        "rotated monochrome at ({left}, {top}): texture_transport={texture_transport}"
+                    );
+                }
+                if let Some(expected) = &storage_pixels {
+                    assert_matching_pixels(&pixels, expected, "rotated monochrome storage/texture");
+                } else {
+                    storage_pixels = Some(pixels);
+                }
+                renderer.check_gpu_errors()?;
+            }
+            Ok(())
+        },
+    )
+}
+
+#[test]
+fn subpixel_grayscale_fallback_preserves_records_and_clips_for_both_transports()
+-> anyhow::Result<()> {
+    #[repr(C)]
+    struct SubpixelFixture {
+        order: u32,
+        pad: u32,
+        tile: AtlasTile,
+        bounds: Bounds<ScaledPixels>,
+        clip: ClipEnvelope,
+        color: open_gpui::Hsla,
+        transform: PrimitiveTransform,
+    }
+
+    assert_eq!(std::mem::size_of::<open_gpui::SubpixelSprite>(), 120);
+    let mut renderer = WgpuHeadlessRenderer::new()?;
+    with_unleased_window_scene(
+        &mut renderer,
+        WindowFixture::mixed()?,
+        |scene, scale_factor, renderer| {
+            let template = scene.monochrome_sprites[0];
+            let clip = scene.quads[1].clip;
+            assert_window_clip(scene, clip, scale_factor);
+            let mut tiles = Vec::new();
+            for subpixel_rendering in [false, true] {
+                let params = open_gpui::RenderGlyphParams {
+                    font_id: FontId(0),
+                    glyph_id: GlyphId(u32::MAX),
+                    font_size: px(2.0),
+                    subpixel_variant: point(0, 0),
+                    scale_factor: 1.0,
+                    is_emoji: false,
+                    subpixel_rendering,
+                    dilation: 0,
+                };
+                let channels = if subpixel_rendering { 4 } else { 1 };
+                let mut mask = vec![0; 4 * 4 * channels];
+                for row in 1..3 {
+                    let start = (row * 4 + 1) * channels;
+                    mask[start..start + 2 * channels].fill(255);
+                }
+                let tile =
+                    renderer
+                        .core
+                        .atlas
+                        .get_or_insert_with(AtlasKey::Glyph(params), &mut || {
+                            Ok(Some((
+                                size(DevicePixels(4), DevicePixels(4)),
+                                Cow::Borrowed(mask.as_slice()),
+                            )))
+                        })?;
+                let mut tile = tile.context("the fallback mask must allocate an atlas tile")?;
+                tile.bounds.origin = tile.bounds.origin + point(DevicePixels(1), DevicePixels(1));
+                tile.bounds.size = size(DevicePixels(2), DevicePixels(2));
+                tiles.push(tile);
+            }
+            let mut reference = scene.clone();
+            reference.shadows.clear();
+            reference.quads.clear();
+            reference.paths.clear();
+            reference.underlines.clear();
+            reference.monochrome_sprites.clear();
+            reference.polychrome_sprites.clear();
+            for (left, top, color) in [
+                (48.0, 0.0, 0xffffff),
+                (0.0, 0.0, 0x00ff00),
+                (32.0, 20.0, 0xff00ff),
+                (84.0, 44.0, 0x00ffff),
+            ] {
+                let mut sprite = template;
+                sprite.tile = tiles[0];
+                sprite.bounds = Bounds::new(point(px(left), px(top)), size(px(24.0), px(24.0)))
+                    .scale(scale_factor);
+                sprite.clip = clip;
+                sprite.color = rgb(color).into();
+                reference.monochrome_sprites.push(sprite);
+            }
+            let target_size = render_size(scale_factor, 112.0, 80.0);
+            for texture_transport in [false, true] {
+                renderer.core = WgpuRendererCore::new_with_transport(
+                    &renderer.context,
+                    renderer.core.atlas.clone(),
+                    renderer.core.target_format,
+                    wgpu::CompositeAlphaMode::Opaque,
+                    texture_transport,
+                )?;
+                if renderer.core.dual_source_blending {
+                    renderer.core.resources.pipelines = WgpuRendererCore::create_pipelines(
+                        &renderer.core.resources.device,
+                        &renderer.core.resources.bind_group_layouts,
+                        renderer.core.target_format,
+                        wgpu::CompositeAlphaMode::Opaque,
+                        false,
+                        texture_transport,
+                    );
+                    renderer.core.dual_source_blending = false;
+                }
+                if texture_transport {
+                    let (instances, capacity) = narrow_packed_texture(
+                        &renderer.context.device,
+                        "subpixel_fallback_cross_row_instances",
+                        5,
+                        256,
+                    );
+                    renderer.core.resources.instance_buffer = instances;
+                    renderer.core.instance_buffer_capacity = capacity;
+                }
+                for count in [1, 3] {
+                    let mut expected_scene = reference.clone();
+                    expected_scene.monochrome_sprites.truncate(count + 1);
+                    let expected = renderer.render_scene_to_image(&expected_scene, target_size)?;
+                    assert_eq!(
+                        pixel_at(&expected, scale_factor, 12.0, 12.0),
+                        [0, 255, 0, 255]
+                    );
+                    assert_eq!(pixel_at(&expected, scale_factor, 4.0, 4.0), [0, 0, 0, 255]);
+                    if count == 3 {
+                        assert_eq!(
+                            pixel_at(&expected, scale_factor, 44.0, 36.0),
+                            [255, 0, 255, 255]
+                        );
+                        assert_eq!(
+                            pixel_at(&expected, scale_factor, 96.0, 60.0),
+                            [0, 255, 255, 255]
+                        );
+                        assert_eq!(
+                            pixel_at(&expected, scale_factor, 108.0, 60.0),
+                            [0, 0, 0, 255]
+                        );
+                    }
+                    let mut fallback = expected_scene;
+                    fallback.subpixel_sprites = fallback
+                        .monochrome_sprites
+                        .split_off(1)
+                        .into_iter()
+                        .map(|sprite| {
+                            let fixture = SubpixelFixture {
+                                order: sprite.order,
+                                pad: 0,
+                                tile: tiles[1],
+                                bounds: sprite.bounds,
+                                clip: sprite.clip,
+                                color: sprite.color,
+                                transform: Primitive::MonochromeSprite(sprite).transform(),
+                            };
+                            unsafe {
+                                std::mem::transmute::<SubpixelFixture, open_gpui::SubpixelSprite>(
+                                    fixture,
+                                )
+                            }
+                        })
+                        .collect();
+                    let actual = renderer.render_scene_to_image(&fallback, target_size)?;
+                    assert_matching_pixels(
+                        &actual,
+                        &expected,
+                        &format!(
+                            "subpixel fallback pixels: texture_transport={texture_transport}, count={count}"
+                        ),
+                    );
+                    renderer.check_gpu_errors()?;
+                }
+            }
             Ok(())
         },
     )

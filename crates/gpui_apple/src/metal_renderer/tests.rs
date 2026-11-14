@@ -13,20 +13,21 @@ use open_gpui::{
     AppContext as _, AtlasKey, AtlasRemoveOutcome, AtlasTile, Context, Corners, HeadlessAppContext,
     Hsla, ImageId, IntoElement, MonochromeSprite, NoopTextSystem, PaddedBool32, PathBuilder,
     Pixels, PlatformAtlas, PlatformPixelBuffer, PolychromeSprite, Render, RenderImageParams,
-    RenderSvgParams, Styled as _, SubtreeClip, SubtreeTransform, SubtreeTransformExt as _, Window,
-    canvas, fill, point, px, rgb,
+    RenderSvgParams, SpriteAnimationId, Styled as _, SubtreeClip, SubtreeTransform,
+    SubtreeTransformExt as _, TransformationMatrix, Window, canvas, fill, point, px, rgb,
 };
 use std::borrow::Cow;
 
 #[repr(C)]
 struct MonochromeFixture {
     order: u32,
-    pad: u32,
+    animation: SpriteAnimationId,
     tile: AtlasTile,
     bounds: Bounds<ScaledPixels>,
     clip: ClipEnvelope,
     color: Hsla,
     transform: PrimitiveTransform,
+    transformation: TransformationMatrix,
 }
 
 #[repr(C)]
@@ -49,23 +50,26 @@ fn sprite_fixtures_match_production_layouts() {
             mem::size_of::<MonochromeFixture>(),
             mem::align_of::<MonochromeFixture>(),
             mem::offset_of!(MonochromeFixture, order),
-            mem::offset_of!(MonochromeFixture, pad),
+            mem::offset_of!(MonochromeFixture, animation),
             mem::offset_of!(MonochromeFixture, tile),
             mem::offset_of!(MonochromeFixture, bounds),
             mem::offset_of!(MonochromeFixture, clip),
             mem::offset_of!(MonochromeFixture, color),
+            mem::offset_of!(MonochromeFixture, transformation),
         ],
         [
             mem::size_of::<MonochromeSprite>(),
             mem::align_of::<MonochromeSprite>(),
             mem::offset_of!(MonochromeSprite, order),
-            mem::offset_of!(MonochromeSprite, pad),
+            mem::offset_of!(MonochromeSprite, animation),
             mem::offset_of!(MonochromeSprite, tile),
             mem::offset_of!(MonochromeSprite, bounds),
             mem::offset_of!(MonochromeSprite, clip),
             mem::offset_of!(MonochromeSprite, color),
+            mem::offset_of!(MonochromeSprite, transformation),
         ],
     );
+    assert_eq!(mem::offset_of!(MonochromeFixture, transform), 104);
     assert_eq!(
         [
             mem::size_of::<PolychromeFixture>(),
@@ -101,12 +105,13 @@ fn mixed_scene(monochrome: AtlasTile, polychrome: AtlasTile, monochrome_first: b
     );
     let monochrome = MonochromeFixture {
         order: u32::from(!monochrome_first),
-        pad: 0,
+        animation: SpriteAnimationId::NONE,
         tile: monochrome,
         bounds,
         clip: ClipEnvelope::default(),
         color: Hsla::default(),
         transform: PrimitiveTransform::IDENTITY,
+        transformation: TransformationMatrix::default(),
     };
     let polychrome = PolychromeFixture {
         order: u32::from(monochrome_first),
@@ -121,7 +126,7 @@ fn mixed_scene(monochrome: AtlasTile, polychrome: AtlasTile, monochrome_first: b
     };
     let mut scene = Scene::default();
     // SAFETY: Both fixtures mirror the corresponding repr(C) sprite's exact fields and order,
-    // including its terminal identity transform. Transmute also checks the complete byte sizes.
+    // including the renderer and SVG transforms. Transmute also checks the complete byte sizes.
     unsafe {
         scene
             .monochrome_sprites

@@ -1,6 +1,7 @@
 //! Exact submission authority for one platform delivery attempt.
 //!
-//! The original Window owns the pending candidate and its previously submitted publications.
+//! The original Window owns the pending candidate or retained raster snapshot and its
+//! previously submitted publications.
 //! This module carries only that candidate's immutable identity, shared settlement state and
 //! original completion callback. It does not retain a Scene, select a newer candidate or schedule
 //! work. Clones share one settlement on the UI thread and cannot be sent between threads.
@@ -26,7 +27,7 @@ pub enum PlatformFrameDeliveryMode {
     /// The platform retains the original token and reports a terminal outcome later.
     ///
     /// Returning [`PlatformWindowPresentOutcome::Deferred`] leaves the token pending. The
-    /// original Window retains candidate custody until the exact attempt is admitted or cancelled.
+    /// original Window retains the candidate or retained scene until the exact attempt settles.
     Deferred,
 }
 
@@ -51,7 +52,8 @@ pub enum PlatformFrameSubmissionStatus {
 
 /// Cloneable UI-thread authority for one exact Window, frame generation and delivery attempt.
 ///
-/// The original Window creates the token before handing its candidate to the platform. A
+/// The original Window creates the token before handing its candidate or retained raster
+/// snapshot to the platform. A
 /// synchronous return settles that same token without invoking its completion callback. A
 /// deferred platform retains the token for that exact candidate; retries for the same frame
 /// generation have distinct attempt identities and settlement state.

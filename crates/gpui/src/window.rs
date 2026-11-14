@@ -28,17 +28,18 @@ use crate::{
     PrimitiveTransform, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
     RenderImage, RenderImageParams, RenderSvgParams, Replay, RequestFrameOptions, ResizeEdge,
     SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow,
-    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
-    SubtreeClip, SubtreeClipError, SubtreePresentation, SubtreeTransform, SubtreeTransformError,
-    SystemWindowTab, SystemWindowTabController, TaffyLayoutEngine, Task, TextInputConfiguration,
-    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, Underline,
-    UnderlineStyle, WindowActivationPolicy, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowCreationFacts, WindowDecorations,
-    WindowFrameSubmissionOutcome, WindowFrameSubmissionSnapshot, WindowFrameSubmissionTicket,
-    WindowInitialPresentationOrder, WindowInitialPresentationStatus, WindowInsets, WindowKind,
-    WindowMutationDispatch, WindowMutationDomain, WindowMutationOutcome, WindowOptions,
-    WindowParams, WindowPhysicalPlacementRequest, WindowPlacementRequest, WindowPlacementState,
-    WindowPlatformFacts, WindowPresentAttemptFacts, WindowPresentationFacts,
+    SharedString, Size, SpriteAnimation, SpriteAnimationId, StrikethroughStyle, Style,
+    SubpixelSprite, SubscriberSet, Subscription, SubtreeClip, SubtreeClipError,
+    SubtreePresentation, SubtreeTransform, SubtreeTransformError, SystemWindowTab,
+    SystemWindowTabController, TaffyLayoutEngine, Task, TextInputConfiguration,
+    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, TransformationMatrix,
+    Underline, UnderlineStyle, WindowActivationPolicy, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowCreationFacts,
+    WindowDecorations, WindowFrameSubmissionOutcome, WindowFrameSubmissionSnapshot,
+    WindowFrameSubmissionTicket, WindowInitialPresentationOrder, WindowInitialPresentationStatus,
+    WindowInsets, WindowKind, WindowMutationDispatch, WindowMutationDomain, WindowMutationOutcome,
+    WindowOptions, WindowParams, WindowPhysicalPlacementRequest, WindowPlacementRequest,
+    WindowPlacementState, WindowPlatformFacts, WindowPresentAttemptFacts, WindowPresentationFacts,
     WindowProvisionalOpeningClaim, WindowProvisionalPlacementOutcome,
     WindowProvisionalPlacementRequest, WindowProvisionalPlacementTicket,
     WindowProvisionalRevealCancellationOutcome, WindowProvisionalRevealOutcome,
@@ -98,6 +99,7 @@ mod bring_into_view;
 mod cache_dependency_tests;
 mod candidate_transfers;
 mod deferred_frame;
+mod deferred_scene;
 mod displays;
 #[cfg(test)]
 mod draw_unwind_tests;
@@ -142,6 +144,8 @@ pub mod retained_visual;
 mod root_layout_tests;
 #[cfg(test)]
 mod spring_tests;
+#[cfg(test)]
+mod timed_svg_tests;
 mod touch_gestures;
 #[cfg(test)]
 mod underline_tests;
@@ -1630,6 +1634,7 @@ pub struct Window {
     next_candidate_frame_attempt_id: u64,
     candidate_frame_transaction: Option<CandidateFrameTransaction>,
     deferred_candidate: Option<DeferredCandidateFrame>,
+    deferred_scene: Option<deferred_scene::DeferredScenePresentation>,
     candidate_atlas_lease_failure: Option<AtlasTextureLeaseError>,
     last_atlas_frame_rejection: Option<AtlasFrameRejection>,
     candidate_pending_input_clear: bool,
@@ -1686,6 +1691,8 @@ pub struct Window {
         SubscriberSet<(), Box<dyn FnMut(WindowVisibility, &mut Window, &mut App) -> bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
+    /// The accepted scene's animation demand; candidates publish it only when accepted.
+    scene_animation_interval: Option<Duration>,
     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
@@ -2841,6 +2848,7 @@ impl Window {
             next_candidate_frame_attempt_id: 0,
             candidate_frame_transaction: None,
             deferred_candidate: None,
+            deferred_scene: None,
             candidate_atlas_lease_failure: None,
             last_atlas_frame_rejection: None,
             candidate_pending_input_clear: false,
@@ -2896,6 +2904,7 @@ impl Window {
             visibility_observers: SubscriberSet::new(),
             hovered,
             needs_present,
+            scene_animation_interval: None,
             input_rate_tracker,
             frame_pacer: FramePacer::default(),
             inactive_frame_interval,
@@ -2985,6 +2994,7 @@ impl Window {
     }
 
     pub(crate) fn claim_presentation_shutdown(&mut self) -> PreparedPlatformPresentationShutdown {
+        self.cancel_deferred_scene();
         self.cancel_deferred_submission();
         self.settle_logical_window_terminal();
         if self.presentation_shutdown.is_none() {
@@ -7588,6 +7598,7 @@ impl Window {
             && self.presentation_is_allowed()
             && (self.invalidator.is_dirty()
                 || self.needs_present.get()
+                || self.has_scene_animations()
                 || !self.next_frame_callbacks.borrow().is_empty()
                 || self.deferred_force_render)
         {
@@ -7597,9 +7608,21 @@ impl Window {
     }
 
     pub(crate) fn deferred_frame_delivery_is_parked(&self) -> bool {
-        self.deferred_candidate
-            .as_ref()
-            .is_some_and(|candidate| candidate.delivered)
+        self.deferred_scene.is_some()
+            || self
+                .deferred_candidate
+                .as_ref()
+                .is_some_and(|candidate| candidate.delivered)
+    }
+
+    pub(crate) fn has_scene_animations(&self) -> bool {
+        self.scene_animation_interval.is_some()
+    }
+
+    pub(crate) fn advance_scene_animations(&mut self, cx: &App) {
+        let elapsed = cx.background_executor().now() - cx.synced_animation_epoch;
+        self.rendered_frame.scene.advance_animations(elapsed);
+        self.scene_animation_interval = self.rendered_frame.scene.animation_frame_interval();
     }
 
     fn native_frame_requested_inner(
@@ -7608,6 +7631,12 @@ impl Window {
         cx: &mut App,
     ) {
         self.cancel_deferred_candidate_if_stale(cx);
+        self.cancel_deferred_scene_if_stale();
+        if self.deferred_scene.is_some() {
+            self.deferred_force_render |= request_frame_options.force_render;
+            self.present_animated_deferred_scene(cx);
+            return;
+        }
         if self.deferred_candidate.is_some() {
             if self.needs_present.get() {
                 self.present(cx);
@@ -7629,12 +7658,13 @@ impl Window {
         let force_render = fresh_frame_required
             || (requested_force_render && !(initial_presentation_pending && !fresh_frame_required));
         let high_rate_input = self.input_rate_tracker.borrow_mut().is_high_rate();
-        let has_frame_demand = self.invalidator.is_dirty()
+        let has_demand_besides_animation = self.invalidator.is_dirty()
             || force_render
             || !self.next_frame_callbacks.borrow().is_empty()
             || request_frame_options.require_presentation
             || self.needs_present.get()
             || high_rate_input;
+        let has_frame_demand = has_demand_besides_animation || self.has_scene_animations();
         let min_frame_interval = if initial_presentation_pending
             || renderer_repaint_pending
             || provisional_presentation_pending
@@ -7654,6 +7684,9 @@ impl Window {
                 inactive_frame_interval: self.inactive_frame_interval,
                 low_power_frame_interval: self.low_power_frame_interval,
                 thermal_frame_interval: self.thermal_frame_interval,
+                animation_frame_interval: self
+                    .scene_animation_interval
+                    .filter(|_| !has_demand_besides_animation),
             }
             .min_frame_interval()
         };
@@ -7681,6 +7714,9 @@ impl Window {
                         frame_pump::FrameRateLimit::Thermal => {
                             profiler::journal::FrameSkipReason::ThermalFrameRateLimit
                         }
+                        frame_pump::FrameRateLimit::Animation => {
+                            profiler::journal::FrameSkipReason::AnimationFrameRateLimit
+                        }
                     },
                 );
             }
@@ -7696,7 +7732,7 @@ impl Window {
 
         let needs_present = PresentFacts {
             require_presentation: request_frame_options.require_presentation,
-            needs_present: self.needs_present.get(),
+            needs_present: self.needs_present.get() || self.has_scene_animations(),
             high_rate_input: self.input_rate_tracker.borrow_mut().is_high_rate(),
         }
         .needs_present();
@@ -7978,6 +8014,7 @@ impl Window {
     }
 
     fn draw_inner(&mut self, cx: &mut App) -> ArenaClearNeeded {
+        self.cancel_deferred_scene();
         let _access_frame = cx.entities.frame_access_scope();
         // Set up the per-App arena for element allocation during this draw.
         // This ensures that multiple test Apps have isolated arenas.
@@ -8309,6 +8346,7 @@ impl Window {
             self.next_frame.generation
         );
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
+        self.scene_animation_interval = self.rendered_frame.scene.animation_frame_interval();
         if self.pending_input.is_some() && self.active_pending_input().is_none() {
             self.clear_pending_keystrokes(cx);
         }
@@ -8657,6 +8695,9 @@ impl Window {
             return PlatformWindowPresentOutcome::RepaintRequired;
         }
         if self.platform_window.frame_delivery_mode() == PlatformFrameDeliveryMode::Deferred {
+            if self.has_scene_animations() || self.deferred_scene.is_some() {
+                return self.present_animated_deferred_scene(cx);
+            }
             // A retained scene also needs exact completion authority when its renderer
             // submits asynchronously. Prepare a candidate on the next frame instead of
             // retrying the synchronous draw path without a submission token forever.
@@ -8666,6 +8707,7 @@ impl Window {
         #[cfg(feature = "profiler")]
         let present_start = Instant::now();
         let outcome = if self.presentation_is_allowed() {
+            self.advance_scene_animations(cx);
             self.platform_window.draw(&self.rendered_frame.scene)
         } else {
             PlatformWindowPresentOutcome::Rejected
@@ -11136,6 +11178,14 @@ impl Window {
     }
 
     fn insert_scene_primitive(&mut self, primitive: impl Into<Primitive>) -> bool {
+        self.insert_scene_primitive_with_animation(primitive, None)
+    }
+
+    fn insert_scene_primitive_with_animation(
+        &mut self,
+        primitive: impl Into<Primitive>,
+        animation: Option<SpriteAnimation>,
+    ) -> bool {
         let primitive = primitive.into();
         let atlas_texture_lease = match primitive.atlas_texture_instance() {
             Some(texture) => match self.retain_frame_atlas_texture_instance(texture) {
@@ -11152,12 +11202,25 @@ impl Window {
         };
         let clip_stack = self.clip_stack();
         let scale_factor = self.scale_factor();
-        if let Err(error) = self.next_frame.scene.insert_primitive_scoped(
-            primitive,
-            &clip_stack,
-            scale_factor,
-            self.subtree_geometry_validity(),
-        ) {
+        let validity = self.subtree_geometry_validity();
+        let insertion = match (primitive, animation) {
+            (Primitive::MonochromeSprite(sprite), Some(animation)) => {
+                self.next_frame.scene.insert_animated_sprite_scoped(
+                    sprite,
+                    animation,
+                    &clip_stack,
+                    scale_factor,
+                    validity,
+                )
+            }
+            (primitive, _) => self.next_frame.scene.insert_primitive_scoped(
+                primitive,
+                &clip_stack,
+                scale_factor,
+                validity,
+            ),
+        };
+        if let Err(error) = insertion {
             self.record_subtree_geometry_failure(error);
             false
         } else if let Some(lease) = atlas_texture_lease {
@@ -12115,7 +12178,8 @@ impl Window {
             } else {
                 self.insert_scene_primitive(MonochromeSprite {
                     order: 0,
-                    pad: 0,
+                    animation: Default::default(),
+                    transformation: Default::default(),
                     bounds,
                     clip: Default::default(),
                     color: color.opacity(element_opacity),
@@ -12225,7 +12289,29 @@ impl Window {
         &mut self,
         bounds: Bounds<Pixels>,
         path: SharedString,
+        data: Option<&[u8]>,
+        color: Hsla,
+        cx: &App,
+    ) -> Result<()> {
+        self.paint_animated_svg(
+            bounds,
+            path,
+            data,
+            TransformationMatrix::unit(),
+            None,
+            color,
+            cx,
+        )
+    }
+
+    /// Paints an SVG whose raster pose can advance without rebuilding its view.
+    pub(crate) fn paint_animated_svg(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        path: SharedString,
         mut data: Option<&[u8]>,
+        transformation: TransformationMatrix,
+        animation: Option<SpriteAnimation>,
         color: Hsla,
         cx: &App,
     ) -> Result<()> {
@@ -12275,15 +12361,19 @@ impl Window {
             return Ok(());
         };
 
-        self.insert_scene_primitive(MonochromeSprite {
-            order: 0,
-            pad: 0,
-            bounds: svg_bounds,
-            clip: Default::default(),
-            color: color.opacity(element_opacity),
-            tile,
-            transform,
-        });
+        self.insert_scene_primitive_with_animation(
+            MonochromeSprite {
+                order: 0,
+                animation: SpriteAnimationId::NONE,
+                bounds: svg_bounds,
+                clip: Default::default(),
+                color: color.opacity(element_opacity),
+                tile,
+                transform,
+                transformation,
+            },
+            animation,
+        );
 
         Ok(())
     }
@@ -15738,7 +15828,8 @@ pub(crate) mod cached_paint_atlas_tests {
                     for order in 0..primitive_count {
                         assert!(window.insert_scene_primitive(MonochromeSprite {
                             order,
-                            pad: 0,
+                            animation: Default::default(),
+                            transformation: Default::default(),
                             bounds,
                             clip: Default::default(),
                             color: red(),
@@ -15792,7 +15883,8 @@ pub(crate) mod cached_paint_atlas_tests {
                                 let bounds = window.device_local_bounds(bounds);
                                 assert!(window.insert_scene_primitive(MonochromeSprite {
                                     order: 0,
-                                    pad: 0,
+                                    animation: Default::default(),
+                                    transformation: Default::default(),
                                     bounds,
                                     clip: Default::default(),
                                     color: red(),
@@ -15894,7 +15986,8 @@ pub(crate) mod cached_paint_atlas_tests {
                             let bounds = window.device_local_bounds(bounds);
                             assert!(window.insert_scene_primitive(MonochromeSprite {
                                 order: 0,
-                                pad: 0,
+                                animation: Default::default(),
+                                transformation: Default::default(),
                                 bounds,
                                 clip: Default::default(),
                                 color: red(),
@@ -15983,7 +16076,8 @@ pub(crate) mod cached_paint_atlas_tests {
                             let bounds = window.device_local_bounds(bounds);
                             let _ = window.insert_scene_primitive(MonochromeSprite {
                                 order: 0,
-                                pad: 0,
+                                animation: Default::default(),
+                                transformation: Default::default(),
                                 bounds,
                                 clip: Default::default(),
                                 color: red(),
@@ -16279,7 +16373,8 @@ pub(crate) mod cached_paint_atlas_tests {
                                     let bounds = window.device_local_bounds(bounds);
                                     window.insert_scene_primitive(MonochromeSprite {
                                         order: 0,
-                                        pad: 0,
+                                        animation: Default::default(),
+                                        transformation: Default::default(),
                                         bounds,
                                         clip: Default::default(),
                                         color: red(),
@@ -16511,7 +16606,8 @@ pub(crate) mod cached_paint_atlas_tests {
                                     let bounds = window.device_local_bounds(bounds);
                                     window.insert_scene_primitive(MonochromeSprite {
                                         order: 0,
-                                        pad: 0,
+                                        animation: Default::default(),
+                                        transformation: Default::default(),
                                         bounds,
                                         clip: Default::default(),
                                         color: red(),

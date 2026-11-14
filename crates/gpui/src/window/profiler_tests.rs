@@ -123,7 +123,8 @@ impl Render for ProfilerProbe {
                     if paint_controls.paint_sprite.get() {
                         let _ = window.insert_scene_primitive(MonochromeSprite {
                             order: 1,
-                            pad: 0,
+                            animation: Default::default(),
+                            transformation: Default::default(),
                             bounds: window.device_local_bounds(bounds),
                             clip: Default::default(),
                             color,

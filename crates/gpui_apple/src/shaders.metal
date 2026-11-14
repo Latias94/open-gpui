@@ -10,12 +10,24 @@ static_assert(sizeof(PaddedBool32) == 4,
               "PaddedBool32 must occupy a complete GPU uint slot");
 static_assert(sizeof(PrimitiveTransform) == 16,
               "PrimitiveTransform must match the Rust shader ABI");
+static_assert(sizeof(TransformationMatrix) == 24,
+              "TransformationMatrix must match the Rust shader ABI");
+static_assert(__builtin_offsetof(TransformationMatrix, translation) == 16,
+              "SVG translation must follow the row-major rotation and scale");
+static_assert(sizeof(SpriteAnimationId) == 4,
+              "SpriteAnimationId must occupy a complete GPU uint slot");
 static_assert(sizeof(Quad) == 184, "Quad must match the Rust shader ABI");
 static_assert(sizeof(Shadow) == 136, "Shadow must match the Rust shader ABI");
 static_assert(sizeof(Underline) == 88,
               "Underline must match the Rust shader ABI");
-static_assert(sizeof(MonochromeSprite) == 120,
+static_assert(sizeof(MonochromeSprite) == 144,
               "MonochromeSprite must match the Rust shader ABI");
+static_assert(__builtin_offsetof(MonochromeSprite, animation) == 4,
+              "Sprite animation must retain the former padding slot");
+static_assert(__builtin_offsetof(MonochromeSprite, transform) == 104,
+              "MonochromeSprite must preserve its subtree projection offset");
+static_assert(__builtin_offsetof(MonochromeSprite, transformation) == 120,
+              "SVG transformation must follow the subtree projection");
 static_assert(sizeof(PolychromeSprite) == 128,
               "PolychromeSprite must match the Rust shader ABI");
 static_assert(sizeof(PathCurve) == 40, "PathCurve must match the Rust shader ABI");
@@ -736,8 +748,26 @@ vertex MonochromeSpriteFragmentInput monochrome_sprite_vertex(
     [[buffer(SpriteInputIndex_AtlasTextureSize)]]) {
   float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
   MonochromeSprite sprite = sprites[sprite_id];
-  ClippedVertex clipped = clip_transformed_primitive(
-      unit_vertex, sprite.bounds, sprite.clip, sprite.transform);
+  float2 row_x = float2(sprite.transformation.rotation_scale[0][0],
+                       sprite.transformation.rotation_scale[0][1]);
+  float2 row_y = float2(sprite.transformation.rotation_scale[1][0],
+                       sprite.transformation.rotation_scale[1][1]);
+  float2 translation = float2(sprite.transformation.translation[0],
+                             sprite.transformation.translation[1]);
+  ClippedVertex clipped;
+  if (all(row_x == float2(1., 0.)) && all(row_y == float2(0., 1.)) &&
+      all(translation == float2(0.))) {
+    clipped = clip_transformed_primitive(
+        unit_vertex, sprite.bounds, sprite.clip, sprite.transform);
+  } else {
+    clipped.local_position = unit_vertex * float2(sprite.bounds.size.width,
+                                                 sprite.bounds.size.height) +
+                             float2(sprite.bounds.origin.x, sprite.bounds.origin.y);
+    float2 position = float2(dot(row_x, clipped.local_position),
+                            dot(row_y, clipped.local_position)) + translation;
+    clipped.position = apply_primitive_transform(position, sprite.transform);
+    clipped.unit_vertex = unit_vertex;
+  }
   float4 device_position = to_device_position_impl(clipped.position, viewport_size);
   float2 tile_position = to_tile_position(clipped.unit_vertex, sprite.tile, atlas_size);
   float4 color = hsla_to_rgba(sprite.color);

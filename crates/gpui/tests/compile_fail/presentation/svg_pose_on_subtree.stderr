@@ -1,0 +1,17 @@
+error[E0599]: no method named `with_transformation` found for struct `open_gpui::Div` in the current scope
+ --> tests/compile_fail/presentation/svg_pose_on_subtree.rs:4:19
+  |
+4 |     let _ = div().with_transformation(Transformation::rotate(radians(0.5)));
+  |                   ^^^^^^^^^^^^^^^^^^^
+  |
+help: there is a method `with_animation` with a similar name, but with different arguments
+ --> src/elements/animation.rs
+  |
+  | /     fn with_animation(
+  | |         self,
+  | |         id: impl Into<ElementId>,
+  | |         animation: Animation,
+... |
+  | |     where
+  | |         Self: Sized,
+  | |____________________^

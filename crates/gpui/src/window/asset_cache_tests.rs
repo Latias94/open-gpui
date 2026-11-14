@@ -70,7 +70,8 @@ impl Render for CachedAssetView {
                 window.paint_quad(fill(bounds, color));
                 let _ = window.insert_scene_primitive(MonochromeSprite {
                     order: 1,
-                    pad: 0,
+                    animation: Default::default(),
+                    transformation: Default::default(),
                     bounds: window.device_local_bounds(bounds),
                     clip: Default::default(),
                     color,

@@ -95,7 +95,8 @@ impl<'a> SceneBuilder<'a> {
     pub fn monochrome_sprite(&mut self, bounds: Bounds<Pixels>, tile: AtlasTile, color: Hsla) {
         self.insert(MonochromeSprite {
             order: 0,
-            pad: 0,
+            animation: Default::default(),
+            transformation: Default::default(),
             tile,
             bounds: bounds.scale(1.),
             clip: Default::default(),

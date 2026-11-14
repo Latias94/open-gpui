@@ -115,6 +115,11 @@ struct PrimitiveTransform {
     float translation_y;
 };
 
+struct TransformationMatrix {
+    float rotation_scale[2][2];
+    float translation[2];
+};
+
 static const float M_PI_F = 3.141592653f;
 static const float3 GRAYSCALE_FACTORS = float3(0.2126f, 0.7152f, 0.0722f);
 static const uint SIMPLE_PRIMITIVE_FLAG = 1u << 31;
@@ -1409,12 +1414,13 @@ float4 underline_fragment(UnderlineFragmentInput input): SV_Target {
 
 struct MonochromeSprite {
     uint order;
-    uint pad;
+    uint animation;
     AtlasTile tile;
     Bounds bounds;
     ClipEnvelope clip;
     Hsla color;
     PrimitiveTransform transform;
+    TransformationMatrix transformation;
 };
 
 struct MonochromeSpriteFragmentInput {
@@ -1431,8 +1437,24 @@ MonochromeSpriteFragmentInput monochrome_sprite_vertex(uint vertex_id: SV_Vertex
     uint sprite_id = batch_start_index + instance_id;
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     MonochromeSprite sprite = mono_sprites[sprite_id];
-    ClippedVertex vertex = clip_to_mask(unit_vertex, sprite.bounds,
-                                       pixel_raster_mask(sprite.clip.conservative_bounds), sprite.transform);
+    float2 row_x = float2(sprite.transformation.rotation_scale[0][0],
+                         sprite.transformation.rotation_scale[0][1]);
+    float2 row_y = float2(sprite.transformation.rotation_scale[1][0],
+                         sprite.transformation.rotation_scale[1][1]);
+    float2 translation = float2(sprite.transformation.translation[0],
+                               sprite.transformation.translation[1]);
+    ClippedVertex vertex;
+    if (all(row_x == float2(1.0, 0.0)) && all(row_y == float2(0.0, 1.0)) &&
+        all(translation == float2(0.0, 0.0))) {
+        vertex = clip_to_mask(unit_vertex, sprite.bounds,
+                             pixel_raster_mask(sprite.clip.conservative_bounds), sprite.transform);
+    } else {
+        vertex.local_position = unit_vertex * sprite.bounds.size + sprite.bounds.origin;
+        float2 position = float2(dot(row_x, vertex.local_position),
+                                 dot(row_y, vertex.local_position)) + translation;
+        vertex.position = apply_primitive_transform(position, sprite.transform);
+        vertex.unit_vertex = unit_vertex;
+    }
     float2 tile_position = to_tile_position(vertex.unit_vertex, sprite.tile);
     float4 color = hsla_to_rgba(sprite.color);
 
@@ -1455,8 +1477,33 @@ float4 monochrome_sprite_fragment(MonochromeSpriteFragmentInput input): SV_Targe
     return float4(input.color.rgb, input.color.a * alpha_corrected);
 }
 
+struct SubpixelSprite {
+    uint order;
+    uint pad;
+    AtlasTile tile;
+    Bounds bounds;
+    ClipEnvelope clip;
+    Hsla color;
+    PrimitiveTransform transform;
+};
+
+StructuredBuffer<SubpixelSprite> subpixel_sprites: register(t1);
+
 MonochromeSpriteFragmentInput subpixel_sprite_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
-    return monochrome_sprite_vertex(vertex_id, instance_id);
+    uint sprite_id = batch_start_index + instance_id;
+    float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
+    SubpixelSprite sprite = subpixel_sprites[sprite_id];
+    ClippedVertex vertex = clip_to_mask(unit_vertex, sprite.bounds,
+                                       pixel_raster_mask(sprite.clip.conservative_bounds), sprite.transform);
+
+    MonochromeSpriteFragmentInput output;
+    output.position = to_device_position_impl(vertex.position);
+    output.tile_position = to_tile_position(vertex.unit_vertex, sprite.tile);
+    output.color = hsla_to_rgba(sprite.color);
+    output.clip_range = uint2(sprite.clip.first_clip, sprite.clip.clip_count);
+    output.clip_bounds = float4(sprite.clip.conservative_bounds.origin,
+                                sprite.clip.conservative_bounds.size);
+    return output;
 }
 
 SubpixelSpriteFragmentOutput subpixel_sprite_fragment(MonochromeSpriteFragmentInput input) {

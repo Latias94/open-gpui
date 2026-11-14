@@ -49,6 +49,10 @@ name = "system_notifications"
 path = "examples/system_notifications.rs"
 
 [[example]]
+name = "svg_animation"
+path = "examples/svg_animation.rs"
+
+[[example]]
 name = "toggle_headless"
 path = "examples/toggle_headless.rs"
 

@@ -1797,7 +1797,7 @@ mod abi_layout_tests {
     use super::*;
     use open_gpui::{
         Background, Corners, GpuClipShape, MonochromeSprite, Point, PolychromeSprite, Quad, Shadow,
-        SubpixelSprite, Underline, point,
+        SpriteAnimationId, SubpixelSprite, TransformationMatrix, Underline, point,
     };
     use std::mem::{align_of, offset_of, size_of};
 
@@ -2044,17 +2044,23 @@ mod abi_layout_tests {
     }
 
     #[test]
-    fn primitive_transform_has_shader_abi_layout() {
+    fn primitive_and_svg_transforms_have_shader_abi_layouts() {
         assert_eq!(align_of::<PrimitiveTransform>(), align_of::<f32>());
         assert_eq!(size_of::<PrimitiveTransform>(), 4 * size_of::<f32>());
         assert_eq!(
             PrimitiveTransform::IDENTITY.components(),
             [1.0, 1.0, 0.0, 0.0]
         );
+        assert_eq!(align_of::<TransformationMatrix>(), align_of::<f32>());
+        assert_eq!(size_of::<TransformationMatrix>(), 6 * size_of::<f32>());
+        assert_eq!(offset_of!(TransformationMatrix, rotation_scale), 0);
+        assert_eq!(offset_of!(TransformationMatrix, translation), 16);
+        assert_eq!(align_of::<SpriteAnimationId>(), align_of::<u32>());
+        assert_eq!(size_of::<SpriteAnimationId>(), size_of::<u32>());
     }
 
     #[test]
-    fn transformed_primitive_fields_are_terminal_in_shader_abi() {
+    fn transformed_primitives_preserve_shader_abi() {
         assert_eq!(size_of::<open_gpui::PaddedBool32>(), 4);
         assert_eq!(align_of::<open_gpui::PaddedBool32>(), 4);
         let _: fn(Underline) -> open_gpui::PaddedBool32 = |underline| underline.wavy;
@@ -2063,8 +2069,13 @@ mod abi_layout_tests {
         assert_eq!(size_of::<Shadow>(), 136);
         assert_eq!(size_of::<Underline>(), 88);
         assert_eq!(offset_of!(Underline, wavy), 68);
-        assert_eq!(size_of::<MonochromeSprite>(), 120);
+        assert_eq!(size_of::<MonochromeSprite>(), 144);
+        assert_eq!(offset_of!(MonochromeSprite, animation), 4);
         assert_eq!(offset_of!(MonochromeSprite, tile), 8);
+        assert_eq!(offset_of!(MonochromeSprite, bounds), 48);
+        assert_eq!(offset_of!(MonochromeSprite, clip), 64);
+        assert_eq!(offset_of!(MonochromeSprite, color), 88);
+        assert_eq!(offset_of!(MonochromeSprite, transformation), 120);
         assert_eq!(size_of::<SubpixelSprite>(), 120);
         assert_eq!(offset_of!(SubpixelSprite, tile), 8);
         assert_eq!(size_of::<PolychromeSprite>(), 128);

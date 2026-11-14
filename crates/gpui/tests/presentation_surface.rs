@@ -4,7 +4,6 @@ use open_gpui::{
     SubtreeTransformExt as _, SubtreeTransformOrigin, TargetedEvent, Window, div, measured_element,
     point, px, size,
 };
-use std::{ffi::OsStr, fs, path::Path};
 
 #[test]
 fn checked_presentation_import_paths_compile() {
@@ -50,31 +49,17 @@ fn checked_presentation_import_paths_compile() {
 }
 
 #[test]
-fn legacy_transform_names_do_not_reenter_production_source() {
-    let source_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut sources = Vec::new();
-    collect_rust_sources(&source_root, &mut sources);
+fn svg_raster_poses_compose_with_checked_subtree_presentation() {
+    use open_gpui::{TimedTransformation, Transformation, radians, svg};
+    use std::time::Duration;
 
-    for forbidden in [
-        concat!("Trans", "formation"),
-        concat!("Trans", "formationMatrix"),
-        concat!("with_", "transformation"),
-    ] {
-        let offenders = sources
-            .iter()
-            .filter_map(|path| {
-                let source = fs::read_to_string(path).ok()?;
-                source
-                    .contains(forbidden)
-                    .then(|| path.display().to_string())
-            })
-            .collect::<Vec<_>>();
-        assert!(
-            offenders.is_empty(),
-            "legacy transform name `{forbidden}` reappeared in {}",
-            offenders.join(", ")
-        );
-    }
+    let _element = svg()
+        .with_transformation(Transformation::rotate(radians(0.5)))
+        .with_timed_transformation(TimedTransformation::rotation(
+            Duration::from_secs(1),
+            Transformation::alpha(0.8),
+        ))
+        .with_subtree_transform(SubtreeTransform::IDENTITY);
 }
 
 #[test]
@@ -100,18 +85,4 @@ fn renderer_transform_abi_stays_opaque_to_applications() {
     }
     assert!(scene.contains("pub(crate) fn try_new("));
     assert!(scene.contains("pub(crate) transform: PrimitiveTransform"));
-}
-
-fn collect_rust_sources(directory: &Path, output: &mut Vec<std::path::PathBuf>) {
-    for entry in fs::read_dir(directory).expect("GPUI source directory should be readable") {
-        let path = entry.expect("GPUI source entry should be readable").path();
-        if path.is_dir() {
-            collect_rust_sources(&path, output);
-        } else if path
-            .extension()
-            .is_some_and(|extension| extension == OsStr::new("rs"))
-        {
-            output.push(path);
-        }
-    }
 }

@@ -253,9 +253,11 @@ impl Window {
     }
 
     pub(super) fn cancel_deferred_submission(&self) -> bool {
+        let retained = self.cancel_deferred_scene_submission();
         self.deferred_candidate
             .as_ref()
             .is_some_and(|candidate| candidate.submission.cancel())
+            || retained
     }
 
     pub(super) fn cancel_deferred_candidate_if_stale(&mut self, cx: &mut App) -> bool {
@@ -282,6 +284,8 @@ impl Window {
         let submission = candidate.submission.clone();
         if !candidate.delivered {
             candidate.delivered = true;
+            let elapsed = cx.background_executor().now() - cx.synced_animation_epoch;
+            self.next_frame.scene.advance_animations(elapsed);
             let outcome = self
                 .platform_window
                 .draw_with_submission(&self.next_frame.scene, &submission);
@@ -328,6 +332,9 @@ impl Window {
         outcome: PlatformWindowPresentOutcome,
         cx: &mut App,
     ) -> bool {
+        if self.deferred_scene.is_some() {
+            return self.complete_deferred_scene_submission(submission, outcome, cx);
+        }
         let status = match outcome {
             PlatformWindowPresentOutcome::Submitted => PlatformFrameSubmissionStatus::Submitted,
             PlatformWindowPresentOutcome::RepaintRequired => {
@@ -470,8 +477,9 @@ impl Window {
     }
 
     pub(crate) fn cancel_deferred_candidate(&mut self, cx: &mut App) -> bool {
+        let retained = self.cancel_deferred_scene();
         let Some(candidate) = self.deferred_candidate.take() else {
-            return false;
+            return retained;
         };
         self.discard_deferred_candidate(candidate, cx);
         true

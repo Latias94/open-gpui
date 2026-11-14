@@ -6,6 +6,7 @@
 @group(1) @binding(2) var<storage, read> b_path_paints: array<PathPaint>;
 @group(1) @binding(0) var<storage, read> b_underlines: array<Underline>;
 @group(1) @binding(0) var<storage, read> b_mono_sprites: array<MonochromeSprite>;
+@group(1) @binding(0) var<storage, read> b_subpixel_sprites: array<SubpixelSprite>;
 @group(1) @binding(0) var<storage, read> b_poly_sprites: array<PolychromeSprite>;
 
 fn clip_arena_length() -> u32 { return arrayLength(&b_clip_shapes); }
@@ -17,4 +18,5 @@ fn load_path_curve(index: u32) -> PathCurve { return b_path_curves[index]; }
 fn load_path_paint(index: u32) -> PathPaint { return b_path_paints[index]; }
 fn load_underline(index: u32) -> Underline { return b_underlines[index]; }
 fn load_mono_sprite(index: u32) -> MonochromeSprite { return b_mono_sprites[index]; }
+fn load_subpixel_sprite(index: u32) -> SubpixelSprite { return b_subpixel_sprites[index]; }
 fn load_poly_sprite(index: u32) -> PolychromeSprite { return b_poly_sprites[index]; }

@@ -59,6 +59,98 @@ fn subpixel_shader_is_valid_wgsl() {
 }
 
 #[test]
+fn sprite_shader_layouts_match_distinct_rust_records() {
+    use open_gpui::{MonochromeSprite, SubpixelSprite, TransformationMatrix};
+    use std::mem::{offset_of, size_of};
+
+    let mono_fields = [
+        (Some("order"), offset_of!(MonochromeSprite, order)),
+        (Some("animation"), offset_of!(MonochromeSprite, animation)),
+        (Some("tile"), offset_of!(MonochromeSprite, tile)),
+        (Some("bounds"), offset_of!(MonochromeSprite, bounds)),
+        (Some("clip"), offset_of!(MonochromeSprite, clip)),
+        (Some("color"), offset_of!(MonochromeSprite, color)),
+        (Some("transform"), 104),
+        (
+            Some("transformation"),
+            offset_of!(MonochromeSprite, transformation),
+        ),
+    ];
+    let subpixel_fields = [
+        (Some("order"), offset_of!(SubpixelSprite, order)),
+        (Some("pad"), offset_of!(SubpixelSprite, pad)),
+        (Some("tile"), offset_of!(SubpixelSprite, tile)),
+        (Some("bounds"), offset_of!(SubpixelSprite, bounds)),
+        (Some("clip"), offset_of!(SubpixelSprite, clip)),
+        (Some("color"), offset_of!(SubpixelSprite, color)),
+        (Some("transform"), 104),
+    ];
+    let matrix_fields = [
+        (
+            Some("rotation_scale"),
+            offset_of!(TransformationMatrix, rotation_scale),
+        ),
+        (
+            Some("translation"),
+            offset_of!(TransformationMatrix, translation),
+        ),
+    ];
+
+    for (source, has_storage) in [
+        (STORAGE_BUFFER_SHADERS, true),
+        (WEBGL_SHADERS, false),
+        (SUBPIXEL_SHADERS, true),
+    ] {
+        let module = naga::front::wgsl::parse_str(source).expect("shader must parse");
+        let layouts = [
+            (
+                "TransformationMatrix",
+                size_of::<TransformationMatrix>(),
+                matrix_fields.as_slice(),
+            ),
+            (
+                "MonochromeSprite",
+                size_of::<MonochromeSprite>(),
+                mono_fields.as_slice(),
+            ),
+            (
+                "SubpixelSprite",
+                size_of::<SubpixelSprite>(),
+                subpixel_fields.as_slice(),
+            ),
+        ];
+        for (name, expected_size, expected_fields) in layouts {
+            let (handle, shader_type) = module
+                .types
+                .iter()
+                .find(|(_, shader_type)| shader_type.name.as_deref() == Some(name))
+                .expect("shader record must be declared");
+            let naga::TypeInner::Struct { members, span } = &shader_type.inner else {
+                panic!("{name} must be a parameter struct");
+            };
+            assert_eq!(*span as usize, expected_size, "{name} size");
+            let actual_fields = members
+                .iter()
+                .map(|member| (member.name.as_deref(), member.offset as usize))
+                .collect::<Vec<_>>();
+            assert_eq!(actual_fields, expected_fields, "{name} field offsets");
+            if has_storage && name != "TransformationMatrix" {
+                let stride = module.types.iter().find_map(|(_, array_type)| {
+                    if let naga::TypeInner::Array { base, stride, .. } = &array_type.inner
+                        && *base == handle
+                    {
+                        Some(*stride)
+                    } else {
+                        None
+                    }
+                });
+                assert_eq!(stride, Some(expected_size as u32), "{name} array stride");
+            }
+        }
+    }
+}
+
+#[test]
 fn webgl_record_sizes_match_shader_word_strides() {
     use open_gpui::{MonochromeSprite, PolychromeSprite, Quad, Shadow, SubpixelSprite, Underline};
     assert_eq!(std::mem::size_of::<Quad>(), 46 * 4);
@@ -67,7 +159,7 @@ fn webgl_record_sizes_match_shader_word_strides() {
     assert_eq!(std::mem::size_of::<PathCurve>(), 10 * 4);
     assert_eq!(std::mem::size_of::<PathTile>(), 14 * 4);
     assert_eq!(std::mem::size_of::<Underline>(), 22 * 4);
-    assert_eq!(std::mem::size_of::<MonochromeSprite>(), 30 * 4);
+    assert_eq!(std::mem::size_of::<MonochromeSprite>(), 36 * 4);
     assert_eq!(std::mem::size_of::<SubpixelSprite>(), 30 * 4);
     assert_eq!(std::mem::size_of::<PolychromeSprite>(), 32 * 4);
     assert_eq!(std::mem::size_of::<GpuClipShape>(), 3 * 16);
@@ -148,7 +240,7 @@ fn webgl_quad_layout_matches_fixed_decoder() {
 #[test]
 fn packed_allocations_keep_whole_records_and_partial_texels_disjoint() -> anyhow::Result<()> {
     let mut offset = 16;
-    for stride in [184, 136, 40, 56, 88, 120, 128] {
+    for stride in [184, 136, 40, 56, 88, 120, 144, 128] {
         for count in [0, 1, 2, 3, 19] {
             let (start, allocation, first) =
                 instance_allocation(offset, stride * count, stride, 16, true)?;

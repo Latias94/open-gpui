@@ -77,6 +77,13 @@ fn read_transform(cursor: ptr<function, InstanceCursor>) -> PrimitiveTransform {
     return PrimitiveTransform(read_f32(cursor), read_f32(cursor), read_f32(cursor), read_f32(cursor));
 }
 
+fn read_transformation(cursor: ptr<function, InstanceCursor>) -> TransformationMatrix {
+    return TransformationMatrix(
+        mat2x2<f32>(read_vec2_f32(cursor), read_vec2_f32(cursor)),
+        read_vec2_f32(cursor),
+    );
+}
+
 fn read_atlas_tile(cursor: ptr<function, InstanceCursor>) -> AtlasTile {
     return AtlasTile(
         AtlasTextureId(read_word(cursor), read_word(cursor)),
@@ -208,8 +215,16 @@ fn load_underline(instance_id: u32) -> Underline {
 }
 
 fn load_mono_sprite(instance_id: u32) -> MonochromeSprite {
-    var cursor = instance_cursor(instance_id * 30u);
+    var cursor = instance_cursor(instance_id * 36u);
     return MonochromeSprite(
+        read_word(&cursor), read_word(&cursor), read_atlas_tile(&cursor), read_bounds(&cursor),
+        read_clip(&cursor), read_hsla(&cursor), read_transform(&cursor), read_transformation(&cursor),
+    );
+}
+
+fn load_subpixel_sprite(instance_id: u32) -> SubpixelSprite {
+    var cursor = instance_cursor(instance_id * 30u);
+    return SubpixelSprite(
         read_word(&cursor), read_word(&cursor), read_atlas_tile(&cursor), read_bounds(&cursor),
         read_clip(&cursor), read_hsla(&cursor), read_transform(&cursor),
     );

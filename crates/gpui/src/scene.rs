@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use crate::PlatformPixelBuffer;
 use crate::{
     AtlasTextureInstanceId, AtlasTextureLease, AtlasTextureLeaseError, AtlasTile, Background,
-    Bounds, Corners, Edges, Hsla, Path, PathTiles, Pixels, PlatformAtlas, Point, ScaledPixels,
-    Size, SubtreeTransformError,
+    Bounds, Corners, Edges, Hsla, Path, PathTiles, Pixels, PlatformAtlas, Point, Radians,
+    ScaledPixels, Size, SubtreeTransformError, TimedTransformation,
     bounds_tree::BoundsTree,
     geometry::{
         ClipStackSnapshot, ResolvedClip, ResolvedSubtreeTransform, SubtreeGeometryError,
@@ -20,6 +20,7 @@ use crate::{
 use smallvec::SmallVec;
 use std::{
     collections::VecDeque, fmt::Debug, iter::Peekable, ops::Range, rc::Rc, slice, sync::Arc,
+    time::Duration,
 };
 
 #[expect(missing_docs)]
@@ -136,6 +137,7 @@ pub struct Scene {
     pub surfaces: Vec<PaintSurface>,
     clip_shapes: Vec<GpuClipShape>,
     clip_stack_ranges: Vec<Range<u32>>,
+    animations: Vec<SpriteAnimation>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -150,6 +152,7 @@ struct SceneJournalCheckpoint {
     paint_operations_len: usize,
     clip_shapes_len: usize,
     clip_stack_ranges_len: usize,
+    animations_len: usize,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -166,11 +169,79 @@ impl Scene {
         self.clear_render_state();
         self.clip_shapes.clear();
         self.clip_stack_ranges.clear();
+        self.animations.clear();
+    }
+
+    /// How long the window may wait between presents needed only by sprite animations.
+    pub(crate) fn animation_frame_interval(&self) -> Option<Duration> {
+        self.animations
+            .iter()
+            .filter(|animation| {
+                animation.sprite_index < self.monochrome_sprites.len()
+                    && self.paint_operations[animation.journal_index]
+                        .validity
+                        .as_ref()
+                        .is_none_or(SubtreeGeometryValidity::is_valid)
+            })
+            .map(|animation| {
+                animation
+                    .transformation
+                    .min_frame_interval()
+                    .unwrap_or_default()
+            })
+            .min()
+    }
+
+    /// Updates renderer sprites from their original color and the shared animation clock.
+    pub(crate) fn advance_animations(&mut self, elapsed: Duration) {
+        if self.animations.iter().any(|animation| {
+            animation.sprite_index < self.monochrome_sprites.len()
+                && self.paint_operations[animation.journal_index]
+                    .validity
+                    .as_ref()
+                    .is_some_and(|validity| !validity.is_valid())
+        }) {
+            self.finish();
+        }
+        for animation in &self.animations {
+            let Some(sprite) = self.monochrome_sprites.get_mut(animation.sprite_index) else {
+                continue;
+            };
+            let pose = animation.transformation.at(elapsed);
+            let transformation = pose.into_matrix(animation.center, animation.scale_factor);
+            let color = animation.base_color.opacity(pose.alpha_factor());
+            if !color.a.is_finite()
+                || transformation
+                    .try_transform_bounds(sprite.bounds)
+                    .and_then(|bounds| sprite.transform.try_project_bounds(bounds))
+                    .and_then(|bounds| {
+                        if bounds.right().0.is_finite() && bounds.bottom().0.is_finite() {
+                            Ok(bounds)
+                        } else {
+                            Err(SubtreeTransformError::UnrepresentableResult)
+                        }
+                    })
+                    .is_err()
+            {
+                continue;
+            }
+            sprite.transformation = transformation;
+            sprite.color = color;
+        }
     }
 
     /// Returns the exact frame-local clip-shape arena referenced by primitive envelopes.
     pub fn clip_shapes(&self) -> &[GpuClipShape] {
         &self.clip_shapes
+    }
+
+    pub(crate) fn valid_geometry_scopes(
+        &self,
+    ) -> impl Iterator<Item = SubtreeGeometryValidity> + '_ {
+        self.paint_operations
+            .iter()
+            .filter_map(|operation| operation.validity.clone())
+            .filter(SubtreeGeometryValidity::is_valid)
     }
 
     pub fn len(&self) -> usize {
@@ -350,8 +421,48 @@ impl Scene {
                 .conservative_bounds
                 .intersect(&path.paint.clip.conservative_bounds);
         }
+        if let Primitive::MonochromeSprite(sprite) = &mut primitive {
+            sprite.animation = SpriteAnimationId::NONE;
+        }
         primitive.set_clip_envelope(clip);
         self.record_primitive(primitive, validity)
+    }
+
+    /// Inserts an animated SVG with the same clip and geometry ownership as other primitives.
+    /// The journal keeps its starting matrix and its color before the animation's alpha.
+    pub(crate) fn insert_animated_sprite_scoped(
+        &mut self,
+        mut sprite: MonochromeSprite,
+        animation: SpriteAnimation,
+        clip_stack: &ClipStackSnapshot,
+        scale_factor: f32,
+        validity: Option<SubtreeGeometryValidity>,
+    ) -> Result<(), SubtreeGeometryError> {
+        sprite.clip = self.intern_clip_stack(clip_stack, scale_factor)?;
+        self.record_animated_sprite(sprite, animation, validity)
+    }
+
+    fn record_animated_sprite(
+        &mut self,
+        mut sprite: MonochromeSprite,
+        mut animation: SpriteAnimation,
+        validity: Option<SubtreeGeometryValidity>,
+    ) -> Result<(), SubtreeGeometryError> {
+        let animation_id = u32::try_from(self.animations.len())
+            .ok()
+            .filter(|id| *id != SpriteAnimationId::NONE.0)
+            .ok_or(SubtreeGeometryError::DeviceConversion)?;
+        sprite.animation = SpriteAnimationId(animation_id);
+        animation.base_color = sprite.color;
+        animation.sprite_index = usize::MAX;
+        animation.journal_index = self.paint_operations.len();
+        let journal_index = animation.journal_index;
+        self.animations.push(animation);
+        let result = self.record_primitive(sprite.into(), validity);
+        if self.paint_operations.len() == journal_index {
+            self.animations.pop();
+        }
+        result
     }
 
     pub(crate) fn insert_quad_partition_scoped(
@@ -452,6 +563,9 @@ impl Scene {
             clip.conservative_bounds = clip.conservative_bounds.intersect(&recorded_bounds);
         }
         primitive.set_clip_envelope(clip);
+        if let Primitive::MonochromeSprite(sprite) = &mut primitive {
+            sprite.animation = SpriteAnimationId::NONE;
+        }
         self.record_primitive(primitive, validity)
     }
 
@@ -538,10 +652,16 @@ impl Scene {
                 self.underlines.push(*underline);
             }
             Primitive::MonochromeSprite(sprite) => {
-                if keep_sprite_order(sprite.transform, sprite.bounds) {
+                if sprite.animation != SpriteAnimationId::NONE
+                    || sprite.transformation != TransformationMatrix::unit()
+                    || keep_sprite_order(sprite.transform, sprite.bounds)
+                {
                     self.legacy_sprite_order_mut(order).monochrome = true;
                 }
                 sprite.order = order;
+                if let Some(animation) = self.animations.get_mut(sprite.animation.0 as usize) {
+                    animation.sprite_index = self.monochrome_sprites.len();
+                }
                 self.monochrome_sprites.push(*sprite);
             }
             Primitive::SubpixelSprite(sprite) => {
@@ -661,12 +781,27 @@ impl Scene {
                     validity.clone(),
                 );
                 match &operation.kind {
-                    PaintOperationKind::Primitive(primitive) => self
-                        .insert_primitive_with_gpu_clips(
-                            primitive.clone(),
-                            prev_scene.clip_shapes_for(primitive.clip_envelope())?,
-                            replayed_validity,
-                        )?,
+                    PaintOperationKind::Primitive(primitive) => {
+                        let clips = prev_scene.clip_shapes_for(primitive.clip_envelope())?;
+                        if let Primitive::MonochromeSprite(sprite) = primitive
+                            && let Some(animation) =
+                                prev_scene.animations.get(sprite.animation.0 as usize)
+                        {
+                            let mut sprite = *sprite;
+                            let mut clip = self.intern_gpu_clip_stack(clips)?;
+                            clip.conservative_bounds = clip
+                                .conservative_bounds
+                                .intersect(&sprite.clip.conservative_bounds);
+                            sprite.clip = clip;
+                            self.record_animated_sprite(sprite, *animation, replayed_validity)?;
+                        } else {
+                            self.insert_primitive_with_gpu_clips(
+                                primitive.clone(),
+                                clips,
+                                replayed_validity,
+                            )?;
+                        }
+                    }
                     PaintOperationKind::StartLayer(bounds) => {
                         self.push_layer_scoped(*bounds, replayed_validity)
                     }
@@ -719,6 +854,18 @@ impl Scene {
             |sprite| (sprite.order, &sprite.tile),
         );
         self.surfaces.sort_by_key(|surface| surface.order);
+        self.bind_animations();
+    }
+
+    fn bind_animations(&mut self) {
+        for animation in &mut self.animations {
+            animation.sprite_index = usize::MAX;
+        }
+        for (index, sprite) in self.monochrome_sprites.iter().enumerate() {
+            if let Some(animation) = self.animations.get_mut(sprite.animation.0 as usize) {
+                animation.sprite_index = index;
+            }
+        }
     }
 
     fn journal_checkpoint(&self) -> SceneJournalCheckpoint {
@@ -726,6 +873,7 @@ impl Scene {
             paint_operations_len: self.paint_operations.len(),
             clip_shapes_len: self.clip_shapes.len(),
             clip_stack_ranges_len: self.clip_stack_ranges.len(),
+            animations_len: self.animations.len(),
         }
     }
 
@@ -735,10 +883,19 @@ impl Scene {
         self.clip_shapes.truncate(checkpoint.clip_shapes_len);
         self.clip_stack_ranges
             .truncate(checkpoint.clip_stack_ranges_len);
+        self.animations.truncate(checkpoint.animations_len);
         self.rebuild_render_state_from_journal();
     }
 
     fn rebuild_render_state_from_journal(&mut self) {
+        // A deferred scene may already have been delivered at a sampled pose. Rebuilding to
+        // filter an invalid sibling must preserve that sample while the journal keeps its base.
+        let mut poses = vec![None; self.animations.len()];
+        for sprite in &self.monochrome_sprites {
+            if let Some(pose) = poses.get_mut(sprite.animation.0 as usize) {
+                *pose = Some((sprite.transformation, sprite.color));
+            }
+        }
         self.clear_render_state();
         for index in 0..self.paint_operations.len() {
             let operation = self.paint_operations[index].clone();
@@ -758,9 +915,18 @@ impl Scene {
                 PaintOperationKind::EndLayer => self.pop_layer_for_render(),
             }
         }
+        for sprite in &mut self.monochrome_sprites {
+            if let Some(Some((transformation, color))) = poses.get(sprite.animation.0 as usize) {
+                sprite.transformation = *transformation;
+                sprite.color = *color;
+            }
+        }
     }
 
     fn clear_render_state(&mut self) {
+        for animation in &mut self.animations {
+            animation.sprite_index = usize::MAX;
+        }
         self.primitive_bounds.clear();
         self.layer_stack.clear();
         self.layers.clear();
@@ -1016,10 +1182,33 @@ impl Primitive {
         }
     }
 
-    fn local_raster_bounds(&self) -> Bounds<ScaledPixels> {
+    fn local_raster_bounds(&self) -> Result<Bounds<ScaledPixels>, SubtreeTransformError> {
         match self {
-            Primitive::Shadow(shadow) => shadow.local_raster_bounds(),
-            _ => *self.bounds(),
+            Primitive::Shadow(shadow) => Ok(shadow.local_raster_bounds()),
+            Primitive::MonochromeSprite(sprite) => {
+                if ![
+                    sprite.color.h,
+                    sprite.color.s,
+                    sprite.color.l,
+                    sprite.color.a,
+                ]
+                .into_iter()
+                .all(f32::is_finite)
+                {
+                    return Err(SubtreeTransformError::UnrepresentableResult);
+                }
+                let bounds = sprite.transformation.try_transform_bounds(sprite.bounds)?;
+                if sprite.animation != SpriteAnimationId::NONE && bounds.is_empty() {
+                    let projected = sprite.transform.try_project_bounds(bounds)?;
+                    if !projected.right().0.is_finite() || !projected.bottom().0.is_finite() {
+                        return Err(SubtreeTransformError::UnrepresentableResult);
+                    }
+                    Ok(sprite.bounds)
+                } else {
+                    Ok(bounds)
+                }
+            }
+            _ => Ok(*self.bounds()),
         }
     }
 
@@ -1027,8 +1216,15 @@ impl Primitive {
         if let Self::Path(path) = self {
             PaintedPath::try_project_bounds(path.paint.bounds, path.paint.transform)?;
         }
-        self.transform()
-            .try_project_bounds(self.local_raster_bounds())
+        let bounds = self
+            .transform()
+            .try_project_bounds(self.local_raster_bounds()?)?;
+        if matches!(self, Self::MonochromeSprite(_))
+            && (!bounds.right().0.is_finite() || !bounds.bottom().0.is_finite())
+        {
+            return Err(SubtreeTransformError::UnrepresentableResult);
+        }
+        Ok(bounds)
     }
 }
 
@@ -1624,17 +1820,213 @@ pub enum BorderStyle {
     Dashed = 1,
 }
 
+/// An affine transformation of an SVG's raster, independent of layout and hit testing.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
+pub struct TransformationMatrix {
+    /// Row-major rotation and scale matrix.
+    pub rotation_scale: [[f32; 2]; 2],
+    /// Translation in device-scaled pixels.
+    pub translation: [f32; 2],
+}
+
+impl Eq for TransformationMatrix {}
+
+impl TransformationMatrix {
+    /// The identity matrix.
+    pub fn unit() -> Self {
+        Self {
+            rotation_scale: [[1.0, 0.0], [0.0, 1.0]],
+            translation: [0.0, 0.0],
+        }
+    }
+
+    /// Translates the origin before applying this matrix.
+    pub fn translate(self, offset: Point<ScaledPixels>) -> Self {
+        self.compose(Self {
+            translation: [offset.x.0, offset.y.0],
+            ..Self::unit()
+        })
+    }
+
+    /// Rotates clockwise around the origin before applying this matrix.
+    pub fn rotate(self, angle: Radians) -> Self {
+        let (sin, cos) = angle.0.sin_cos();
+        self.compose(Self {
+            rotation_scale: [[cos, -sin], [sin, cos]],
+            translation: [0.0, 0.0],
+        })
+    }
+
+    /// Scales around the origin before applying this matrix.
+    pub fn scale(self, scale: Size<f32>) -> Self {
+        self.compose(Self {
+            rotation_scale: [[scale.width, 0.0], [0.0, scale.height]],
+            translation: [0.0, 0.0],
+        })
+    }
+
+    /// Composes the matrices, applying `other` first and then `self`.
+    #[inline]
+    pub fn compose(self, other: Self) -> Self {
+        if other == Self::unit() {
+            return self;
+        }
+        Self {
+            rotation_scale: [
+                [
+                    self.rotation_scale[0][0] * other.rotation_scale[0][0]
+                        + self.rotation_scale[0][1] * other.rotation_scale[1][0],
+                    self.rotation_scale[0][0] * other.rotation_scale[0][1]
+                        + self.rotation_scale[0][1] * other.rotation_scale[1][1],
+                ],
+                [
+                    self.rotation_scale[1][0] * other.rotation_scale[0][0]
+                        + self.rotation_scale[1][1] * other.rotation_scale[1][0],
+                    self.rotation_scale[1][0] * other.rotation_scale[0][1]
+                        + self.rotation_scale[1][1] * other.rotation_scale[1][1],
+                ],
+            ],
+            translation: [
+                self.translation[0]
+                    + self.rotation_scale[0][0] * other.translation[0]
+                    + self.rotation_scale[0][1] * other.translation[1],
+                self.translation[1]
+                    + self.rotation_scale[1][0] * other.translation[0]
+                    + self.rotation_scale[1][1] * other.translation[1],
+            ],
+        }
+    }
+
+    pub(crate) fn try_transform_bounds(
+        self,
+        bounds: Bounds<ScaledPixels>,
+    ) -> Result<Bounds<ScaledPixels>, SubtreeTransformError> {
+        let values = [
+            bounds.origin.x.0,
+            bounds.origin.y.0,
+            bounds.size.width.0,
+            bounds.size.height.0,
+            bounds.right().0,
+            bounds.bottom().0,
+        ];
+        if !self
+            .rotation_scale
+            .as_flattened()
+            .iter()
+            .chain(&self.translation)
+            .chain(&values)
+            .all(|value| value.is_finite())
+            || bounds.size.width.0 < 0.0
+            || bounds.size.height.0 < 0.0
+        {
+            return Err(SubtreeTransformError::UnrepresentableResult);
+        }
+        if self == Self::unit() {
+            return Ok(bounds);
+        }
+        let [[xx, xy], [yx, yy]] = self.rotation_scale;
+        let [translate_x, translate_y] = self.translation;
+        let corners = [
+            bounds.origin,
+            bounds.top_right(),
+            bounds.bottom_left(),
+            bounds.bottom_right(),
+        ]
+        .map(|corner| {
+            point(
+                ScaledPixels(xx * corner.x.0 + xy * corner.y.0 + translate_x),
+                ScaledPixels(yx * corner.x.0 + yy * corner.y.0 + translate_y),
+            )
+        });
+        if corners
+            .iter()
+            .any(|corner| !corner.x.0.is_finite() || !corner.y.0.is_finite())
+        {
+            return Err(SubtreeTransformError::UnrepresentableResult);
+        }
+        let [first, rest @ ..] = corners;
+        let top_left = rest.iter().fold(first, |min, corner| min.min(corner));
+        let bottom_right = rest.iter().fold(first, |max, corner| max.max(corner));
+        let transformed = Bounds::from_corners(top_left, bottom_right);
+        if !transformed.size.width.0.is_finite() || !transformed.size.height.0.is_finite() {
+            return Err(SubtreeTransformError::UnrepresentableResult);
+        }
+        Ok(transformed)
+    }
+
+    /// Applies the matrix to a point expressed in the matrix's coordinate space.
+    pub fn apply(&self, position: Point<Pixels>) -> Point<Pixels> {
+        let [[xx, xy], [yx, yy]] = self.rotation_scale;
+        point(
+            Pixels(xx * position.x.0 + xy * position.y.0 + self.translation[0]),
+            Pixels(yx * position.x.0 + yy * position.y.0 + self.translation[1]),
+        )
+    }
+}
+
+impl Default for TransformationMatrix {
+    fn default() -> Self {
+        Self::unit()
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct MonochromeSprite {
     pub order: DrawOrder,
-    pub pad: u32,
+    pub animation: SpriteAnimationId,
     pub tile: AtlasTile,
     pub bounds: Bounds<ScaledPixels>,
     pub clip: ClipEnvelope,
     pub color: Hsla,
     pub(crate) transform: PrimitiveTransform,
+    pub transformation: TransformationMatrix,
+}
+
+/// A scene-local animation identifier stored in a four-byte sprite slot.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct SpriteAnimationId(u32);
+
+impl SpriteAnimationId {
+    /// The sprite has no animation.
+    pub const NONE: Self = Self(u32::MAX);
+}
+
+impl Default for SpriteAnimationId {
+    fn default() -> Self {
+        Self::NONE
+    }
+}
+
+/// A timed SVG transformation applied to the renderer projection before presenting.
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct SpriteAnimation {
+    transformation: TimedTransformation,
+    center: Point<Pixels>,
+    scale_factor: f32,
+    base_color: Hsla,
+    sprite_index: usize,
+    journal_index: usize,
+}
+
+impl SpriteAnimation {
+    pub(crate) fn new(
+        transformation: TimedTransformation,
+        center: Point<Pixels>,
+        scale_factor: f32,
+    ) -> Self {
+        Self {
+            transformation,
+            center,
+            scale_factor,
+            base_color: Hsla::default(),
+            sprite_index: usize::MAX,
+            journal_index: usize::MAX,
+        }
+    }
 }
 
 impl From<MonochromeSprite> for Primitive {
@@ -1874,7 +2266,8 @@ impl From<PaintedPath> for Primitive {
 mod tests {
     use super::*;
     use crate::{
-        AtlasTextureId, AtlasTextureKind, SubtreeClip, SubtreeClipError, TileId, px, size,
+        AtlasTextureId, AtlasTextureKind, SubtreeClip, SubtreeClipError, TileId, Transformation,
+        hsla, px, size,
     };
     use std::mem::{align_of, offset_of, size_of};
 
@@ -1962,15 +2355,22 @@ mod tests {
                 size_of::<MonochromeSprite>(),
                 align_of::<MonochromeSprite>(),
                 offset_of!(MonochromeSprite, order),
-                offset_of!(MonochromeSprite, pad),
+                offset_of!(MonochromeSprite, animation),
                 offset_of!(MonochromeSprite, tile),
                 offset_of!(MonochromeSprite, bounds),
                 offset_of!(MonochromeSprite, clip),
                 offset_of!(MonochromeSprite, color),
                 offset_of!(MonochromeSprite, transform),
+                offset_of!(MonochromeSprite, transformation),
             ],
-            [120, 4, 0, 4, 8, 48, 64, 88, 104],
+            [144, 4, 0, 4, 8, 48, 64, 88, 104, 120],
         );
+        assert_eq!(size_of::<TransformationMatrix>(), 24);
+        assert_eq!(align_of::<TransformationMatrix>(), 4);
+        assert_eq!(offset_of!(TransformationMatrix, rotation_scale), 0);
+        assert_eq!(offset_of!(TransformationMatrix, translation), 16);
+        assert_eq!(size_of::<SpriteAnimationId>(), 4);
+        assert_eq!(SpriteAnimationId::default(), SpriteAnimationId::NONE);
         assert_eq!(
             [
                 size_of::<SubpixelSprite>(),
@@ -2489,7 +2889,7 @@ mod tests {
     fn monochrome_sprite(tile_id: u32, index: u32, generation: u32, x: f32) -> MonochromeSprite {
         MonochromeSprite {
             order: 0,
-            pad: 0,
+            animation: SpriteAnimationId::NONE,
             tile: AtlasTile {
                 texture_id: AtlasTextureId {
                     index,
@@ -2505,6 +2905,7 @@ mod tests {
             clip: ClipEnvelope::default(),
             color: Hsla::default(),
             transform: PrimitiveTransform::IDENTITY,
+            transformation: TransformationMatrix::unit(),
         }
     }
 
@@ -2813,6 +3214,507 @@ mod tests {
             )
             .unwrap();
         ClipStackSnapshot::root(viewport).push(clip)
+    }
+
+    #[test]
+    fn svg_raster_matrix_precedes_the_checked_subtree_transform() {
+        let mut sprite = monochrome_sprite(0, 0, 1, 2.0);
+        sprite.bounds = scaled_bounds(2.0, 3.0, 4.0, 6.0);
+        sprite.transformation = TransformationMatrix {
+            rotation_scale: [[0.0, -2.0], [3.0, 0.0]],
+            translation: [20.0, 5.0],
+        };
+        sprite.transform = PrimitiveTransform::try_new(
+            size(2.0, 3.0),
+            point(ScaledPixels(7.0), ScaledPixels(11.0)),
+        )
+        .unwrap();
+        assert_eq!(
+            Primitive::from(sprite).local_raster_bounds().unwrap(),
+            scaled_bounds(2.0, 11.0, 12.0, 12.0)
+        );
+        assert_eq!(
+            Primitive::from(sprite).try_visual_bounds().unwrap(),
+            scaled_bounds(11.0, 44.0, 24.0, 36.0)
+        );
+
+        let clip = rounded_stack(
+            logical_bounds(0.0, 0.0, 200.0, 200.0),
+            logical_bounds(10.0, 40.0, 30.0, 50.0),
+        );
+        let mut scene = Scene::default();
+        scene
+            .insert_primitive_scoped(sprite, &clip, 1.0, None)
+            .unwrap();
+        scene.finish();
+        assert_eq!(scene.monochrome_sprites.len(), 1);
+        assert_eq!(scene.monochrome_sprites[0].bounds, sprite.bounds);
+        assert_eq!(scene.monochrome_sprites[0].transform, sprite.transform);
+        assert_eq!(
+            scene.monochrome_sprites[0].transformation,
+            sprite.transformation
+        );
+        assert_eq!(scene.monochrome_sprites[0].clip.clip_count, 2);
+        assert_eq!(scene.animation_frame_interval(), None);
+    }
+
+    #[test]
+    fn animated_sprite_bindings_follow_sorting_and_geometry_invalidation() {
+        let clip = rounded_stack(
+            logical_bounds(0.0, 0.0, 200.0, 200.0),
+            logical_bounds(0.0, 0.0, 120.0, 100.0),
+        );
+        let invalidity = SubtreeGeometryValidity::new(None);
+        let mut scene = Scene::default();
+        for (index, x) in [20.0, 20.0, 60.0, 60.0].into_iter().enumerate() {
+            let from =
+                Transformation::alpha(0.5).with_translation(point(px(index as f32), px(0.0)));
+            let timed = TimedTransformation::new(Duration::from_secs(1))
+                .from(from)
+                .to(from
+                    .with_translation(point(px(index as f32 + 4.0), px(0.0)))
+                    .with_alpha(1.0))
+                .with_max_fps([5.0, 10.0, 20.0, 40.0][index]);
+            let mut sprite = monochrome_sprite(3 - index as u32, 1, 1, x);
+            sprite.color = hsla(0.25, 1.0, 0.5, 0.8);
+            sprite.transformation = from.into_matrix(Point::default(), 1.0);
+            scene
+                .insert_animated_sprite_scoped(
+                    sprite,
+                    SpriteAnimation::new(timed, Point::default(), 1.0),
+                    &clip,
+                    1.0,
+                    (index == 3).then(|| invalidity.clone()),
+                )
+                .unwrap();
+        }
+        let original = scene.monochrome_sprites.clone();
+        let shapes = scene.clip_shapes().to_vec();
+        assert!(original.iter().map(|sprite| sprite.order).eq([1, 2, 1, 2]));
+        scene.finish();
+        assert!(
+            scene
+                .monochrome_sprites
+                .iter()
+                .map(|sprite| sprite.tile.tile_id.0)
+                .eq([1, 3, 0, 2])
+        );
+        assert_eq!(
+            scene.animation_frame_interval(),
+            Some(Duration::from_millis(25))
+        );
+
+        for _ in 0..2 {
+            scene.advance_animations(Duration::from_millis(250));
+            for (index, sprite) in scene.monochrome_sprites.iter().enumerate() {
+                let animation_index = sprite.animation.0 as usize;
+                assert_eq!(scene.animations[animation_index].sprite_index, index);
+                assert_eq!(
+                    sprite.transformation.translation,
+                    [animation_index as f32 + 1.0, 0.0]
+                );
+                assert!((sprite.color.a - 0.5).abs() < 1e-6);
+            }
+        }
+        invalidity.invalidate(SubtreeClipError::UnrepresentableResult);
+        assert_eq!(
+            scene.animation_frame_interval(),
+            Some(Duration::from_millis(50))
+        );
+        scene.advance_animations(Duration::ZERO);
+        assert_eq!(scene.monochrome_sprites.len(), 3);
+        assert_eq!(scene.journal_len(), 4);
+        assert_eq!(scene.clip_shapes(), shapes);
+        assert_eq!(scene.animations[3].sprite_index, usize::MAX);
+        for (index, sprite) in scene.monochrome_sprites.iter().enumerate() {
+            let animation_index = sprite.animation.0 as usize;
+            assert_eq!(scene.animations[animation_index].sprite_index, index);
+            assert_eq!(
+                sprite.transformation,
+                original[animation_index].transformation
+            );
+            assert!((sprite.color.a - 0.4).abs() < 1e-6);
+        }
+        for (operation, sprite) in scene.paint_operations.iter().zip(&original) {
+            let PaintOperationKind::Primitive(Primitive::MonochromeSprite(recorded)) =
+                &operation.kind
+            else {
+                panic!("the journal should contain its original SVG sprite");
+            };
+            assert_eq!(recorded.color, sprite.color);
+            assert_eq!(recorded.transformation, sprite.transformation);
+        }
+    }
+
+    #[test]
+    fn animated_journal_replay_rebinds_ids_without_accumulating_pose_or_alpha() {
+        let viewport = logical_bounds(0.0, 0.0, 200.0, 200.0);
+        let source_clip = rounded_stack(viewport, logical_bounds(20.0, 20.0, 80.0, 80.0));
+        let source_validity = SubtreeGeometryValidity::new(None);
+        let from = Transformation::alpha(0.4).with_translation(point(px(2.0), px(0.0)));
+        let timed = TimedTransformation::new(Duration::from_secs(1))
+            .from(from)
+            .to(from
+                .with_translation(point(px(6.0), px(0.0)))
+                .with_alpha(0.2))
+            .with_max_fps(20.0);
+        let mut sprite = monochrome_sprite(0, 1, 2, 30.0);
+        sprite.bounds.origin.y = ScaledPixels(30.0);
+        sprite.color = hsla(0.4, 0.6, 0.5, 0.6);
+        sprite.transformation = from.into_matrix(Point::default(), 1.0);
+        let mut source = Scene::default();
+        source
+            .insert_animated_sprite_scoped(
+                sprite,
+                SpriteAnimation::new(timed, Point::default(), 1.0),
+                &source_clip,
+                1.0,
+                Some(source_validity.clone()),
+            )
+            .unwrap();
+        source.finish();
+        source.advance_animations(Duration::from_millis(500));
+        assert!((source.monochrome_sprites[0].color.a - 0.18).abs() < 1e-6);
+        let (mut fragment, _) = source.retained_visual_fragment(0..1).unwrap();
+
+        let replay_validity = SubtreeGeometryValidity::new(None);
+        let mut target = Scene::default();
+        target
+            .insert_animated_sprite_scoped(
+                monochrome_sprite(1, 2, 1, 120.0),
+                SpriteAnimation::new(timed.with_max_fps(10.0), Point::default(), 1.0),
+                &ClipStackSnapshot::root(viewport),
+                1.0,
+                None,
+            )
+            .unwrap();
+        target
+            .replay(0..1, &source, Some(replay_validity.clone()))
+            .unwrap();
+        target.finish();
+        let PaintOperationKind::Primitive(Primitive::MonochromeSprite(recorded)) =
+            &target.paint_operations[1].kind
+        else {
+            panic!("replay should record an animated SVG");
+        };
+        assert_eq!(recorded.animation, SpriteAnimationId(1));
+        assert_eq!(recorded.color, sprite.color);
+        assert_eq!(recorded.transformation, sprite.transformation);
+        assert_ne!(
+            recorded.clip.first_clip,
+            source.monochrome_sprites[0].clip.first_clip
+        );
+        assert_eq!(
+            target.clip_shapes_for(recorded.clip).unwrap(),
+            source
+                .clip_shapes_for(source.monochrome_sprites[0].clip)
+                .unwrap()
+        );
+
+        source_validity.invalidate(SubtreeTransformError::UnrepresentableResult);
+        source.finish();
+        assert_eq!(source.animation_frame_interval(), None);
+        source.clear();
+        fragment.finish();
+        fragment.advance_animations(Duration::ZERO);
+        assert_eq!(
+            fragment.monochrome_sprites[0].transformation,
+            sprite.transformation
+        );
+        assert!((fragment.monochrome_sprites[0].color.a - 0.24).abs() < 1e-6);
+
+        for _ in 0..2 {
+            target.advance_animations(Duration::ZERO);
+            let replayed = target
+                .monochrome_sprites
+                .iter()
+                .find(|sprite| sprite.animation == SpriteAnimationId(1))
+                .unwrap();
+            assert_eq!(replayed.transformation, sprite.transformation);
+            assert!((replayed.color.a - 0.24).abs() < 1e-6);
+        }
+        let mut copied = target.clone();
+        target.clear();
+        copied.advance_animations(Duration::from_millis(500));
+        assert_eq!(
+            copied.animation_frame_interval(),
+            Some(Duration::from_millis(50))
+        );
+        replay_validity.invalidate(SubtreeClipError::UnrepresentableResult);
+        copied.finish();
+        assert_eq!(copied.monochrome_sprites.len(), 1);
+        assert_eq!(
+            copied.animation_frame_interval(),
+            Some(Duration::from_millis(100))
+        );
+        copied.clear();
+        assert!(copied.animations.is_empty());
+        assert_eq!(copied.journal_len(), 0);
+        assert_eq!(copied.animation_frame_interval(), None);
+    }
+
+    #[test]
+    fn animated_replay_failure_restores_open_layers_and_animation_demand() {
+        let clip = ClipStackSnapshot::root(logical_bounds(0.0, 0.0, 200.0, 200.0));
+        let timed =
+            TimedTransformation::rotation(Duration::from_secs(1), Transformation::default())
+                .with_max_fps(20.0);
+        let mut source = Scene::default();
+        for index in 0..2 {
+            source
+                .insert_animated_sprite_scoped(
+                    monochrome_sprite(index, 0, 1, index as f32 * 20.0),
+                    SpriteAnimation::new(timed, Point::default(), 1.0),
+                    &clip,
+                    1.0,
+                    None,
+                )
+                .unwrap();
+        }
+        let PaintOperationKind::Primitive(second) = &mut source.paint_operations[1].kind else {
+            panic!("the source should contain two animated sprites");
+        };
+        let mut invalid_clip = second.clip_envelope();
+        invalid_clip.first_clip = u32::MAX;
+        second.set_clip_envelope(invalid_clip);
+
+        let mut target = Scene::default();
+        target.push_layer(scaled_bounds(0.0, 0.0, 200.0, 200.0));
+        target
+            .insert_animated_sprite_scoped(
+                monochrome_sprite(2, 1, 3, 40.0),
+                SpriteAnimation::new(timed.with_max_fps(10.0), Point::default(), 1.0),
+                &clip,
+                1.0,
+                None,
+            )
+            .unwrap();
+        let shapes = target.clip_shapes().to_vec();
+        assert_eq!(target.animation_frame_interval(), None);
+        assert_eq!(
+            target.replay(0..2, &source, None),
+            Err(SubtreeGeometryError::DeviceConversion)
+        );
+        assert_eq!(target.journal_len(), 2);
+        assert_eq!(target.animations.len(), 1);
+        assert_eq!(target.clip_shapes(), shapes);
+        assert_eq!(target.layer_stack.len(), 1);
+        assert!(target.monochrome_sprites.is_empty());
+        target.pop_layer();
+        target.finish();
+        assert_eq!(target.monochrome_sprites.len(), 1);
+        assert_eq!(target.monochrome_sprites[0].animation, SpriteAnimationId(0));
+        assert_eq!(target.animations[0].sprite_index, 0);
+        assert_eq!(
+            target.animation_frame_interval(),
+            Some(Duration::from_millis(100))
+        );
+        target.advance_animations(Duration::from_millis(250));
+        assert!(target.monochrome_sprites[0].transformation.rotation_scale[0][0].abs() < 1e-5);
+    }
+
+    #[test]
+    fn rejected_and_invalid_animated_sprites_leave_no_animation_demand() {
+        let clip = ClipStackSnapshot::root(logical_bounds(0.0, 0.0, 10.0, 10.0));
+        let timed =
+            TimedTransformation::rotation(Duration::from_secs(1), Transformation::default());
+        let animation = SpriteAnimation::new(timed, Point::default(), 1.0);
+        let mut scene = Scene::default();
+        scene
+            .insert_animated_sprite_scoped(
+                monochrome_sprite(0, 0, 1, 20.0),
+                animation,
+                &clip,
+                1.0,
+                None,
+            )
+            .unwrap();
+        assert!(scene.animations.is_empty());
+        assert_eq!(scene.journal_len(), 0);
+        assert_eq!(scene.animation_frame_interval(), None);
+
+        for coefficient in [f32::NAN, f32::INFINITY, f32::MAX] {
+            let mut sprite = monochrome_sprite(0, 0, 1, 0.0);
+            sprite.transformation.rotation_scale[0][0] = coefficient;
+            assert_eq!(
+                scene.insert_animated_sprite_scoped(sprite, animation, &clip, 1.0, None),
+                Err(SubtreeGeometryError::Transform(
+                    SubtreeTransformError::UnrepresentableResult
+                ))
+            );
+            assert!(scene.animations.is_empty());
+            assert_eq!(scene.journal_len(), 0);
+            assert_eq!(scene.animation_frame_interval(), None);
+            sprite.animation = SpriteAnimationId::NONE;
+            assert!(
+                scene
+                    .insert_primitive_scoped(sprite, &clip, 1.0, None)
+                    .is_err()
+            );
+        }
+        assert_eq!(
+            scene.insert_animated_sprite_scoped(
+                monochrome_sprite(0, 0, 1, 0.0),
+                animation,
+                &clip,
+                f32::INFINITY,
+                None,
+            ),
+            Err(SubtreeGeometryError::DeviceConversion)
+        );
+        assert!(scene.animations.is_empty());
+
+        let invalidity = SubtreeGeometryValidity::new(None);
+        invalidity.invalidate(SubtreeClipError::UnrepresentableResult);
+        scene
+            .insert_animated_sprite_scoped(
+                monochrome_sprite(0, 0, 1, 0.0),
+                animation,
+                &clip,
+                1.0,
+                Some(invalidity),
+            )
+            .unwrap();
+        assert_eq!(scene.animation_frame_interval(), None);
+        scene.finish();
+        assert!(scene.monochrome_sprites.is_empty());
+        assert_eq!(scene.journal_len(), 1);
+        assert_eq!(scene.animation_frame_interval(), None);
+    }
+
+    #[test]
+    fn a_zero_scale_start_keeps_animation_demand_without_changing_the_journal_pose() {
+        let clip = ClipStackSnapshot::root(logical_bounds(10.0, 20.0, 8.0, 12.0));
+        let from = Transformation::scale(size(0.0, 0.0));
+        let timed = TimedTransformation::new(Duration::from_secs(1))
+            .from(from)
+            .to(Transformation::default());
+        let center = point(px(2.0), px(2.0));
+        let mut sprite = monochrome_sprite(0, 0, 1, 0.0);
+        sprite.color = hsla(0.0, 1.0, 0.5, 0.8);
+        sprite.transformation = from.into_matrix(center, 1.0);
+        sprite.transform = PrimitiveTransform::try_new(
+            size(2.0, 3.0),
+            point(ScaledPixels(10.0), ScaledPixels(20.0)),
+        )
+        .unwrap();
+        let mut scene = Scene::default();
+        scene
+            .insert_animated_sprite_scoped(
+                sprite,
+                SpriteAnimation::new(timed, center, 1.0),
+                &clip,
+                1.0,
+                None,
+            )
+            .unwrap();
+        scene.finish();
+        assert_eq!(scene.monochrome_sprites.len(), 1);
+        assert_eq!(scene.animation_frame_interval(), Some(Duration::ZERO));
+        assert_eq!(
+            scene.monochrome_sprites[0].transformation,
+            sprite.transformation
+        );
+        scene.advance_animations(Duration::from_millis(500));
+        assert_eq!(
+            scene.monochrome_sprites[0].transformation.rotation_scale,
+            [[0.5, 0.0], [0.0, 0.5]]
+        );
+        assert_eq!(scene.monochrome_sprites[0].transform, sprite.transform);
+        assert_eq!(scene.monochrome_sprites[0].bounds, sprite.bounds);
+
+        let mut static_scene = Scene::default();
+        static_scene
+            .insert_primitive_scoped(sprite, &clip, 1.0, None)
+            .unwrap();
+        assert!(static_scene.monochrome_sprites.is_empty());
+        assert_eq!(static_scene.animation_frame_interval(), None);
+    }
+
+    #[test]
+    fn animation_pose_validation_includes_the_fixed_parent_projection() {
+        let clip = ClipStackSnapshot::root(logical_bounds(0.0, 0.0, 100.0, 100.0));
+        let timed = TimedTransformation::new(Duration::from_secs(1))
+            .to(Transformation::translate(point(px(f32::MAX), px(0.0))).with_alpha(0.2));
+        let mut sprite = monochrome_sprite(0, 0, 1, 0.0);
+        sprite.color = hsla(0.0, 1.0, 0.5, 0.8);
+        sprite.transform = PrimitiveTransform::try_new(size(4.0, 1.0), Point::default()).unwrap();
+        let mut scene = Scene::default();
+        scene
+            .insert_animated_sprite_scoped(
+                sprite,
+                SpriteAnimation::new(timed, Point::default(), 1.0),
+                &clip,
+                1.0,
+                None,
+            )
+            .unwrap();
+        scene.finish();
+        scene.advance_animations(Duration::from_millis(500));
+        assert_eq!(
+            scene.monochrome_sprites[0].transformation,
+            sprite.transformation
+        );
+        assert_eq!(scene.monochrome_sprites[0].color, sprite.color);
+        scene.advance_animations(Duration::ZERO);
+        assert_eq!(
+            scene.monochrome_sprites[0].transformation,
+            TransformationMatrix::unit()
+        );
+        assert_eq!(scene.monochrome_sprites[0].color, sprite.color);
+    }
+
+    #[test]
+    fn retained_animated_sprites_keep_their_original_atlas_lease() -> anyhow::Result<()> {
+        use crate::{AtlasKey, HeadlessAtlas, RenderSvgParams};
+        use std::borrow::Cow;
+
+        let atlas = Arc::new(HeadlessAtlas::default());
+        let key = AtlasKey::Svg(RenderSvgParams {
+            path: "animated.svg".into(),
+            size: size(crate::DevicePixels(1), crate::DevicePixels(1)),
+        });
+        let tile = atlas
+            .get_or_insert_with(key.clone(), &mut || {
+                Ok(Some((
+                    size(crate::DevicePixels(1), crate::DevicePixels(1)),
+                    Cow::Borrowed(&[255_u8][..]),
+                )))
+            })?
+            .unwrap();
+        let timed =
+            TimedTransformation::rotation(Duration::from_secs(1), Transformation::default());
+        let mut sprite = monochrome_sprite(0, 0, 1, 0.0);
+        sprite.tile = tile;
+        let mut source = Scene::default();
+        source
+            .insert_animated_sprite_scoped(
+                sprite,
+                SpriteAnimation::new(timed, point(px(2.0), px(2.0)), 1.0),
+                &ClipStackSnapshot::root(logical_bounds(0.0, 0.0, 20.0, 20.0)),
+                1.0,
+                None,
+            )
+            .unwrap();
+        source.finish();
+        let lease = source.retain_atlas_textures(atlas.clone())?;
+        let (mut retained, _) = source
+            .retained_visual_fragment(0..source.journal_len())
+            .unwrap();
+        source.clear();
+        atlas.remove(&key);
+        retained.finish();
+        retained.advance_animations(Duration::from_millis(250));
+        assert_eq!(
+            retained.atlas_texture_instances(),
+            [tile.texture_instance()]
+        );
+        assert_eq!(lease.texture_instances(), &[tile.texture_instance()]);
+        assert!(lease.validate().is_ok());
+        assert!(retained.retain_atlas_textures(atlas.clone()).is_ok());
+        drop(lease);
+        assert!(retained.retain_atlas_textures(atlas).is_err());
+        Ok(())
     }
 
     #[test]

@@ -29,6 +29,7 @@ def success_marker(executable, arguments):
             "native application appearance, inheritance, callback, and cleanup probe passed"
         ),
         "native_termination": "NATIVE TERMINATION: real AppKit terminal observed",
+        "svg_animation": "NATIVE SVG ANIMATION OK:",
     }.get(executable)
 
 

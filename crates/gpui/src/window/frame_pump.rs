@@ -44,6 +44,7 @@ pub(crate) enum FrameRateLimit {
     Inactive,
     LowPower,
     Thermal,
+    Animation,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,6 +57,7 @@ pub(crate) struct FrameThrottleFacts {
     pub(crate) inactive_frame_interval: Option<Duration>,
     pub(crate) low_power_frame_interval: Option<Duration>,
     pub(crate) thermal_frame_interval: Option<Duration>,
+    pub(crate) animation_frame_interval: Option<Duration>,
 }
 
 impl FrameThrottleFacts {
@@ -79,6 +81,9 @@ impl FrameThrottleFacts {
                     )
                 })
                 .map(|interval| (interval, FrameRateLimit::Thermal)),
+            self.animation_frame_interval
+                .filter(|interval| !interval.is_zero())
+                .map(|interval| (interval, FrameRateLimit::Animation)),
         ]
         .into_iter()
         .flatten()
@@ -199,6 +204,7 @@ mod tests {
             inactive_frame_interval: options.inactive_frame_interval,
             low_power_frame_interval: options.low_power_frame_interval,
             thermal_frame_interval: options.thermal_frame_interval,
+            animation_frame_interval: None,
         }
     }
 

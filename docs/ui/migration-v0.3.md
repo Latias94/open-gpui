@@ -1412,10 +1412,11 @@ Listbox; neither path recreates a public controlled-active API.
 
 ## Interactive Subtree Transform And Coordinates
 
-The SVG-only `Transformation`, `TransformationMatrix`, and `Svg::with_transformation` APIs are
-deleted without aliases. They changed raster output while leaving descendants, input, IME,
-accessibility, and diagnostics at the old geometry. Use the checked layout-neutral subtree
-authority for supported axis-aligned scale and translation:
+The official SVG-only `Transformation` and `Svg::with_transformation` APIs remain available for
+raster effects. `Svg::with_timed_transformation` adds scene-owned periodic scale, translation,
+rotation and alpha without re-rendering its view. These APIs preserve the SVG's original layout
+and hitbox. Use the checked layout-neutral subtree authority when supported axis-aligned scale
+and translation must also update input, IME and accessibility:
 
 ```rust
 use open_gpui::{
@@ -1437,6 +1438,33 @@ built in; `SubtreeTransformOrigin::try_new(anchor, offset)` resolves
 `anchor * child_size + offset` after layout. Rotation, skew, arbitrary matrices, reflection, and
 3D have no replacement in this API. A numeric or backend conversion failure suppresses the whole
 affected subtree transaction; it never clamps or substitutes identity.
+
+For an SVG spinner whose layout and hitbox should remain still:
+
+```rust
+use std::time::Duration;
+use open_gpui::{TimedTransformation, Transformation, svg};
+
+let spinner = svg().path("icons/loading.svg").with_timed_transformation(
+    TimedTransformation::rotation(Duration::from_secs(2), Transformation::default())
+        .with_max_fps(30.),
+);
+```
+
+Timed poses share the application's animation epoch. `alternate()` and per-property `Easing`
+select the periodic motion; `Easing::Heartbeat` supplies two beats followed by a rest. Reduced
+motion paints the initial pose without scheduling an animation. The least restrictive SVG FPS
+cap in a window applies only when animation is its sole frame demand; required submissions
+bypass it, and power/thermal limits still apply. Keep motion near its initial bounds because
+Scene ordering is established when the SVG is inserted.
+
+Immediate renderers advance the retained scene before presenting, keeping its accepted frame
+generation and view render count unchanged. Deferred renderers deliver an independently leased
+snapshot with the original submission token and publish its sampled raster pose on actual
+submission. Their accepted frame generation and view render count also stay unchanged. Submitted
+poses survive journal validity rebuilds; stale, rejected and cancelled snapshots publish no pose.
+Custom renderers must use the 144-byte `MonochromeSprite` record, including its animation ID and
+SVG matrix, and keep the 120-byte subpixel record separate, including grayscale fallback paths.
 
 Retained geometry or other state published outside the frame journal must use a stable
 `PrepaintPublicationId` with `Window::record_prepaint_window_transaction`. GPUI commits it only
