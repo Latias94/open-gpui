@@ -31,7 +31,7 @@ struct NativeWgpuDevice {
 impl NativeWgpuDevice {
     fn new() -> Result<Self> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::VULKAN,
+            backends: wgpu::Backends::DX12 | wgpu::Backends::VULKAN,
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let adapter =
@@ -41,6 +41,11 @@ impl NativeWgpuDevice {
                 compatible_surface: None,
                 apply_limit_buckets: false,
             }))?;
+        let adapter_info = adapter.get_info();
+        eprintln!(
+            "native custom renderer backend={:?} adapter={}",
+            adapter_info.backend, adapter_info.name
+        );
         let (device, queue) = open_gpui::block_on(
             adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("native application-owned GPUI device"),
