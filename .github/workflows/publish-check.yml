@@ -81,6 +81,8 @@ jobs:
           # Leaf crates get a full package build. Crates that still depend on local workspace
           # packages are checked with --list because a version bump is merged before the new
           # dependency chain exists on crates.io.
+          # This checks archive structure. Release Crates separately rejects Git pins and root
+          # patches before any upload, because their registry fallbacks can omit required fixes.
           def run_package(pkg, extra_args):
               print(f"::group::cargo package {pkg['name']} {' '.join(extra_args)}")
               subprocess.run(

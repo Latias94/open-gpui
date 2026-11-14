@@ -408,6 +408,17 @@ the direct workspace Git dependency, so independent consumers receive the same t
 without relying on a root-only Cargo patch. Other third-party executors may independently
 retain registry async-task; their task values do not cross the GPUI dispatch contract.
 
+The November 14 packageability repair adds the pinned crate's version requirement so Cargo can
+construct archives. This does not qualify registry async-task 4.7.1: its task-waker correction
+still differs from the selected Git source. Cargo removes `git` and `rev` from the normalized
+published manifest, while downstream roots do not inherit workspace `[patch]` selections.
+The [release workflow](../../.github/workflows/release-crates.yml) therefore rejects publishable
+Git dependencies and root-only Git/path patches before any crate upload. The ordinary Publish
+Check continues to check archive structure and is not proof of source-equivalent publication.
+Current Git consumers retain the exact selected source. A crates.io release remains blocked
+until qualified registry successors or source-preserving published forks replace these entries;
+this includes task-waker and process-owner corrections, dockspace and renderer/worker sources.
+
 The actual executor regression checks original/clone identity in both directions and across
 worker submission and repeated polls. The old registry control passes in the local debug
 configuration (`9ac65b38-7817-40bc-9f45-28e542753346`); this does not reproduce the official

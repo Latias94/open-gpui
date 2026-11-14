@@ -161,6 +161,41 @@ jobs:
           require_successful_workflow "publish-check.yml"
           require_successful_workflow "dependency-health.yml"
 
+      - name: Verify dependency publication sources
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import subprocess
+          import tomllib
+
+          metadata = json.loads(subprocess.check_output([
+              "cargo", "metadata", "--no-deps", "--format-version", "1", "--locked",
+          ], text=True))
+          workspace_ids = set(metadata["workspace_members"])
+          blockers = sorted({
+              f"{package['name']} -> {dependency['name']}: {dependency['source']}"
+              for package in metadata["packages"]
+              if package["id"] in workspace_ids and package.get("publish") != []
+              for dependency in package["dependencies"]
+              if (dependency.get("source") or "").startswith("git+")
+          })
+          with open("Cargo.toml", "rb") as source:
+              manifest = tomllib.load(source)
+          for registry, patches in manifest.get("patch", {}).items():
+              for name, patch in patches.items():
+                  if "git" in patch or "path" in patch:
+                      blockers.append(f"root-only patch {registry}/{name}")
+          if blockers:
+              for blocker in blockers:
+                  print(f"::error::Unreleased dependency source: {blocker}")
+              raise SystemExit(
+                  "Cargo removes Git pins and consumer roots do not inherit patches. "
+                  "Select qualified registry releases or publish source-preserving forks before uploading crates."
+              )
+          print("All publishable dependency declarations use registry or workspace sources.")
+          PY
+
       - name: Compute publish order
         shell: bash
         run: |
