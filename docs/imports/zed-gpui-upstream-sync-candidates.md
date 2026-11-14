@@ -35,10 +35,19 @@ starts at Open-GPUI `6017e2a3` and separately fixes the newly observed official
 range `27bbbc1cc480a7500cec122f120e796d1fb8500c..5bd59e2e439aff9b9203b9dd3c9bcb04159f701c`.
 It adopts strict-CSP safe-area probes, the off-UI macOS notification worker and
 the applicable font-cache cleanup while retaining the declared compiler floors.
-The SVG timed-transformation optimization is applicable and **still queued**;
-the new endpoint is not source-complete. Earlier zero-open ledger conclusions
-retain their own fixed endpoints. Fork docking-listener and inherited native
-close-panic repairs have separate provenance in the follow-up.
+The SVG timed-transformation contribution is now adopted through the Scene,
+accepted-candidate and native submission owners, with separate subpixel renderer
+records. The fourteen-row range has **zero open applicable source commits**;
+the full inventory now contains 588 distinct official SHAs. Earlier zero-open
+ledger conclusions retain their own fixed endpoints. The follow-up separately
+records source mapping, 2,269 passing library cases, real Mac retained-animation
+pixels, browser/CI repairs and remaining platform qualification. Fork docking
+listeners, journal adaptation and inherited native close-panic repairs keep their
+own provenance.
+M-SVG maps official `aff99ecc3249cfa95e720c4d6c1eb4a72105a3ee` to local
+`b95b84ff5e70570ae672243f605c57fc0af3af82`. The complete final-source Chromium
+workflow passes in 236.660 seconds without unavailable skips; the new native
+receipt preserves its build base and verified final source hashes separately.
 
 ## November 13 Incremental Continuation
 

@@ -22,9 +22,11 @@ The GitHub API comparison returned HTTP 403 rate-limit exceeded; the official
 patch endpoint succeeded without changing either checkout. These fourteen rows
 extend the earlier 574-SHA inventory to 588 distinct official commits.
 
-This is a correctness follow-up, not completion of the newer source endpoint.
-The SVG timed-transformation contribution remains explicitly queued. Its
-upstream performance measurements are not measurements of this fork.
+The applicable framework source contributions at this fixed endpoint are now
+reconciled, including the SVG timed-transformation contribution below. The
+fourteen-row range contains no remaining queued framework commit. Source
+completion does not qualify every platform or reproduce upstream performance
+measurements; the executed and outstanding gates remain separate below.
 
 ## Per-commit inventory
 
@@ -39,7 +41,7 @@ upstream performance measurements are not measurements of this fork.
 | `faf97b0a0c1249f64b29bbc3f26d4503fa9bddf2` | Preserve structured model refusal details (#66929) | Outside the extracted framework: model providers, agent thread and generated-code UI. |
 | `69239eb54067293f1b646a7dd7f83fc4f62af728` | Add an icon-only variant to the toggle button component (#66937) | Outside the extracted framework: Zed's product `ui` component. Open-GPUI's own controls retain their separate public contracts. |
 | `563319c3f47e2bf82d132942c6b5f5860b18a1e2` | Sync Neovim default key mappings (#66759) | Outside the extracted framework: Vim product keymap. |
-| `aff99ecc3249cfa95e720c4d6c1eb4a72105a3ee` | Animate SVG transformations without re-rendering views (#66896) | **Queued M-SVG**: applicable GPUI optimization and public API. Adapt Scene animation entries, original transforms, accepted/replayed journal ranges, reduced motion and submission scheduling together; port the complete upstream regressions and ordinary example. Product `ui` call sites are reference consumers. No equivalent implementation or performance pass is claimed. |
+| `aff99ecc3249cfa95e720c4d6c1eb4a72105a3ee` | Animate SVG transformations without re-rendering views (#66896) | M-SVG: adopt the official static/timed SVG APIs, easing, heartbeat, Scene animation table, FPS/reduced-motion policy and ordinary example. Adapt cache replay, candidate admission, exact clips and asynchronous accepted-scene presentation through their existing owners. Migrate Metal/WGSL/HLSL records together; keep the 120-byte subpixel path distinct. Product `ui` call sites remain reference consumers. |
 | `83df5df635ed97ca6425d16659ad0307865ed93b` | Add corgi to the Nix dev shell (#66940) | Outside the extracted framework: Zed's Nix/devshell build environment. |
 | `dc93abce2fa6c0bf349d425310db4884aa953467` | Keep macOS notification service calls off the UI thread (#66934) | M-NOTIFY: adopt one lazy FIFO notification worker, native-call completion tasks, retained delegate and foreground responses; migrate the public trait, backend implementations, relocated tests/example and independent consumer. |
 | `06999050d632c0c6ee224fb3955a7bcda9afc462` | Stream thread saves into zstd instead of buffering JSON (#66683) | Outside the extracted framework: agent database persistence. |
@@ -87,10 +89,10 @@ new live-workspace replacement API.
 
 ## Delivery and executed evidence
 
-The resulting code checkpoint is
+The preceding correctness code checkpoint is
 `eef07bd089871b2d93845591973910debd8791c5`. Every implementation has its own
-Conventional Commit; subsequent documentation does not change the qualified
-runtime source.
+Conventional Commit. Those receipts retain that source scope; the subsequent
+SVG implementation and its qualification are recorded separately below.
 
 | Owner | Full local commit | Source linkage |
 | --- | --- | --- |
@@ -139,12 +141,117 @@ facts are in `/tmp/open-gpui-maintenance-native-20261114-receipt.json`;
 serial compiler/test commands and results are in
 `/tmp/open-gpui-maintenance-validation-20261114.json`.
 
+## SVG retained-scene adaptation
+
+The implementation checkpoint is
+`b95b84ff5e70570ae672243f605c57fc0af3af82`. Its full official/local mapping is:
+
+| Owner | Full official commit | Full local implementation commit |
+| --- | --- | --- |
+| M-SVG, including fork journal/submission and renderer adaptations | `aff99ecc3249cfa95e720c4d6c1eb4a72105a3ee` | `b95b84ff5e70570ae672243f605c57fc0af3af82` |
+
+M-SVG restores the official SVG-only raster pose APIs alongside the checked
+interactive subtree authority. It does not extend arbitrary element hit testing
+to rotation. Scene entries retain original matrices/colors, rebind IDs during
+cache replay and publish animation demand only with the accepted candidate.
+Animation-only FPS limits leave dirty frames, callbacks, input and required
+submissions under the existing scheduling rules. Reduced motion accepts a static
+initial pose and removes animation demand.
+
+The first real Mac attempt exposed an integration gap: native delivery is
+asynchronous, and the incumbent retained-present fallback rebuilt the view on
+every frame (59 to 73 renders in 220 ms). Accepted animated scenes now receive
+an independently leased, immutable presentation snapshot and a fresh attempt
+under the existing submission authority. Only its actual Submitted completion
+publishes the raster sample, preserving the semantic frame generation. A new
+candidate, shutdown, stale geometry, invalid scope, font change or failed lease
+cannot publish the old sample. This path adds no second semantic acceptance
+transaction.
+
+Independent review also reproduces a journal rebuild losing an already delivered
+pose when an invalid sibling is removed. The formerly failing deferred regression
+now passes; rebuilding preserves surviving raster samples while keeping journal
+base values unchanged. Renderer review finds that the old WGPU grayscale fallback
+would decode 120-byte subpixel instances as the new 144-byte monochrome record.
+Storage and packed-texture fallback now use the dedicated subpixel vertex entry;
+the monochrome fragment retains its existing grayscale behavior. DirectX has the
+same separate subpixel vertex/record boundary.
+
+| SVG gate | Actual result and scope |
+| --- | --- |
+| Final Core/Apple/macOS/WGPU libraries | **2269/2269**, zero skipped; nextest `b3702b22-3d7d-4de1-879c-dd72fb8660e4`, 66.315 s execution, `test-support,runtime_shaders,profiler`. Includes nine accepted/deferred SVG window regressions, exact clips, lifecycle and real GPU readbacks. |
+| Public presentation surface | **4/4**, zero skipped; nextest `1e6bdcd2-3ac9-4323-b7cf-929096b3f4ab`. SVG poses compose with the checked subtree API; the new compile-fail case rejects poses on arbitrary `Div`. |
+| Independent Rust 1.95 consumer | **2/2**, zero skipped; nextest `e3e6f0aa-9288-4a98-93db-a77f97c29268`, its own locked graph and no optional features. Public API composition and heartbeat execute without starting an App. |
+| Rotated masks and subpixel grayscale fallback | **2/2** focused actual-GPU controls; nextest `d548bd85-b25b-4923-871e-414bb2007a82`. Both storage and packed-texture transports preserve UVs, parent projection, exact clips and record strides; the final library cohort above includes both tests. |
+| Offline Metal and native SVG example | Offline Xcode Metal build passes in 22.974 s. Signed-bundle `svg_animation --smoke` passes in 2.918 s with actual OS exit 0: all 200 animations remain live, pixels advance over 220 ms, and both render count and accepted generation remain unchanged. Final inventory: zero live probe processes and zero temporary apps. |
+| Compiler and wasm owners | Final Rust **1.93.0** locked Core/macOS/WGPU/platform all-target check passes in **33.57 s**. Web wasm `--tests` passes in **1.83 s** and the production WGPU wasm library passes in **18.30 s**. An exploratory WGPU wasm test build retains its existing Criterion/Rayon restriction; it is not a supported passing gate. |
+| Shared iOS compilation | `open-gpui-ios --target aarch64-apple-ios-sim --all-features --lib` passes in **84.214 s** with deployment floor 15.0. Shared Apple/Core source is compiled; no simulator or device launch is claimed. |
+| Windows owning-target compilation | Real MSVC SDK/LLVM `cargo xwin check` passes Windows/WGPU/platform all targets with `test-support` in **91.215 s** for `x86_64-pc-windows-msvc`. This cross-check does not run FXC, DirectX, native windows or GPU output. |
+| Correctness Clippy | Core/Apple/macOS/WGPU/platform/xtask all-target check passes `-D clippy::correctness -D clippy::suspicious` in **56.52 s**. Existing advisory warnings remain. |
+| Complete real browser workflow | Chromium **151.0.7922.34**, final source, **exit 0 in 236.660 s** without unavailable skips. Explicit WebGL, Auto/WebGPU, explicit WebGPU and forced-no-WebGPU Auto/GL each pass **22/22** PNG samples at both viewport sizes. Platform identity, trusted clipboard/text, fonts, touch and deterministic backend refusal/cleanup controls all pass in the same invocation. |
+| Repository gates | Root/consumer formatting, document links, public API tiers, import boundaries, release/breaking inventory and whitespace checks pass. The first release-doc check catches a missing literal ABI symbol in the changelog; the release-facing migration entry is added before the final pass. |
+
+The first library run's tiny-atlas fixture rejected the SVG supersampling extent;
+its corrected atlas retains ordinary raster bounds. The later grayscale regression
+initially compared masks with different filtering neighborhoods. Both now use the
+same transparent border, preserving the original whole-image zero-difference
+oracle; neither production coverage nor pixel tolerance is weakened. These
+fixture failures are separate from the reproduced deferred/journal defects.
+
+Native source hashes, build-time base, Cargo-reported executable and actual exit
+are retained in `/tmp/open-gpui-svg-native-final-receipt-20261114.json`. Logs are
+`/tmp/open-gpui-svg-*-20261114.log`. The existing runner removes each signed app
+before another launches. No upstream speedup ratio or renderer submission count
+is inferred from view counters.
+The native pixel oracle uses GPU readback of the accepted scene through
+`Window::render_to_image`. That method does not advance animation time; the
+changing sample is published by the original native Submitted completion. This
+is not a screen recording or scanout measurement.
+
+The first browser invocation selects the host's default Edge and exits before
+graphics preflight on a CDP handshake timeout. Its log remains
+`/tmp/open-gpui-svg-browser-edge-handshake-failed-20261114.log`. The complete
+passing invocation explicitly selects the already qualified Chromium above and
+the task-local matching wasm-bindgen **0.2.130** CLI. The shared CLI is unchanged.
+Browser output and execution metadata are retained in
+`/tmp/open-gpui-svg-final-browser-20261114.log` and its companion JSON.
+
+## CI dependency and browser repairs
+
+| Full local commit | CI contribution and source boundary |
+| --- | --- |
+| `f483eed100cd8535ec8560972cfa25c31afe0d7d` | Vulnerable QUIC updates, explicit package versions for retained Git pins and target-correct wasm test support. |
+| `813139bb3ed01c4d19d047e62d9b783cc6052efd` | Reject lossy Git/patch dependency substitution before any registry upload. |
+| `299a91dc2461535a826d7d80624be22e3c19db14` | Initialize direct SwiftShader Vulkan without ANGLE Vulkan reimport. |
+| `df39f150aa2cec0a4a02ba2fd7e135e315d5e0dd` | Deterministic WebGL initialization refusal, exact candidate cleanup and independent test controls. |
+
+`f483eed1` updates the vulnerable QUIC packages, supplies required package versions
+alongside development Git pins and restores target-correct wasm test support.
+Dependency Health and Publish Check both pass for `299a91dc`; the local audit
+reports zero vulnerabilities and all 39 packageability checks pass. These are
+build/packaging receipts, not authorization or qualification of registry uploads.
+`813139bb` rejects publishable Git dependencies and root-only patches before the
+first upload, because Cargo packaging can otherwise replace required fork fixes
+with registry code. The [dependency audit](zed-fork-dependency-audit.md) owns those
+unresolved registry successors.
+
+The Linux browser initially crashes its GPU process before preflight. `299a91dc`
+keeps direct SwiftShader Vulkan without importing Vulkan from ANGLE; the real
+Linux rerun then passes WebGL, Auto/WebGPU and explicit WebGPU at both pixel
+sizes, plus platform/input/touch checks. Its later failure exposes an obsolete
+test assumption: requesting a WebGL software adapter succeeds on that browser.
+`df39f150` replaces that assumption with a deterministic unavailable-context
+control, requiring the exact backend error, no launched App and removed canvas
+candidate. The control is removed before WebGPU failure/Auto fallback checks.
+Its fourteen existing host tests and independent read-only review pass. The
+complete local Chromium invocation above executes the new control and final SVG
+source together; remote Verify status remains separate from that host receipt.
+
 ## Remaining qualification and next work
 
-Complete M-SVG before claiming source closure at the newer fixed endpoint.
-Advance its transformations through the original Scene/candidate owners; do
-not mutate accepted source transforms cumulatively or manufacture a submitted
-frame. Retained replay, exact clips and atlas residency remain fork contracts.
+The fixed fourteen-row source inventory is complete. Continue qualifying the
+changed renderer and native paths on their owning platforms; retain exact clips,
+atlas residency and original submission authority when adding future consumers.
 
 Physical capture/drag cancellation, stationary-pointer/native hit-stack
 arbitration, mixed-DPI movement and actual foreign-platform shutdown retain
@@ -155,7 +262,9 @@ notification-service stall. A stalled service can still delay subsequent
 notification commands while the UI remains independent.
 
 Windows and Linux notification implementations and native test call sites are
-source-migrated to `Task<()>`; their owning-target compilation and native
-notification/retirement runs still need those platforms. The Mac checks do not
-grant that execution credit or repeat iOS qualification. Web's real wasm
-compilation covers its inherited default notification method.
+source-migrated to `Task<()>`. The subsequent Windows target cross-check above
+compiles its backend and call sites; Linux target compilation still needs its
+own result. Native notification/retirement execution remains open on both
+platforms. The Mac checks do not grant that execution credit or repeat iOS native
+qualification. Web's real wasm compilation covers its inherited default
+notification method.

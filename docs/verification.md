@@ -1,13 +1,76 @@
 # Verification
 
+## November 14 Retained SVG and CI Follow-up
+
+Official `aff99ecc3249cfa95e720c4d6c1eb4a72105a3ee` is adopted at the fixed
+`5bd59e2e439aff9b9203b9dd3c9bcb04159f701c` endpoint. The
+[fourteen-row ledger](imports/zed-gpui-incremental-sync-2026-11-14.md#svg-retained-scene-adaptation)
+contains its source mapping, reproduced adaptation defects and separate platform
+limits. The range has zero queued applicable framework contributions; this does
+not move any earlier ledger endpoint or claim an upstream performance ratio.
+The implementation checkpoint is `b95b84ff5e70570ae672243f605c57fc0af3af82`.
+
+| Gate | Executed result and scope |
+| --- | --- |
+| Core/Apple/macOS/WGPU | **2269/2269**, zero skipped, 66.315 s; nextest `b3702b22-3d7d-4de1-879c-dd72fb8660e4`, `test-support,runtime_shaders,profiler`. Includes accepted/replayed animation demand, nine deferred/shutdown window controls and real GPU pixels. |
+| Public and independently locked API | Presentation surface **4/4**, including the new arbitrary-Div compile-fail boundary. Independent Rust 1.95 `timed_svg` **2/2** without optional features, nextest `e3e6f0aa-9288-4a98-93db-a77f97c29268`. |
+| Native retained SVG | Offline Xcode Metal build **22.974 s**; rebuilt signed-bundle smoke **2.918 s**, actual OS exit 0. Two hundred live SVGs advance pixels over 220 ms without another view render or accepted generation. Final inventory: zero live probe processes and zero temporary apps. |
+| Compiler floor | Final locked Rust **1.93.0** Core/macOS/WGPU/platform all-target check passes in **33.57 s** with `test-support,runtime_shaders`. |
+| Web compilation | Final `open-gpui-web --target wasm32-unknown-unknown --tests` passes in **1.83 s**; the WGPU wasm library check passes in **18.30 s**. These are separate from browser execution. |
+| Shared iOS compilation | Locked all-feature `open-gpui-ios` library check passes in **84.214 s** for `aarch64-apple-ios-sim`, deployment floor 15.0. No simulator/device launch is implied. |
+| Windows owning-target compilation | Real MSVC SDK/LLVM `cargo xwin check` passes Windows/WGPU/platform all targets with `test-support` in **91.215 s**. Target: `x86_64-pc-windows-msvc`. FXC/HLSL execution, DirectX and native windows remain separate Windows gates. |
+| Correctness Clippy | Core/Apple/macOS/WGPU/platform/xtask all-target check passes both `-D clippy::correctness` and `-D clippy::suspicious` in **56.52 s**. Existing advisory warnings remain. |
+| Full real browser workflow | Final-source Chromium **151.0.7922.34**, **exit 0 in 236.660 s**, no unavailable skip. WebGL, Auto/WebGPU, explicit WebGPU and forced-no-WebGPU Auto/GL pass both viewport pixel sets plus all platform/input/clipboard/text/font/touch and refusal/cleanup controls. |
+| Repository gates | Root and independent-consumer formatting, document links, public API tiers, import boundaries, release/breaking inventory and whitespace checks pass. |
+
+The library command is:
+
+```text
+CARGO_BUILD_JOBS=1 cargo nextest run --locked -p open-gpui -p open-gpui-apple -p open-gpui-macos -p open-gpui-wgpu --no-default-features --features test-support,runtime_shaders,profiler --lib --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+The earlier 2,268/2,269 run retains a fixture failure from different atlas-edge
+filtering neighborhoods. The corrected transparent borders preserve whole-image
+zero-difference assertions; the final run above includes both transport variants.
+The independent journal/deferred defect has its own failing-before-fix receipt.
+An exploratory WGPU wasm `--tests` invocation stops in the existing Criterion
+Rayon restriction; the supported Web `--tests` and production WGPU wasm library
+gates above pass. No test dependency policy or compiler floor is changed to hide
+that exploratory result.
+
+CI repairs are `f483eed1`, `813139bb`, `299a91dc` and `df39f150`. Audit reports
+zero vulnerabilities; all 39 packageability checks pass, and remote Dependency
+Health/Publish Check pass for `299a91dc`. Registry upload preflight intentionally
+rejects dependencies whose Git source would be lost by packaging. The Linux
+`299a91dc` run passes actual WebGL/Auto/WebGPU pixels and input after the
+SwiftShader correction, then exposes a test assumption that software WebGL must
+fail. The deterministic unavailable-context control keeps exact refusal and
+canvas cleanup assertions. Fourteen host tests and independent review pass;
+the final-source complete browser invocation above also passes. Remote Verify
+completion remains separate from this local host receipt.
+
+Native hashes, build base, actual exit and executable identity are in
+`/tmp/open-gpui-svg-native-final-receipt-20261114.json`; other logs use
+`/tmp/open-gpui-svg-*-20261114.log`. The ordinary `svg_animation` example requires
+`test-support` only for `--smoke`; its regular public API runs without that feature.
+Its pixel oracle reads the accepted scene through `Window::render_to_image`,
+which does not advance the clock; native Submitted completion publishes each
+new sample. This readback is not a screen recording or scanout measurement.
+The first default-Edge browser attempt stops at the CDP handshake; its failed
+log remains separate. The passing run selects Chromium explicitly with a
+task-local wasm-bindgen 0.2.130 CLI, leaving the shared installation unchanged.
+Windows HLSL/native output, Linux native output, physical input, mixed-DPI and
+numerical baseline/candidate performance retain their own qualification scope.
+
 ## November 14 Correctness Follow-up
 
 The [follow-up ledger](imports/zed-gpui-incremental-sync-2026-11-14.md) records
 the exact source range, independently reproduced listener/checkout failures,
 corrected tests, native cleanup and compiler receipts. It includes the official
-notification FIFO worker and strict-CSP safe-area fix. Its SVG optimization is
-still queued; neither source closure at the newer endpoint nor physical-input
-qualification follows from these correctness repairs.
+notification FIFO worker and strict-CSP safe-area fix. These earlier correctness
+receipts retain checkpoint `eef07bd0`; the subsequent SVG contribution and newer
+source completion are qualified separately above. Physical-input qualification
+does not follow from these correctness repairs.
 
 ## November 14 Default Docking Cutover
 
@@ -12508,8 +12571,8 @@ The GPUI tests cover checked numeric construction, nested composition, every sce
 transactional late failure, hit testing, explicit local/window event coordinates, pixel and line
 wheel semantics, pointer capture rebinding, drag/drop, IME, final AccessKit bounds, deferred and
 portal behavior, cache replay, tooltip lifecycle, committed measurement, and displayed debug
-geometry. `presentation_surface` also rejects the removed `Transformation`,
-`TransformationMatrix`, and `with_transformation` names and guards the opaque renderer ABI.
+geometry. `presentation_surface` composes SVG raster poses with the checked subtree authority,
+rejects applying an SVG-only pose to a `Div`, and guards the opaque subtree renderer ABI.
 
 The Gallery `presentation` smoke uses nested non-uniform transforms with a real Button, delayed
 Tooltip owner, TextInput, ScrollArea, drag/drop target, accessibility group, Motion projection, and

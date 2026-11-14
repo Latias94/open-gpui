@@ -103,10 +103,11 @@ repairs per-mount close-listener accumulation and native close panic boundaries.
 It also inventories fourteen newer official commits through `5bd59e2e`, adopts
 the macOS notification worker and strict-CSP Web fix, and keeps the Rust 1.93/1.95
 floors. Notification dismissal now returns `Task<()>`; await it or call
-`.detach()`. The newer official SVG timed-transformation contribution remains
-explicitly queued: adapt it through accepted/replayed Scene and submission
-owners before claiming source closure at that endpoint. No new compositor or
-global state rewrite is selected.
+`.detach()`. The newer official SVG timed-transformation contribution is also
+adopted through accepted/replayed Scene and submission owners. All applicable
+framework source contributions in the fixed fourteen-row range now have
+dispositions, with zero queued source commits at `5bd59e2e`. No new compositor
+or global state rewrite is selected.
 
 The correctness checkpoint is `eef07bd0`. Default/all-feature docking pass
 66/1,542 cases, final Core/Apple/macOS pass 1,904, the public notification
@@ -117,6 +118,33 @@ injection and editor smoke each finish with actual OS exit 0; the final
 inventory contains zero probe processes/apps. Windows/Linux notification
 native qualification and strict-CSP browser execution retain their separate
 unexecuted scope in the ledger.
+
+The SVG continuation is `b95b84ff`, mapping official `aff99ecc`. It restores
+the official public raster APIs, property easing,
+heartbeat, reduced motion and animation-only FPS caps. Final Core/Apple/macOS/WGPU
+libraries pass 2,269 cases; the independently locked Rust 1.95 API consumer passes
+two. The rebuilt ordinary example animates 200 SVGs with changing native pixels
+while its view render count and accepted generation stay fixed; offline Metal
+compilation and actual OS exit 0 pass, with zero surviving probes/apps. Deferred
+presentations own an immutable, independently leased sample until the original
+submission settles. Interactive subtree geometry remains under ADR 0021.
+Custom renderers must migrate the 144-byte monochrome record and keep the
+120-byte subpixel record and grayscale fallback separate. The ledger retains
+initial failures, independent review corrections and foreign-platform limits.
+Final-source Chromium 151 passes the complete required workflow in 236.660
+seconds, including both browser backends, actual pixels and deterministic
+initialization failure/cleanup controls. Rust 1.93, iOS simulator compilation,
+Windows MSVC-target cross-compilation and correctness/suspicious Clippy pass;
+owning-platform native execution still needs its own receipts.
+
+CI repairs retain the required Git dependency sources, remove vulnerable QUIC
+versions, restore wasm test compilation and check all 39 packageable crates.
+Registry upload preflight deliberately refuses dependencies whose required Git
+source would be lost during packaging. Linux browser execution reaches real
+WebGL/WebGPU pixels after direct SwiftShader initialization; its former
+software-adapter-refusal assumption is replaced by an explicit unavailable-context
+control. The complete local browser run passes; continue reading actual remote
+run results in the ledger before claiming a complete remote Verify pass.
 
 Continue with the actual remaining integration boundaries:
 
