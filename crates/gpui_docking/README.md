@@ -122,8 +122,8 @@ repository's macOS probe runner.
 The displaced engine is available only through `open_gpui_docking::legacy` and
 its explicit `legacy-docking` feature. Enabling it never changes the root or
 prelude types. It is not a fallback or a second writer for a migrated workspace.
-The old native dogfood example and browser unsupported-native-window smoke
-retain their own compatibility qualification until replacement scenarios run:
+The old Windows native dogfood example retains its compatibility qualification
+until its ten shared-session replacement scenarios run:
 
 ```sh
 cargo run -p open-gpui-docking-native --features legacy-docking
@@ -135,6 +135,13 @@ See [compatibility notes](LEGACY.md), the
 [cutover evidence](../../docs/knowledge/engineering/verification/dockspace-default-cutover-20261114.md).
 Historical receipts retain source paths at their recorded commits; incumbent
 files now live under `src/legacy/`.
+
+The browser unsupported-native-window probe now uses the shared session. Unused
+canonical migration and detached payload experiments have been removed. The
+[remote adoption record](../../docs/knowledge/engineering/verification/dockspace-remote-adoption-20261114.md)
+lists the exact remaining Windows retirement boundary. Copy a logical recovery
+checkpoint with `dock.with_view(|view| view.to_layout())`; continue using the
+document envelope when external View-key history and save generations matter.
 
 ## Compiler And Verification Scope
 

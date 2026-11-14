@@ -1,5 +1,18 @@
 # Verification
 
+## November 14 Published Dockspace Adoption
+
+The [remote adoption record](knowledge/engineering/verification/dockspace-remote-adoption-20261114.md)
+tracks the production update to `dcd65e983220e17662b1f02929fcf84348cd8eb3`,
+the empty-lane API migration, egui integration comparison, browser probe migration
+and bounded removal of unused legacy experiments. The fixed inventory now covers
+44 source commits. Original native outputs use the callback FIFO's presentation
+barrier so a renderer terminal cannot overtake earlier native ingress. Window
+geometry/minimization observations revoke stale receiver authority before redraw,
+while a shown window retains that authority under compositor occlusion.
+Executed receipts and remaining Windows replacement scenarios belong to that
+record; the earlier candidate-only results below retain their historical scope.
+
 ## November 14 Dockspace Candidate Qualification
 
 The [fixed-source inventory](knowledge/engineering/verification/dockspace-source-qualification-20261114.md)

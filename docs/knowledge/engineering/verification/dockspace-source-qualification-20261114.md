@@ -1,5 +1,30 @@
 # Dockspace Source Qualification — November 14, 2026
 
+## Published Dependency Follow-up
+
+The owner subsequently published the reviewed source. A fresh `git fetch origin`
+on November 14 observes remote `main` at
+`dcd65e983220e17662b1f02929fcf84348cd8eb3`. Open-GPUI now selects that exact
+Git revision, retaining `serde`, disabled default features and Rust 1.95 for
+docking. The sibling's uncommitted changes are excluded from this comparison.
+The earlier candidate qualification and failed fetch receipts below remain
+historical evidence; they do not describe the current production pin.
+
+The new fixed range has **44 commits** from the original production dependency.
+It includes all 42 entries below and these two additional commits:
+
+| Full dockspace commit | Contribution and adapter disposition |
+| --- | --- |
+| `9e737172fcafcf07bb9e6ec15d36117e29cc2e1f` | Native adapter regressions independently vary native DPI, presentation scale, client size and positive/negative desktop origins. Reference coverage does not establish physical GPUI input qualification. |
+| `dcd65e983220e17662b1f02929fcf84348cd8eb3` | Public `DockspaceView::to_layout()` creates an owned committed logical checkpoint. Available through existing `DockSurface::with_view`; it excludes native/output authority and does not replace the external-key document envelope. |
+
+The receiver migration below is now applied to the production adapter. The
+frontmost blocking fallback remains `Blocked`; actual empty click/drag lanes
+use the renamed empty-lane APIs, and missing exact presentation remains
+`Unknown`. The independent consumer lockfile selects the same fixed source.
+Final execution and remaining retirement scope are recorded in the
+[remote adoption record](dockspace-remote-adoption-20261114.md).
+
 ## Fixed Sources
 
 This continuation starts at Open-GPUI

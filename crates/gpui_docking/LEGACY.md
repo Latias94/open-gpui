@@ -13,8 +13,11 @@ Do not attach both semantic runtimes to one workspace or use the old controller
 as recovery for a new surface. See the [migration guide](../../docs/ui/migration-v0.3.md#default-shared-docking-session)
 for the new lifecycle and persistence entry points.
 
-The feature retains the existing deterministic scenarios, native Windows input
-qualification and browser unsupported-native-window qualification. Old benchmarks
+The feature retains the existing deterministic scenarios and native Windows input
+qualification. The browser unsupported-native-window probe uses the default shared
+session. Unused canonical-layout migration and detached payload experiments have
+been removed; the default one-way wire-format conversion remains independent.
+Old benchmarks
 require both `legacy-docking` and `test-support`. The native dogfood example also
 requires its package's `legacy-docking` feature:
 
@@ -35,3 +38,6 @@ backend. The [cutover record](../../docs/knowledge/engineering/verification/dock
 separates executed replacement checks from pending platform work. Legacy v2/v3
 persistence conversion already lives in `persistence` and needs none of this
 runtime or its feature.
+
+The [remote adoption record](../../docs/knowledge/engineering/verification/dockspace-remote-adoption-20261114.md)
+lists the ten remaining Windows behaviors and the exact fixed dependency.

@@ -51,13 +51,34 @@ DevTools' corresponding feature and module are both named `legacy-docking` and
 `legacy_docking`, respectively. The native dogfood example requires
 `--features legacy-docking`. Cargo feature unification never switches the root
 or prelude back to the incumbent types. The browser unsupported-window probe
-retains an explicit incumbent dependency until replacement qualification runs.
+uses the default shared session; the Windows native dogfood remains explicit
+compatibility scope.
 
 See the [crate guide](../../crates/gpui_docking/README.md) and
 [cutover evidence](../knowledge/engineering/verification/dockspace-default-cutover-20261114.md)
 for executed checks and the platform scenarios still required before deleting
 the compatibility engine. Earlier incumbent API migrations in this guide apply
 inside the explicit `legacy` namespace.
+
+## Shared Docking Receiver And Recovery APIs
+
+The fixed dockspace dependency at `dcd65e98` renames the reexported
+`SurfacePointerReceiverFacts::with_no_delivery` and `with_no_drag_delivery` to
+`with_empty_delivery_lane` and `with_empty_drag_delivery_lane`, respectively.
+`NativeReceiverAnswer::NoReceiver` becomes `EmptyLane`. Use these names only
+when exact presented evidence proves that the queried semantic lane is empty.
+A frontmost control which blocks the lane remains `Blocked`; missing authority
+remains `Unknown`. `with_clear_hover_lane` retains its separate hover meaning.
+Ordinary `DockSurface` consumers need no input-routing changes.
+
+`dock.with_view(|view| view.to_layout())` now returns an independent logical
+checkpoint of committed state. It carries no native bindings, queued input,
+gestures, GPUI entities, external-key history or document save generations.
+Use the existing document envelope for durable persistence. Before reconstructing
+a native host, drain the old host and its original output/capture/window owners;
+the checkpoint grants no authority to reuse them. See the
+[adoption record](../knowledge/engineering/verification/dockspace-remote-adoption-20261114.md)
+for the fixed source inventory and remaining legacy-platform boundary.
 
 ## System Notification Completion
 

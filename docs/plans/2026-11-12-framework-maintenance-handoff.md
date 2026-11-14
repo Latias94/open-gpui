@@ -189,6 +189,17 @@ not submitted; it does not reproduce the sibling's pending-preview defect.
 After source publication, prefer the complete candidate's authority/resize
 corrections with its explicit empty-lane API migration and owning native tests.
 
+The subsequent [published adoption](../knowledge/engineering/verification/dockspace-remote-adoption-20261114.md)
+selects remote `dcd65e98`, including the two newly published DPI/checkpoint
+commits. It applies the empty-lane API migration and exposes the owned logical
+checkpoint through the existing read-only view. Comparison with the mature egui
+adapter identifies native observation and presentation journal ordering seams;
+the owning GPUI fixes and actual regressions are recorded there. The browser
+probe moves to the shared session. Unused canonical migration/detached payload
+experiments are removed, while the Windows dogfood and its ten physical-input
+behaviors remain explicitly legacy until their replacements execute. Do not
+attribute the removed experimental tests or egui's receipts to new GPUI coverage.
+
 Continue with the actual remaining integration boundaries:
 
 1. Run Nara's canonical Dialogue Session/file and complete native trajectory on

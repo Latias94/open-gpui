@@ -86,6 +86,14 @@ scenarios remain available until their declared replacements run. This is a
 production entry-point cutover, not completed removal or universal native parity.
 See the [cutover record](../knowledge/engineering/verification/dockspace-default-cutover-20261114.md).
 
+The later [published dependency adoption](../knowledge/engineering/verification/dockspace-remote-adoption-20261114.md)
+migrates the browser probe to the shared session and removes unused canonical
+migration/detached payload experiments. The Windows dogfood still owns ten
+explicit physical-input journeys; its legacy runtime remains until those
+shared-session replacements execute. The public logical checkpoint is a
+read-only reconstruction input, not durable document persistence or permission
+to reuse an undrained native host.
+
 This decision selects the architecture; it is not evidence that every backend or consumer has
 passed native qualification. Implement and verify dependency compatibility, real pane content,
 multi-surface aggregation, deferred-sibling progress, native create/first-live, close recovery and
