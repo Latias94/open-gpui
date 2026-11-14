@@ -1,5 +1,8 @@
 //! Root registration failures retain original GPUI and core lifetime authority.
 
+#[path = "presentation_tests.rs"]
+mod presentation_order;
+
 use dockspace::{
     model::{
         DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, ItemId,
@@ -71,6 +74,31 @@ fn commit_native(session: &mut DockspaceSession) -> HostFrameReport {
         .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
         .unwrap();
     frame.commit().unwrap()
+}
+
+fn collect_without_report_dispatch(
+    host: &mut super::HostState,
+    bridge: &mut super::NativeBridge,
+    cx: &mut App,
+) {
+    // These tests isolate report-policy failures. Commit the real ingress and
+    // presentation barriers while leaving their reports for process_reports.
+    loop {
+        bridge.collect(&mut host.session).unwrap();
+        if host.session.has_pending_native_input() {
+            let report = commit_native(&mut host.session);
+            host.invalidate_report(&report);
+            bridge.accept_report(report);
+        }
+        let Some(terminal) = bridge.transport().take_presentation() else {
+            break;
+        };
+        crate::adapter::presentation::settle_native(host, terminal, None, cx).unwrap();
+        while let Some(report) = host.native.as_mut().unwrap().pending_reports.pop_front() {
+            bridge.accept_report(report);
+        }
+    }
+    assert!(bridge.transport().is_empty());
 }
 
 #[open_gpui::test]
@@ -157,7 +185,7 @@ fn a_close_retired_by_the_same_native_reset_does_not_lose_the_terminal_suffix(
     cx.run_until_parked();
     cx.update(|cx| {
         let mut host = dock.host.borrow_mut();
-        bridge.collect(&mut host.session).unwrap();
+        collect_without_report_dispatch(&mut host, &mut bridge, cx);
         let terminal = bridge.binding_for_window(second.window_id()).unwrap();
         let report = commit_native(&mut host.session);
         host.invalidate_report(&report);
@@ -229,19 +257,15 @@ fn a_failed_close_policy_preserves_the_current_report_and_terminal_suffix(cx: &m
         .unwrap();
     cx.run_until_parked();
     assert!(!cx.simulate_window_close(first));
-    cx.update(|_| {
+    cx.update(|cx| {
         let mut host = dock.host.borrow_mut();
-        bridge.collect(&mut host.session).unwrap();
-        let report = commit_native(&mut host.session);
-        bridge.accept_report(report);
+        collect_without_report_dispatch(&mut host, &mut bridge, cx);
     });
     assert!(held.release());
     cx.run_until_parked();
     cx.update(|cx| {
         let mut host = dock.host.borrow_mut();
-        bridge.collect(&mut host.session).unwrap();
-        let report = commit_native(&mut host.session);
-        bridge.accept_report(report);
+        collect_without_report_dispatch(&mut host, &mut bridge, cx);
         let retired: Vec<_> = host
             .session
             .retained_native_surface_bindings_for_window(terminal)

@@ -26,6 +26,14 @@ pub(super) struct PendingSubmission {
     input_frames: Vec<continuation::InputFrame>,
 }
 
+pub(crate) struct PendingPresentation {
+    owner: WindowId,
+    serial: u64,
+    outputs: Vec<PaintedSurfaceOutput>,
+    input_frames: Vec<continuation::InputFrame>,
+    result: SurfacePresentationResult,
+}
+
 impl PendingSubmission {
     pub(super) fn outputs_for_binding(
         &self,
@@ -60,7 +68,7 @@ impl PendingSubmission {
     }
 }
 
-pub(super) fn abandon_unaccepted(host: &mut HostState, window: &mut Window) {
+pub(super) fn abandon_unaccepted(host: &mut HostState, window: &mut Window, cx: &mut App) {
     let owner = window.window_handle().window_id();
     if host
         .mounts
@@ -68,7 +76,7 @@ pub(super) fn abandon_unaccepted(host: &mut HostState, window: &mut Window) {
         .and_then(|mount| mount.pending.as_ref())
         .is_some_and(|pending| pending.update.is_some())
     {
-        withdraw_pending(host, window);
+        withdraw_pending(host, window, cx);
     }
 }
 
@@ -95,7 +103,7 @@ pub(super) fn observe(
         {
             return;
         }
-        let mut pending = mount.pending.take().expect("matching pending submission");
+        let pending = mount.pending.take().expect("matching pending submission");
         let exact = pending.accepted_generation.is_some()
             && snapshot.accepted_frame_generation() == pending.accepted_generation
             && snapshot.submitted_frame_generation() == pending.accepted_generation;
@@ -105,34 +113,9 @@ pub(super) fn observe(
             SurfacePresentationResult::Dropped
         };
         window.retire_exact_frame_submission(&pending.ticket);
-        if result == SurfacePresentationResult::Presented {
-            if let Some(mount) = host.mounts.get_mut(&owner) {
-                mount.input_frames = pending.input_frames;
-            }
-        }
         let reported_outputs = !pending.outputs.is_empty();
-        for output in pending.outputs.drain(..) {
-            let surface = output.surface();
-            let artifact = output.presentation_artifact();
-            match host.session.report_surface_presentation(output, result) {
-                Ok(()) => {
-                    if let Some(region) = host
-                        .mounts
-                        .get_mut(&owner)
-                        .and_then(|mount| mount.regions.get_mut(&surface))
-                    {
-                        if result == SurfacePresentationResult::Presented {
-                            region.presented = Some((serial, artifact));
-                        } else {
-                            region.dirty = true;
-                        }
-                    }
-                }
-                Err(error) => host.fail(error),
-            }
-        }
-        if reported_outputs {
-            host.presentation_pending = true;
+        retire_pending(&mut host, owner, pending, result, cx);
+        if host.native.is_none() && reported_outputs {
             if let Err(error) = settle_pending(&mut host, Some(window), cx) {
                 host.fail(error);
             }
@@ -282,7 +265,7 @@ pub(super) fn accept_focus_stable(
 pub(super) fn discard(shared: &SharedHost, window: &mut Window, cx: &mut App) {
     let owner = window.window_handle().window_id();
     let mut host = shared.borrow_mut();
-    withdraw_pending(&mut host, window);
+    withdraw_pending(&mut host, window, cx);
     let Some(mount) = host.mounts.get_mut(&owner) else {
         return;
     };
@@ -303,7 +286,7 @@ pub(super) fn discard(shared: &SharedHost, window: &mut Window, cx: &mut App) {
     host_native::schedule(shared, cx);
 }
 
-fn withdraw_pending(host: &mut HostState, window: &mut Window) {
+fn withdraw_pending(host: &mut HostState, window: &mut Window, cx: &mut App) {
     let owner = window.window_handle().window_id();
     let Some(mount) = host.mounts.get_mut(&owner) else {
         return;
@@ -312,24 +295,88 @@ fn withdraw_pending(host: &mut HostState, window: &mut Window) {
     for region in mount.regions.values_mut() {
         region.dirty = true;
     }
-    let Some(mut pending) = mount.pending.take() else {
+    let Some(pending) = mount.pending.take() else {
         return;
     };
     window.retire_exact_frame_submission(&pending.ticket);
-    let unaccepted = pending.update.take().is_some();
-    host.presentation_pending |= !pending.outputs.is_empty();
-    for output in pending.outputs.drain(..) {
-        if let Err(error) = host
-            .session
-            .report_surface_presentation(output, SurfacePresentationResult::Dropped)
-        {
-            host.fail(error);
-        }
-    }
-    if unaccepted {
+    retire_pending(host, owner, pending, SurfacePresentationResult::Dropped, cx);
+}
+
+fn retire_pending(
+    host: &mut HostState,
+    owner: WindowId,
+    mut pending: PendingSubmission,
+    result: SurfacePresentationResult,
+    cx: &mut App,
+) {
+    if pending.update.take().is_some() {
         pending.inputs.append(&mut host.inputs);
         host.inputs = pending.inputs;
     }
+    let terminal = PendingPresentation {
+        owner,
+        serial: pending.serial,
+        outputs: pending.outputs,
+        input_frames: pending.input_frames,
+        result,
+    };
+    if let Some(native) = &host.native {
+        // Preserve the original affine outputs at their arrival boundary. Native
+        // ingress before this terminal commits first; its suffix stays queued.
+        native.transport.presentation(terminal, cx);
+    } else {
+        apply_presentation(host, terminal);
+    }
+}
+
+fn apply_presentation(host: &mut HostState, terminal: PendingPresentation) {
+    let PendingPresentation {
+        owner,
+        serial,
+        outputs,
+        input_frames,
+        result,
+    } = terminal;
+    if result == SurfacePresentationResult::Presented
+        && let Some(mount) = host
+            .mounts
+            .get_mut(&owner)
+            .filter(|mount| mount.serial == serial)
+    {
+        mount.input_frames = input_frames;
+    }
+    host.presentation_pending |= !outputs.is_empty();
+    for output in outputs {
+        let surface = output.surface();
+        let artifact = output.presentation_artifact();
+        match host.session.report_surface_presentation(output, result) {
+            Ok(()) => {
+                if let Some(region) = host
+                    .mounts
+                    .get_mut(&owner)
+                    .filter(|mount| mount.serial == serial)
+                    .and_then(|mount| mount.regions.get_mut(&surface))
+                {
+                    if result == SurfacePresentationResult::Presented {
+                        region.presented = Some((serial, artifact));
+                    } else {
+                        region.dirty = true;
+                    }
+                }
+            }
+            Err(error) => host.fail(error),
+        }
+    }
+}
+
+pub(super) fn settle_native(
+    host: &mut HostState,
+    terminal: PendingPresentation,
+    window: Option<&Window>,
+    cx: &mut App,
+) -> anyhow::Result<()> {
+    apply_presentation(host, terminal);
+    settle_pending(host, window, cx)
 }
 
 fn settle_pending(
@@ -370,16 +417,8 @@ fn wake_waiting(host: &mut HostState, cx: &mut App) {
 pub(super) fn close(host: &mut HostState, owner: WindowId, cx: &mut App) {
     if let Some(mut mount) = host.mounts.remove(&owner) {
         if let Some(mut pending) = mount.pending.take() {
-            drop(pending.update.take());
-            host.presentation_pending |= !pending.outputs.is_empty();
-            for output in pending.outputs.drain(..) {
-                if let Err(error) = host
-                    .session
-                    .report_surface_presentation(output, SurfacePresentationResult::Dropped)
-                {
-                    host.fail(error);
-                }
-            }
+            pending.inputs.clear();
+            retire_pending(host, owner, pending, SurfacePresentationResult::Dropped, cx);
         }
         for surface in mount.regions.keys() {
             host.owners.remove(surface);

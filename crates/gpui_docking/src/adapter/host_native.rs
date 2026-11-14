@@ -1150,6 +1150,14 @@ fn collect_host(
         }
         process_reports(host, bridge, cx)?;
         let pending_input = host.session.has_pending_native_input();
+        if !pending_input && let Some(terminal) = bridge.transport().take_presentation() {
+            presentation::settle_native(host, terminal, current, cx)?;
+            while let Some(report) = host.native.as_mut().unwrap().pending_reports.pop_front() {
+                bridge.accept_report(report);
+            }
+            process_reports(host, bridge, cx)?;
+            continue;
+        }
         let may_create = !host.native.as_ref().unwrap().transport.is_frozen()
             && host.session.has_pending_native_create();
         if !pending_input && !may_create {

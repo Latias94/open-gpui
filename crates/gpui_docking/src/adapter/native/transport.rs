@@ -57,6 +57,26 @@ impl NativeTransport {
         self.0.queue.borrow_mut().push_back(Inbound::Pointer(input));
     }
 
+    pub(crate) fn presentation(
+        &self,
+        terminal: crate::adapter::presentation::PendingPresentation,
+        cx: &mut App,
+    ) {
+        self.push(Inbound::Presentation(terminal), cx);
+    }
+
+    pub(crate) fn take_presentation(
+        &self,
+    ) -> Option<crate::adapter::presentation::PendingPresentation> {
+        let mut queue = self.0.queue.borrow_mut();
+        if matches!(queue.front(), Some(Inbound::Presentation(_)))
+            && let Some(Inbound::Presentation(terminal)) = queue.pop_front()
+        {
+            return Some(terminal);
+        }
+        None
+    }
+
     pub(crate) fn captured_drag(
         &self,
         binding: NativeWindowBinding,
@@ -155,6 +175,7 @@ impl NativeTransport {
 }
 
 pub(super) enum Inbound {
+    Presentation(crate::adapter::presentation::PendingPresentation),
     Observed(NativeWindowBinding, NativeWindowFacts),
     Close(
         NativeWindowBinding,
@@ -216,6 +237,10 @@ impl NativeBridge {
     pub fn collect(&mut self, session: &mut DockspaceSession) -> Result<usize, NativeBridgeError> {
         let mut collected = 0;
         while let Some(record) = self.transport.pop() {
+            if matches!(record, Inbound::Presentation(_)) {
+                self.transport.retry(record);
+                break;
+            }
             if let Some(binding) = record.binding()
                 && (!session.recognizes_native_window_binding(binding)
                     || match &record {
@@ -374,7 +399,9 @@ impl NativeBridge {
                 self.reports.push_back(NativeReport::GroupShutdownRequested);
             }
             Inbound::Effect(_) => return Err(NativeBridgeError::UnknownBinding),
-            Inbound::Wake => {}
+            // The managed host consumes this barrier only after committing the
+            // prefix collected above; the bridge never consumes its outputs.
+            Inbound::Presentation(_) | Inbound::Wake => {}
         }
         Ok(())
     }

@@ -155,7 +155,7 @@ impl Element for DockspaceElement {
         window: &mut Window,
         cx: &mut App,
     ) -> PreparedState {
-        presentation::abandon_unaccepted(&mut self.host.borrow_mut(), window);
+        presentation::abandon_unaccepted(&mut self.host.borrow_mut(), window, cx);
         host_native::prepare_window(&self.host, window, cx);
         let mount = self
             .host
