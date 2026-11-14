@@ -1,6 +1,4 @@
-use crate::legacy::detached_tree::PreparedDetach;
 use crate::legacy::graph_assembly::{CanonicalGraphError, CanonicalNode, DockGraphAssembly};
-use crate::legacy::payload_ref::{DockPayloadKind, DockPayloadRefError};
 use crate::legacy::{
     CanonicalGraphAuthority, CanonicalGraphRevisionChange, CanonicalGraphVersion, DockFloatingId,
     DockGroupId, DockItemId, DockLayoutRect, DockSpaceId, SplitAxis,
@@ -86,31 +84,6 @@ fn empty_central_space_has_policy_without_placeholder_node() {
     assert!(space.central.keep_alive_when_empty);
     assert!(space.central.passthrough_when_empty);
     assert!(graph.nodes().is_empty());
-}
-
-#[test]
-fn payload_ref_and_prepared_detach_preserve_group_identity() {
-    let mut assembly = DockGraphAssembly::new();
-    assembly.add_space("main").unwrap();
-    let group = assembly
-        .add_group("editor", [item("A"), item("B")], item("B"))
-        .unwrap();
-    assembly.set_root("main", group).unwrap();
-    assembly
-        .set_central_node("main", Some(group), true, false)
-        .unwrap();
-    let graph = assembly.publish(version(1, 0)).unwrap();
-
-    let payload = graph
-        .payload_ref("main", "A", DockPayloadKind::WholeGroup)
-        .unwrap();
-    let prepared = PreparedDetach::prepare(&graph, payload).unwrap();
-    assert_eq!(
-        prepared.payload.source_group.as_ref().unwrap().as_str(),
-        "editor"
-    );
-    assert_eq!(prepared.source_node, group_node(&graph, "editor"));
-    assert_eq!(prepared.expected_central_node, Some(prepared.source_node));
 }
 
 #[test]
@@ -243,7 +216,7 @@ fn canonical_authorities_receive_distinct_epochs() {
 }
 
 #[test]
-fn floating_root_is_first_class_and_payload_ownership_is_indexed() {
+fn floating_root_is_first_class_and_ownership_is_indexed() {
     let mut assembly = DockGraphAssembly::new();
     assembly.add_space("main").unwrap();
     let floating = assembly
@@ -253,23 +226,12 @@ fn floating_root_is_first_class_and_payload_ownership_is_indexed() {
         .add_floating_root("float-1", "main", floating, rect(), 7)
         .unwrap();
     let graph = assembly.publish(version(1, 0)).unwrap();
-    let payload = graph
-        .payload_ref("main", "F", DockPayloadKind::WholeFloating)
-        .unwrap();
-    assert_eq!(
-        payload.source_floating.as_ref().map(|id| id.as_str()),
-        Some("float-1")
-    );
     assert_eq!(
         graph
             .index()
             .floating_for_item(&item("F"))
             .map(|id| id.as_str()),
         Some("float-1")
-    );
-    assert_eq!(
-        payload.source_node,
-        graph.floating_roots().values().next().unwrap().root
     );
 }
 
@@ -303,33 +265,6 @@ fn publication_canonicalizes_floating_order_by_z_then_id() {
         ]
     );
     graph.validate().unwrap();
-}
-
-#[test]
-fn payload_proof_rejects_an_identical_graph_from_another_authority() {
-    fn graph(version: CanonicalGraphVersion) -> crate::legacy::graph_assembly::CanonicalDockGraph {
-        let mut assembly = DockGraphAssembly::new();
-        assembly.add_space("main").unwrap();
-        let group = assembly
-            .add_group("editor", [item("A")], item("A"))
-            .unwrap();
-        assembly.set_root("main", group).unwrap();
-        assembly.publish(version).unwrap()
-    }
-
-    let original = graph(version(41, 0));
-    let replacement = graph(version(42, 0));
-    let payload = original
-        .payload_ref("main", "A", DockPayloadKind::WholeGroup)
-        .unwrap();
-
-    assert_eq!(
-        replacement.validate_payload_ref(&payload),
-        Err(DockPayloadRefError::StaleVersion {
-            expected: version(41, 0),
-            actual: version(42, 0),
-        })
-    );
 }
 
 #[test]
@@ -402,31 +337,6 @@ fn assembly_rejects_a_child_reused_by_two_branches() {
 }
 
 #[test]
-fn retained_subtree_payload_binds_to_the_explicit_subtree_root() {
-    let mut assembly = DockGraphAssembly::new();
-    assembly.add_space("main").unwrap();
-    let first = assembly.add_group("first", [item("A")], item("A")).unwrap();
-    let second = assembly
-        .add_group("second", [item("B")], item("B"))
-        .unwrap();
-    let root = assembly
-        .add_branch(SplitAxis::Horizontal, first, second, 0.5)
-        .unwrap();
-    assembly.set_root("main", root).unwrap();
-    let graph = assembly.publish(version(1, 0)).unwrap();
-    let root = graph
-        .space(&DockSpaceId::from("main"))
-        .unwrap()
-        .root
-        .unwrap();
-
-    let payload = graph.subtree_payload_ref("main", root, "B").unwrap();
-    assert_eq!(payload.kind, DockPayloadKind::RetainedSubtree);
-    assert_eq!(payload.source_node, root);
-    graph.validate_payload_ref(&payload).unwrap();
-}
-
-#[test]
 fn canonical_graph_rejects_invalid_runtime_mru_and_duplicate_floating_order() {
     let mut assembly = DockGraphAssembly::new();
     assembly.add_space("main").unwrap();
@@ -462,14 +372,4 @@ fn canonical_graph_rejects_invalid_runtime_mru_and_duplicate_floating_order() {
         duplicate_order.publish(version(2, 0)),
         Err(CanonicalGraphError::DuplicateFloatingZOrder { z_order: 5, .. })
     ));
-}
-
-fn group_node(
-    graph: &crate::legacy::graph_assembly::CanonicalDockGraph,
-    group: &str,
-) -> crate::legacy::CanonicalNodeId {
-    graph
-        .index()
-        .node_for_group(&DockGroupId::from(group))
-        .unwrap()
 }
