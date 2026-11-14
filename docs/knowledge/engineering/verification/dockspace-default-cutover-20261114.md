@@ -17,7 +17,7 @@ incumbent-removal or physical-platform qualification scope.
 | Open-GPUI delivery | Commit | Qualification linkage |
 | --- | --- | --- |
 | Structured diagnostic text redaction | `28ce49635639617bf6d2a68c2031f59f37f24a44` | Generic JSON structure/idempotence test and complete DevTools cohort below. |
-| Default session cutover, inspection and close decisions | `e7bf156a6dcafe49f34ea81e4d578159d1dad3ee` | Final source for the deterministic and compiler gates below; includes compatibility isolation, migrated consumers, root roster cleanup and wasm clock correction. Native attempts retain their explicitly intermediate build scope. |
+| Default session cutover, inspection and close decisions | `e7bf156a6dcafe49f34ea81e4d578159d1dad3ee` | Final source for the deterministic and compiler gates below; includes compatibility isolation, migrated consumers, root roster cleanup and wasm clock correction. The successful native retry below builds documentation-only descendant `410f7650`; earlier native attempts retain their explicitly intermediate build scope. |
 
 ## Ownership and API cutover
 
@@ -117,7 +117,7 @@ its declared scenarios without changing their qualification scope.
 | Browser compilation | Rust 1.95 locked `wasm32-unknown-unknown` smoke compiles with its explicit incumbent feature and the shared adapter. This proves clock/dependency compilation, not browser execution of the new docking implementation. |
 | Correctness and documentation | Strict `clippy::correctness` / `clippy::suspicious`, root formatting, rustdoc broken-link denial, public API, import boundaries, public doc links and release inventory pass. Existing non-denied warnings remain; this is not a warning-free claim. |
 | Federated UI gate | `scan-ui-contract` passes its static ownership checks and exact registered scenarios. The existing visual scan now recognizes files named `tests.rs` as tests, matching its prior `_test` exclusion. |
-| Native editor | Two startup refusals described below; **not passed** at this revision. Both actual processes exit and the final inventory is empty. |
+| Native editor | **Passed** on clean `410f7650e6f2154108b54328b6ca2663481b0789`, after the two historical startup refusals below. The rebuilt editor completes the native trajectory in 2.026 s with actual OS exit 0; final inventory contains zero probe processes/apps. |
 
 Logs use `/tmp/open-gpui-docking-cutover-*-20261114.log`. The default/shared,
 all-feature, example, tool and diagnostic test run IDs above preserve their
@@ -143,8 +143,33 @@ contains **zero live probe processes and zero temporary apps**. Logs are
 `/tmp/open-gpui-docking-cutover-native-smoke-awake-20261114.log`; the cleanup
 receipt is `/tmp/open-gpui-docking-cutover-native-final-cleanup-20261114.json`.
 Earlier successful native receipts keep their original revisions and are not
-relabelled as execution of this cutover. Rerun the ordinary editor trajectory
-when the owning GUI session has a committed display topology.
+relabelled as execution of this cutover.
+
+At the owner's request, the ordinary editor trajectory was retried at
+2026-11-14 09:09:50 +08:00 on clean
+`410f7650e6f2154108b54328b6ca2663481b0789`. A locked, serial incremental build
+selected the actual Cargo-reported executable. CoreGraphics reported one active
+and one online display before and after execution. A bounded `caffeinate -d -u`
+assertion kept the display awake during the existing LaunchServices runner;
+the assertion process was terminated and reaped afterward. No runtime or runner
+source changed to obtain this result.
+
+The retry **passed** in 2.026 s, with runner exit 0 and actual native wait status
+0. Its `DOCKSPACE NATIVE SMOKE OK:` receipt confirms child creation, two real
+Submitted windows, retained Entity identity and local/shared edits,
+dependent-before-anchor native terminal handling and binding quiescence, and
+survival followed by independent retirement of the isolated sibling workspace.
+The temporary app was removed after process exit. The post-run inventory again
+contains **zero live probe processes and zero temporary apps**. This qualifies
+the ordinary native trajectory for the final cutover source; the physical input
+and foreign-platform gates below remain separate.
+
+| Retry artifact | Path |
+| --- | --- |
+| Cargo build log | `/tmp/open-gpui-docking-native-retry-20261114-090950-build.log` |
+| Cargo executable selection | `/tmp/open-gpui-docking-native-retry-20261114-090950-artifacts.jsonl` |
+| Native smoke log | `/tmp/open-gpui-docking-native-retry-20261114-090950-smoke.log` |
+| Source, display, exit and cleanup receipt | `/tmp/open-gpui-docking-native-retry-20261114-090950-receipt.json` |
 
 ## Remaining removal and platform gates
 

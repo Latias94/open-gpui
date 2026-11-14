@@ -70,10 +70,14 @@ The cutover implementation is `e7bf156a`, preceded by generic JSON diagnostic
 redaction `28ce4963`. Final default docking passes 65 cases, all-feature docking
 passes 1,541, complete DevTools passes 123 and the migrated example pair passes
 its two lifecycle trajectories. Rust 1.95, the independent consumer, wasm smoke
-compilation and ownership/documentation gates pass. Two real Mac editor attempts
-refuse startup without an atomic display publication; both exit and leave zero
-probe processes/apps. Preserve that unpassed native boundary when selecting the
-next downstream pin; do not replace it with the earlier successful smoke receipt.
+compilation and ownership/documentation gates pass. Two initial real Mac editor
+attempts refused startup without an atomic display publication; both exited and
+left zero probe processes/apps. A rebuilt retry on clean `410f7650` passes the
+ordinary editor native trajectory in 2.026 s with actual OS exit 0, retaining
+Entity identity and edits through two submitted windows, native retirement and
+independent workspace cleanup. Its final inventory also contains zero probe
+processes/apps. The cutover evidence preserves all three attempts and their
+source scopes; physical input and foreign-platform qualification remain open.
 
 The continuation independently rechecks the full 564-SHA fixed upstream set,
 149 root/toolchain entries and actual final iOS/Apple/Tokio/EGL/renderer owners;
