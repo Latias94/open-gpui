@@ -706,6 +706,8 @@ fn select_native_mixed_dpi_display_pair(
 
 mod process_harness;
 mod scenario_runner;
+mod shared_interactive;
+mod shared_session;
 mod shared_shutdown;
 
 use scenario_runner::{
@@ -1525,6 +1527,18 @@ fn run_native_interactive_worker(registration: NativeScenarioRegistration) -> ! 
     process_harness::await_worker_start();
     if registration.behavior == NativeDockBehavior::SurfaceShutdown {
         shared_shutdown::run_worker(registration);
+    }
+    if matches!(
+        registration.behavior,
+        NativeDockBehavior::SourceCapture
+            | NativeDockBehavior::ComplexDockspaceWorkflow
+            | NativeDockBehavior::OpaqueOcclusion
+            | NativeDockBehavior::ProvisionalSameHwndPromotion
+            | NativeDockBehavior::LiveRouteAndReleaseLock
+            | NativeDockBehavior::NoInputPassThrough
+            | NativeDockBehavior::MixedDpiPlacement
+    ) {
+        shared_interactive::run_worker(registration);
     }
     let scenario_id = registration.id.clone();
     let behavior = registration.behavior;
