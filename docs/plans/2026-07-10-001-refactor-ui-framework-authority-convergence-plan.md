@@ -11,6 +11,12 @@ deepened: 2026-07-30
 
 # Open GPUI UI Framework Authority Convergence - Plan
 
+The physical Windows execution policy is superseded by
+[Hosted CI and Local Physical Verification](../verification.md#hosted-ci-and-local-physical-verification).
+System-input and mixed-DPI qualification use the local manifest gate. References below to the
+removed self-hosted workflow describe the earlier deployment proposal; their behavioral acceptance
+requirements still apply locally.
+
 ## Goal Capsule
 
 Open GPUI should leave this work as a credible general-purpose desktop UI framework foundation, not only a large component catalog. The framework must have one authoritative path for form lifecycle, focus and overlay arbitration, accessibility semantics and announcements, activation, theme resolution, collection typeahead, component conformance, post-layout subtree geometry, layout-preserving subtree presentation, portal anchors, nested reveal, rounded subtree clipping, Dock presentation and application ownership, lossless platform-event delivery, live platform-window mutation, native multi-viewport drag transport, and DockSurface window-session teardown.

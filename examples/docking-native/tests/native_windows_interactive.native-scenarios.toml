@@ -1,6 +1,5 @@
-schema = 6
+schema = 7
 suite = "docking-native.windows.interactive"
-runner = "open-gpui-windows-native-interactive-ephemeral"
 
 [[scenario]]
 id = "native.u27.source-capture"

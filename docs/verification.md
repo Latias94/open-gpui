@@ -1,5 +1,22 @@
 # Verification
 
+## Hosted CI and Local Physical Verification
+
+GitHub Actions runs checks supported by its hosted images. The dedicated Windows physical-input
+workflow has been removed; physical qualification runs locally through the existing manifest gate.
+
+| Execution environment | Verification scope |
+| --- | --- |
+| GitHub-hosted Linux, macOS and Windows | Compilation, compiler floors, formatting, library and consumer contracts, packaging and dependency checks. |
+| GitHub-hosted Windows and Linux browser jobs | Programmatic HWND/rendering/retirement tests, shared adapter and recovery baselines, GPU readback and browser smoke supported by those images. |
+| Local Windows interactive desktop | System pointer injection, clean-desktop Z-order, same-HWND physical promotion and mixed-DPI/negative-origin placement. |
+
+The hosted `Verify` workflow keeps physical tests ignored. It checks their manifest, registry and
+compilation without executing the physical gate. A hosted CI pass establishes only the first two
+rows. The local command and hardware requirements are in
+[Windows Native Interactive Runner Gate](#windows-native-interactive-runner-gate). Earlier records
+that name the removed self-hosted workflow retain their historical execution scope.
+
 ## November 14 Published Dockspace Adoption
 
 The [remote adoption record](knowledge/engineering/verification/dockspace-remote-adoption-20261114.md)
@@ -166,8 +183,8 @@ does not follow from these correctness repairs.
 The shared session is now the root/prelude API. Default library checks exercise
 that path; `--all-features` additionally compiles and tests the explicit
 compatibility engine under `legacy`. Both cohorts remain required. The native
-dogfood example requires `--features legacy-docking`; its Windows manifest runner
-and CI command pass that feature explicitly. Older commands below describe their
+dogfood example requires `--features legacy-docking`; its local Windows manifest runner
+and hosted example baseline pass that feature explicitly. Older commands below describe their
 recorded revisions: add the feature when rerunning incumbent scenarios on current
 source. Browser smoke also explicitly retains the incumbent unsupported-native
 window probe until its replacement is qualified.
@@ -13231,26 +13248,12 @@ retry succeeds. Automated owners include
 ## Windows Native Interactive Runner Gate
 
 Claims about system-routed cross-HWND pointer input, actual Win32 capture ownership, or a live
-provisional viewport require the self-hosted runner label
-`open-gpui-windows-native-interactive-ephemeral`. The runner is owned by the Windows backend CODEOWNER in
-`.github/CODEOWNERS`; runner outage or missing capacity is an infrastructure failure that blocks
-the gate. Do not skip the job, move it to `windows-latest`, or replace system input with
-`SendMessageW` / `PostMessageW`. Escalate an unavailable or incapable runner through a repository
-infrastructure issue assigned to `@Latias94`.
+provisional viewport require a local execution of the physical-input gate. GitHub Actions does not
+schedule this suite. The existing sentinel, manifest selectors, behavior receipts and native cleanup
+assertions remain the acceptance criteria; direct `SendMessageW` / `PostMessageW` delivery does not
+substitute for system input.
 
-The self-hosted workflow is not triggered by `pull_request`. It accepts only merge-queue commits,
-trusted pushes to the primary branch, or a maintainer `workflow_dispatch` with a full `commit_sha`;
-checkout is rejected unless HEAD matches that object exactly. Pull-request candidates receive this
-evidence through the merge queue or a maintainer-owned trusted-branch reproduction, never by running
-their head revision directly on the self-hosted desktop. Every third-party action in this workflow is
-pinned to an immutable full Git object id. The runner must be a separate immutable one-job Windows
-host registered with `--ephemeral`, with no repository or organization secrets, no reusable
-credentials, and no access to privileged internal resources. Its machine or VM must be destroyed or
-returned to a known-clean image after the job. A persistent self-hosted desktop must never carry the
-ephemeral label or execute this workflow. Runner logs must be forwarded before the disposable runner
-is destroyed.
-
-The runner must provide all of the following:
+The local Windows machine must provide all of the following:
 
 - an unlocked interactive user desktop rather than a service session;
 - compatible process integrity and UIPI boundaries for `SendInput`;
@@ -13259,45 +13262,15 @@ The runner must provide all of the following:
 - a functioning native renderer/GPU path;
 - two actual displays with distinct DPI scales and at least one negative physical origin;
 - exposed shell-desktop space on both display work areas for provisional placement;
-- permission to foreground the sentinel HWND without human interaction;
-- one-job ephemeral registration and a clean disposable host; and
-- no credentials or unrestricted network reachability that candidate code could retain or abuse.
-
-Before checkout, the workflow reads the following machine-level attestations directly from the
-runner host and fails closed if any are absent or inconsistent:
-
-| Machine environment variable | Required evidence |
-| --- | --- |
-| `OPEN_GPUI_NATIVE_RUNNER_EPHEMERAL` | exact value `1` |
-| `OPEN_GPUI_NATIVE_RUNNER_ONE_JOB` | exact value `1` |
-| `OPEN_GPUI_NATIVE_RUNNER_CLEAN_IMAGE_ID` | immutable image/build identifier for the disposable host |
-| `OPEN_GPUI_NATIVE_RUNNER_ACCOUNT_SID` | exact SID of the dedicated low-privilege interactive account |
-| `OPEN_GPUI_NATIVE_RUNNER_NETWORK_POLICY` | exact value `deny-default-v1` |
-
-The preflight also requires `Environment.UserInteractive`, a non-zero Windows session id, and a
-current process SID matching the attested account. These facts are provisioned in the machine image,
-not through repository variables, workflow inputs, or secrets. The workflow grants only read-only
-repository contents and references no repository or organization secret. Infrastructure owns image
-destruction and network-policy enforcement; the repository gate verifies their machine-stamped
-identities before any candidate checkout or Cargo execution.
+- permission to foreground the sentinel HWND without human interaction.
 
 The hosted `Verify` workflow covers the shared adapter suites, complete Windows backend,
 minimum compiler versions, native rendering consumers and the programmatic recovery baseline.
-It does not replace this physical-input gate. Once an eligible ephemeral runner is registered,
-dispatch the interactive workflow against a published exact commit:
-
-```text
-gh workflow run native-windows-interactive.yml --repo Latias94/open-gpui --ref main -f commit_sha=<full-commit-sha>
-```
-
-The gate uses a dedicated per-run temporary directory for native worker evidence. Successful
-and failed worker stdout/stderr logs upload with `always()` under the artifact name
-`native-windows-interactive-<run-id>-<attempt>` and remain available for 14 days. Each original
-worker report contains its nonce, census and terminal facts. The full Cargo/gate output remains
-in the Actions job log. An early failure before worker creation warns about missing artifacts
-without replacing the original job result. Artifact upload requires the runner's network policy
-to permit the Actions artifact service. The repository's actionlint configuration declares the
-existing custom runner label; it does not provision a runner.
+It does not replace this physical-input gate. Run one gate at a time without concurrent mouse
+automation or manual input. Record `git rev-parse HEAD`, any working-tree changes and the complete
+gate output with each local qualification. Successful and failed worker stdout/stderr files remain
+in the system temporary directory; manifest invocations print their original paths and nonces.
+Keep those original reports with the gate log so capture, census and terminal facts remain reviewable.
 
 The preflight opens a rendered GPUI window, waits for a non-empty framework frame to receive a
 `Submitted` renderer outcome, records and later restores the foreground window and system cursor,
@@ -13307,16 +13280,15 @@ the exact canary-tagged HWND message together with its GPUI observer/capture eff
 cannot satisfy the preflight. Stack unwinding releases a matching test capture and restores
 the original cursor; if failure occurs after injected button-down, cleanup first injects a
 best-effort button-up so the desktop cannot remain in a global drag. The input guard is destroyed
-before application/platform teardown, which continues to own every test HWND. The workflow
-serializes all runs through the same concurrency group and never cancels an in-progress cursor
-owner.
+before application/platform teardown, which continues to own every test HWND. The local operator
+owns exclusive access to the cursor for the entire gate.
 
-Run the sentinel only on that dedicated runner:
+To run the sentinel separately on the same local desktop:
 
 ```powershell
 $env:CARGO_BUILD_JOBS = '1'
 $env:OPEN_GPUI_NATIVE_INTERACTIVE = '1'
-cargo nextest run -p open-gpui-windows --locked --run-ignored only -E 'test(=platform::native_test_support::native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture)' --no-fail-fast
+cargo nextest run -p open-gpui-windows --locked --run-ignored only -E 'test(=platform::native_test_support::native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture)' --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 The sentinel is the phase-zero runner proof. The native Dock manifest
@@ -13444,7 +13416,7 @@ the `Successful worker receipt retention` section distinguishes the follow-up fr
 | `native.u28.no-input-pass-through` | U28 | `system-input`, `wnd-proc`, `capture`, `point-stack`, `presentation` | two consecutive no-input GPUI HWNDs pass through to a lower GPUI HWND, stop at a lower external opaque HWND, and reject a generation-changing sample |
 | `native.u28.mixed-dpi-client-bounds` | U28 | `system-input`, `wnd-proc`, `capture`, `point-stack`, `presentation`, `lifetime` | captured desktop tear-off across the same real distinct-DPI display pair in both lower-to-higher and higher-to-lower directions, with at least one negative physical display origin, same-HWND provisional promotion, and exact target-side physical client bounds; missing dual-DPI or negative-origin capacity is a gate failure |
 
-The schema 6 manifest is the native-scenario execution inventory and selector-metadata authority: its
+The schema 7 manifest is the native-scenario execution inventory and selector-metadata authority: its
 rows supply the scenario id, requirement owner, package/test coordinate, ignored policy, typed
 observation domains, behavior, and optional dockspace fixture id used to construct each exact
 `nextest` invocation. A complex-workflow row does not duplicate fixture steps or declare a synthetic
@@ -13457,21 +13429,21 @@ row for every supported behavior and rejects duplicate ids, behaviors, or packag
 without attempting to parse Rust source. The non-ignored example registry test reloads the same
 manifest and checks row identity plus evidence basics rather than maintaining a second ownership
 table. A Dock worker receives the selected scenario id through `OPEN_GPUI_NATIVE_SCENARIO_ID`, reloads
-that manifest row, and dispatches it through the matching behavior-specific wrapper. The workflow
-invokes one typed runner entry, and the runner builds one exact `nextest` process per manifest row in
-either `open-gpui-docking-native` or `open-gpui-windows`. The workflow does not contain a second list
-of selectors, so an alias worker cannot satisfy two scenario ids. The CI-negative fixtures exercise
-the manifest's fail-closed schema, unique row/behavior/coordinate rules, behavior receipts, and
-workflow-entry checks before the interactive workers run.
+that manifest row, and dispatches it through the matching behavior-specific wrapper. The local
+typed runner builds one exact `nextest` process per manifest row in either
+`open-gpui-docking-native` or `open-gpui-windows`. The manifest records test behavior without a CI
+runner label. Negative fixtures exercise its fail-closed schema, unique row/behavior/coordinate
+rules and behavior receipts. Hosted UI-contract checks validate this metadata without reading a
+physical-input workflow or executing its workers.
 
 The provisional activation Z-order and opaque hit-transparent prefix rows are intentionally ignored
 in the ordinary Windows package suite. They mutate or inspect global foreground and top-level
-Z-order state and therefore require the named ephemeral interactive runner's clean desktop and
-capability preflight. Moving them behind the typed manifest prevents unrelated user windows or
+Z-order state and therefore require the local gate's clean desktop and capability preflight.
+Keeping them behind the typed manifest prevents unrelated user windows or
 integrity boundaries from becoming false product failures while retaining the exact real-HWND
 proofs as release gates.
 
-The dedicated workflow entry is:
+Run the complete local gate with:
 
 ```powershell
 $env:CARGO_BUILD_JOBS = '1'

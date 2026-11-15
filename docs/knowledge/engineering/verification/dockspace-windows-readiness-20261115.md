@@ -8,6 +8,13 @@ git_commit: 479c48011efb15930025a71ad5578daf414cc2ac
 
 # Windows Shared Dockspace Readiness
 
+The later execution-policy change removes the self-hosted physical-input workflow. The existing
+manifest gate now runs locally; hosted CI retains programmatic native, rendering and adapter
+coverage. Schema 7 removes only the manifest's runner label, preserving all fifteen scenario rows
+and their acceptance requirements. See [the current verification guide](../../../verification.md#hosted-ci-and-local-physical-verification).
+Earlier workflow and runner-capacity observations below retain their original scope, including
+the incomplete 8/15 physical result.
+
 ## Source and scope
 
 The assessment starts from clean Open-GPUI

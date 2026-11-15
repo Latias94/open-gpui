@@ -641,7 +641,7 @@ fn require_native_interactive_runner() {
         std::env::var("OPEN_GPUI_NATIVE_INTERACTIVE")
             .ok()
             .is_some_and(|value| value == "1"),
-        "native interactive tests require OPEN_GPUI_NATIVE_INTERACTIVE=1 on the open-gpui-windows-native-interactive-ephemeral runner"
+        "native interactive tests require OPEN_GPUI_NATIVE_INTERACTIVE=1 on a local interactive Windows desktop"
     );
 }
 
@@ -5944,7 +5944,7 @@ fn borrowed_renderer_rejects_quiescence_without_destroying_the_real_hwnd() {
 }
 
 #[test]
-#[ignore = "requires the open-gpui-windows-native-interactive-ephemeral runner"]
+#[ignore = "requires the local Windows physical-input gate"]
 fn native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture() {
     require_native_interactive_runner();
     discard_stale_quit_messages();

@@ -29,7 +29,7 @@ enum XtaskCommand {
     DependencyHealth,
     /// Run the complete native WGPU package test suite.
     RendererSmoke,
-    /// Run the manifest-owned Windows native interactive Dock gate.
+    /// Run the manifest-owned Dock gate on a local interactive Windows desktop.
     NativeWindowsInteractive,
     /// Verify changelog, release notes, README versions, and breaking inventory.
     VerifyReleaseDocs(ForwardArgs),

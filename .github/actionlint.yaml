@@ -1,3 +1,0 @@
-self-hosted-runner:
-  labels:
-    - open-gpui-windows-native-interactive-ephemeral

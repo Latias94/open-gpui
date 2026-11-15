@@ -4,6 +4,12 @@ Prepared November 12, 2026 for the independent Open-GPUI maintenance session. Th
 handoff navigation and suggested next work. Accepted ADRs remain architecture authority; existing
 plans and qualification records retain their exact scope.
 
+Current CI policy: GitHub Actions retains hosted compilation, library, consumer, programmatic
+native and rendering checks. Physical Windows input, clean-desktop Z-order and mixed-DPI
+qualification run locally through `cargo run --locked -p xtask -- native-windows-interactive`.
+The former self-hosted workflow and runner provisioning requirements in historical sections are
+superseded by [the verification guide](../verification.md#hosted-ci-and-local-physical-verification).
+
 The engine development path is recorded separately in Nara:
 `docs/plans/2026-11-12-nara-ui-integration-handoff.md`.
 

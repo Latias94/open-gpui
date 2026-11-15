@@ -14,11 +14,8 @@ use crate::ui_contract::scan_ui_contract;
 pub(crate) const NATIVE_SCENARIO_MANIFEST_PATH: &str =
     "examples/docking-native/tests/native_windows_interactive.native-scenarios.toml";
 pub(crate) const NATIVE_SCENARIO_SUITE: &str = "docking-native.windows.interactive";
-pub(crate) const NATIVE_SCENARIO_RUNNER: &str = "open-gpui-windows-native-interactive-ephemeral";
-pub(crate) const NATIVE_SCENARIO_WORKFLOW_ENTRY: &str =
-    "cargo run --locked -p xtask -- native-windows-interactive";
 
-const NATIVE_SCENARIO_SCHEMA: u16 = 6;
+const NATIVE_SCENARIO_SCHEMA: u16 = 7;
 const DOCKSPACE_SCENARIO_FIXTURES: &str =
     include_str!("../../crates/gpui_docking/src/legacy/fixtures/dockspace_scenarios_v2.json");
 const NATIVE_DOCK_PACKAGE: &str = "open-gpui-docking-native";
@@ -149,7 +146,6 @@ impl Drop for NativeScenarioRunReceipt {
 pub(crate) struct NativeScenarioManifest {
     pub(crate) schema: u16,
     pub(crate) suite: String,
-    pub(crate) runner: String,
     pub(crate) scenario: Vec<NativeScenarioDeclaration>,
 }
 
@@ -357,12 +353,6 @@ pub(crate) fn native_manifest_failures(manifest: &NativeScenarioManifest) -> Vec
         failures.push(format!(
             "{NATIVE_SCENARIO_MANIFEST_PATH}: suite `{}` must be `{NATIVE_SCENARIO_SUITE}`",
             manifest.suite
-        ));
-    }
-    if manifest.runner != NATIVE_SCENARIO_RUNNER {
-        failures.push(format!(
-            "{NATIVE_SCENARIO_MANIFEST_PATH}: runner `{}` must be `{NATIVE_SCENARIO_RUNNER}`",
-            manifest.runner
         ));
     }
     if manifest.scenario.is_empty() {
@@ -623,7 +613,7 @@ pub(crate) fn native_windows_interactive(root: &Path) -> Result<(), ()> {
     }
     if env::var("OPEN_GPUI_NATIVE_INTERACTIVE").ok().as_deref() != Some("1") {
         eprintln!(
-            "native-windows-interactive requires OPEN_GPUI_NATIVE_INTERACTIVE=1 on the dedicated interactive runner"
+            "native-windows-interactive requires OPEN_GPUI_NATIVE_INTERACTIVE=1 on a local interactive Windows desktop"
         );
         return Err(());
     }

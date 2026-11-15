@@ -826,7 +826,6 @@ impl NativeDockBehavior {
 struct NativeScenarioManifest {
     schema: u16,
     suite: String,
-    runner: String,
     scenario: Vec<NativeScenarioManifestRegistration>,
 }
 
@@ -1378,12 +1377,8 @@ struct NativeNoInputOverlay {
 #[test]
 fn native_interactive_scenario_registry_matches_cases() {
     let manifest = native_scenario_manifest();
-    assert_eq!(manifest.schema, 6);
+    assert_eq!(manifest.schema, 7);
     assert_eq!(manifest.suite, NATIVE_DOCK_SUITE_ID);
-    assert_eq!(
-        manifest.runner,
-        "open-gpui-windows-native-interactive-ephemeral"
-    );
 
     let mut registrations = BTreeMap::new();
     for registration in manifest.scenario {
@@ -1429,19 +1424,19 @@ fn native_interactive_scenario_registry_matches_cases() {
 }
 
 #[test]
-#[ignore = "requires the open-gpui-windows-native-interactive-ephemeral runner"]
+#[ignore = "requires the local Windows physical-input gate"]
 fn native_interactive_two_hwnd_captured_drag_routes_preview_and_drop() {
     run_native_interactive_manifest_scenario(NativeDockBehavior::SourceCapture);
 }
 
 #[test]
-#[ignore = "requires the open-gpui-windows-native-interactive-ephemeral runner"]
+#[ignore = "requires the local Windows physical-input gate"]
 fn native_interactive_complex_dockspace_workflow_runs_four_cross_window_steps() {
     run_native_interactive_manifest_scenario(NativeDockBehavior::ComplexDockspaceWorkflow);
 }
 
 #[test]
-#[ignore = "requires the open-gpui-windows-native-interactive-ephemeral runner"]
+#[ignore = "requires the local Windows physical-input gate"]
 fn native_interactive_tab_drag_input_to_submit_latency_benchmark() {
     let registration = NativeScenarioRegistration {
         id: DRAG_LATENCY_BENCHMARK_ID.to_owned(),
@@ -1465,49 +1460,49 @@ fn native_interactive_tab_drag_input_to_submit_latency_benchmark() {
 }
 
 #[test]
-#[ignore = "requires the open-gpui-windows-native-interactive-ephemeral runner"]
+#[ignore = "requires the local Windows physical-input gate"]
 fn native_interactive_opaque_occlusion_blocks_underlay_and_preserves_same_hwnd() {
     run_native_interactive_manifest_scenario(NativeDockBehavior::OpaqueOcclusion);
 }
 
 #[test]
-#[ignore = "requires the open-gpui-windows-native-interactive-ephemeral runner"]
+#[ignore = "requires the local Windows physical-input gate"]
 fn native_interactive_anchor_close_releases_capture_and_retires_dependent_hwnds() {
     run_native_interactive_manifest_scenario(NativeDockBehavior::SurfaceShutdown);
 }
 
 #[test]
-#[ignore = "requires the open-gpui-windows-native-interactive-ephemeral runner"]
+#[ignore = "requires the local Windows physical-input gate"]
 fn native_interactive_provisional_gate_presents_and_promotes_same_hwnd() {
     run_native_interactive_manifest_scenario(NativeDockBehavior::ProvisionalSameHwndPromotion);
 }
 
 #[test]
-#[ignore = "requires the open-gpui-windows-native-interactive-ephemeral runner"]
+#[ignore = "requires the local Windows physical-input gate"]
 fn native_interactive_live_route_reuses_same_hwnd_and_locks_release() {
     run_native_interactive_manifest_scenario(NativeDockBehavior::LiveRouteAndReleaseLock);
 }
 
 #[test]
-#[ignore = "requires the open-gpui-windows-native-interactive-ephemeral runner"]
+#[ignore = "requires the local Windows physical-input gate"]
 fn native_interactive_committed_destination_loss_retires_runtime_authority() {
     run_native_interactive_manifest_scenario(NativeDockBehavior::CommittedLossRecovery);
 }
 
 #[test]
-#[ignore = "requires the open-gpui-windows-native-interactive-ephemeral runner"]
+#[ignore = "requires the local Windows physical-input gate"]
 fn native_interactive_process_converges_after_active_surface_shutdown() {
     run_native_interactive_manifest_scenario(NativeDockBehavior::ProcessConvergence);
 }
 
 #[test]
-#[ignore = "requires the open-gpui-windows-native-interactive-ephemeral runner"]
+#[ignore = "requires the local Windows physical-input gate"]
 fn native_interactive_no_input_prefix_passes_through_and_fails_closed_on_generation_drift() {
     run_native_interactive_manifest_scenario(NativeDockBehavior::NoInputPassThrough);
 }
 
 #[test]
-#[ignore = "requires the open-gpui-windows-native-interactive-ephemeral runner"]
+#[ignore = "requires the local Windows physical-input gate"]
 fn native_interactive_mixed_dpi_final_client_bounds_are_exact() {
     run_native_interactive_manifest_scenario(NativeDockBehavior::MixedDpiPlacement);
 }
@@ -2206,7 +2201,7 @@ fn ensure_native_interactive_runner(scenario_id: &str) {
         std::env::var("OPEN_GPUI_NATIVE_INTERACTIVE")
             .ok()
             .is_some_and(|value| value == "1"),
-        "scenario `{scenario_id}` requires OPEN_GPUI_NATIVE_INTERACTIVE=1 on the named ephemeral runner"
+        "scenario `{scenario_id}` requires OPEN_GPUI_NATIVE_INTERACTIVE=1 on a local interactive Windows desktop"
     );
 }
 
