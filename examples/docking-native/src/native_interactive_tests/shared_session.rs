@@ -43,17 +43,20 @@ use super::{
 pub(super) const SHARED_SOURCE_SURFACE: SurfaceId = SurfaceId::new(1);
 pub(super) const SHARED_TARGET_SURFACE: SurfaceId = SurfaceId::new(2);
 pub(super) const SHARED_MIDDLE_SURFACE: SurfaceId = SurfaceId::new(3);
+pub(super) const SHARED_SURVIVOR_SURFACE: SurfaceId = SurfaceId::new(10);
 pub(super) const SHARED_SOURCE_ITEM: ItemId = ItemId::new(101);
 pub(super) const SHARED_TARGET_ITEM: ItemId = ItemId::new(102);
 pub(super) const SHARED_MIDDLE_ITEM: ItemId = ItemId::new(103);
 pub(super) const SHARED_TARGET_SECONDARY_ITEM: ItemId = ItemId::new(104);
 pub(super) const SHARED_SOURCE_SECONDARY_ITEM: ItemId = ItemId::new(105);
 pub(super) const SHARED_MIDDLE_SECONDARY_ITEM: ItemId = ItemId::new(106);
+pub(super) const SHARED_SURVIVOR_ITEM: ItemId = ItemId::new(110);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum SharedFixtureShape {
     TwoWindows,
     ThreeWindows,
+    SurvivorWindow,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -194,6 +197,25 @@ impl SharedSession {
                         (SHARED_TARGET_SURFACE, SHARED_TARGET_ITEM, bounds[1]),
                         (SHARED_MIDDLE_SURFACE, SHARED_MIDDLE_ITEM, bounds[2]),
                     ],
+                )
+            }
+            SharedFixtureShape::SurvivorWindow => {
+                ensure!(bounds.len() == 1, "survivor fixture needs one bound");
+                let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+                    SHARED_SURVIVOR_SURFACE,
+                    DockspaceRootLayout::new(
+                        RootId::new(SHARED_SURVIVOR_SURFACE.get()),
+                        DockspaceNode::tabs([SHARED_SURVIVOR_ITEM]),
+                    ),
+                )])?;
+                (
+                    layout,
+                    vec![DockPane::new(
+                        SHARED_SURVIVOR_ITEM,
+                        "Shared survivor",
+                        cx.new(|_| Empty),
+                    )],
+                    vec![(SHARED_SURVIVOR_SURFACE, SHARED_SURVIVOR_ITEM, bounds[0])],
                 )
             }
         };

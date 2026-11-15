@@ -70,12 +70,19 @@ pub(super) fn run_worker(registration: NativeScenarioRegistration) -> ! {
     let behavior = registration.behavior;
     let scenario_id = registration.id.clone();
     let worker_subcase = process_harness::worker_subcase(&registration.id, behavior);
+    let quit_mode = if behavior == NativeDockBehavior::ProcessConvergence
+        && worker_subcase.uses_last_window_policy()
+    {
+        QuitMode::LastWindowClosed
+    } else {
+        QuitMode::Explicit
+    };
     let worker_observation = observation.clone();
     let completion_for_application = completion.clone();
     match WindowsPlatform::new_returning_for_test(false) {
         Ok(platform) => {
             let mut application =
-                Application::with_platform(Rc::new(platform)).with_quit_mode(QuitMode::Explicit);
+                Application::with_platform(Rc::new(platform)).with_quit_mode(quit_mode);
             application.run_returning_for_test(move |cx| {
                 let completion = completion_for_application.clone();
                 let scenario_id = scenario_id.clone();
@@ -99,12 +106,15 @@ pub(super) fn run_worker(registration: NativeScenarioRegistration) -> ! {
                     if let Err(error) = cleanup {
                         failures.push(format!("shared interactive cleanup failed: {error}"));
                     }
-                    let app_shutdown =
+                    let app_shutdown = if worker.should_skip_app_shutdown() {
+                        Ok(())
+                    } else {
                         AssertUnwindSafe(shutdown_native_worker_application_without_surface(cx))
                             .catch_unwind()
                             .await
                             .map_err(panic_message)
-                            .and_then(|result| result.map_err(|error| error.to_string()));
+                            .and_then(|result| result.map_err(|error| error.to_string()))
+                    };
                     if let Err(error) = app_shutdown {
                         failures.push(format!("shared interactive app shutdown failed: {error}"));
                     }
@@ -123,13 +133,17 @@ pub(super) fn run_worker(registration: NativeScenarioRegistration) -> ! {
                     } else {
                         NativeWorkerOutcome::Failed(failures.join("; "))
                     };
+                    let skip_app_shutdown = worker.should_skip_app_shutdown();
+                    let exit_path = worker.exit_path;
                     *completion.borrow_mut() = Some(NativeWorkerCompletion {
                         outcome,
                         milestones: worker.milestones,
-                        exit_path: NativeWorkerExitPath::ExplicitCleanup,
+                        exit_path,
                         app_census,
                     });
-                    cx.update(|app| app.quit());
+                    if !skip_app_shutdown {
+                        cx.update(|app| app.quit());
+                    }
                 })
                 .detach();
             });
@@ -211,8 +225,10 @@ pub(super) fn run_worker(registration: NativeScenarioRegistration) -> ! {
 struct SharedScenarioWorker {
     observation: NativeWindowTestObservation,
     session: Option<SharedSession>,
+    survivor: Option<SharedSession>,
     overlays: Vec<NativeNoInputOverlay>,
     milestones: Vec<String>,
+    exit_path: NativeWorkerExitPath,
 }
 
 impl SharedScenarioWorker {
@@ -220,9 +236,15 @@ impl SharedScenarioWorker {
         Self {
             observation,
             session: None,
+            survivor: None,
             overlays: Vec::new(),
             milestones: Vec::new(),
+            exit_path: NativeWorkerExitPath::ExplicitCleanup,
         }
+    }
+
+    fn should_skip_app_shutdown(&self) -> bool {
+        !matches!(self.exit_path, NativeWorkerExitPath::ExplicitCleanup)
     }
 
     async fn run(
@@ -241,7 +263,9 @@ impl SharedScenarioWorker {
                 self.run_provisional(cx, behavior, worker_subcase).await
             }
             NativeDockBehavior::NoInputPassThrough => self.run_no_input(cx).await,
-            NativeDockBehavior::ProcessConvergence => self.run_process_convergence(cx).await,
+            NativeDockBehavior::ProcessConvergence => {
+                self.run_process_convergence(cx, worker_subcase).await
+            }
             NativeDockBehavior::CommittedLossRecovery => self.run_committed_loss(cx).await,
             NativeDockBehavior::SurfaceShutdown | NativeDockBehavior::TabDragLatencyBenchmark => {
                 bail!("shared interactive worker received unsupported behavior {behavior:?}")
@@ -257,6 +281,9 @@ impl SharedScenarioWorker {
         let bounds = cx.update(|app| match shape {
             SharedFixtureShape::TwoWindows => two_window_bounds(app),
             SharedFixtureShape::ThreeWindows => three_window_bounds(app),
+            SharedFixtureShape::SurvivorWindow => {
+                bail!("survivor fixture requires an explicit placement bound")
+            }
         })?;
         self.open_session_with_bounds(cx, shape, bounds).await
     }
@@ -617,15 +644,53 @@ impl SharedScenarioWorker {
         Ok(())
     }
 
-    async fn run_process_convergence(&mut self, cx: &mut AsyncApp) -> Result<()> {
-        // The shared adapter's explicit group shutdown is the common convergence boundary.
-        // The two physical windows are still retained independently until the group is quiescent.
-        let session = self
-            .open_session(cx, SharedFixtureShape::TwoWindows)
+    async fn run_process_convergence(
+        &mut self,
+        cx: &mut AsyncApp,
+        worker_subcase: NativeWorkerSubcase,
+    ) -> Result<()> {
+        let bounds = cx.update(three_window_bounds)?;
+        let observation = self.observation.clone();
+        let primary = cx.update(|app| {
+            SharedSession::build(
+                app,
+                observation.clone(),
+                SharedFixtureShape::TwoWindows,
+                &bounds[..2],
+            )
+        })?;
+        let survivor = cx.update(|app| {
+            SharedSession::build(
+                app,
+                observation,
+                SharedFixtureShape::SurvivorWindow,
+                &bounds[2..],
+            )
+        })?;
+        self.session = Some(primary);
+        self.survivor = Some(survivor);
+        self.session
+            .as_mut()
+            .context("shared primary session disappeared")?
+            .wait_ready(cx)
             .await?;
-        let source = session.source_window()?;
-        let target = session.target_window()?;
-        let drag = session.begin_captured_drag(cx, source, source.item).await?;
+        self.survivor
+            .as_mut()
+            .context("shared survivor session disappeared")?
+            .wait_ready(cx)
+            .await?;
+        let primary = self
+            .session
+            .as_mut()
+            .context("shared primary session disappeared")?;
+        let survivor = self
+            .survivor
+            .as_mut()
+            .context("shared survivor session disappeared")?;
+        let source = primary.source_window()?;
+        let target = primary.target_window()?;
+        let survivor_window = survivor.windows[0];
+        let drag = primary.begin_captured_drag(cx, source, source.item).await?;
         unsafe {
             PostMessageW(
                 Some(target.hwnd),
@@ -635,13 +700,68 @@ impl SharedScenarioWorker {
             )
         }
         .context("shared process convergence could not post WM_CLOSE")?;
-        session.wait_drag_released(cx).await?;
-        ensure!(
-            unsafe { !IsWindow(Some(source.hwnd)).as_bool() }
-                || unsafe { !IsWindow(Some(target.hwnd)).as_bool() },
-            "shared WM_CLOSE retained both HWNDs"
-        );
-        session.assert_release_terminal(source, drag.generation)?;
+        primary.wait_drag_released(cx).await?;
+        wait_until(
+            cx,
+            "shared primary surface to close while survivor remains live",
+            |cx| {
+                primary.pump(cx);
+                survivor.pump(cx);
+                primary.check_health()?;
+                survivor.check_health()?;
+                Ok(primary.dock.native_is_quiescent()
+                    && cx.update(|app| app.windows().len() == 1)
+                    && unsafe { IsWindow(Some(survivor_window.hwnd)).as_bool() }
+                    && cx.update(|app| window_has_non_empty_frame(app, survivor_window.window))?)
+            },
+        )
+        .await?;
+        primary.assert_release_terminal(source, drag.generation)?;
+        if let Some(mut pointer) = primary.pointer.take() {
+            ensure!(
+                pointer.release_primary_button_best_effort(),
+                "shared process convergence could not restore the physical primary button"
+            );
+        }
+        if let (Some(source_identity), Some(anchor_identity)) = (source.identity, target.identity) {
+            let events = self.observation.events();
+            let source_lifecycle = super::native_shutdown_ordinals(&events, source_identity)?;
+            let anchor_lifecycle = super::native_shutdown_ordinals(&events, anchor_identity)?;
+            super::assert_native_shutdown_order("shared process dependent", &source_lifecycle)?;
+            super::assert_native_shutdown_order("shared process anchor", &anchor_lifecycle)?;
+            ensure!(
+                source_lifecycle.non_client_destroy < anchor_lifecycle.destroy_entered,
+                "shared process anchor destruction preceded its dependent"
+            );
+        }
+        if worker_subcase.uses_last_window_policy() {
+            unsafe {
+                PostMessageW(
+                    Some(survivor_window.hwnd),
+                    WM_CLOSE,
+                    WPARAM::default(),
+                    LPARAM::default(),
+                )
+            }
+            .context("shared process convergence could not close survivor")?;
+            wait_until(cx, "shared last-window policy to return", |cx| {
+                survivor.pump(cx);
+                Ok(cx.update(|app| app.windows().is_empty()))
+            })
+            .await?;
+            self.exit_path = NativeWorkerExitPath::LastWindowClosed;
+        } else {
+            cx.update(|app| app.shutdown_and_quit_for_native_exit_test());
+            wait_until(cx, "shared App shutdown fanout", |cx| {
+                primary.pump(cx);
+                survivor.pump(cx);
+                Ok(primary.dock.native_is_quiescent()
+                    && survivor.dock.native_is_quiescent()
+                    && cx.update(|app| app.windows().is_empty()))
+            })
+            .await?;
+            self.exit_path = NativeWorkerExitPath::AppShutdown;
+        }
         Ok(())
     }
 
@@ -691,8 +811,14 @@ impl SharedScenarioWorker {
         for overlay in self.overlays.drain(..) {
             let _ = cx.update(|app| close_no_input_overlay(app, overlay));
         }
+        if self.should_skip_app_shutdown() {
+            return Ok(());
+        }
         if let Some(session) = self.session.as_mut() {
             session.shutdown(cx).await?;
+        }
+        if let Some(survivor) = self.survivor.as_mut() {
+            survivor.shutdown(cx).await?;
         }
         Ok(())
     }
