@@ -632,6 +632,12 @@ legacy fixture catalog or package-wide `legacy-docking` feature. The shared
 committed-loss test seam calls the dockspace presentation command and does not
 reintroduce the old payload recovery registry.
 
+The subsequent [Windows readiness assessment](../knowledge/engineering/verification/dockspace-windows-readiness-20261115.md)
+checks the source migration against the locked egui/native and winit multiview references. It
+separates missing platform facts and provisional-window integration from worker role, shutdown,
+mixed-DPI and committed-loss oracle defects. Use its actual Windows gate result and module
+recommendations before treating the source-complete migration as physical parity.
+
 ## First Maintenance Session
 
 1. Verify the current checkout, local commits and remote pin; read this handoff's Mac continuation

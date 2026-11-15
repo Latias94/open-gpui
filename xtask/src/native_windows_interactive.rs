@@ -645,18 +645,21 @@ pub(crate) fn native_windows_interactive(root: &Path) -> Result<(), ()> {
         true,
         None,
     )?;
-    run_cargo(
-        root,
-        [
-            "nextest",
-            "run",
-            "-p",
-            WINDOWS_PACKAGE,
-            "--locked",
-            "--test-threads=1",
-            "--no-fail-fast",
-        ],
-    )?;
+    let mut report = NativeGateReport::default();
+    report.run("open-gpui-windows baseline", || {
+        run_cargo(
+            root,
+            [
+                "nextest",
+                "run",
+                "-p",
+                WINDOWS_PACKAGE,
+                "--locked",
+                "--test-threads=1",
+                "--no-fail-fast",
+            ],
+        )
+    });
     run_exact_test(
         root,
         NATIVE_DOCK_PACKAGE,
@@ -665,7 +668,6 @@ pub(crate) fn native_windows_interactive(root: &Path) -> Result<(), ()> {
         None,
     )?;
 
-    let mut report = NativeGateReport::default();
     for scenario in &manifest.scenario {
         println!(
             "==> native scenario {} ({})",
@@ -733,6 +735,9 @@ fn run_exact_test(
         "--no-tests".to_owned(),
         "fail".to_owned(),
     ]);
+    if scenario.is_some() {
+        args.extend(["--success-output".to_owned(), "final".to_owned()]);
+    }
     run_cargo_with_scenario(root, args, scenario)
 }
 
@@ -795,8 +800,8 @@ mod tests {
         let executed = RefCell::new(Vec::new());
         let mut report = NativeGateReport::default();
 
-        report.run("sentinel", || {
-            executed.borrow_mut().push("sentinel");
+        report.run("Windows baseline", || {
+            executed.borrow_mut().push("Windows baseline");
             Err(())
         });
         report.run("later scenario", || {
@@ -804,8 +809,11 @@ mod tests {
             Ok(())
         });
 
-        assert_eq!(executed.into_inner(), ["sentinel", "later scenario"]);
-        assert_eq!(report.failed_steps(), ["sentinel"]);
+        assert_eq!(
+            executed.into_inner(),
+            ["Windows baseline", "later scenario"]
+        );
+        assert_eq!(report.failed_steps(), ["Windows baseline"]);
         assert_eq!(report.finish(), Err(()));
     }
 

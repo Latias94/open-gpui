@@ -13257,6 +13257,8 @@ The runner must provide all of the following:
 - one serial owner of the global cursor and pointer buttons;
 - a non-empty virtual screen containing the test window;
 - a functioning native renderer/GPU path;
+- two actual displays with distinct DPI scales and at least one negative physical origin;
+- exposed shell-desktop space on both display work areas for provisional placement;
 - permission to foreground the sentinel HWND without human interaction;
 - one-job ephemeral registration and a clean disposable host; and
 - no credentials or unrestricted network reachability that candidate code could retain or abuse.
@@ -13278,6 +13280,24 @@ not through repository variables, workflow inputs, or secrets. The workflow gran
 repository contents and references no repository or organization secret. Infrastructure owns image
 destruction and network-policy enforcement; the repository gate verifies their machine-stamped
 identities before any candidate checkout or Cargo execution.
+
+The hosted `Verify` workflow covers the shared adapter suites, complete Windows backend,
+minimum compiler versions, native rendering consumers and the programmatic recovery baseline.
+It does not replace this physical-input gate. Once an eligible ephemeral runner is registered,
+dispatch the interactive workflow against a published exact commit:
+
+```text
+gh workflow run native-windows-interactive.yml --repo Latias94/open-gpui --ref main -f commit_sha=<full-commit-sha>
+```
+
+The gate uses a dedicated per-run temporary directory for native worker evidence. Successful
+and failed worker stdout/stderr logs upload with `always()` under the artifact name
+`native-windows-interactive-<run-id>-<attempt>` and remain available for 14 days. Each original
+worker report contains its nonce, census and terminal facts. The full Cargo/gate output remains
+in the Actions job log. An early failure before worker creation warns about missing artifacts
+without replacing the original job result. Artifact upload requires the runner's network policy
+to permit the Actions artifact service. The repository's actionlint configuration declares the
+existing custom runner label; it does not provision a runner.
 
 The preflight opens a rendered GPUI window, waits for a non-empty framework frame to receive a
 `Submitted` renderer outcome, records and later restores the foreground window and system cursor,
@@ -13304,6 +13324,107 @@ The sentinel is the phase-zero runner proof. The native Dock manifest
 scenario ids to one exact package/test coordinate, one U27-U29 requirement owner, one behavior
 dispatch, an explicit ignored policy, and the typed native observation domains that worker must
 cross:
+
+The table records required behavior, not completed shared-session qualification. The November 15
+workers dispatch to the shared adapter, but the
+[Windows readiness assessment](knowledge/engineering/verification/dockspace-windows-readiness-20261115.md)
+records physical capture/work-area integration, release-barrier, receiver and reentrant WndProc
+ownership fixes, the executed gate, and the shared provisional physical owner and same-window
+adoption implementation. That checkpoint passes 143 focused regressions and the 34-test example baseline;
+its physical row still stops at the pointer canary before activation. Pre-release native qualification
+and migrated-worker oracle gaps remain. Its full gate passes three of fifteen rows. Later focused
+results and native crash diagnosis are recorded separately; they do not rewrite that full-gate receipt.
+
+The subsequent real Windows post-admission loss regression uses the public semantic tear-off
+command without system pointer injection. It shares its admission, retained-View, native-loss,
+automatic recovery and Dock Back checks with the physical committed-loss worker. It requires the
+original HWND's renderer/native retirement, the same View's local state under a contained or exact
+admitted replacement owner, and final presentation in the original source main root. See the
+readiness record's `Post-admission native loss and shared dock-back` section for executed results
+and the distinction from the legacy pre-first-live loss/Restore-control qualification below.
+The expanded cohort passes all 35 nonignored example tests plus three adjacent Windows lifetime
+regressions (38/38). A final targeted run after refining generation-bound retirement checks also
+passes, with 4/4 native generations terminal on the replacement path. These runs retain the physical
+manifest and its existing qualification requirements.
+
+The target-DPI follow-up adds an explicitly selected real Windows regression:
+
+```powershell
+$env:CARGO_BUILD_JOBS = '1'
+cargo nextest run --locked -p open-gpui-docking-native --features legacy-docking `
+  --run-ignored only `
+  -E 'test(=native_interactive_tests::shared_placement::real_windows_shared_native_placement_matches_target_dpi_in_both_directions)' `
+  --test-threads=1 --no-fail-fast --no-tests fail --success-output final
+```
+
+This requires an actual mixed-DPI display pair and negative-coordinate monitor; missing hardware
+fails when the test is selected. The public tear-off command and custom native factory preserve
+the original core outer intent and capture the backend's target-DPI client conversion before
+bridge placement. Both directions require exact real HWND client/outer geometry, first-live
+presentation of the original stateful View, unchanged source roots, native terminal cleanup and
+an unchanged process window census. The custom factory opts out of provisional preview, so this
+regression does not qualify physical captured routing or same-HWND promotion. See the readiness
+record's `Target-DPI placement and original caption anchors` section for executed receipts.
+The real hardware regression passes in both directions on the November 15 125%/150% pair,
+including negative-coordinate placement and independent 3/3 native-generation cleanup and
+unchanged HWND census per direction. Its final target-DPI cohort passes 94/94, and the full shared
+adapter regression set passes 95/95. These results preserve the distinction from physical rows.
+
+This execution also catches two integration defects: custom factories need their original
+callback route before staged surface painting, and real mount removal must commit a per-surface
+`SurfaceUnavailable` contribution before permanent binding quiescence. That loss contribution
+uses the existing native FIFO presentation barrier. Group drain retires core-owned children and
+their bindings before application roots, preserving non-anchor recovery hosts.
+
+The physical provisional workers separately require the original LiveRoute receipt and actual
+target-DPI geometry before release, followed by the original FinalRelease receipt, independent
+core outer intent, current full placement binding and retained-View presentation after promotion.
+Their exact root identities and geometry must survive. A request's original Z-order anchor may
+lie on the native caption outside the client, while the Windows backend still requires the
+requested outer frame to contain that same anchor.
+
+An earlier completed November 15 fifteen-row gate passes seven rows, including both
+process-convergence exit paths, surface shutdown and no-input pass-through. Its Windows baseline
+passes 324/324 and its example baseline passes 35/35. A later continuation fixes omitted native
+desktop-routing capability declarations and the workflow fixture's restoration-guard lifetime.
+Focused real Windows source-capture and four-step workflow runs then pass. The workflow also
+requires the same View and local state 41 to render in its destination and subsequent third
+window. The complete adapter suite passes 99/99, including desktop delivery and a negative
+button-authority case; the final standalone example baseline passes 35/35.
+
+The following full-gate attempts do not reach the fifteen rows: two fail the unchanged input
+sentinel on cursor position or an already-pressed primary button, and one passes that sentinel
+but stops at a 323/324 Windows baseline with an exact Submitted/readback timeout. The failing
+round-trip test passes its focused follow-up; no renderer logic or deadline is changed. These
+attempts do not establish a new fifteen-row result. Six physical-preview rows still need their
+required shell-desktop placement area and an idle input desktop. Full-gate and legacy-removal
+qualification remain incomplete; see the readiness record's `Native cross-window delivery
+capabilities` section for the executed boundaries and preserved failed attempts.
+
+A subsequent user-authorized complete-gate retry passes the UI contract and original input
+sentinel, then stops at another 323/324 Windows baseline. The earlier Submitted/readback round-trip
+test passes in this run; the failing clipboard stale-metadata test returns `None` from its final
+public read and passes an unchanged focused follow-up. Its cause remains unproven, and no manifest
+row executes in that gate. A separate exact source-capture run then passes the final retained-View
+and local-state-41 assertions with its original behavior receipt and native cleanup protocol.
+These distinct results and run identifiers are retained in the readiness record's
+`Authorized complete-gate retry` section; they do not change the complete-gate status.
+
+The following clipboard investigation reproduces the final-read `None` together with an actual
+`OpenClipboard` refusal. Ordinary clipboard unit fixtures now use the existing bounded acquisition
+wait, which returns admitted data failures immediately. The exact stale-metadata test passes
+300/300 repetitions. A separate private-metadata failure inside an admitted guard remains recorded
+with no established cause. The runner also aggregates the Windows baseline with its existing final
+failure report, allowing independent manifest rows to execute while preserving a failed gate.
+
+The latest complete fifteen-row execution passes **8/15**, with Windows baseline 324/324 and Dock
+baseline 35/35. The four-step stateful-View workflow and both process-convergence exit paths pass.
+Source-capture times out at initial native capture before delivery; six preview/promotion rows lack
+real shell-desktop placement points on the covered display work areas. Its complete-gate failure
+remains explicit. The readiness record's `Independent gate-result aggregation` section contains all
+fifteen run identifiers and the distinct failure boundaries. Successful worker stdout/stderr logs
+are now retained, with their original nonce and artifact paths emitted by manifest invocations;
+the `Successful worker receipt retention` section distinguishes the follow-up from that full run.
 
 | Scenario id | Owner | Required observation domains | Exact native worker responsibility |
 | --- | --- | --- | --- |
@@ -13365,6 +13486,16 @@ metadata sets `ignored = true` add `--run-ignored only`, regardless of whether t
 Dock or the Windows backend. The rendered native Dock baseline runs afterward. A scenario failure
 therefore cannot be hidden by a broad regex, an alias worker, a package mismatch, or an accidentally
 skipped ignored test.
+
+The Windows backend baseline contributes to the same final failure report as the manifest rows
+and the rendered Dock baseline. Its failure does not stop the independent manifest rows from
+executing, and still makes the complete gate fail. The input sentinel, manifest validation,
+UI contract and scenario registry remain prerequisites: a failure there stops native scenario
+execution. All workers still use the original receipt, cleanup and assertion requirements.
+Scenario invocations print successful test output so each verified worker's original nonce and
+retained stdout/stderr paths are included in the gate log. The original worker report carries its
+census and terminal facts; successful and failed worker artifacts both remain available in the
+system temporary directory.
 
 Each worker uses a two-phase, nonce-bound pipe protocol. The parent creates the child with piped
 stdin/stdout, assigns it to a Windows Job Object configured with

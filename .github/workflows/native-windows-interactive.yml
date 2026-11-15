@@ -98,6 +98,27 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
 
+      - name: Prepare native worker evidence directory
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidenceDirectory = Join-Path $env:RUNNER_TEMP "native-windows-interactive-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          New-Item -ItemType Directory -Path $evidenceDirectory -ErrorAction Stop | Out-Null
+          "TEMP=$evidenceDirectory" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "TMP=$evidenceDirectory" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "OPEN_GPUI_NATIVE_EVIDENCE_DIRECTORY=$evidenceDirectory" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Run the manifest-owned native Dock gate
         shell: pwsh
         run: cargo run --locked -p xtask -- native-windows-interactive
+
+      - name: Upload native worker evidence
+        if: ${{ always() && env.OPEN_GPUI_NATIVE_EVIDENCE_DIRECTORY != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-windows-interactive-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.OPEN_GPUI_NATIVE_EVIDENCE_DIRECTORY }}/open-gpui-native-dock-*.stdout.log
+            ${{ env.OPEN_GPUI_NATIVE_EVIDENCE_DIRECTORY }}/open-gpui-native-dock-*.stderr.log
+          if-no-files-found: warn
+          retention-days: 14
