@@ -707,6 +707,9 @@ fn select_native_mixed_dpi_display_pair(
 mod process_harness;
 mod scenario_runner;
 mod shared_interactive;
+mod shared_native;
+mod shared_placement;
+mod shared_recovery;
 mod shared_session;
 mod shared_shutdown;
 

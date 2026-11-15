@@ -78,14 +78,18 @@ pub(super) fn run_worker(registration: super::NativeScenarioRegistration) -> ! {
         previous_hook(panic);
     }));
     let completion = Rc::new(RefCell::new(None::<NativeWorkerCompletion>));
+    process_harness::worker_phase("platform.initializing");
     match WindowsPlatform::new_returning_for_test(false) {
         Ok(platform) => {
+            process_harness::worker_phase("platform.initialized");
             let mut application =
                 Application::with_platform(Rc::new(platform)).with_quit_mode(QuitMode::Explicit);
             let completion_for_application = completion.clone();
             let worker_observation = observation.clone();
             application.run_returning_for_test(move |cx| {
+                process_harness::worker_phase("application.launched");
                 cx.spawn(async move |cx| {
+                    process_harness::worker_phase("scenario.running");
                     let mut worker = ShutdownWorker::default();
                     let mut failures = Vec::new();
                     let result = AssertUnwindSafe(worker.exercise(cx, &worker_observation))
@@ -93,6 +97,7 @@ pub(super) fn run_worker(registration: super::NativeScenarioRegistration) -> ! {
                         .await
                         .map_err(panic_message)
                         .and_then(|result| result.map_err(|error| format!("{error:#}")));
+                    process_harness::worker_phase("scenario.finished");
                     if let Err(error) = result {
                         failures.push(error);
                     }
@@ -132,6 +137,7 @@ pub(super) fn run_worker(registration: super::NativeScenarioRegistration) -> ! {
                             NativeWorkerAppCensus::default()
                         }
                     };
+                    process_harness::worker_phase("cleanup.census-ready");
                     if app_census.window_registry_count != 0
                         || app_census.active_drag
                         || !app_census.native_exit_authority_settled
@@ -151,7 +157,7 @@ pub(super) fn run_worker(registration: super::NativeScenarioRegistration) -> ! {
                         exit_path: NativeWorkerExitPath::ExplicitCleanup,
                         app_census,
                     });
-                    cx.update(|app| app.quit());
+                    cx.update(|app| app.shutdown_and_quit_for_native_exit_test());
                 })
                 .detach();
             });
@@ -167,6 +173,7 @@ pub(super) fn run_worker(registration: super::NativeScenarioRegistration) -> ! {
             });
         }
     }
+    process_harness::worker_phase("application.returned");
     let mut completion = completion
         .borrow_mut()
         .take()
@@ -373,8 +380,10 @@ impl ShutdownWorker {
                 drag_events.borrow_mut().push(event);
             })
         }));
+        process_harness::worker_phase("anchor.opening");
         let anchor =
             cx.update(|app| dock.open_native_root(ANCHOR, true, WindowOptions::default(), app))?;
+        process_harness::worker_phase("anchor.opened");
         wait_until(cx, "shared anchor's original Submitted frame", |cx| {
             self.pump(cx);
             self.check_health()?;
@@ -385,6 +394,7 @@ impl ShutdownWorker {
                 && cx.update(|app| window_has_non_empty_frame(app, anchor))?)
         })
         .await?;
+        process_harness::worker_phase("anchor.submitted");
         let anchor = cx.update(|app| ObservedWindow::capture(app, &dock, observation, anchor))?;
         let outer = native_test_window_rect(anchor.hwnd)?;
         cx.update(|app| {

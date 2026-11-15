@@ -9,7 +9,7 @@ use open_gpui_windows::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    env, fs,
+    env,
     fs::File,
     io::{self, BufRead as _, BufReader, Read as _, Seek as _, SeekFrom, Write as _},
     panic::{AssertUnwindSafe, catch_unwind},
@@ -455,16 +455,63 @@ pub(super) fn worker_mixed_dpi_pair_plan(
 }
 
 pub(super) fn await_worker_start() {
+    worker_phase("start.waiting");
     let nonce = worker_protocol_nonce();
     let command = read_worker_command();
     if command != format!("{WORKER_START_COMMAND} {nonce}") {
         eprintln!("native Dock worker received an invalid start command");
         std::process::exit(2);
     }
+    worker_phase("start.accepted");
+}
+
+pub(super) fn worker_phase(phase: &str) {
+    eprintln!("native Dock worker phase: {phase}");
 }
 
 pub(super) fn capture_process_window_census() -> Result<NativeProcessWindowCensus> {
     process_window_census(std::process::id())
+}
+
+pub(super) fn validate_process_window_census(
+    before: &NativeProcessWindowCensus,
+    after: &NativeProcessWindowCensus,
+) -> Result<()> {
+    ensure!(
+        after.top_level_hwnds == before.top_level_hwnds,
+        "top-level HWND census changed: before={before:?}, after={after:?}"
+    );
+    ensure!(
+        after.gpui_message_only_hwnds == before.gpui_message_only_hwnds,
+        "GPUI platform message windows remain: {:?}",
+        describe_message_only_windows(&after.gpui_message_only_hwnds)
+    );
+    let added: Vec<_> = after
+        .message_only_hwnds
+        .iter()
+        .copied()
+        .filter(|window| !before.message_only_hwnds.contains(window))
+        .collect();
+    let unexpected: Vec<_> = added
+        .iter()
+        .copied()
+        .filter(|window| {
+            message_only_window_class(*window)
+                .is_none_or(|class_name| class_name != SYSTEM_USER_ADAPTER_WINDOW_CLASS)
+        })
+        .collect();
+    ensure!(
+        unexpected.is_empty(),
+        "unexpected process message windows remain: {:?}",
+        describe_message_only_windows(&unexpected)
+    );
+    if !added.is_empty() {
+        eprintln!(
+            "process-scoped system message windows: {:?}",
+            describe_message_only_windows(&added)
+        );
+    }
+    Ok(())
 }
 
 pub(super) fn finish_worker_report(
@@ -511,6 +558,7 @@ pub(super) fn finish_worker_report(
 }
 
 pub(super) fn publish_worker_report_and_wait_for_release(report: &NativeWorkerReport) {
+    worker_phase("report.publishing");
     let nonce = worker_protocol_nonce();
     let body = serde_json::to_string(report).unwrap_or_else(|error| {
         eprintln!("native Dock worker could not serialize its report: {error}");
@@ -524,11 +572,13 @@ pub(super) fn publish_worker_report_and_wait_for_release(report: &NativeWorkerRe
         std::process::exit(2);
     }
 
+    worker_phase("release.waiting");
     let command = read_worker_command();
     if command != format!("{WORKER_RELEASE_COMMAND} {nonce}") {
         eprintln!("native Dock worker received an invalid release command");
         std::process::exit(2);
     }
+    worker_phase("release.accepted");
 }
 
 fn worker_protocol_nonce() -> String {
@@ -719,7 +769,13 @@ fn run_worker_subcase(
             );
         }
     }
-    artifacts.remove_logs_after_success();
+    eprintln!(
+        "verified native worker: scenario={scenario_id}, subcase={}, nonce={}, stdout={}, stderr={}",
+        artifacts.subcase.as_env(),
+        artifacts.protocol_nonce,
+        artifacts.stdout_path.display(),
+        artifacts.stderr_path.display(),
+    );
 }
 
 fn panic_payload_message(panic: Box<dyn std::any::Any + Send>) -> String {
@@ -739,44 +795,13 @@ fn assert_worker_census(
     artifacts: &WorkerArtifacts,
 ) {
     let census = &report.census;
-    assert_eq!(
-        census.after_application.top_level_hwnds,
-        census.before_application.top_level_hwnds,
-        "scenario `{}` did not restore the worker's exact pre-application top-level HWND census before process exit\n{}",
-        scenario_id,
-        artifacts.summary()
-    );
-    assert_eq!(
-        census.after_application.gpui_message_only_hwnds,
-        census.before_application.gpui_message_only_hwnds,
-        "scenario `{}` retained GPUI platform message windows before process exit: {:?}\n{}",
-        scenario_id,
-        describe_message_only_windows(&census.after_application.gpui_message_only_hwnds),
-        artifacts.summary()
-    );
-    let unexpected_message_windows = census
-        .after_application
-        .message_only_hwnds
-        .iter()
-        .copied()
-        .filter(|window| {
-            !census
-                .before_application
-                .message_only_hwnds
-                .contains(window)
-        })
-        .filter(|window| {
-            message_only_window_class(*window)
-                .is_none_or(|class_name| class_name != SYSTEM_USER_ADAPTER_WINDOW_CLASS)
-        })
-        .collect::<Vec<_>>();
-    assert!(
-        unexpected_message_windows.is_empty(),
-        "scenario `{}` retained unexpected process message windows before exit: {:?}\n{}",
-        scenario_id,
-        describe_message_only_windows(&unexpected_message_windows),
-        artifacts.summary()
-    );
+    validate_process_window_census(&census.before_application, &census.after_application)
+        .unwrap_or_else(|error| {
+            panic!(
+                "scenario `{scenario_id}` HWND census: {error:#}\n{}",
+                artifacts.summary()
+            )
+        });
     let parent_observation = process_window_census(worker_pid).unwrap_or_else(|error| {
         panic!(
             "scenario `{}` parent could not establish the live pre-exit HWND census: {error:#}\n{}",
@@ -975,11 +1000,6 @@ impl WorkerArtifacts {
             read_log_tail(&self.stdout_path),
             read_log_tail(&self.stderr_path)
         )
-    }
-
-    fn remove_logs_after_success(&self) {
-        let _ = fs::remove_file(&self.stdout_path);
-        let _ = fs::remove_file(&self.stderr_path);
     }
 }
 

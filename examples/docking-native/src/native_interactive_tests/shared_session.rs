@@ -4,8 +4,10 @@ use std::{cell::RefCell, collections::BTreeSet, rc::Rc};
 
 use anyhow::{Context as _, Result, bail, ensure};
 use open_gpui::{
-    AnyWindowHandle, App, AppContext as _, AsyncApp, Empty, NativeCapturedDragEvent,
-    NativeCapturedDragGeneration, NativeCapturedDragReleaseTerminal, px,
+    AnyWindowHandle, App, AppContext as _, AsyncApp, Context, Empty, Entity, IntoElement,
+    NativeCapturedDragEvent, NativeCapturedDragGeneration, NativeCapturedDragPhase,
+    NativeCapturedDragReleaseTerminal, PlatformWindowPhysicalGeometry, Render, Window, WindowId,
+    div, prelude::*, px,
 };
 use open_gpui_docking::{
     DockPane, DockSurface, GpuiDockspaceConfig,
@@ -15,21 +17,24 @@ use open_gpui_docking::{
             DockspaceSurfaceLayout, ItemId, RootId, SurfaceId,
         },
         policy::DockPolicy,
-        runtime::DockspaceSession,
+        runtime::{DockspaceSession, NativeWindowBinding},
     },
     native::NativeReport,
 };
 use open_gpui_windows::{
     NativeTestDisplay, NativeTestPointerAction, NativeTestSystemPointerGuard,
-    NativeWindowTestIdentity, NativeWindowTestMessage, NativeWindowTestObservation,
-    native_test_acquire_foreground_window, native_test_logical_client_point_to_screen,
-    native_test_non_shell_root_window_at,
+    NativeWindowTestEventKind, NativeWindowTestIdentity, NativeWindowTestMessage,
+    NativeWindowTestObservation, native_test_acquire_foreground_window,
+    native_test_logical_client_point_to_screen, native_test_non_shell_root_window_at,
+    native_test_window_rect,
 };
 use windows::Win32::{
     Foundation::{HWND, POINT},
     UI::{
         Input::KeyboardAndMouse::{GetAsyncKeyState, GetCapture, VK_LBUTTON},
-        WindowsAndMessaging::{IsWindow, IsWindowVisible},
+        WindowsAndMessaging::{
+            GetCursorPos, GetForegroundWindow, IsWindow, IsWindowVisible, WM_NCMOUSEMOVE,
+        },
     },
 };
 
@@ -68,6 +73,13 @@ pub(super) struct SharedWindow {
     pub(super) identity: Option<NativeWindowTestIdentity>,
 }
 
+pub(super) struct SharedRootSnapshot {
+    owner: SharedWindow,
+    root: RootId,
+    binding: NativeWindowBinding,
+    geometry: PlatformWindowPhysicalGeometry,
+}
+
 pub(super) struct SharedCapturedDrag {
     pub(super) generation: NativeCapturedDragGeneration,
     pub(super) source: SharedWindow,
@@ -77,17 +89,39 @@ pub(super) struct SharedCapturedDrag {
 
 pub(super) struct SharedSession {
     pub(super) dock: DockSurface,
+    pub(super) source_view: Option<Entity<SharedSourceView>>,
     pub(super) windows: Vec<SharedWindow>,
     pub(super) observation: NativeWindowTestObservation,
     pub(super) reports: Vec<NativeReport>,
     pub(super) drag_events: Rc<RefCell<Vec<NativeCapturedDragEvent>>>,
-    pub(super) drag_observer: Option<open_gpui::Subscription>,
     pub(super) pointer: Option<NativeTestSystemPointerGuard>,
-    pub(super) initial_revision: u64,
-    pub(super) initial_window_count: usize,
-    pub(super) initial_binding_count: usize,
+    pub(super) preexisting_window_count: usize,
     pub(super) milestones: Vec<String>,
 }
+
+#[derive(Default)]
+pub(super) struct SharedSourceView {
+    pub(super) local_edits: u64,
+    pub(super) last_render: Option<(WindowId, u64)>,
+}
+
+impl Render for SharedSourceView {
+    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.last_render = Some((window.window_handle().window_id(), self.local_edits));
+        let edits = self.local_edits;
+        div()
+            .size_full()
+            .debug_selector(move || format!("shared-source-view:{edits}"))
+            .child(format!("Retained View: {edits}"))
+    }
+}
+
+struct SharedDragObservation {
+    events: Rc<RefCell<Vec<NativeCapturedDragEvent>>>,
+    _subscription: open_gpui::Subscription,
+}
+
+impl open_gpui::Global for SharedDragObservation {}
 
 impl SharedSession {
     pub(super) fn build(
@@ -96,6 +130,25 @@ impl SharedSession {
         shape: SharedFixtureShape,
         bounds: &[open_gpui::Bounds<open_gpui::Pixels>],
     ) -> Result<Self> {
+        let display_id = cx
+            .primary_display()
+            .context("shared fixture needs a primary display")?
+            .id();
+        Self::build_on_display(cx, observation, shape, bounds, display_id)
+    }
+
+    pub(super) fn build_on_display(
+        cx: &mut App,
+        observation: NativeWindowTestObservation,
+        shape: SharedFixtureShape,
+        bounds: &[open_gpui::Bounds<open_gpui::Pixels>],
+        display_id: open_gpui::DisplayId,
+    ) -> Result<Self> {
+        ensure!(
+            cx.find_display(display_id).is_some(),
+            "shared fixture could not resolve selected display {display_id:?}"
+        );
+        let mut source_view = None;
         let (layout, panes, surfaces) = match shape {
             SharedFixtureShape::TwoWindows => {
                 ensure!(
@@ -118,10 +171,12 @@ impl SharedSession {
                         ),
                     ),
                 ])?;
+                let view = cx.new(|_| SharedSourceView::default());
+                source_view = Some(view.clone());
                 (
                     layout,
                     vec![
-                        DockPane::new(SHARED_SOURCE_ITEM, "Shared source", cx.new(|_| Empty)),
+                        DockPane::new(SHARED_SOURCE_ITEM, "Shared source", view),
                         DockPane::new(
                             SHARED_SOURCE_SECONDARY_ITEM,
                             "Shared source secondary",
@@ -170,10 +225,12 @@ impl SharedSession {
                         ),
                     ),
                 ])?;
+                let view = cx.new(|_| SharedSourceView::default());
+                source_view = Some(view.clone());
                 (
                     layout,
                     vec![
-                        DockPane::new(SHARED_SOURCE_ITEM, "Shared source", cx.new(|_| Empty)),
+                        DockPane::new(SHARED_SOURCE_ITEM, "Shared source", view),
                         DockPane::new(SHARED_TARGET_ITEM, "Shared target", cx.new(|_| Empty)),
                         DockPane::new(SHARED_MIDDLE_ITEM, "Shared middle", cx.new(|_| Empty)),
                         DockPane::new(
@@ -227,33 +284,39 @@ impl SharedSession {
             GpuiDockspaceConfig::default(),
             cx,
         )?;
-        let initial_revision = 0;
-        let initial_window_count = cx.windows().len();
-        let initial_binding_count = dock.inspection()?.native_window_binding_count;
-        let drag_events = Rc::new(RefCell::new(Vec::new()));
-        let drag_events_for_observer = drag_events.clone();
-        let drag_observer = cx.observe_native_captured_drag(move |event, _| {
-            drag_events_for_observer.borrow_mut().push(event);
-        });
+        let preexisting_window_count = cx.windows().len();
+        if !cx.has_global::<SharedDragObservation>() {
+            let events = Rc::new(RefCell::new(Vec::new()));
+            let observed = events.clone();
+            let subscription = cx.observe_native_captured_drag(move |event, _| {
+                observed.borrow_mut().push(event);
+            });
+            cx.set_global(SharedDragObservation {
+                events,
+                _subscription: subscription,
+            });
+        }
+        let drag_events = cx.global::<SharedDragObservation>().events.clone();
         let mut session = Self {
             dock,
+            source_view,
             windows: Vec::new(),
             observation,
             reports: Vec::new(),
             drag_events,
-            drag_observer: Some(drag_observer),
             pointer: None,
-            initial_revision,
-            initial_window_count,
-            initial_binding_count,
+            preexisting_window_count,
             milestones: Vec::new(),
         };
         for (index, (surface, item, bounds)) in surfaces.into_iter().enumerate() {
             let mut options = super::viewport_window_options(bounds);
+            options.display_id = Some(display_id);
             options.focus_on_appearing = index == 0;
+            let anchor =
+                shape == SharedFixtureShape::SurvivorWindow || surface == SHARED_TARGET_SURFACE;
             let window = session
                 .dock
-                .open_native_root(surface, index == 0, options, cx)
+                .open_native_root(surface, anchor, options, cx)
                 .with_context(|| format!("shared root {surface:?} failed to open"))?;
             let hwnd = raw_hwnd(cx, window)?;
             session.windows.push(SharedWindow {
@@ -270,22 +333,56 @@ impl SharedSession {
     pub(super) async fn wait_ready(&mut self, cx: &mut AsyncApp) -> Result<()> {
         wait_until(
             cx,
-            "shared managed roots to submit non-empty frames",
+            "shared managed roots to present their exact docking contents",
             |cx| {
                 self.pump(cx);
                 self.check_health()?;
+                let inspection = self.dock.inspection()?;
                 cx.update(|app| {
-                    self.windows.iter().try_fold(true, |ready, window| {
-                        Ok::<_, anyhow::Error>(
-                            ready
-                                && window_has_non_empty_frame(app, window.window)?
-                                && unsafe { IsWindowVisible(window.hwnd).as_bool() },
-                        )
-                    })
+                    for window in &self.windows {
+                        let presented = inspection
+                            .mounts
+                            .iter()
+                            .find(|mount| mount.window_id == window.window.window_id().as_u64())
+                            .and_then(|mount| {
+                                mount
+                                    .regions
+                                    .iter()
+                                    .find(|region| region.surface == window.surface)
+                            })
+                            .is_some_and(|region| {
+                                region.packet_deferred == Some(false) && region.current_presentation
+                            });
+                        if !presented
+                            || !window_has_non_empty_frame(app, window.window)?
+                            || !unsafe { IsWindowVisible(window.hwnd).as_bool() }
+                        {
+                            return Ok(false);
+                        }
+                        let selector = format!("dockspace:tab:{}", window.item.get());
+                        let matches = app.update_window(window.window, |_, window, _| {
+                            window
+                                .committed_debug_bounds_for_test()
+                                .into_iter()
+                                .filter(|(candidate, _)| candidate == &selector)
+                                .collect::<Vec<_>>()
+                        })?;
+                        ensure!(
+                            matches.len() <= 1,
+                            "shared root has ambiguous committed selector `{selector}`: {matches:?}"
+                        );
+                        if !matches.first().is_some_and(|(_, bounds)| {
+                            bounds.size.width > px(0.0) && bounds.size.height > px(0.0)
+                        }) {
+                            return Ok(false);
+                        }
+                    }
+                    Ok(true)
                 })
             },
         )
-        .await?;
+        .await
+        .with_context(|| format!("shared root presentation: {:?}", self.dock.inspection()))?;
         for window in &mut self.windows {
             window.hwnd = cx.update(|app| raw_hwnd(app, window.window))?;
             window.identity = unique_native_identity_for_window(
@@ -311,6 +408,132 @@ impl SharedSession {
             "shared fixture roots must own distinct HWNDs"
         );
         self.milestones.push("shared.roots-ready".to_owned());
+        Ok(())
+    }
+
+    pub(super) fn assert_roots_on_display(
+        &self,
+        cx: &mut App,
+        display: NativeTestDisplay,
+        bounds: &[open_gpui::Bounds<open_gpui::Pixels>],
+    ) -> Result<()> {
+        ensure!(
+            self.windows.len() == bounds.len(),
+            "shared fixture root bounds do not match its windows"
+        );
+        for (window, bounds) in self.windows.iter().zip(bounds) {
+            let expected_bounds = bounds.to_device_pixels(display.scale_factor());
+            let facts = super::window_platform_facts(cx, window.window)?;
+            let geometry = facts
+                .physical_geometry
+                .context("shared fixture root has no physical client geometry")?;
+            let native_bounds = super::native_client_screen_bounds(window.hwnd)?;
+            ensure!(
+                facts.display_id == Some(display.display_id())
+                    && (facts.scale_factor - display.scale_factor()).abs() <= 0.001
+                    && (geometry.scale_factor() - display.scale_factor()).abs() <= 0.001
+                    && geometry.client_bounds() == expected_bounds
+                    && native_bounds == expected_bounds,
+                "shared fixture root diverged from its selected display and requested client bounds: window={window:?}, display={display:?}, expected={expected_bounds:?}, native_client={native_bounds:?}, facts={facts:?}"
+            );
+        }
+        Ok(())
+    }
+
+    pub(super) fn snapshot_roots(&self, app: &mut App) -> Result<Vec<SharedRootSnapshot>> {
+        let snapshots = self
+            .windows
+            .iter()
+            .map(|owner| {
+                let facts = super::window_platform_facts(app, owner.window)?;
+                let geometry = facts
+                    .physical_geometry
+                    .context("original root has no physical geometry")?;
+                ensure!(
+                    geometry.outer_bounds().is_some() && geometry.display_observation().is_some(),
+                    "original root has no coherent native frame/display observation"
+                );
+                Ok(SharedRootSnapshot {
+                    owner: *owner,
+                    root: self
+                        .dock
+                        .with_view(|view| {
+                            view.surface(owner.surface)
+                                .and_then(|surface| surface.main_root())
+                                .map(|root| root.id())
+                        })
+                        .context("original surface has no main root")?,
+                    binding: self
+                        .dock
+                        .native_binding_for_window(owner.window.window_id())
+                        .context("original root has no native binding")?,
+                    geometry,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        self.assert_roots_unchanged(app, &snapshots)?;
+        Ok(snapshots)
+    }
+
+    pub(super) fn assert_roots_unchanged(
+        &self,
+        app: &mut App,
+        snapshots: &[SharedRootSnapshot],
+    ) -> Result<()> {
+        let events = self.observation.events();
+        for snapshot in snapshots {
+            let owner = snapshot.owner;
+            let identity = owner
+                .identity
+                .context("original root has no native identity")?;
+            ensure!(
+                app.windows().contains(&owner.window)
+                    && raw_hwnd(app, owner.window)? == owner.hwnd
+                    && unique_native_identity_for_window(
+                        &events,
+                        owner.window.window_id(),
+                        "surviving original root"
+                    )? == identity
+                    && !events.iter().any(|event| event.window() == identity
+                        && matches!(
+                            event.kind(),
+                            NativeWindowTestEventKind::NativeTerminal { .. }
+                        ))
+                    && self
+                        .dock
+                        .native_binding_for_window(owner.window.window_id())
+                        == Some(snapshot.binding)
+                    && self.dock.with_view(|view| view
+                        .surface(owner.surface)
+                        .and_then(|surface| surface.main_root())
+                        .map(|root| root.id()))
+                        == Some(snapshot.root),
+                "native placement replaced or retired an original root: {owner:?}"
+            );
+            let facts = super::window_platform_facts(app, owner.window)?;
+            let client = super::native_client_screen_bounds(owner.hwnd)?;
+            let outer = native_test_window_rect(owner.hwnd)?;
+            let expected_outer = snapshot.geometry.outer_bounds().unwrap();
+            ensure!(
+                facts.physical_geometry == Some(snapshot.geometry)
+                    && facts.display_id
+                        == snapshot
+                            .geometry
+                            .display_observation()
+                            .map(|display| display.display_id())
+                    && facts.scale_factor == snapshot.geometry.scale_factor()
+                    && client == snapshot.geometry.client_bounds()
+                    && (outer.left, outer.top, outer.right, outer.bottom)
+                        == (
+                            expected_outer.origin.x.0,
+                            expected_outer.origin.y.0,
+                            expected_outer.right().0,
+                            expected_outer.bottom().0
+                        ),
+                "native placement moved or rescaled an original root: owner={owner:?}, original={:?}, facts={facts:?}, client={client:?}, outer={outer:?}",
+                snapshot.geometry
+            );
+        }
         Ok(())
     }
 
@@ -370,7 +593,12 @@ impl SharedSession {
         if unsafe { GetAsyncKeyState(i32::from(VK_LBUTTON.0)) } as u16 & 0x8000 != 0 {
             bail!("shared drag began with the physical primary button pressed");
         }
-        let mut pointer = NativeTestSystemPointerGuard::capture()?;
+        // Restoration belongs to the whole journey. Replacing a previous guard
+        // after starting the next drag would release that new generation's capture.
+        let mut pointer = match self.pointer.take() {
+            Some(pointer) => pointer,
+            None => NativeTestSystemPointerGuard::capture()?,
+        };
         let bounds = cx.update(|app| {
             unique_matching_debug_bounds(
                 app,
@@ -387,14 +615,43 @@ impl SharedSession {
             open_gpui::point(bounds.center().x + px(28.0), bounds.center().y),
             scale,
         )?;
+        native_test_acquire_foreground_window(source.hwnd.0 as isize)?;
         for point in [threshold_point, press_point] {
             ensure!(
                 native_test_non_shell_root_window_at(point) == Some(source.hwnd),
                 "shared drag point is occluded: point={point:?}, source={:?}",
                 source.hwnd
             );
+            let canary_context = || {
+                let mut cursor = POINT::default();
+                let cursor = unsafe { GetCursorPos(&mut cursor) }.ok().map(|_| cursor);
+                let messages: Vec<_> = self
+                    .observation
+                    .events()
+                    .into_iter()
+                    .rev()
+                    .filter(|event| {
+                        matches!(
+                            event.kind(),
+                            NativeWindowTestEventKind::WindowMessage {
+                                message: NativeWindowTestMessage::MouseMove
+                                    | NativeWindowTestMessage::Other(WM_NCMOUSEMOVE),
+                                ..
+                            }
+                        )
+                    })
+                    .take(12)
+                    .collect();
+                format!(
+                    "shared pointer canary requested={point:?}, cursor={cursor:?}, source={source:?}, root={:?}, foreground={:?}, messages={messages:?}",
+                    native_test_non_shell_root_window_at(point),
+                    unsafe { GetForegroundWindow() }
+                )
+            };
             pointer.inject(point, NativeTestPointerAction::Move)?;
-            let delivered = wait_for_cursor(cx, point, "shared source pointer canary").await?;
+            let delivered = wait_for_cursor(cx, point, "shared source pointer canary")
+                .await
+                .with_context(&canary_context)?;
             wait_until(cx, "shared source WndProc pointer canary", |_| {
                 Ok(native_system_mouse_message_observed(
                     &self.observation,
@@ -403,9 +660,10 @@ impl SharedSession {
                     delivered,
                 ))
             })
-            .await?;
+            .await
+            .with_context(canary_context)?;
         }
-        native_test_acquire_foreground_window(source.hwnd.0 as isize)?;
+        let event_cursor = self.drag_events.borrow().len();
         pointer.inject(press_point, NativeTestPointerAction::PrimaryDown)?;
         wait_until(cx, "shared source native capture", |_| {
             Ok(unsafe { GetCapture() } == source.hwnd
@@ -418,19 +676,48 @@ impl SharedSession {
         })
         .await?;
         pointer.inject(threshold_point, NativeTestPointerAction::Move)?;
-        wait_until(cx, "shared managed drag activation", |cx| {
+        let activation = wait_until(cx, "shared managed drag activation", |cx| {
             self.pump(cx);
             self.check_health()?;
             Ok(cx.update(|app| app.has_active_drag())
                 && cx.update(|app| self.dock.has_active_gesture())
                 && unsafe { GetCapture() } == source.hwnd)
         })
+        .await;
+        if let Err(error) = activation {
+            bail!(
+                "{error}; app_drag={}, dock={:?}, capture={:?}, events={:?}",
+                cx.update(|app| app.has_active_drag()),
+                self.dock.inspection(),
+                unsafe { GetCapture() },
+                self.drag_events.borrow()
+            );
+        }
+        pointer.inject(press_point, NativeTestPointerAction::Move)?;
+        wait_until(cx, "shared current-generation native captured move", |cx| {
+            self.pump(cx);
+            self.check_health()?;
+            Ok(self.drag_events.borrow()[event_cursor..]
+                .iter()
+                .any(|event| {
+                    event.source_window() == source.window.window_id()
+                        && event.phase() == NativeCapturedDragPhase::Moved
+                        && event.global_position().is_some_and(|point| {
+                            point.x.0 == press_point.x && point.y.0 == press_point.y
+                        })
+                }))
+        })
         .await?;
         let generation = self
             .drag_events
             .borrow()
+            .get(event_cursor..)
+            .unwrap_or_default()
             .iter()
-            .find(|event| event.source_window() == source.window.window_id())
+            .find(|event| {
+                event.source_window() == source.window.window_id()
+                    && event.phase() == NativeCapturedDragPhase::Moved
+            })
             .map(NativeCapturedDragEvent::generation)
             .context("shared managed drag did not publish a native capture generation")?;
         self.pointer = Some(pointer);
@@ -508,9 +795,7 @@ impl SharedSession {
         wait_until(cx, "shared managed session quiescence", |cx| {
             self.pump(cx);
             self.check_health()?;
-            Ok(self.dock.native_is_quiescent()
-                && cx.update(|app| app.windows().is_empty() && !app.has_active_drag())
-                && unsafe { GetCapture() } == HWND::default())
+            Ok(self.dock.native_is_quiescent())
         })
         .await
     }
