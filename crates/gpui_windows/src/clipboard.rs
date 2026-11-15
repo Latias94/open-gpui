@@ -474,11 +474,13 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
+    use super::test_support::retry_clipboard_open;
     use super::*;
 
     #[test]
     fn normalization_matrix_preserves_text_and_metadata_under_one_native_lock() {
-        let _clipboard = ClipboardGuard::open().expect("the clipboard must be available");
+        let _clipboard =
+            retry_clipboard_open(ClipboardGuard::open).expect("the clipboard must be available");
         for (text, expected) in [
             ("", ""),
             ("\0", " "),
@@ -563,7 +565,7 @@ mod tests {
             "a different window's native lock must refuse the public read",
         );
         assert!(
-            ClipboardGuard::open().is_some(),
+            retry_clipboard_open(ClipboardGuard::open).is_some(),
             "the native clipboard lock must become available after release",
         );
     }
@@ -571,12 +573,15 @@ mod tests {
     #[test]
     fn external_text_replacement_refuses_stale_metadata_without_dropping_private_formats() {
         let metadata = "[12]";
-        write_to_clipboard(ClipboardItem::new_string_with_metadata(
-            "before\0after".into(),
-            metadata.into(),
-        ));
+        retry_clipboard_open(|| {
+            write_to_clipboard(ClipboardItem::new_string_with_metadata(
+                "before\0after".into(),
+                metadata.into(),
+            ));
+        });
         {
-            let _clipboard = ClipboardGuard::open().expect("the clipboard must be available");
+            let _clipboard = retry_clipboard_open(ClipboardGuard::open)
+                .expect("the clipboard must be available");
             let hash_format = (*CLIPBOARD_HASH_FORMAT).expect("the hash format must register");
             let metadata_format =
                 (*CLIPBOARD_METADATA_FORMAT).expect("the metadata format must register");
@@ -603,7 +608,7 @@ mod tests {
             );
         }
         assert_eq!(
-            read_from_clipboard(),
+            retry_clipboard_open(read_from_clipboard),
             Some(ClipboardItem::new_string("external 世界".into())),
         );
     }
