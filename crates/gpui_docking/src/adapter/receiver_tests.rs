@@ -74,10 +74,11 @@ fn fixture(cx: &mut TestAppContext) -> (DockSurface, VisualTestContext) {
     (dock, visual)
 }
 
-fn press(
+fn pointer(
     dock: &DockSurface,
     visual: &mut VisualTestContext,
     position: Point<Pixels>,
+    event: NativePointerEvent,
 ) -> (
     Vec<(NativeReceiverQuery, NativeReceiverAnswer)>,
     Result<(), DockspaceRuntimeError>,
@@ -92,10 +93,14 @@ fn press(
             .record_native_pointer(
                 NativePointerInput::new_local(
                     NativePointerId::new(1),
-                    NativePointerEvent::ButtonPressed(NativePointerButton::Primary),
+                    event,
                     NativeLocalPointerLocation::Exact(sample),
                     NativePointerOwner::Native(binding),
-                    NativePointerOwner::Unknown,
+                    if matches!(event, NativePointerEvent::Moved) {
+                        NativePointerOwner::Native(binding)
+                    } else {
+                        NativePointerOwner::Unknown
+                    },
                 )
                 .with_metadata(metadata),
             )
@@ -155,7 +160,12 @@ fn a_frontmost_drag_only_splitter_blocks_click_and_accepts_drag(cx: &mut TestApp
         assert_eq!(semantic.drag_delivery().unwrap().descriptor(), *descriptor);
         (*descriptor, position)
     });
-    let (queries, result) = press(&dock, &mut visual, position);
+    let (queries, result) = pointer(
+        &dock,
+        &mut visual,
+        position,
+        NativePointerEvent::ButtonPressed(NativePointerButton::Primary),
+    );
     let [
         (NativeReceiverQuery::Surface(click), click_answer),
         (NativeReceiverQuery::Surface(drag), drag_answer),
@@ -204,7 +214,12 @@ fn an_exposed_empty_background_keeps_both_delivery_lanes_without_receivers(
         assert!(semantic.delivery().is_none());
         assert!(semantic.drag_delivery().is_none());
     });
-    let (queries, result) = press(&dock, &mut visual, position);
+    let (queries, result) = pointer(
+        &dock,
+        &mut visual,
+        position,
+        NativePointerEvent::ButtonPressed(NativePointerButton::Primary),
+    );
     assert_eq!(queries.len(), 2, "{queries:?}");
     for (query, answer) in queries {
         let NativeReceiverQuery::Surface(query) = query else {
@@ -220,9 +235,98 @@ fn an_exposed_empty_background_keeps_both_delivery_lanes_without_receivers(
 }
 
 #[open_gpui::test]
+fn an_exposed_background_clears_hover_without_asserting_semantic_emptiness(
+    cx: &mut TestAppContext,
+) {
+    let (dock, mut visual) = fixture(cx);
+    let source = visual.update(|window, _| {
+        let host = dock.host.borrow();
+        let frame = &host.mounts[&window.window_handle().window_id()].input_frames[0];
+        let (descriptor, hitbox) = frame
+            .receivers
+            .iter()
+            .find(|(descriptor, _)| descriptor.role() == DockspaceReceiverRole::TabBody)
+            .unwrap();
+        let center = descriptor.center();
+        let position = frame.bounds.origin + point(px(center.x() as f32), px(center.y() as f32));
+        assert_eq!(hitbox.window_point_target_rank(position, window), Some(0));
+        position
+    });
+    pointer(
+        &dock,
+        &mut visual,
+        source,
+        NativePointerEvent::ButtonPressed(NativePointerButton::Primary),
+    )
+    .1
+    .unwrap();
+    assert!(dock.host.borrow().session.has_active_gesture());
+
+    let position = point(px(24.0), px(24.0));
+    let (queries, result) = pointer(&dock, &mut visual, position, NativePointerEvent::Moved);
+    result.expect("framework clearance must let the core resolve the hover winner");
+    let [(NativeReceiverQuery::Surface(query), answer)] = queries.as_slice() else {
+        panic!("expected one native hover query: {queries:?}");
+    };
+    assert_eq!(query.purpose(), &NativeReceiverPurpose::HoverHit);
+    let clear = NativeReceiverAnswer::ClearHoverLane(query.presented_surface());
+    assert_eq!(*answer, clear);
+
+    visual.update(|window, _| {
+        let host = dock.host.borrow();
+        let mount = &host.mounts[&window.window_handle().window_id()];
+        let frame = &mount.input_frames[0];
+        let background = frame.hitboxes[0];
+        let (_, artifact) = mount.regions[&SURFACE].presented.unwrap();
+        assert!(query.matches_presentation_artifact(artifact));
+        assert_eq!(
+            background.window_point_target_rank(position, window),
+            Some(0)
+        );
+        assert!(
+            frame.receivers.iter().all(|(_, hitbox)| {
+                hitbox.window_point_target_rank(position, window) != Some(0)
+            })
+        );
+        let semantic = host
+            .session
+            .host_pointer_hit_for_device(SURFACE, query.point().unwrap(), PointerDeviceKind::Mouse)
+            .unwrap();
+        assert!(semantic.delivery().is_none());
+        assert!(semantic.drag_delivery().is_none());
+        assert_eq!(
+            semantic.hover().unwrap().descriptor().role(),
+            DockspaceReceiverRole::DropTarget,
+            "an exposed background can have a semantic hover winner"
+        );
+        assert_eq!(
+            resolve_in_window((*query).into(), mount, |hitbox, _| {
+                (hitbox == background).then_some(0)
+            }),
+            clear
+        );
+        assert_ne!(
+            clear,
+            NativeReceiverAnswer::EmptyLane(query.presented_surface())
+        );
+        assert_eq!(
+            resolve_in_window((*query).into(), mount, |_, _| None),
+            NativeReceiverAnswer::Blocked(query.presented_surface()),
+            "an external frontmost widget must still block hover"
+        );
+    });
+    assert!(dock.error().is_none(), "{:?}", dock.error());
+}
+
+#[open_gpui::test]
 fn a_real_hit_without_matching_presentation_authority_remains_unknown(cx: &mut TestAppContext) {
     let (dock, mut visual) = fixture(cx);
-    let (queries, result) = press(&dock, &mut visual, point(px(24.0), px(24.0)));
+    let (queries, result) = pointer(
+        &dock,
+        &mut visual,
+        point(px(24.0), px(24.0)),
+        NativePointerEvent::ButtonPressed(NativePointerButton::Primary),
+    );
     result.unwrap();
     assert_eq!(queries.len(), 2, "{queries:?}");
     visual.update(|window, _| {
@@ -248,4 +352,152 @@ fn a_real_hit_without_matching_presentation_authority_remains_unknown(cx: &mut T
         }
         mount.regions.get_mut(&SURFACE).unwrap().presented = Some(presented);
     });
+}
+
+#[open_gpui::test]
+fn managed_desktop_drag_delivers_to_another_presented_window(cx: &mut TestAppContext) {
+    managed_desktop_drag(cx, true);
+}
+
+#[open_gpui::test]
+fn managed_desktop_drag_without_button_authority_keeps_the_source(cx: &mut TestAppContext) {
+    managed_desktop_drag(cx, false);
+}
+
+fn managed_desktop_drag(cx: &mut TestAppContext, button_state_available: bool) {
+    use std::time::Duration;
+
+    use dockspace::{
+        geometry::PhysicalPoint,
+        runtime::{NativeDesktopPointerLocation, NativeDesktopPosition, NativePointerHover},
+    };
+    use open_gpui::{Bounds, DevicePixels, MouseButton, PlatformWindowHitStack, WindowOptions};
+
+    let source = SurfaceId::new(1);
+    let target = SurfaceId::new(2);
+    let item = ItemId::new(1);
+    cx.defer_next_window_frame_requests();
+    cx.set_platform_mouse_button_is_pressed(
+        MouseButton::Left,
+        button_state_available.then_some(false),
+    );
+    cx.set_platform_window_hit_stack(
+        PlatformWindowHitStack::try_available_open_desktop(
+            point(DevicePixels(0), DevicePixels(0)),
+            vec![],
+        )
+        .unwrap(),
+    );
+    let dock = cx.update(|cx| {
+        let layout = DockspaceLayout::new([
+            DockspaceSurfaceLayout::new(
+                source,
+                DockspaceRootLayout::new(
+                    RootId::new(1),
+                    DockspaceNode::tabs([item, ItemId::new(2)]),
+                ),
+            ),
+            DockspaceSurfaceLayout::new(
+                target,
+                DockspaceRootLayout::new(RootId::new(2), DockspaceNode::tabs([ItemId::new(3)])),
+            ),
+        ])
+        .unwrap();
+        let panes = [item, ItemId::new(2), ItemId::new(3)]
+            .map(|item| DockPane::new(item, "Pane", cx.new(|_| Empty)));
+        DockSurface::new_managed(
+            DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap(),
+            panes,
+            GpuiDockspaceConfig::default(),
+            cx,
+        )
+        .unwrap()
+    });
+    let windows = [source, target].map(|surface| {
+        cx.update(|cx| {
+            dock.open_native_root(surface, surface == source, WindowOptions::default(), cx)
+        })
+        .unwrap()
+    });
+    for (index, window) in windows.iter().enumerate() {
+        cx.set_platform_window_physical_client_geometry(
+            *window,
+            Some(Bounds::new(
+                point(DevicePixels(index as i32 * 1000), DevicePixels(0)),
+                size(DevicePixels(800), DevicePixels(600)),
+            )),
+            1.0,
+        );
+    }
+    let mut visuals = windows.map(|window| VisualTestContext::from_window(window, cx));
+    let paint = |visuals: &mut [VisualTestContext; 2], cx: &mut TestAppContext| {
+        for _ in 0..4 {
+            for visual in &mut *visuals {
+                visual.simulate_frame(RequestFrameOptions {
+                    require_presentation: true,
+                    force_render: true,
+                    ..Default::default()
+                });
+            }
+            cx.run_until_parked();
+            cx.update(|cx| dock.pump_native(cx));
+            assert!(dock.error().is_none(), "{:?}", dock.error());
+        }
+    };
+    paint(&mut visuals, cx);
+    let [source_binding, target_binding] =
+        windows.map(|window| dock.native_binding_for_window(window.window_id()).unwrap());
+    for (index, (event, x, hover)) in [
+        (
+            NativePointerEvent::ButtonPressed(NativePointerButton::Primary),
+            32.0,
+            source_binding,
+        ),
+        (NativePointerEvent::Moved, 64.0, source_binding),
+        (NativePointerEvent::Moved, 1032.0, target_binding),
+        (
+            NativePointerEvent::ButtonReleased(NativePointerButton::Primary),
+            1032.0,
+            target_binding,
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let input = NativePointerInput::new(
+            NativePointerId::new(1),
+            event,
+            NativeDesktopPointerLocation::new(
+                NativeDesktopPosition::Exact(PhysicalPoint::new(x, 14.0).unwrap()),
+                NativePointerHover::Dock(hover),
+                None,
+            ),
+            NativePointerOwner::Native(source_binding),
+            NativePointerOwner::Native(source_binding),
+        )
+        .with_metadata(PointerEventMetadata::new(
+            PointerDeviceKind::Mouse,
+            Duration::from_millis(index as u64),
+        ));
+        cx.update(|cx| dock.native_transport().unwrap().pointer(input, cx));
+        paint(&mut visuals, cx);
+    }
+    dock.with_view(|view| {
+        let moved = view.item(item).unwrap();
+        assert_eq!(
+            moved.surface(),
+            if button_state_available {
+                target
+            } else {
+                source
+            },
+            "desktop delivery must respect the backend's button authority"
+        );
+        assert!(moved.is_selected());
+    });
+    assert!(!dock.has_active_gesture());
+    cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| dock.pump_native(cx));
+    assert!(dock.native_is_quiescent());
 }

@@ -9,9 +9,23 @@ use dockspace::{
         SurfacePointerCapture, SurfacePointerEvent, SurfacePointerId, SurfacePointerReceiverFacts,
     },
 };
-use open_gpui::{Bounds, HitboxId, Modifiers, Pixels, Point, Window, WindowId};
+use open_gpui::{
+    Bounds, HitboxId, Modifiers, Pixels, Point, PointerCaptureHandle, Window, WindowId,
+};
 
 use super::HostState;
+
+#[derive(Clone)]
+pub(super) struct InputFrame {
+    pub(super) surface: SurfaceId,
+    pub(super) serial: u64,
+    pub(super) bounds: Bounds<Pixels>,
+    pub(super) hitboxes: Vec<HitboxId>,
+    pub(super) capture: PointerCaptureHandle,
+    pub(super) receivers: Vec<(dockspace::runtime::DockspaceReceiverDescriptor, HitboxId)>,
+    pub(super) scale: f64,
+    pub(super) native_binding: Option<dockspace::runtime::NativeSurfaceBinding>,
+}
 
 #[derive(Clone, Copy)]
 pub(super) struct QueuedPointer {

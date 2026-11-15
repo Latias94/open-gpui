@@ -148,6 +148,12 @@ pub struct DockNativeInspection {
     pub pump_scheduled: bool,
     /// Whether the managed host retains a native pointer continuation task.
     pub continuation_pending: bool,
+    /// Whether the default factory retains a visual-only native preview.
+    pub provisional_opening: bool,
+    /// Adopted windows still waiting for exact destination submission and core admission.
+    pub provisional_promotion_count: usize,
+    /// Unadopted preview owners still awaiting GPUI renderer/native retirement.
+    pub provisional_retirement_count: usize,
 }
 
 impl DockSurface {

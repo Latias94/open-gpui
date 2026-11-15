@@ -942,6 +942,76 @@ fn managed_chrome_clicks_use_the_native_producer_and_submitted_receivers(cx: &mu
 }
 
 #[open_gpui::test]
+fn managed_drag_start_survives_a_submitted_chrome_redraw(cx: &mut TestAppContext) {
+    use open_gpui::{MouseButton, NativeCapturedDragPhase, NativeCapturedDragReleaseTerminal};
+
+    cx.defer_next_window_frame_requests();
+    let (dock, _, _, windows) = managed_fixture(cx);
+    frames(&mut VisualTestContext::from_window(windows[0], cx), &dock);
+    let mut source = VisualTestContext::from_window(windows[1], cx);
+    source.update(|window, _| {
+        let _ = window.activate_window();
+    });
+    frames(&mut source, &dock);
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let _observer = source.cx.update({
+        let events = events.clone();
+        move |cx| cx.observe_native_captured_drag(move |event, _| events.borrow_mut().push(event))
+    });
+    let tab = source.debug_bounds("dockspace:tab:22").unwrap();
+    source.simulate_mouse_down(tab.center(), MouseButton::Left, Modifiers::none());
+    frames(&mut source, &dock);
+    source.simulate_mouse_move(
+        tab.center() + open_gpui::point(px(24.0), px(0.0)),
+        Some(MouseButton::Left),
+        Modifiers::none(),
+    );
+    source.cx.update(|cx| {
+        assert_eq!(
+            cx.active_native_captured_drag_source_window(),
+            Some(windows[1].window_id())
+        );
+        assert!(dock.has_active_gesture());
+    });
+    let moved = tab.center() + open_gpui::point(px(32.0), px(0.0));
+    source.simulate_mouse_move(moved, Some(MouseButton::Left), Modifiers::none());
+    source.simulate_mouse_up(moved, MouseButton::Left, Modifiers::none());
+    source.run_until_parked();
+    source.cx.update(|cx| dock.pump_native(cx));
+    let events = events.borrow();
+    let released = events
+        .iter()
+        .find(|event| event.phase() == NativeCapturedDragPhase::Released)
+        .expect("the original native MouseUp must reach the route");
+    let reports = dock.take_native_reports();
+    assert_eq!(
+        reports
+            .iter()
+            .filter(|report| matches!(report,
+                super::native::NativeReport::CaptureTerminal { barrier, terminal, .. }
+                    if barrier.source_window() == windows[1].window_id()
+                        && barrier.drag_generation() == released.generation()
+                        && *terminal == NativeCapturedDragReleaseTerminal::Released
+            ))
+            .count(),
+        1,
+        "{reports:?}"
+    );
+    assert!(!reports.iter().any(|report| matches!(report,
+        super::native::NativeReport::Unsupported { operation }
+            if *operation == "observing the original native capture release after drag retirement"
+    )), "{reports:?}");
+    source.cx.update(|cx| {
+        dock.begin_native_shutdown(cx).unwrap();
+    });
+    source.run_until_parked();
+    source.cx.update(|cx| dock.pump_native(cx));
+    source.run_until_parked();
+    assert!(dock.native_is_quiescent());
+    assert!(dock.failure().is_none());
+}
+
+#[open_gpui::test]
 fn managed_shutdown_waits_for_capture_release_before_the_first_native_motion(
     cx: &mut TestAppContext,
 ) {

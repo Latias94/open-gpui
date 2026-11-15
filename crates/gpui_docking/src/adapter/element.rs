@@ -22,7 +22,10 @@ use open_gpui::{
 };
 
 use crate::adapter::{
-    HostState, SharedHost, continuation::InputFrame, host::DockRegion, host_native, input,
+    HostState, SharedHost,
+    host::DockRegion,
+    host_native,
+    input::{self, InputFrame},
     presentation,
 };
 
@@ -35,6 +38,7 @@ use recording::record;
 pub(super) struct Packet {
     draws: Vec<Draw>,
     deferred: bool,
+    pub(super) native_preview: Option<host_native::provisional::Preview>,
 }
 
 impl Packet {
@@ -367,6 +371,7 @@ impl DockspaceElement {
                                     Rc::new(Packet {
                                         draws: Vec::new(),
                                         deferred: true,
+                                        native_preview: None,
                                     })
                                 }),
                             )
@@ -407,7 +412,7 @@ impl DockspaceElement {
                         return Err(error);
                     }
                 };
-                let ticket = match window.begin_exact_frame_submission(cx) {
+                let ticket = match host_native::provisional::begin_submission(&host, window, cx) {
                     Ok(ticket) => ticket,
                     Err(error) => {
                         drop(update);
@@ -932,6 +937,7 @@ fn build_candidate(
                 Rc::new(Packet {
                     draws: Vec::new(),
                     deferred,
+                    native_preview: None,
                 }),
             );
             continue;
@@ -946,6 +952,7 @@ fn build_candidate(
                 Rc::new(Packet {
                     draws: Vec::new(),
                     deferred: true,
+                    native_preview: None,
                 }),
             );
             continue;
@@ -1006,6 +1013,7 @@ fn build_candidate(
                 Rc::new(Packet {
                     draws: Vec::new(),
                     deferred: true,
+                    native_preview: None,
                 }),
             );
             continue;

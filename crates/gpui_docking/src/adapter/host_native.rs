@@ -13,14 +13,13 @@ use dockspace::{
     model::SurfaceId,
     runtime::{
         DockspaceHostFrame, DockspaceSession, HostFrameReport, HostWindowToken,
-        NativeHostCapability, NativeHostErrorKind, NativeReceiverAnswer, NativeReceiverPurpose,
-        NativeReceiverQuery, NativeSurfaceBinding, NativeSurfaceCloseAction,
-        NativeSurfaceCloseRequest, NativeSurfacePlacement, NativeWindowBinding, NativeWindowHit,
+        NativeHostCapability, NativeHostErrorKind, NativeSurfaceBinding, NativeSurfaceCloseAction,
+        NativeSurfaceCloseRequest, NativeSurfacePlacement, NativeWindowBinding,
     },
 };
 use open_gpui::{
     AnyWindowHandle, App, AppContext as _, Bounds, Context, IntoElement, Pixels, Render,
-    Subscription, Window, WindowId, WindowOptions, div, point, prelude::*, px,
+    Subscription, Window, WindowId, WindowOptions, div, prelude::*,
 };
 
 use super::{
@@ -38,8 +37,18 @@ use super::{
 mod tests;
 
 #[cfg(test)]
+#[path = "host_native_factory_tests.rs"]
+mod factory_tests;
+
+#[cfg(test)]
 #[path = "receiver_tests.rs"]
 mod receiver_tests;
+
+pub(super) mod provisional;
+mod receiver;
+use receiver::resolve;
+#[cfg(test)]
+use receiver::resolve_in_window;
 
 type WindowFactory = dyn Fn(
     &DockSurface,
@@ -57,13 +66,16 @@ pub(super) struct ManagedHost {
     reports: VecDeque<NativeReport>,
     retired: BTreeSet<NativeSurfaceBinding>,
     close_policy: Option<NativeCloseDecision>,
-    factory: Rc<WindowFactory>,
+    factory: Option<Rc<WindowFactory>>,
+    factory_opening: Option<NativeCallbacks>,
+    provisional: provisional::Provisional,
     _quit: Subscription,
     pump_scheduled: bool,
     wake: Option<NativeWake>,
     registrations: BTreeMap<WindowId, RootRegistration>,
     retirements: BTreeMap<WindowId, open_gpui::WindowPresentationShutdownTicket>,
     _terminal: Subscription,
+    _displays: Subscription,
 }
 
 impl ManagedHost {
@@ -93,6 +105,8 @@ pub(super) fn accept_owned_report(native: &mut ManagedHost, report: HostFrameRep
 
 pub(super) fn inspection(host: &HostState) -> Option<super::DockNativeInspection> {
     let native = host.native.as_ref()?;
+    let (provisional_opening, provisional_promotion_count, provisional_retirement_count) =
+        native.provisional.inspection();
     let tickets: Vec<_> = native
         .retirements
         .values()
@@ -117,6 +131,9 @@ pub(super) fn inspection(host: &HostState) -> Option<super::DockNativeInspection
         pending_root_quiescence_count: tickets.iter().filter(|ticket| !ticket.quiesced()).count(),
         pump_scheduled: native.pump_scheduled,
         continuation_pending: native.wake.is_some(),
+        provisional_opening,
+        provisional_promotion_count,
+        provisional_retirement_count,
     })
 }
 
@@ -131,13 +148,15 @@ fn is_quiescent(host: &HostState, native: &ManagedHost) -> bool {
         && native.retirements.is_empty()
         && native.callbacks.is_empty()
         && native.wake.is_none()
+        && native.provisional.is_quiescent()
         && host.mounts.is_empty()
+        && host.unavailable_surfaces.is_empty()
         && !host.session.has_pending_native_input()
 }
 
 #[cfg(test)]
 mod inspection_tests {
-    use dockspace::{model::DockspaceLayout, policy::DockPolicy};
+    use dockspace::{model::DockspaceLayout, policy::DockPolicy, runtime::NativeReceiverAnswer};
     use open_gpui::TestAppContext;
 
     use super::*;
@@ -265,6 +284,10 @@ pub(super) fn enroll(shared: &SharedHost, cx: &mut App) -> Result<()> {
     });
     let wake = transport.clone();
     let terminal = cx.on_window_native_terminal(move |cx, _| wake.wake(cx));
+    let desktop = transport.clone();
+    let displays =
+        cx.observe_display_publication(move |snapshot, cx| desktop.desktop(snapshot, cx));
+    let desktop = transport.clone();
     shared.borrow_mut().native = Some(ManagedHost {
         bridge: Some(bridge),
         transport,
@@ -274,14 +297,18 @@ pub(super) fn enroll(shared: &SharedHost, cx: &mut App) -> Result<()> {
         reports: VecDeque::new(),
         retired: BTreeSet::new(),
         close_policy: None,
-        factory: Rc::new(default_factory),
+        factory: None,
+        factory_opening: None,
+        provisional: provisional::Provisional::default(),
         _quit: quit,
         pump_scheduled: false,
         wake: None,
         registrations: BTreeMap::new(),
         retirements: BTreeMap::new(),
         _terminal: terminal,
+        _displays: displays,
     });
+    desktop.desktop(&cx.display_snapshot(), cx);
     Ok(())
 }
 
@@ -299,7 +326,17 @@ fn install_router(cx: &mut App) {
         return;
     }
     let subscription = cx.consume_native_captured_drag(
-        |_, _, _| Arc::new(()),
+        |event, _, cx| {
+            if let Some(shared) = event
+                .payload::<NativeDragPayload>()
+                .and_then(|payload| payload.host.upgrade())
+                && let Some(native) = &shared.borrow().native
+                && let Some(callbacks) = native.callbacks.get(&event.source_window())
+            {
+                callbacks.observe_capture_release(event, cx);
+            }
+            Arc::new(())
+        },
         |event, cx| {
             let Some(shared) = event
                 .payload::<NativeDragPayload>()
@@ -318,6 +355,9 @@ fn install_router(cx: &mut App) {
                 {
                     native.transport.captured_drag(
                         callbacks.binding(),
+                        super::native::native_capture_owner(event.capture_owner(), |owner| {
+                            native.callbacks.get(&owner).map(NativeCallbacks::binding)
+                        }),
                         event,
                         dockspace::runtime::NativePointerId::new(1),
                         metadata,
@@ -375,6 +415,13 @@ fn start_drag(
         dockspace::runtime::PointerDeviceKind::Mouse,
         host.observed_at(),
     );
+    let capture = super::native::native_capture_owner(
+        geometry.native_drag_start_snapshot().map_or(
+            open_gpui::PlatformNativePointerCaptureOwner::Unavailable,
+            |snapshot| snapshot.pointer_frame().capture_owner(),
+        ),
+        |owner| native.callbacks.get(&owner).map(NativeCallbacks::binding),
+    );
     let callbacks = callbacks.clone();
     let source = window.window_handle().window_id();
     let transport = native.transport.clone();
@@ -398,7 +445,7 @@ fn start_drag(
                 NativePointerEvent::Moved,
                 NativeLocalPointerLocation::Exact(sample),
                 NativePointerOwner::Native(binding),
-                NativePointerOwner::Unknown,
+                capture,
             )
             .with_metadata(metadata),
             cx,
@@ -441,6 +488,27 @@ impl DockSurface {
     pub fn native_binding_for_window(&self, window: WindowId) -> Option<NativeWindowBinding> {
         self.native_callbacks_for_window(window)
             .map(|callbacks| callbacks.binding())
+    }
+
+    /// Reads the current live-route owner's original outer intent and placement ticket.
+    ///
+    /// This borrows the existing owner; it retains no separate evidence history.
+    /// After promotion, inspect the adopted callbacks' original final receipt instead.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn native_provisional_placement_for_test(
+        &self,
+        window: WindowId,
+    ) -> Option<(
+        dockspace::geometry::PhysicalRect,
+        open_gpui::WindowProvisionalPlacementSnapshot,
+    )> {
+        self.host
+            .borrow()
+            .native
+            .as_ref()?
+            .provisional
+            .placement_for_test(window)
     }
 
     /// Registers an application root during its original GPUI construction/update.
@@ -551,7 +619,11 @@ impl DockSurface {
                 *root_failure.borrow_mut() = Some(error);
                 window.remove_window(cx);
             }
-            cx.new(|_| NativeRoot { dock, surface })
+            cx.new(|_| NativeRoot {
+                dock,
+                surface,
+                provisional: None,
+            })
         });
         let root_binding = failure.borrow_mut().take();
         match window {
@@ -634,6 +706,12 @@ impl DockSurface {
     }
 
     /// Installs an application root factory while preserving the original native callbacks.
+    ///
+    /// Custom factories own window creation options and opt out of the default factory's
+    /// pre-release native preview. Any outstanding default preview retires through GPUI.
+    /// Open through [`NativeCallbacks::open`] or install the supplied callbacks during
+    /// root construction. The managed host routes that exact lifetime before staged
+    /// surface painting; the factory must not register a second application root.
     pub fn set_native_window_factory(
         &self,
         factory: impl Fn(
@@ -649,7 +727,7 @@ impl DockSurface {
             .native
             .as_mut()
             .ok_or_else(|| anyhow!("managed native hosting is not enabled"))?
-            .factory = Rc::new(factory);
+            .factory = Some(Rc::new(factory));
         Ok(())
     }
 
@@ -705,11 +783,22 @@ impl DockSurface {
 struct NativeRoot {
     dock: DockSurface,
     surface: SurfaceId,
+    provisional: Option<Rc<RefCell<provisional::ProvisionalWindow>>>,
 }
 
 impl Render for NativeRoot {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().size_full().child(self.dock.element(self.surface))
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(preview) = self
+            .provisional
+            .as_ref()
+            .and_then(|state| provisional::prepare(&self.dock, state, window, cx))
+        {
+            return preview;
+        }
+        div()
+            .size_full()
+            .child(self.dock.element(self.surface))
+            .into_any_element()
     }
 }
 
@@ -719,19 +808,17 @@ fn default_factory(
     callbacks: &NativeCallbacks,
     cx: &mut App,
 ) -> std::result::Result<AnyWindowHandle, NativeOpenFailure> {
+    if let Some(window) = provisional::adopt(dock, request, callbacks, cx) {
+        return window;
+    }
     let dock = dock.clone();
-    let callbacks_for_root = callbacks.clone();
     callbacks.open(
         WindowOptions::default(),
-        move |window, cx| {
-            if let Some(native) = dock.host.borrow_mut().native.as_mut() {
-                native
-                    .callbacks
-                    .insert(window.window_handle().window_id(), callbacks_for_root);
-            }
+        move |_, cx| {
             cx.new(|_| NativeRoot {
                 dock,
                 surface: request.binding.surface(),
+                provisional: None,
             })
         },
         cx,
@@ -794,139 +881,26 @@ pub(super) fn set_placements(
     Ok(())
 }
 
-fn resolve(
-    query: NativeReceiverQuery,
-    mounts: &BTreeMap<WindowId, WindowMount>,
-    native: &ManagedHost,
-    current: Option<&Window>,
-    cx: &mut App,
-) -> NativeReceiverAnswer {
-    let owner = match query {
-        NativeReceiverQuery::WindowHit(query) => {
-            native.callbacks.iter().find_map(|(owner, callbacks)| {
-                (callbacks.binding() == query.window()).then_some(*owner)
-            })
-        }
-        NativeReceiverQuery::Surface(query) => mounts.iter().find_map(|(owner, mount)| {
-            mount
-                .regions
-                .get(&query.surface())
-                .and_then(|region| region.presented)
-                .filter(|(_, artifact)| query.matches_presentation_artifact(*artifact))
-                .and_then(|_| native.callbacks.get(owner))
-                .map(|_| *owner)
-        }),
-    };
-    let Some(owner) = owner else {
-        return NativeReceiverAnswer::Unknown;
-    };
-    let Some(mount) = mounts.get(&owner) else {
-        return NativeReceiverAnswer::Unknown;
-    };
-    // The immutable committed graph also works while another Window owns its
-    // update borrow. Never enter a sibling's render/update path from the reducer.
-    resolve_in_window(query, mount, |hitbox, point| {
-        if let Some(window) = current.filter(|window| window.window_handle().window_id() == owner) {
-            hitbox.window_point_target_rank(point, window)
-        } else {
-            cx.window_point_target_rank(mount.window, hitbox, point)
-        }
-    })
-}
-
-fn resolve_in_window(
-    query: NativeReceiverQuery,
-    mount: &WindowMount,
-    target_rank: impl Fn(open_gpui::HitboxId, open_gpui::Point<Pixels>) -> Option<usize>,
-) -> NativeReceiverAnswer {
-    match query {
-        NativeReceiverQuery::WindowHit(query) => {
-            for frame in &mount.input_frames {
-                let Some((serial, artifact)) = mount
-                    .regions
-                    .get(&frame.surface)
-                    .and_then(|region| region.presented)
-                else {
-                    continue;
-                };
-                if serial != frame.serial {
-                    continue;
-                }
-                let point = point(
-                    px((query.point().x() / frame.scale) as f32),
-                    px((query.point().y() / frame.scale) as f32),
-                );
-                if !frame.bounds.contains(&point) {
-                    continue;
-                }
-                let exposed = frame
-                    .hitboxes
-                    .iter()
-                    .any(|hitbox| target_rank(*hitbox, point) == Some(0));
-                return NativeReceiverAnswer::WindowHit(if exposed {
-                    NativeWindowHit::Surface(artifact)
-                } else {
-                    NativeWindowHit::Blocked
-                });
-            }
-            NativeReceiverAnswer::WindowHit(NativeWindowHit::Unknown)
-        }
-        NativeReceiverQuery::Surface(query) => {
-            let Some(frame) = mount.input_frames.iter().find(|frame| {
-                frame.surface == query.surface()
-                    && mount
-                        .regions
-                        .get(&frame.surface)
-                        .and_then(|region| region.presented)
-                        .is_some_and(|(serial, artifact)| {
-                            serial == frame.serial && query.matches_presentation_artifact(artifact)
-                        })
-            }) else {
-                return NativeReceiverAnswer::Unknown;
-            };
-            let Some(client) = query.client_position() else {
-                return NativeReceiverAnswer::Unknown;
-            };
-            let point = point(
-                px((client.x() / frame.scale) as f32),
-                px((client.y() / frame.scale) as f32),
-            );
-            if let Some((descriptor, _)) = frame
-                .receivers
-                .iter()
-                .find(|(_, hitbox)| target_rank(*hitbox, point) == Some(0))
-            {
-                if matches!(query.purpose(), NativeReceiverPurpose::HoverHit) {
-                    query.clear_hover_lane(descriptor).map_or(
-                        NativeReceiverAnswer::Unknown,
-                        NativeReceiverAnswer::ClearHoverLane,
-                    )
-                } else {
-                    // A frontmost control blocks delivery lanes it does not implement.
-                    query.bind_receiver(descriptor).map_or(
-                        NativeReceiverAnswer::Blocked(query.presented_surface()),
-                        NativeReceiverAnswer::Dock,
-                    )
-                }
-            } else if frame
-                .hitboxes
-                .iter()
-                .any(|hitbox| target_rank(*hitbox, point) == Some(0))
-            {
-                NativeReceiverAnswer::EmptyLane(query.presented_surface())
-            } else {
-                NativeReceiverAnswer::Blocked(query.presented_surface())
-            }
-        }
-    }
-}
-
 pub(super) fn prepare_window(shared: &SharedHost, window: &mut Window, cx: &mut App) {
     let mut host = shared.borrow_mut();
     let Some(native) = host.native.as_mut() else {
         return;
     };
-    if let Some(callbacks) = native.callbacks.get(&window.window_handle().window_id()) {
+    let owner = window.window_handle().window_id();
+    // A native factory may draw its root before returning its handle. The bridge
+    // is checked out for dispatch, so retain that original callback route here
+    // before the element validates the not-yet-committed staging surface.
+    if let Some(callbacks) = native
+        .factory_opening
+        .as_ref()
+        .filter(|callbacks| callbacks.window_id() == Some(owner))
+    {
+        native
+            .callbacks
+            .entry(owner)
+            .or_insert_with(|| callbacks.clone());
+    }
+    if let Some(callbacks) = native.callbacks.get(&owner) {
         callbacks.observe(window, cx);
     }
     let Some(mut bridge) = native.bridge.take() else {
@@ -1143,6 +1117,10 @@ fn collect_host(
     if host.has_unaccepted_update() {
         return Ok(false);
     }
+    presentation::settle_pending(host, current, cx)?;
+    while let Some(report) = host.native.as_mut().unwrap().pending_reports.pop_front() {
+        bridge.accept_report(report);
+    }
     recover_root_registrations(host, bridge, current, cx)?;
     for _ in 0..4 {
         if let Err(error) = bridge.collect(&mut host.session) {
@@ -1249,6 +1227,12 @@ fn recover_root_registrations(
 fn process_reports(host: &mut HostState, bridge: &mut NativeBridge, cx: &mut App) -> Result<()> {
     while let Some(mut report) = bridge.pop_report() {
         match &report {
+            NativeReport::CapturedRelease { capture, frame } => {
+                provisional::observe_release(host.native.as_mut().unwrap(), *capture, *frame);
+            }
+            NativeReport::Admitted(binding) => {
+                provisional::observe_admitted(host.native.as_mut().unwrap(), *binding, cx);
+            }
             NativeReport::CloseRequested(close) => {
                 let native = host.native.as_ref().unwrap();
                 let root = native.callbacks.iter().any(|(owner, callbacks)| {
@@ -1341,11 +1325,31 @@ pub(super) fn pump(shared: &SharedHost, cx: &mut App) {
     let dock = DockSurface {
         host: shared.clone(),
     };
-    if let Err(error) = bridge.dispatch_effects(
-        &mut |request, callbacks, cx| factory(&dock, request, callbacks, cx),
-        cx,
-    ) {
-        shared.borrow_mut().fail(&error);
+    if provisional::drive(shared, &bridge, cx) {
+        if let Err(error) = bridge.dispatch_effects(
+            &mut |request, callbacks, cx| {
+                shared.borrow_mut().native.as_mut().unwrap().factory_opening =
+                    Some(callbacks.clone());
+                let opened = if let Some(factory) = &factory {
+                    factory(&dock, request, callbacks, cx)
+                } else {
+                    default_factory(&dock, request, callbacks, cx)
+                };
+                let mut host = shared.borrow_mut();
+                let native = host.native.as_mut().unwrap();
+                native.factory_opening = None;
+                if let Some(owner) = callbacks.window_id() {
+                    native
+                        .callbacks
+                        .entry(owner)
+                        .or_insert_with(|| callbacks.clone());
+                }
+                opened
+            },
+            cx,
+        ) {
+            shared.borrow_mut().fail(&error);
+        }
     }
     if let Err(error) = bridge.drive_shutdown(cx) {
         shared.borrow_mut().fail(&error);
@@ -1358,7 +1362,7 @@ pub(super) fn pump(shared: &SharedHost, cx: &mut App) {
     if let Err(error) = process_reports(&mut host, &mut bridge, cx) {
         host.fail(error.as_ref());
     }
-    if !host.session.has_pending_native_input() {
+    if !host.session.has_pending_native_input() && host.unavailable_surfaces.is_empty() {
         let retired: Vec<_> = host
             .native
             .as_ref()

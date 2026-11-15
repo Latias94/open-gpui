@@ -228,3 +228,138 @@ fn a_managed_submission_keeps_its_native_fifo_boundary(cx: &mut TestAppContext) 
     cx.run_until_parked();
     assert!(dock.native_is_quiescent());
 }
+
+#[open_gpui::test]
+fn logical_window_removal_revokes_presented_authority_before_native_terminal(
+    cx: &mut TestAppContext,
+) {
+    cx.defer_next_window_frame_requests();
+    let dock = cx.update(workspace);
+    let window = cx
+        .update(|cx| dock.open_native_root(FIRST, false, WindowOptions::default(), cx))
+        .unwrap();
+    finish(cx, &dock);
+    cx.defer_next_window_frame_requests();
+    let anchor = cx
+        .update(|cx| dock.open_native_root(SECOND, true, WindowOptions::default(), cx))
+        .unwrap();
+    finish(cx, &dock);
+    frames(&mut VisualTestContext::from_window(window, cx), &dock);
+    frames(&mut VisualTestContext::from_window(anchor, cx), &dock);
+    let owner = window.window_id();
+    let item = ItemId::new(FIRST.get());
+    let roots = dock.with_view(|view| {
+        [FIRST, SECOND].map(|surface| view.surface(surface).unwrap().main_root().unwrap().id())
+    });
+    let (serial, original_artifact, pane) = {
+        let host = dock.host.borrow();
+        let mount = &host.mounts[&owner];
+        let region = &mount.regions[&FIRST];
+        assert!(region.packet.as_ref().is_some_and(|packet| {
+            !packet.is_deferred() && packet.pane_items().contains(&item)
+        }));
+        let (serial, artifact) = region
+            .presented
+            .expect("the original pane must have a real submitted output");
+        assert!(
+            host.session
+                .presented_surface(FIRST)
+                .is_some_and(|surface| surface.matches_presentation_artifact(artifact))
+        );
+        assert!(crate::adapter::input::is_presented(
+            &host, owner, FIRST, serial
+        ));
+        (serial, artifact, host.panels[&item].view.clone())
+    };
+    let callbacks = dock.native_callbacks_for_window(owner).unwrap();
+    // Keep automatic draws out of the logical-close/native-terminal interval.
+    cx.skip_drawing();
+    let held = cx.hold_window_native_terminal(window);
+    dock.take_native_reports();
+    cx.update_window(window, |_, window, cx| window.remove_window(cx))
+        .unwrap();
+    finish(cx, &dock);
+    {
+        let host = dock.host.borrow();
+        assert!(
+            host.session.presented_surface(FIRST).is_none(),
+            "logical removal must revoke Ready artifact {original_artifact:?} before native terminal"
+        );
+        assert!(!crate::adapter::input::is_presented(
+            &host, owner, FIRST, serial
+        ));
+        assert!(!host.mounts.contains_key(&owner));
+        assert!(!host.owners.contains_key(&FIRST));
+        assert!(
+            host.unavailable_surfaces.is_empty(),
+            "logical close must commit its unavailable contribution before native terminal"
+        );
+        assert!(!host.presentation_pending);
+        let view = host.session.view();
+        assert_eq!(view.surfaces().count(), 2);
+        for (surface, root) in [FIRST, SECOND].into_iter().zip(roots) {
+            let retained = view.surface(surface).unwrap();
+            assert_eq!(retained.main_root().unwrap().id(), root);
+            assert_eq!(retained.contained().count(), 0);
+            let item = view.item(ItemId::new(surface.get())).unwrap();
+            assert_eq!(
+                (item.surface(), item.root(), item.is_selected()),
+                (surface, root, true)
+            );
+        }
+        assert_eq!(host.panels[&item].view.entity_id(), pane.entity_id());
+    }
+    cx.read(|cx| {
+        assert!(!cx.windows().contains(&window));
+        assert!(cx.windows().contains(&anchor));
+    });
+    assert_eq!(
+        dock.native_callbacks_for_window(owner).unwrap().binding(),
+        callbacks.binding()
+    );
+    assert!(matches!(
+        callbacks.seal(),
+        Err(NativeBridgeError::NotQuiescent)
+    ));
+    assert!(!dock.native_is_quiescent());
+    let reports = dock.take_native_reports();
+    assert!(
+        reports.iter().any(|report| matches!(report,
+            NativeReport::LogicalClosed(binding) if *binding == callbacks.binding()
+        )),
+        "{reports:?}"
+    );
+    assert!(
+        !reports.iter().any(|report| matches!(report,
+            NativeReport::NativeTerminal(binding) if *binding == callbacks.binding()
+        )),
+        "{reports:?}"
+    );
+
+    assert!(held.release());
+    finish(cx, &dock);
+    let reports = dock.take_native_reports();
+    assert_eq!(
+        reports
+            .iter()
+            .filter(|report| matches!(report,
+                NativeReport::NativeTerminal(binding) if *binding == callbacks.binding()
+            ))
+            .count(),
+        1,
+        "the original callback must deliver its real terminal exactly once: {reports:?}"
+    );
+    callbacks.seal().unwrap();
+    assert!(dock.native_callbacks_for_window(owner).is_none());
+    assert!(
+        dock.host
+            .borrow()
+            .session
+            .retained_native_surface_bindings_for_window(callbacks.binding())
+            .next()
+            .is_none()
+    );
+    cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();
+    finish(cx, &dock);
+    assert!(dock.native_is_quiescent());
+}

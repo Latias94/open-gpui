@@ -9,8 +9,8 @@ use dockspace::{
 };
 use open_gpui::{
     App, Bounds, DevicePixels, MouseButton, NativeCapturedDragEvent, NativeCapturedDragGeneration,
-    NativeCapturedDragPhase, PlatformWindowHit, PlatformWindowHitStack, PlatformWindowHitTerminus,
-    PointerCaptureHandle, Window, WindowId,
+    NativeCapturedDragPhase, PlatformNativePointerCaptureOwner, PlatformWindowHit,
+    PlatformWindowHitStack, PlatformWindowHitTerminus, PointerCaptureHandle, Window, WindowId,
 };
 
 use super::{NativeBridge, NativeBridgeError, NativeCallbacks};
@@ -127,8 +127,11 @@ impl NativeBridge {
         let binding = self
             .binding_for_window(event.source_window())
             .ok_or(NativeBridgeError::UnknownBinding)?;
+        let capture = native_capture_owner(event.capture_owner(), |owner| {
+            self.binding_for_window(owner)
+        });
         self.transport
-            .captured_drag(binding, event.clone(), pointer, metadata, cx);
+            .captured_drag(binding, capture, event.clone(), pointer, metadata, cx);
         Ok(())
     }
 
@@ -136,6 +139,7 @@ impl NativeBridge {
         &self,
         session: &dockspace::runtime::DockspaceSession,
         binding: NativeWindowBinding,
+        capture: NativePointerOwner,
         event: &NativeCapturedDragEvent,
         pointer: NativePointerId,
         metadata: PointerEventMetadata,
@@ -175,10 +179,17 @@ impl NativeBridge {
             event.global_position(),
             |window_id| self.binding_for_window(window_id),
         );
+        let work_area = matches!(hover, NativePointerHover::OutsideAll)
+            .then(|| {
+                event
+                    .physical_frame()
+                    .and_then(|frame| self.desktop.work_area(session, frame))
+            })
+            .flatten();
         let location = NativeDesktopPointerLocation::new(
             position.map_or(NativeDesktopPosition::Unknown, NativeDesktopPosition::Exact),
             hover,
-            None,
+            work_area,
         );
         let edge = match event.phase() {
             NativeCapturedDragPhase::Moved => NativePointerEvent::Moved,
@@ -195,7 +206,7 @@ impl NativeBridge {
                 edge,
                 dockspace::runtime::NativeLocalToDesktopHandoff::new(local, location),
                 NativePointerOwner::Native(binding),
-                NativePointerOwner::Unknown,
+                capture,
             )
         } else {
             NativePointerInput::new(
@@ -203,10 +214,24 @@ impl NativeBridge {
                 edge,
                 location,
                 NativePointerOwner::Native(binding),
-                NativePointerOwner::Unknown,
+                capture,
             )
         };
         input.with_metadata(metadata)
+    }
+}
+
+pub(crate) fn native_capture_owner(
+    owner: PlatformNativePointerCaptureOwner,
+    mut resolve: impl FnMut(WindowId) -> Option<NativeWindowBinding>,
+) -> NativePointerOwner {
+    match owner {
+        PlatformNativePointerCaptureOwner::Unavailable => NativePointerOwner::Unknown,
+        PlatformNativePointerCaptureOwner::None => NativePointerOwner::None,
+        PlatformNativePointerCaptureOwner::Window(window) => {
+            resolve(window).map_or(NativePointerOwner::Foreign, NativePointerOwner::Native)
+        }
+        PlatformNativePointerCaptureOwner::UnregisteredWindow => NativePointerOwner::Foreign,
     }
 }
 

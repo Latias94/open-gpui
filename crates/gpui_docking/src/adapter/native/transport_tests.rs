@@ -13,8 +13,8 @@ use dockspace::{
         RootId, SurfaceId,
     },
     runtime::{
-        DockspaceSession, NativePointerId, NativeReceiverAnswer, NativeSurfaceBinding,
-        PointerDeviceKind, PointerEventMetadata, SurfaceUnavailableReason,
+        DockspaceSession, NativePointerId, NativePointerOwner, NativeReceiverAnswer,
+        NativeSurfaceBinding, PointerDeviceKind, PointerEventMetadata, SurfaceUnavailableReason,
     },
 };
 use open_gpui::{
@@ -57,6 +57,103 @@ impl Render for ObservedStartView {
 }
 
 #[open_gpui::test]
+fn desktop_publication_commits_before_its_suffix_and_rejects_stale_pointer_topology(
+    cx: &mut TestAppContext,
+) {
+    use dockspace::runtime::HostWorkAreaToken;
+    use open_gpui::{
+        Bounds, DevicePixels, PlatformDisplaySnapshot, PlatformNativePointerPhysicalFrame,
+        PlatformPhysicalDisplayObservation, PlatformWindowPhysicalGeometry, size,
+    };
+
+    let (mut session, mut bridge, _, _) = cx.update(crate::adapter::native::tests::fixture);
+    for _ in 0..4 {
+        cx.run_until_parked();
+        commit_capture_transport(&mut session, &mut bridge);
+        if bridge.transport().is_empty() {
+            break;
+        }
+    }
+    assert!(bridge.transport().is_empty());
+    let (displays, primary) = cx.update(|cx| {
+        (
+            cx.displays(),
+            cx.primary_display().map(|display| display.id()),
+        )
+    });
+    assert_eq!(displays.len(), 1);
+    let display_id = displays[0].id();
+    let bounds = Bounds::new(
+        point(DevicePixels(-2560), DevicePixels(533)),
+        size(DevicePixels(2560), DevicePixels(1440)),
+    );
+    let display = |generation| {
+        PlatformPhysicalDisplayObservation::try_new(
+            generation,
+            display_id,
+            bounds,
+            Bounds::new(bounds.origin, size(DevicePixels(2560), DevicePixels(1380))),
+            1.25,
+        )
+        .unwrap()
+    };
+    let snapshot = |generation| {
+        PlatformDisplaySnapshot::try_new(Some(generation), displays.clone(), primary).unwrap()
+    };
+    assert!(snapshot(1).with_physical_displays(vec![]).is_none());
+    assert!(
+        snapshot(1)
+            .with_physical_displays(vec![display(2)])
+            .is_none()
+    );
+    let pointer = |generation| {
+        PlatformNativePointerPhysicalFrame::new(
+            point(DevicePixels(-2000), DevicePixels(700)),
+            PlatformWindowPhysicalGeometry::try_new(bounds, 1.25).unwrap(),
+        )
+        .with_target_display(display(generation))
+        .unwrap()
+    };
+    let token = HostWorkAreaToken::new(u64::from(display_id));
+    let first = snapshot(1)
+        .with_physical_displays(vec![display(1)])
+        .unwrap();
+    let transport = bridge.transport();
+    cx.update(|cx| {
+        transport.desktop(&first, cx);
+        transport.device_removed(cx);
+    });
+    assert_eq!(bridge.collect(&mut session).unwrap(), 1);
+    assert_eq!(session.native_work_area(token), None);
+    assert_eq!(bridge.desktop.work_area(&session, pointer(1)), None);
+    assert!(!transport.is_empty());
+    assert_eq!(bridge.collect(&mut session).unwrap(), 0);
+    commit_capture_transport(&mut session, &mut bridge);
+    let binding = session.native_work_area(token).unwrap();
+    assert_eq!(
+        bridge.desktop.work_area(&session, pointer(1)),
+        Some(binding)
+    );
+    assert!(!transport.is_empty());
+    commit_capture_transport(&mut session, &mut bridge);
+    assert!(transport.is_empty());
+
+    let second = snapshot(2)
+        .with_physical_displays(vec![display(2)])
+        .unwrap();
+    cx.update(|cx| transport.desktop(&second, cx));
+    assert_eq!(bridge.collect(&mut session).unwrap(), 1);
+    assert_eq!(bridge.desktop.work_area(&session, pointer(1)), None);
+    commit_capture_transport(&mut session, &mut bridge);
+    assert!(bridge.desktop.work_area(&session, pointer(2)).is_some());
+
+    cx.update(|cx| transport.desktop(&snapshot(3), cx));
+    commit_capture_transport(&mut session, &mut bridge);
+    assert_eq!(session.native_work_area(token), None);
+    assert_eq!(bridge.desktop.work_area(&session, pointer(2)), None);
+}
+
+#[open_gpui::test]
 fn a_later_activated_start_does_not_overtake_a_queued_native_terminal(cx: &mut TestAppContext) {
     let (mut session, mut bridge, bindings, windows) =
         cx.update(crate::adapter::native::tests::fixture);
@@ -75,6 +172,7 @@ fn a_later_activated_start_does_not_overtake_a_queued_native_terminal(cx: &mut T
                     events.borrow_mut().push(event.clone());
                     transport.captured_drag(
                         bindings[1].window(),
+                        NativePointerOwner::Unknown,
                         event,
                         NativePointerId::new(1),
                         PointerEventMetadata::new(
@@ -194,6 +292,7 @@ fn captured_motion_keeps_its_fifo_position_while_an_update_lease_is_held(cx: &mu
                         received.borrow_mut().push(event.clone());
                         transport.captured_drag(
                             bindings[0].window(),
+                            NativePointerOwner::Native(bindings[0].window()),
                             event,
                             NativePointerId::new(1),
                             metadata,
@@ -268,6 +367,7 @@ fn captured_motion_keeps_its_fifo_position_while_an_update_lease_is_held(cx: &mu
         for original in received.iter() {
             let Some(Inbound::CapturedDrag {
                 binding,
+                capture,
                 event,
                 metadata: actual_metadata,
                 ..
@@ -276,6 +376,7 @@ fn captured_motion_keeps_its_fifo_position_while_an_update_lease_is_held(cx: &mu
                 panic!("later device removal overtook the original native capture packet");
             };
             assert_eq!(*binding, bindings[0].window());
+            assert_eq!(*capture, NativePointerOwner::Native(bindings[0].window()));
             assert_eq!(event.sequence(), original.sequence());
             assert_eq!(event.generation(), original.generation());
             assert_eq!(event.source_window(), original.source_window());
@@ -319,6 +420,7 @@ fn queued_terminal_preserves_the_next_generation(cx: &mut TestAppContext, cancel
                     received.borrow_mut().push(event.clone());
                     transport.captured_drag(
                         bindings[0].window(),
+                        NativePointerOwner::Unknown,
                         event,
                         NativePointerId::new(1),
                         PointerEventMetadata::new(
@@ -477,7 +579,12 @@ struct ContinuedCapture {
 }
 
 fn commit_capture_transport(session: &mut DockspaceSession, bridge: &mut NativeBridge) {
-    bridge.collect(session).unwrap();
+    if let Err(error) = bridge.collect(session) {
+        assert!(
+            session.has_pending_native_input(),
+            "a rejected FIFO front needs an accepted prefix to commit: {error}"
+        );
+    }
     let mut frame = session
         .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
         .unwrap();
@@ -507,6 +614,7 @@ fn continued_capture(cx: &mut TestAppContext) -> ContinuedCapture {
                     events.borrow_mut().push(event.clone());
                     transport.captured_drag(
                         callbacks.binding(),
+                        NativePointerOwner::Unknown,
                         event,
                         NativePointerId::new(1),
                         PointerEventMetadata::new(
@@ -903,4 +1011,469 @@ fn a_late_capture_release_cannot_settle_a_replaced_callback_owner(cx: &mut TestA
     )));
     assert_eq!(replacement.binding(), capture.after.window());
     assert_eq!(original.window_id(), Some(capture.source.window_id()));
+}
+
+struct NaturalCapture {
+    session: DockspaceSession,
+    bridge: NativeBridge,
+    bindings: [NativeSurfaceBinding; 2],
+    windows: [AnyWindowHandle; 2],
+    events: Rc<RefCell<Vec<NativeCapturedDragEvent>>>,
+    starts: Rc<RefCell<Option<open_gpui::PreparedNativeCapturedDragConsumer>>>,
+    _subscription: Subscription,
+}
+
+fn natural_capture(cx: &mut TestAppContext) -> NaturalCapture {
+    let (mut session, mut bridge, bindings, windows) =
+        cx.update(crate::adapter::native::tests::fixture);
+    let source = windows[1];
+    let callbacks = bridge.callbacks(bindings[1].window()).unwrap();
+    let transport = bridge.transport();
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let starts = Rc::new(RefCell::new(None));
+    let subscription = cx.update({
+        let release_callbacks = callbacks.clone();
+        let events = events.clone();
+        let transport = transport.clone();
+        move |cx| {
+            cx.consume_native_captured_drag(
+                move |event, _, cx| {
+                    release_callbacks.observe_capture_release(event, cx);
+                    Arc::new(())
+                },
+                move |event, cx| {
+                    events.borrow_mut().push(event.clone());
+                    transport.captured_drag(
+                        callbacks.binding(),
+                        NativePointerOwner::Unknown,
+                        event,
+                        NativePointerId::new(1),
+                        PointerEventMetadata::new(
+                            PointerDeviceKind::Mouse,
+                            Duration::from_millis(37),
+                        ),
+                        cx,
+                    );
+                },
+            )
+        }
+    });
+    cx.update_window(source, |_, window, cx| {
+        window.replace_root(cx, |_, _| ObservedStartView(starts.clone()));
+        let _ = window.activate_window();
+        window.draw(cx).clear(cx);
+    })
+    .unwrap();
+    for _ in 0..4 {
+        cx.run_until_parked();
+        if transport.is_empty() {
+            break;
+        }
+        commit_capture_transport(&mut session, &mut bridge);
+    }
+    assert!(transport.is_empty());
+    bridge.take_reports();
+    NaturalCapture {
+        session,
+        bridge,
+        bindings,
+        windows,
+        events,
+        starts,
+        _subscription: subscription,
+    }
+}
+
+#[open_gpui::test]
+fn two_natural_capture_releases_survive_collection_after_both_drag_generations(
+    cx: &mut TestAppContext,
+) {
+    let mut capture = natural_capture(cx);
+    let source = capture.windows[1];
+    let binding = capture.bindings[1].window();
+    let transport = capture.bridge.transport();
+    let attempts = Rc::new(RefCell::new(Vec::new()));
+    cx.set_pointer_capture_release_callback(source, {
+        let attempts = attempts.clone();
+        move |generation| {
+            attempts.borrow_mut().push(generation);
+            PlatformPointerCaptureReleaseOutcome::Released
+        }
+    });
+    let recorded = capture.session.native_input_recorded_count();
+    let update = capture
+        .session
+        .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+        .unwrap()
+        .suspend();
+    let mut visual = VisualTestContext::from_window(source, cx);
+    for (index, x) in [20.0, 100.0].into_iter().enumerate() {
+        visual.simulate_mouse_down(point(px(x), px(20.0)), MouseButton::Left, Modifiers::none());
+        visual.simulate_mouse_move(
+            point(px(x + 40.0), px(20.0)),
+            Some(MouseButton::Left),
+            Modifiers::none(),
+        );
+        visual.simulate_mouse_move(
+            point(px(x + 60.0), px(20.0)),
+            Some(MouseButton::Left),
+            Modifiers::none(),
+        );
+        if index == 1 {
+            let callbacks = capture.bridge.callbacks(binding).unwrap();
+            callbacks.retain_capture_start(
+                source.window_id(),
+                capture.starts.borrow().as_ref().unwrap(),
+            );
+            cx.update(|cx| capture.bridge.begin_shutdown(cx)).unwrap();
+        }
+        visual.simulate_mouse_up(
+            point(px(x + 60.0), px(20.0)),
+            MouseButton::Left,
+            Modifiers::none(),
+        );
+    }
+    cx.run_until_parked();
+    cx.update(|cx| assert_eq!(cx.active_native_captured_drag_source_window(), None));
+    let released: Vec<_> = capture
+        .events
+        .borrow()
+        .iter()
+        .filter(|event| event.phase() == NativeCapturedDragPhase::Released)
+        .cloned()
+        .collect();
+    assert_eq!(released.len(), 2);
+    assert_ne!(released[0].generation(), released[1].generation());
+    assert!(released[0].sequence() < released[1].sequence());
+    assert!(
+        capture
+            .events
+            .borrow()
+            .iter()
+            .all(|event| !matches!(event.phase(), NativeCapturedDragPhase::Cancelled(_)))
+    );
+    assert_eq!(attempts.borrow().len(), 2);
+    let original_terminals: Vec<_> = transport
+        .0
+        .queue
+        .borrow()
+        .iter()
+        .filter_map(|record| match record {
+            Inbound::CaptureTerminal(binding, barrier, terminal, _) => {
+                Some((*binding, *barrier, *terminal))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(original_terminals.len(), 2);
+    for (index, (owner, barrier, terminal)) in original_terminals.iter().enumerate() {
+        assert_eq!(*owner, binding);
+        assert_eq!(barrier.source_window(), source.window_id());
+        assert_eq!(barrier.drag_generation(), released[index].generation());
+        assert_eq!(barrier.release_generation(), attempts.borrow()[index]);
+        assert_eq!(*terminal, NativeCapturedDragReleaseTerminal::Released);
+    }
+    assert_ne!(original_terminals[0].1, original_terminals[1].1);
+    assert!(
+        transport
+            .0
+            .queue
+            .borrow()
+            .iter()
+            .all(|record| !matches!(record, Inbound::CaptureUnobserved(_)))
+    );
+    assert_eq!(capture.session.native_input_recorded_count(), recorded);
+
+    drop(update);
+    commit_capture_transport(&mut capture.session, &mut capture.bridge);
+    assert!(transport.is_empty());
+    let mut reports = capture.bridge.take_reports();
+    let release_packets: Vec<_> = reports
+        .iter()
+        .filter_map(|report| {
+            if let NativeReport::CapturedRelease { capture, frame } = report {
+                Some((*capture, *frame))
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(release_packets.len(), 2);
+    for (packet, event) in release_packets.iter().zip(&released) {
+        assert_eq!(packet.0, super::super::NativeCapture::from_event(event));
+        assert_eq!(packet.1, event.physical_frame());
+    }
+    let collected_terminals: Vec<_> = reports
+        .iter()
+        .filter_map(|report| match report {
+            NativeReport::CaptureTerminal {
+                binding,
+                barrier,
+                terminal,
+            } => Some((*binding, *barrier, *terminal)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(collected_terminals, original_terminals);
+    cx.update(|cx| capture.bridge.begin_shutdown(cx)).unwrap();
+    for _ in 0..4 {
+        cx.update(|cx| capture.bridge.drive_shutdown(cx)).unwrap();
+        cx.run_until_parked();
+        commit_capture_transport(&mut capture.session, &mut capture.bridge);
+        reports.extend(capture.bridge.take_reports());
+    }
+    cx.update(|cx| {
+        assert!(
+            capture
+                .windows
+                .iter()
+                .all(|window| !cx.windows().contains(window))
+        );
+    });
+    for binding in capture.bindings {
+        capture
+            .bridge
+            .callbacks(binding.window())
+            .unwrap()
+            .seal()
+            .unwrap();
+        capture
+            .bridge
+            .quiesce_binding(&mut capture.session, binding)
+            .unwrap();
+        commit_capture_transport(&mut capture.session, &mut capture.bridge);
+        reports.extend(capture.bridge.take_reports());
+    }
+    assert!(capture.bridge.is_quiescent());
+    assert_eq!(
+        reports
+            .iter()
+            .filter(|report| matches!(report, NativeReport::CaptureTerminal { .. }))
+            .count(),
+        2,
+        "service must not duplicate either original natural terminal: {reports:?}"
+    );
+    assert!(!reports.iter().any(|report| matches!(report,
+        NativeReport::Unsupported { operation }
+            if *operation == "observing the original native capture release after drag retirement"
+    )), "{reports:?}");
+}
+
+#[open_gpui::test]
+fn natural_capture_release_failure_stays_latched_until_the_actual_native_terminal(
+    cx: &mut TestAppContext,
+) {
+    let mut capture = natural_capture(cx);
+    let source = capture.windows[1];
+    let binding = capture.bindings[1].window();
+    let callbacks = capture.bridge.callbacks(binding).unwrap();
+    let attempts = Rc::new(RefCell::new(Vec::new()));
+    let release_allowed = Rc::new(Cell::new(false));
+    cx.set_pointer_capture_release_callback(source, {
+        let attempts = attempts.clone();
+        let release_allowed = release_allowed.clone();
+        move |generation| {
+            attempts.borrow_mut().push(generation);
+            if release_allowed.get() {
+                PlatformPointerCaptureReleaseOutcome::Released
+            } else {
+                PlatformPointerCaptureReleaseOutcome::Rejected
+            }
+        }
+    });
+    let mut visual = VisualTestContext::from_window(source, cx);
+    visual.simulate_mouse_down(
+        point(px(20.0), px(20.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    visual.simulate_mouse_move(
+        point(px(60.0), px(20.0)),
+        Some(MouseButton::Left),
+        Modifiers::none(),
+    );
+    visual.simulate_mouse_move(
+        point(px(80.0), px(20.0)),
+        Some(MouseButton::Left),
+        Modifiers::none(),
+    );
+    let generation = capture.events.borrow().last().unwrap().generation();
+    commit_capture_transport(&mut capture.session, &mut capture.bridge);
+    capture.bridge.take_reports();
+    visual.simulate_mouse_up(
+        point(px(80.0), px(20.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    cx.update(|cx| assert_eq!(cx.active_native_captured_drag_source_window(), None));
+    assert_eq!(attempts.borrow().len(), 1);
+    let release_generation = attempts.borrow()[0];
+    commit_capture_transport(&mut capture.session, &mut capture.bridge);
+    let mut reports = capture.bridge.take_reports();
+    assert!(
+        !reports
+            .iter()
+            .any(|report| matches!(report, NativeReport::CaptureTerminal { .. }))
+    );
+    for (index, delay) in [8, 32, 128].into_iter().enumerate() {
+        cx.background_executor
+            .advance_clock(Duration::from_millis(delay));
+        cx.run_until_parked();
+        commit_capture_transport(&mut capture.session, &mut capture.bridge);
+        reports.extend(capture.bridge.take_reports());
+        assert_eq!(attempts.borrow().len(), index + 2);
+    }
+    assert_eq!(attempts.borrow().as_slice(), &[release_generation; 4]);
+    let terminals: Vec<_> = reports
+        .iter()
+        .filter_map(|report| match report {
+            NativeReport::CaptureTerminal {
+                binding,
+                barrier,
+                terminal,
+            } => Some((*binding, *barrier, *terminal)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(terminals.len(), 1, "{reports:?}");
+    let (owner, barrier, terminal) = terminals[0];
+    assert_eq!(owner, binding);
+    assert_eq!(barrier.source_window(), source.window_id());
+    assert_eq!(barrier.drag_generation(), generation);
+    assert_eq!(barrier.release_generation(), release_generation);
+    assert_eq!(terminal, NativeCapturedDragReleaseTerminal::Failed);
+    let events = capture.events.borrow();
+    assert_eq!(
+        events.last().unwrap().phase(),
+        NativeCapturedDragPhase::Released
+    );
+    assert!(events.iter().all(|event| event.generation() == generation
+        && !matches!(event.phase(), NativeCapturedDragPhase::Cancelled(_))));
+    drop(events);
+
+    release_allowed.set(true);
+    cx.update(|cx| capture.bridge.begin_shutdown(cx)).unwrap();
+    cx.run_until_parked();
+    commit_capture_transport(&mut capture.session, &mut capture.bridge);
+    reports.extend(capture.bridge.take_reports());
+    for _ in 0..3 {
+        cx.update(|cx| {
+            callbacks.cancel_capture(cx);
+            capture
+                .bridge
+                .dispatch_effects(&mut |_, _, _| panic!("shutdown cannot create"), cx)
+                .unwrap();
+            capture.bridge.drive_shutdown(cx).unwrap();
+        });
+        cx.background_executor.advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        commit_capture_transport(&mut capture.session, &mut capture.bridge);
+        let repeated = capture.bridge.take_reports();
+        assert!(
+            repeated.is_empty(),
+            "a failed natural release must remain retired: {repeated:?}"
+        );
+        assert_eq!(attempts.borrow().as_slice(), &[release_generation; 4]);
+        assert!(capture.bridge.transport().is_empty());
+    }
+    cx.update(|cx| {
+        assert!(
+            capture
+                .windows
+                .iter()
+                .all(|window| cx.windows().contains(window))
+        );
+    });
+    assert!(!capture.bridge.is_quiescent());
+
+    let held = cx.hold_window_native_terminal(source);
+    cx.update_window(source, |_, window, cx| window.remove_window(cx))
+        .unwrap();
+    cx.run_until_parked();
+    commit_capture_transport(&mut capture.session, &mut capture.bridge);
+    let logical = capture.bridge.take_reports();
+    assert!(
+        logical.iter().any(|report| matches!(report,
+            NativeReport::LogicalClosed(owner) if *owner == binding
+        )),
+        "{logical:?}"
+    );
+    assert!(
+        !logical.iter().any(|report| matches!(report,
+            NativeReport::NativeTerminal(owner) if *owner == binding
+        )),
+        "{logical:?}"
+    );
+    assert!(matches!(
+        callbacks.seal(),
+        Err(NativeBridgeError::NotQuiescent)
+    ));
+    reports.extend(logical);
+    cx.update(|cx| capture.bridge.drive_shutdown(cx)).unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| assert!(cx.windows().contains(&capture.windows[0])));
+
+    assert!(held.release());
+    cx.run_until_parked();
+    commit_capture_transport(&mut capture.session, &mut capture.bridge);
+    let native = capture.bridge.take_reports();
+    assert_eq!(
+        native
+            .iter()
+            .filter(|report| matches!(report,
+                NativeReport::NativeTerminal(owner) if *owner == binding
+            ))
+            .count(),
+        1,
+        "{native:?}"
+    );
+    assert!(
+        !native
+            .iter()
+            .any(|report| matches!(report, NativeReport::CaptureTerminal { .. })),
+        "native retirement must not rewrite the failed terminal: {native:?}"
+    );
+    callbacks
+        .seal()
+        .expect("only the actual native terminal clears capture failure custody");
+    reports.extend(native);
+    for _ in 0..3 {
+        cx.update(|cx| capture.bridge.drive_shutdown(cx)).unwrap();
+        cx.run_until_parked();
+        commit_capture_transport(&mut capture.session, &mut capture.bridge);
+        reports.extend(capture.bridge.take_reports());
+    }
+    for binding in capture.bindings {
+        capture
+            .bridge
+            .callbacks(binding.window())
+            .unwrap()
+            .seal()
+            .unwrap();
+        capture
+            .bridge
+            .quiesce_binding(&mut capture.session, binding)
+            .unwrap();
+        commit_capture_transport(&mut capture.session, &mut capture.bridge);
+        reports.extend(capture.bridge.take_reports());
+    }
+    assert!(capture.bridge.is_quiescent());
+    assert_eq!(attempts.borrow().as_slice(), &[release_generation; 4]);
+    let all_terminals: Vec<_> = reports
+        .iter()
+        .filter_map(|report| match report {
+            NativeReport::CaptureTerminal {
+                binding,
+                barrier,
+                terminal,
+            } => Some((*binding, *barrier, *terminal)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(all_terminals, terminals);
+    assert!(!reports.iter().any(|report| matches!(report,
+        NativeReport::Unsupported { operation }
+            if *operation == "observing the original native capture release after drag retirement"
+    )), "{reports:?}");
 }

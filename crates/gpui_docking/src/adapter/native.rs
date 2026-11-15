@@ -17,6 +17,7 @@
 //! Create preparation, first-live admission, logical removal, capture release,
 //! renderer shutdown and actual native destruction remain distinct facts.
 
+mod desktop;
 mod gpui;
 mod input;
 mod transport;
@@ -42,12 +43,21 @@ use open_gpui::{
 use thiserror::Error;
 
 pub use gpui::{NativeCallbacks, NativeGeometry, NativeOpenFailure, NativeWindowRequest};
+pub(crate) use input::native_capture_owner;
 pub use input::{NativeCapture, NativePointerFacts};
 pub use transport::NativeTransport;
 
 /// Facts delivered to the host without acknowledging its semantic outputs.
 #[derive(Debug)]
 pub enum NativeReport {
+    /// The original release packet was accepted by the native FIFO.
+    /// This is not the independent capture-release terminal or a create acknowledgement.
+    CapturedRelease {
+        /// Original source and drag generation from the accepted callback.
+        capture: NativeCapture,
+        /// Physical coordinates frozen by that callback, when available.
+        frame: Option<open_gpui::PlatformNativePointerPhysicalFrame>,
+    },
     /// GPUI completed the original window-owned submission ticket.
     Submission {
         /// Original core-owned native window lifetime.
@@ -161,6 +171,11 @@ pub struct NativeBridge {
     draining: bool,
     pending: Option<gpui::PendingDispatch>,
     work_areas: NativeWorkAreaRoster,
+    desktop: desktop::DesktopObservation,
+    desktop_pending_commit: bool,
+    // Original captured packet from the accepted FIFO prefix, never a later cursor query.
+    pointer_frame: Option<open_gpui::PlatformNativePointerPhysicalFrame>,
+    pointer_capture: Option<NativeCapture>,
 }
 
 impl NativeBridge {
@@ -207,16 +222,33 @@ impl NativeBridge {
             draining: false,
             pending: None,
             work_areas: NativeWorkAreaRoster::Unknown,
+            desktop: desktop::DesktopObservation::default(),
+            desktop_pending_commit: false,
+            pointer_frame: None,
+            pointer_capture: None,
         })
     }
 
-    /// Returns supported GPUI operations without inventing outer geometry or desktop input.
+    /// Maps declared GPUI backend support without granting event-time facts.
     pub fn gpui_capabilities(cx: &App) -> NativeHostCapabilities {
+        let viewport = cx.viewport_capabilities();
         let mut capabilities = NativeHostCapabilities::none_supported()
             .with(NativeHostCapability::AuthoritativeInventory)
             .with(NativeHostCapability::CloseCancellation);
-        if cx.viewport_capabilities().platform_viewport_windows {
+        if viewport.platform_viewport_windows {
             capabilities = capabilities.with(NativeHostCapability::NativeWindowLifecycle);
+        }
+        if viewport.window_hit_stack {
+            capabilities = capabilities.with(NativeHostCapability::HoveredWindow);
+        }
+        if viewport.native_pointer_desktop_position {
+            capabilities = capabilities.with(NativeHostCapability::DesktopPointerPosition);
+        }
+        if viewport.native_pointer_button_state {
+            capabilities = capabilities.with(NativeHostCapability::AuthoritativeButtonState);
+        }
+        if cx.display_snapshot().physical_displays().is_some() {
+            capabilities = capabilities.with(NativeHostCapability::WorkArea);
         }
         capabilities
     }
@@ -374,7 +406,7 @@ impl NativeBridge {
                 _ => {}
             }
         }
-        self.effects.extend(report.take_native_effects());
+        self.enqueue_effects(report.take_native_effects());
     }
 
     /// Appends already extracted requests without deduplication or reordering.

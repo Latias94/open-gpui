@@ -82,6 +82,7 @@ pub(super) fn fixture(
     let mut session = session();
     let capabilities = NativeHostCapabilities::none_supported()
         .with(NativeHostCapability::AuthoritativeInventory)
+        .with(NativeHostCapability::WorkArea)
         .with(NativeHostCapability::CloseCancellation);
     let mut bridge = NativeBridge::enable(
         &mut session,

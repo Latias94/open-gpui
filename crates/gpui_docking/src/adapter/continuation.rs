@@ -1,23 +1,9 @@
 //! Stationary gesture work remains tied to its submitted physical frame.
 
 use super::{SharedHost, input};
-use dockspace::{model::SurfaceId, runtime::DockspacePointerContinuation};
-use open_gpui::{
-    App, Bounds, HitboxId, Pixels, PlatformHoveredWindow, PointerCaptureHandle, Task, Window,
-};
+use dockspace::runtime::DockspacePointerContinuation;
+use open_gpui::{App, PlatformHoveredWindow, Task, Window};
 use std::rc::Rc;
-
-#[derive(Clone)]
-pub(super) struct InputFrame {
-    pub(super) surface: SurfaceId,
-    pub(super) serial: u64,
-    pub(super) bounds: Bounds<Pixels>,
-    pub(super) hitboxes: Vec<HitboxId>,
-    pub(super) capture: PointerCaptureHandle,
-    pub(super) receivers: Vec<(dockspace::runtime::DockspaceReceiverDescriptor, HitboxId)>,
-    pub(super) scale: f64,
-    pub(super) native_binding: Option<dockspace::runtime::NativeSurfaceBinding>,
-}
 
 pub(super) struct Wake {
     request: DockspacePointerContinuation,

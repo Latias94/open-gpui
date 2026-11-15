@@ -22,7 +22,8 @@ use open_gpui::{
     WindowActivationTicket, WindowFrameSubmissionTicket, WindowInitialPresentationStatus,
     WindowMutationDispatch, WindowMutationOutcome, WindowMutationTicket, WindowOpenError,
     WindowOpenFailureStage, WindowOptions, WindowPhysicalPlacementRequest, WindowPlatformFacts,
-    WindowPresentationShutdownTicket,
+    WindowPresentationShutdownTicket, WindowProvisionalPlacementOutcome,
+    WindowProvisionalPlacementSnapshot, WindowProvisionalPlacementTicket,
 };
 
 use super::{
@@ -52,10 +53,15 @@ impl NativeGeometry {
     pub fn gpui() -> Self {
         Self::new(
             |facts| super::input::physical_rect(facts.physical_geometry?.outer_bounds()?),
-            |outer, window| {
-                window.physical_placement_for_outer_bounds(super::input::device_bounds(outer)?)
-            },
+            Self::gpui_client_placement,
         )
+    }
+
+    pub(crate) fn gpui_client_placement(
+        outer: PhysicalRect,
+        window: &Window,
+    ) -> Option<WindowPhysicalPlacementRequest> {
+        window.physical_placement_for_outer_bounds(super::input::device_bounds(outer)?)
     }
     /// Installs real observed outer geometry and outer-to-client placement conversion.
     pub fn new(
@@ -112,6 +118,7 @@ impl From<WindowOpenError> for NativeOpenFailure {
 
 struct CallbackState {
     binding: Cell<NativeWindowBinding>,
+    create_request: Cell<Option<NativeWindowRequest>>,
     window: Cell<Option<AnyWindowHandle>>,
     transport: NativeTransport,
     geometry: Option<Rc<NativeGeometry>>,
@@ -130,7 +137,7 @@ struct CallbackState {
     anchor: Cell<bool>,
     capture: Cell<Option<NativeCapture>>,
     capture_start: Cell<Option<NativeCapture>>,
-    capture_release: Cell<Option<(NativeWindowBinding, NativeCapturedDragReleaseBarrier)>>,
+    capture_releases: RefCell<Vec<(NativeWindowBinding, NativeCapturedDragReleaseBarrier)>>,
     capture_failed: Cell<bool>,
     capture_cancellations: RefCell<VecDeque<NativeCapture>>,
     capture_observation_missing: Cell<bool>,
@@ -138,6 +145,8 @@ struct CallbackState {
     placement_ready: Cell<bool>,
     cleanup: RefCell<Vec<(NativeSurfaceBinding, NativeCleanupObservation)>>,
     open_retirement: RefCell<Option<WindowPresentationShutdownTicket>>,
+    create_placement: RefCell<Option<WindowMutationDispatch>>,
+    provisional_placement: RefCell<Option<WindowProvisionalPlacementTicket>>,
 }
 
 /// Callback custody for one physical lifetime; it never borrows `SharedHost`.
@@ -154,6 +163,7 @@ impl NativeCallbacks {
     ) -> Self {
         Self(Rc::new(CallbackState {
             binding: Cell::new(binding),
+            create_request: Cell::new(None),
             window: Cell::new(None),
             transport,
             geometry,
@@ -172,7 +182,7 @@ impl NativeCallbacks {
             anchor: Cell::new(false),
             capture: Cell::new(None),
             capture_start: Cell::new(None),
-            capture_release: Cell::new(None),
+            capture_releases: RefCell::new(Vec::new()),
             capture_failed: Cell::new(false),
             capture_cancellations: RefCell::new(VecDeque::new()),
             capture_observation_missing: Cell::new(false),
@@ -180,6 +190,8 @@ impl NativeCallbacks {
             placement_ready: Cell::new(false),
             cleanup: RefCell::new(Vec::new()),
             open_retirement: RefCell::new(None),
+            create_placement: RefCell::new(None),
+            provisional_placement: RefCell::new(None),
         }))
     }
 
@@ -270,7 +282,7 @@ impl NativeCallbacks {
             state.native_terminal.set(true);
             state.capture.set(None);
             state.capture_start.set(None);
-            state.capture_release.set(None);
+            state.capture_releases.borrow_mut().clear();
             state.capture_failed.set(false);
             state.capture_cancellations.borrow_mut().clear();
             if state.anchor.get() {
@@ -369,7 +381,7 @@ impl NativeCallbacks {
     /// U5 must separately retire its original submission callbacks and output owners.
     pub fn seal(&self) -> Result<(), NativeBridgeError> {
         if !self.0.native_terminal.get()
-            || self.0.capture_release.get().is_some()
+            || !self.0.capture_releases.borrow().is_empty()
             || self.0.capture_failed.get()
             || self
                 .0
@@ -406,6 +418,32 @@ impl NativeCallbacks {
                     .as_ref()
                     .map(|ticket| ticket.snapshot().window_id())
             })
+    }
+
+    /// Returns the original core request sent to this lifetime's native factory.
+    ///
+    /// Enrolled application roots have no create request. The frozen outer intent
+    /// remains distinct from converted client bounds and later native observations.
+    pub fn create_request(&self) -> Option<NativeWindowRequest> {
+        self.0.create_request.get()
+    }
+
+    fn is_child_window(&self) -> bool {
+        self.create_request()
+            .is_some_and(|request| request.role == NativeSurfaceRole::Child)
+    }
+
+    /// Reads the original placement receipt when a provisional Window was adopted.
+    ///
+    /// Requested client bounds, target display and release anchor come from the
+    /// original request. Native observations and settlement remain separate facts;
+    /// this snapshot does not acknowledge creation or first-live presentation.
+    pub fn provisional_placement(&self) -> Option<WindowProvisionalPlacementSnapshot> {
+        self.0
+            .provisional_placement
+            .borrow()
+            .as_ref()
+            .map(|ticket| ticket.snapshot())
     }
 
     pub(crate) fn retain_open_retirement(
@@ -493,6 +531,28 @@ impl NativeCallbacks {
     pub(super) fn allow_preparation(&self) {
         self.0.placement_ready.set(true);
     }
+    pub(crate) fn retain_provisional_placement(
+        &self,
+        dispatch: WindowMutationDispatch,
+        ticket: WindowProvisionalPlacementTicket,
+    ) {
+        self.0.create_placement.replace(Some(dispatch));
+        self.0.provisional_placement.replace(Some(ticket));
+    }
+
+    fn provisional_placement_settled(&self) -> bool {
+        self.0
+            .provisional_placement
+            .borrow()
+            .as_ref()
+            .is_none_or(|ticket| {
+                let snapshot = ticket.snapshot();
+                snapshot.outcome() == WindowProvisionalPlacementOutcome::Settled
+                    && snapshot
+                        .native_facts()
+                        .is_some_and(|facts| facts.accepts_placement())
+            })
+    }
     pub(super) fn continue_root(&self, binding: NativeWindowBinding) {
         self.0.binding.set(binding);
         // Continuation retains this exact physical window. Its independent
@@ -562,7 +622,7 @@ impl NativeCallbacks {
     pub(super) fn request_capture_cancellation(&self, capture: NativeCapture) {
         if self.0.native_terminal.get()
             || self.0.capture_failed.get()
-            || self.0.capture_release.get().is_some_and(|(_, barrier)| {
+            || self.0.capture_releases.borrow().iter().any(|(_, barrier)| {
                 barrier.source_window() == capture.source
                     && barrier.drag_generation() == capture.generation
             })
@@ -579,16 +639,60 @@ impl NativeCallbacks {
         !self.0.capture_observation_missing.replace(true)
     }
 
+    pub(crate) fn observe_capture_release(
+        &self,
+        event: &open_gpui::NativeCapturedDragEvent,
+        cx: &App,
+    ) {
+        if !self.can_accept_capture_event(event)
+            || self.0.capture_failed.get()
+            || self.0.capture_releases.borrow().iter().any(|(_, barrier)| {
+                barrier.source_window() == event.source_window()
+                    && barrier.drag_generation() == event.generation()
+            })
+        {
+            return;
+        }
+        let weak = Rc::downgrade(&self.0);
+        let binding = self.binding();
+        if let Some(barrier) = cx.observe_native_captured_drag_release(
+            event.source_window(),
+            event.generation(),
+            move |barrier, terminal, cx| {
+                if let Some(state) = weak.upgrade() {
+                    state.transport.push(
+                        Inbound::CaptureTerminal(binding, barrier, terminal, CallbackCustody(weak)),
+                        cx,
+                    );
+                }
+            },
+        ) {
+            self.0
+                .capture_releases
+                .borrow_mut()
+                .push((binding, barrier));
+        }
+    }
+
     pub(super) fn finish_capture(
         &self,
         binding: NativeWindowBinding,
         barrier: open_gpui::NativeCapturedDragReleaseBarrier,
         terminal: open_gpui::NativeCapturedDragReleaseTerminal,
     ) {
-        if self.0.capture_release.get() != Some((binding, barrier)) {
+        let mut releases = self.0.capture_releases.borrow_mut();
+        let Some(index) = releases
+            .iter()
+            .position(|pending| *pending == (binding, barrier))
+        else {
             return;
-        }
-        self.0.capture_release.set(None);
+        };
+        releases.swap_remove(index);
+        drop(releases);
+        self.0.capture_cancellations.borrow_mut().retain(|capture| {
+            capture.source != barrier.source_window()
+                || capture.generation != barrier.drag_generation()
+        });
         if terminal == open_gpui::NativeCapturedDragReleaseTerminal::Failed {
             self.0.capture_failed.set(true);
         } else {
@@ -634,7 +738,7 @@ impl NativeCallbacks {
         for _ in 0..pending {
             // A later generation cannot replace the original in-flight barrier.
             // Its request remains queued until that exact release completes.
-            if self.0.capture_release.get().is_some() {
+            if !self.0.capture_releases.borrow().is_empty() {
                 break;
             }
             let Some(capture) = self.0.capture_cancellations.borrow_mut().pop_front() else {
@@ -661,7 +765,10 @@ impl NativeCallbacks {
             },
         );
         if let Some(barrier) = barrier {
-            self.0.capture_release.set(Some((binding, barrier)));
+            self.0
+                .capture_releases
+                .borrow_mut()
+                .push((binding, barrier));
         } else {
             self.0.capture_failed.set(true);
             self.0
@@ -764,6 +871,14 @@ enum PendingTicket {
 }
 
 impl NativeBridge {
+    pub(crate) fn pointer_frame(&self) -> Option<open_gpui::PlatformNativePointerPhysicalFrame> {
+        self.pointer_frame
+    }
+
+    pub(crate) fn pointer_capture(&self) -> Option<super::NativeCapture> {
+        self.pointer_capture
+    }
+
     pub(crate) fn preflight_root_binding(
         &self,
         window: &Window,
@@ -1026,6 +1141,7 @@ impl NativeBridge {
             self.transport.clone(),
             self.geometry.clone(),
         );
+        callbacks.0.create_request.set(Some(open));
         self.opening = Some(callbacks.clone());
         let dispatch = request.begin_dispatch();
         match factory(open, &callbacks, cx) {
@@ -1077,6 +1193,9 @@ impl NativeBridge {
                     return Err(NativeBridgeError::UnknownBinding);
                 }
                 let placement = handle.update(cx, |_, window, _| {
+                    if let Some(dispatch) = callbacks.0.create_placement.borrow_mut().take() {
+                        return Some(dispatch);
+                    }
                     self.geometry
                         .as_ref()
                         .and_then(|geometry| (geometry.client_placement)(open.outer_bounds, window))
@@ -1094,7 +1213,9 @@ impl NativeBridge {
                             _subscription: subscription,
                         });
                     }
-                    Ok(Some(WindowMutationDispatch::Unchanged)) => {
+                    Ok(Some(WindowMutationDispatch::Unchanged))
+                        if callbacks.provisional_placement_settled() =>
+                    {
                         if let Some(NativeEffectAcknowledgement::Create(acknowledgement)) =
                             dispatch.accepted()
                         {
@@ -1194,7 +1315,9 @@ impl NativeBridge {
             return Ok(false);
         };
         match observation.outcome {
-            WindowMutationOutcome::Exact | WindowMutationOutcome::Adjusted => {
+            WindowMutationOutcome::Exact | WindowMutationOutcome::Adjusted
+                if pending.callbacks.provisional_placement_settled() =>
+            {
                 match pending.request.accepted() {
                     Some(NativeEffectAcknowledgement::Create(ack)) => {
                         pending.callbacks.0.create.set(Some(ack))
@@ -1415,7 +1538,7 @@ impl NativeBridge {
         // Native destruction cannot substitute for proving capture/route cleanup.
         if callbacks.0.capture.get().is_some()
             || callbacks.0.capture_start.get().is_some()
-            || callbacks.0.capture_release.get().is_some()
+            || !callbacks.0.capture_releases.borrow().is_empty()
             || !callbacks.0.capture_cancellations.borrow().is_empty()
             || callbacks.0.capture_failed.get()
         {
@@ -1432,6 +1555,31 @@ impl NativeBridge {
     }
 
     pub(super) fn refresh_dependencies(&self, cx: &App) -> Result<(), NativeBridgeError> {
+        let children: Vec<_> = self
+            .windows
+            .iter()
+            .filter(|(_, _, callbacks)| callbacks.is_child_window())
+            .map(|(_, owner, _)| owner)
+            .collect();
+        if !children.is_empty() {
+            // Any application root may be a child's recovery host, independently
+            // of the workspace's final retirement anchor. Keep those native
+            // owners behind the same real child terminals during App shutdown.
+            for (binding, owner, callbacks) in self.windows.iter() {
+                if Some(binding) != self.anchor
+                    && !callbacks.is_child_window()
+                    && callbacks.handle().is_some()
+                    && !callbacks.0.logical_closed.get()
+                    && !callbacks.0.native_terminal.get()
+                {
+                    cx.register_native_window_retirement_dependencies(
+                        owner,
+                        children.iter().copied(),
+                    )
+                    .map_err(NativeBridgeError::Dependencies)?;
+                }
+            }
+        }
         if let Some(anchor) = self
             .anchor
             .and_then(|binding| self.windows.get(binding))
@@ -1456,11 +1604,32 @@ impl NativeBridge {
     }
 
     /// Retries close intents; a failed handle update never becomes a native terminal.
+    ///
+    /// Child bindings must reach permanent quiescence and leave this bridge before
+    /// application roots retire, preserving any non-anchor recovery hosts.
     pub fn drive_shutdown(&mut self, cx: &mut App) -> Result<(), NativeBridgeError> {
         if !self.draining && !self.transport.is_frozen() {
             return Ok(());
         }
         self.draining = true;
+        let children_pending = self.opening.is_some()
+            || self
+                .windows
+                .iter()
+                .any(|(_, _, callbacks)| callbacks.is_child_window());
+        if children_pending {
+            for (_, _, callbacks) in self
+                .windows
+                .iter()
+                .filter(|(_, _, callbacks)| callbacks.is_child_window())
+            {
+                self.remove_window(callbacks, cx);
+            }
+            // Native terminal alone is insufficient: collection must commit the
+            // loss/recovery and permanent binding quiescence, removing the child
+            // from this index before any application recovery root is closed.
+            return Ok(());
+        }
         for (binding, _, callbacks) in self.windows.iter() {
             if Some(binding) != self.anchor {
                 self.remove_window(callbacks, cx);
@@ -1504,9 +1673,10 @@ impl NativeBridge {
             || self.windows.iter().any(|(_, _, callbacks)| {
                 callbacks
                     .0
-                    .capture_release
-                    .get()
-                    .is_some_and(|(owner, _)| owner == binding.window())
+                    .capture_releases
+                    .borrow()
+                    .iter()
+                    .any(|(owner, _)| *owner == binding.window())
             })
         {
             return Err(NativeBridgeError::NotQuiescent);

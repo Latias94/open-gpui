@@ -6,12 +6,13 @@ use std::{
 
 use dockspace::runtime::{
     DockspaceSession, NativeCloseEffectAcknowledgement, NativeCloseState, NativeEffectResult,
-    NativeGlobalFocus, NativePointerId, NativePointerInput, NativePointerRoster,
-    NativeWindowBinding, NativeWindowFacts, NativeWorkAreaRoster, PointerEventMetadata,
+    NativeGlobalFocus, NativePointerId, NativePointerInput, NativePointerOwner,
+    NativePointerRoster, NativeWindowBinding, NativeWindowFacts, NativeWorkAreaRoster,
+    PointerEventMetadata,
 };
 use open_gpui::{
     App, NativeCapturedDragReleaseBarrier, NativeCapturedDragReleaseTerminal,
-    WindowFrameSubmissionSnapshot,
+    PlatformDisplaySnapshot, WindowFrameSubmissionSnapshot,
 };
 
 use super::{NativeBridge, NativeBridgeError, NativeReport, gpui::CallbackCustody};
@@ -57,7 +58,7 @@ impl NativeTransport {
         self.0.queue.borrow_mut().push_back(Inbound::Pointer(input));
     }
 
-    pub(crate) fn presentation(
+    pub(in crate::adapter) fn presentation(
         &self,
         terminal: crate::adapter::presentation::PendingPresentation,
         cx: &mut App,
@@ -65,7 +66,7 @@ impl NativeTransport {
         self.push(Inbound::Presentation(terminal), cx);
     }
 
-    pub(crate) fn take_presentation(
+    pub(in crate::adapter) fn take_presentation(
         &self,
     ) -> Option<crate::adapter::presentation::PendingPresentation> {
         let mut queue = self.0.queue.borrow_mut();
@@ -80,6 +81,7 @@ impl NativeTransport {
     pub(crate) fn captured_drag(
         &self,
         binding: NativeWindowBinding,
+        capture: NativePointerOwner,
         event: open_gpui::NativeCapturedDragEvent,
         pointer: NativePointerId,
         metadata: PointerEventMetadata,
@@ -88,6 +90,7 @@ impl NativeTransport {
         self.push(
             Inbound::CapturedDrag {
                 binding,
+                capture,
                 event,
                 pointer,
                 metadata,
@@ -117,6 +120,13 @@ impl NativeTransport {
     /// Publishes a complete independently observed work-area roster.
     pub fn work_areas(&self, areas: NativeWorkAreaRoster, cx: &mut App) {
         self.push(Inbound::WorkAreas(areas), cx);
+    }
+
+    pub(crate) fn desktop(&self, snapshot: &PlatformDisplaySnapshot, cx: &mut App) {
+        self.push(
+            Inbound::Desktop(super::desktop::DesktopObservation::from_snapshot(snapshot)),
+            cx,
+        );
     }
 
     /// Publishes an independently observed global focus fact.
@@ -199,12 +209,14 @@ pub(super) enum Inbound {
     Pointer(NativePointerInput),
     CapturedDrag {
         binding: NativeWindowBinding,
+        capture: NativePointerOwner,
         event: open_gpui::NativeCapturedDragEvent,
         pointer: NativePointerId,
         metadata: PointerEventMetadata,
     },
     PointerRoster(NativePointerRoster),
     WorkAreas(NativeWorkAreaRoster),
+    Desktop(super::desktop::DesktopObservation),
     Focus(NativeGlobalFocus),
     DeviceRemoved,
     Effect(NativeEffectResult),
@@ -235,9 +247,18 @@ impl NativeBridge {
     /// This does not begin or commit a host frame. InputCapacity and pending-roster
     /// failures need the host to commit its accepted native prefix before retrying.
     pub fn collect(&mut self, session: &mut DockspaceSession) -> Result<usize, NativeBridgeError> {
+        if self.desktop_pending_commit {
+            if session.has_pending_native_input() {
+                return Ok(0);
+            }
+            self.desktop_pending_commit = false;
+        }
         let mut collected = 0;
         while let Some(record) = self.transport.pop() {
-            if matches!(record, Inbound::Presentation(_)) {
+            let desktop = matches!(record, Inbound::Desktop(_));
+            if matches!(record, Inbound::Presentation(_))
+                || (desktop && session.has_pending_native_input())
+            {
                 self.transport.retry(record);
                 break;
             }
@@ -284,6 +305,11 @@ impl NativeBridge {
                 }
             }
             collected += 1;
+            // A following pointer can use only the work-area binding minted by
+            // this publication's commit, never the preceding roster's binding.
+            if desktop && session.has_pending_native_input() {
+                break;
+            }
         }
         Ok(collected)
     }
@@ -354,9 +380,16 @@ impl NativeBridge {
             Inbound::CaptureUnobserved(_) => self.reports.push_back(NativeReport::Unsupported {
                 operation: "observing the original native capture release after drag retirement",
             }),
-            Inbound::Pointer(input) => session.record_native_pointer(*input)?,
+            Inbound::Pointer(input) => {
+                session.record_native_pointer(*input)?;
+                // A local packet does not extend an earlier captured generation's
+                // desktop authority. The next real captured callback supplies its own.
+                self.pointer_frame = None;
+                self.pointer_capture = None;
+            }
             Inbound::CapturedDrag {
                 binding,
+                capture,
                 event,
                 pointer,
                 metadata,
@@ -370,13 +403,28 @@ impl NativeBridge {
                         .push_back(NativeReport::StaleCallback(*binding));
                     return Ok(());
                 }
-                let input =
-                    self.captured_pointer_input(session, *binding, event, *pointer, *metadata);
+                let input = self.captured_pointer_input(
+                    session, *binding, *capture, event, *pointer, *metadata,
+                );
                 session.record_native_pointer(input)?;
+                self.pointer_frame = event.physical_frame();
+                self.pointer_capture = Some(super::NativeCapture::from_event(event));
+                if matches!(event.phase(), open_gpui::NativeCapturedDragPhase::Released) {
+                    self.reports.push_back(NativeReport::CapturedRelease {
+                        capture: super::NativeCapture::from_event(event),
+                        frame: event.physical_frame(),
+                    });
+                }
                 // Advance native correlation only after ingress accepts the
                 // original front record. A refusal retains this event unchanged.
                 callbacks.accept_capture_event(event);
-                if callbacks.needs_capture_observation_report() {
+                if *capture == NativePointerOwner::Unknown
+                    && !matches!(
+                        event.phase(),
+                        open_gpui::NativeCapturedDragPhase::Cancelled(_)
+                    )
+                    && callbacks.needs_capture_observation_report()
+                {
                     self.reports.push_back(NativeReport::Unsupported {
                         operation: "independent native OS capture ownership observation",
                     });
@@ -393,6 +441,16 @@ impl NativeBridge {
             Inbound::WorkAreas(areas) => {
                 self.record_snapshot(session, None, Some(areas.clone()))?;
                 self.work_areas = areas.clone();
+                self.desktop = super::desktop::DesktopObservation::default();
+            }
+            Inbound::Desktop(desktop) => {
+                if *desktop != self.desktop {
+                    let areas = desktop.roster();
+                    self.record_snapshot(session, None, Some(areas.clone()))?;
+                    self.work_areas = areas;
+                    self.desktop = desktop.clone();
+                    self.desktop_pending_commit = true;
+                }
             }
             Inbound::Freeze => {
                 self.draining = true;

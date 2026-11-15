@@ -24,6 +24,7 @@ pub(super) fn record(
     colors: &DockspaceColors,
 ) -> Result<(Packet, dockspace::runtime::SurfaceProgramExecutionReceipt)> {
     let mut draws = Vec::new();
+    let mut native_preview = None;
     let label = |item: Option<ItemId>| {
         item.and_then(|item| panels.get(&item))
             .map_or_else(|| "Workspace".to_owned(), |pane| pane.title.to_string())
@@ -156,7 +157,18 @@ pub(super) fn record(
                             | DockspacePreviewVisual::Contained { rect, .. } => {
                                 draws.push(Draw::Preview(rect))
                             }
-                            DockspacePreviewVisual::Native { .. } => {}
+                            DockspacePreviewVisual::Native {
+                                host_surface,
+                                target_surface,
+                                placement,
+                            } => {
+                                native_preview =
+                                    Some(crate::adapter::host_native::provisional::Preview {
+                                        host_surface,
+                                        target_surface,
+                                        placement,
+                                    });
+                            }
                         }
                     }
                 }
@@ -216,6 +228,7 @@ pub(super) fn record(
         Packet {
             draws,
             deferred: false,
+            native_preview,
         },
         receipt,
     ))

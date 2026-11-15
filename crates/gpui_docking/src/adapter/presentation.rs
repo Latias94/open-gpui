@@ -4,7 +4,9 @@ use std::{collections::BTreeMap, rc::Rc};
 
 use dockspace::{
     model::SurfaceId,
-    runtime::{DockspaceUpdate, PaintedSurfaceOutput, SurfacePresentationResult},
+    runtime::{
+        DockspaceUpdate, PaintedSurfaceOutput, SurfacePresentationResult, SurfaceUnavailableReason,
+    },
 };
 use open_gpui::{
     AcceptedFrameFence, App, Window, WindowFrameSubmissionOutcome, WindowFrameSubmissionTicket,
@@ -12,7 +14,10 @@ use open_gpui::{
 };
 
 use super::{
-    HostState, SharedHost, continuation, element::Packet, host_native, input::QueuedPointer,
+    HostState, SharedHost, continuation,
+    element::Packet,
+    host_native,
+    input::{InputFrame, QueuedPointer},
 };
 
 pub(super) struct PendingSubmission {
@@ -23,15 +28,21 @@ pub(super) struct PendingSubmission {
     pub(super) inputs: Vec<QueuedPointer>,
     outputs: Vec<PaintedSurfaceOutput>,
     accepted_generation: Option<u64>,
-    input_frames: Vec<continuation::InputFrame>,
+    input_frames: Vec<InputFrame>,
 }
 
-pub(crate) struct PendingPresentation {
-    owner: WindowId,
-    serial: u64,
-    outputs: Vec<PaintedSurfaceOutput>,
-    input_frames: Vec<continuation::InputFrame>,
-    result: SurfacePresentationResult,
+pub(in crate::adapter) enum PendingPresentation {
+    Submission {
+        owner: WindowId,
+        serial: u64,
+        outputs: Vec<PaintedSurfaceOutput>,
+        input_frames: Vec<InputFrame>,
+        result: SurfacePresentationResult,
+    },
+    MountRemoved {
+        owner: WindowId,
+        surfaces: Vec<SurfaceId>,
+    },
 }
 
 impl PendingSubmission {
@@ -140,7 +151,7 @@ pub(super) fn observe(
 pub(super) fn accept(
     shared: &SharedHost,
     serial: u64,
-    mut input_frames: Vec<continuation::InputFrame>,
+    mut input_frames: Vec<InputFrame>,
     fence: AcceptedFrameFence,
     window: &mut Window,
     cx: &App,
@@ -189,6 +200,7 @@ pub(super) fn accept(
             Ok(mut report) => {
                 pending.outputs = report.take_painted_outputs();
                 host.apply_report(report);
+                host_native::provisional::accept_preview(&mut host, owner, &pending.packets);
                 pending.inputs.clear();
                 if let Some(mount) = host.mounts.get_mut(&owner) {
                     for (surface, packet) in &pending.packets {
@@ -244,9 +256,13 @@ pub(super) fn accept_focus_stable(
         return;
     };
     if let Some(generation) = pending.accepted_generation {
-        if let Err(error) =
-            window.accept_exact_frame_submission_frame(&pending.ticket, generation, cx)
-        {
+        if let Err(error) = host_native::provisional::accept_submission(
+            &host,
+            &pending.ticket,
+            generation,
+            window,
+            cx,
+        ) {
             log::error!("GPUI docking exact submission: {error:#}");
             window.refresh();
         }
@@ -313,7 +329,7 @@ fn retire_pending(
         pending.inputs.append(&mut host.inputs);
         host.inputs = pending.inputs;
     }
-    let terminal = PendingPresentation {
+    let terminal = PendingPresentation::Submission {
         owner,
         serial: pending.serial,
         outputs: pending.outputs,
@@ -330,13 +346,27 @@ fn retire_pending(
 }
 
 fn apply_presentation(host: &mut HostState, terminal: PendingPresentation) {
-    let PendingPresentation {
-        owner,
-        serial,
-        outputs,
-        input_frames,
-        result,
-    } = terminal;
+    let (owner, serial, outputs, input_frames, result) = match terminal {
+        PendingPresentation::MountRemoved {
+            owner,
+            mut surfaces,
+        } => {
+            surfaces.retain(|surface| {
+                host.owners
+                    .get(surface)
+                    .is_none_or(|current| *current == owner)
+            });
+            host.unavailable_surfaces.extend(surfaces);
+            return;
+        }
+        PendingPresentation::Submission {
+            owner,
+            serial,
+            outputs,
+            input_frames,
+            result,
+        } => (owner, serial, outputs, input_frames, result),
+    };
     if result == SurfacePresentationResult::Presented
         && let Some(mount) = host
             .mounts
@@ -379,24 +409,48 @@ pub(super) fn settle_native(
     settle_pending(host, window, cx)
 }
 
-fn settle_pending(
+pub(super) fn settle_pending(
     host: &mut HostState,
     window: Option<&Window>,
     cx: &mut App,
 ) -> anyhow::Result<()> {
-    if !host.presentation_pending || host.has_unaccepted_update() {
+    if (!host.presentation_pending && host.unavailable_surfaces.is_empty())
+        || host.has_unaccepted_update()
+    {
         return Ok(());
     }
-    let frame = host_native::begin_frame(
+    let unavailable: Vec<_> = host
+        .unavailable_surfaces
+        .iter()
+        .copied()
+        .filter(|surface| {
+            !host
+                .owners
+                .get(surface)
+                .and_then(|owner| host.mounts.get(owner))
+                .is_some_and(|mount| mount.attached)
+        })
+        .collect();
+    let mut frame = host_native::begin_frame(
         &mut host.session,
         &host.mounts,
         host.native.as_ref(),
         window,
         cx,
     )?;
+    let roster = frame.surfaces();
+    for surface in unavailable {
+        if roster.contains(&surface) {
+            // A preserved logical surface has no measuring/rendering owner now.
+            // Explicit unavailability revokes the old scene's interaction authority;
+            // dropping outputs alone does not withdraw a previously displayed scene.
+            frame.defer_surface(surface, SurfaceUnavailableReason::SurfaceUnavailable)?;
+        }
+    }
     let report = frame.commit()?;
     host.apply_report(report);
     host.presentation_pending = false;
+    host.unavailable_surfaces.clear();
     Ok(())
 }
 
@@ -420,8 +474,24 @@ pub(super) fn close(host: &mut HostState, owner: WindowId, cx: &mut App) {
             pending.inputs.clear();
             retire_pending(host, owner, pending, SurfacePresentationResult::Dropped, cx);
         }
+        let mut surfaces = Vec::new();
         for surface in mount.regions.keys() {
-            host.owners.remove(surface);
+            if host
+                .owners
+                .get(surface)
+                .is_none_or(|current| *current == owner)
+            {
+                host.owners.remove(surface);
+                surfaces.push(*surface);
+            }
+        }
+        let removed = PendingPresentation::MountRemoved { owner, surfaces };
+        if let Some(native) = &host.native {
+            // Keep actual mount loss behind the same original native prefix as
+            // renderer terminals. A rejected head cannot be bypassed by cleanup.
+            native.transport.presentation(removed, cx);
+        } else {
+            apply_presentation(host, removed);
         }
     }
     if let Err(error) = settle_pending(host, None, cx) {
