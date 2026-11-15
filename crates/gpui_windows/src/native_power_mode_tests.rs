@@ -751,7 +751,7 @@ impl NativePowerModeWindow {
                 click_count: 1,
                 ..Default::default()
             }));
-        let at = Instant::now();
+        let at = open_gpui::PlatformFrameSignal::capture(Instant::now);
         let signal_cursor = self.signals.borrow().len();
         let cursor = app.update_for_test(|cx| {
             let cursor = cx
@@ -760,7 +760,7 @@ impl NativePowerModeWindow {
             self.native.state.frame_signal.take();
             platform.raw_window_handles.record_frame_signal(
                 self.registration,
-                Some(at),
+                at,
                 FrameRequestSource::NativeCallback,
             );
             unsafe { SendMessageW(self.registration.as_raw(), WM_PAINT, None, None) };
@@ -770,7 +770,7 @@ impl NativePowerModeWindow {
             self.signals.borrow()[signal_cursor..]
                 .iter()
                 .any(|options| {
-                    options.signal_at == Some(at)
+                    options.signal_at == at
                         && options.signal_source == FrameRequestSource::NativeCallback
                         && !options.require_presentation
                         && !options.force_render

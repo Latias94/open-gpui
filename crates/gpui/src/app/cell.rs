@@ -1069,6 +1069,19 @@ impl AppCell {
         window_id: WindowId,
         captured_drag_generation: Option<NativeCapturedDragGeneration>,
     ) -> NativePointerCaptureReleaseToken {
+        if let Some(generation) = captured_drag_generation
+            && let Some(token) =
+                self.pointer_capture_releases
+                    .borrow()
+                    .values()
+                    .find_map(|barrier| {
+                        (barrier.token.window_id() == window_id
+                            && barrier.token.captured_drag_generation() == Some(generation))
+                        .then_some(barrier.token)
+                    })
+        {
+            return token;
+        }
         let token =
             self.next_native_pointer_capture_release_token(window_id, captured_drag_generation);
         if self

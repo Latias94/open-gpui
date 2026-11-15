@@ -179,7 +179,8 @@ impl WindowsDisplayTopologySnapshot {
                 .collect(),
             Some(candidate.primary_display_id),
         )
-        .expect("validated Windows topology must project to a valid platform snapshot");
+        .and_then(|snapshot| snapshot.with_physical_displays(physical_observations.to_vec()))
+        .expect("validated Windows topology must project to a complete platform snapshot");
         Self {
             generation,
             displays,

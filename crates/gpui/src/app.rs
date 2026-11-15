@@ -872,6 +872,7 @@ pub struct App {
     app_lifecycle_observers: SubscriberSet<(), AppLifecycleHandler>,
     memory_warning_observers: SubscriberSet<(), Handler>,
     display_observers: SubscriberSet<(), displays::DisplayHandler>,
+    display_publication_observers: SubscriberSet<(), displays::DisplayPublicationHandler>,
     displays: HashMap<DisplayId, displays::DisplayState>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
@@ -1094,6 +1095,7 @@ impl App {
                 app_lifecycle_observers: SubscriberSet::new(),
                 memory_warning_observers: SubscriberSet::new(),
                 display_observers: SubscriberSet::new(),
+                display_publication_observers: SubscriberSet::new(),
                 displays: displays::read_displays(platform.as_ref()),
                 global_observers: SubscriberSet::new(),
                 quit_observers: SubscriberSet::new(),
@@ -2243,7 +2245,9 @@ impl App {
         self.platform.primary_display()
     }
 
-    pub(crate) fn display_snapshot(&self) -> PlatformDisplaySnapshot {
+    /// Returns one immutable backend display publication, including physical facts when available.
+    #[doc(hidden)]
+    pub fn display_snapshot(&self) -> PlatformDisplaySnapshot {
         self.platform.display_snapshot()
     }
 
@@ -3315,6 +3319,15 @@ impl App {
                 unreachable!("post-registry-clear work remains admissible until shutdown completes")
             }
         }
+    }
+
+    /// Reads the existing native retirement authority without preparing a new shutdown.
+    #[doc(hidden)]
+    pub fn native_window_retirement_ticket(
+        &self,
+        window: WindowId,
+    ) -> Option<crate::WindowPresentationShutdownTicket> {
+        self.this.upgrade()?.native_window_retirement_ticket(window)
     }
 
     /// Requires every dependent native window to reach terminal before retiring `anchor`.

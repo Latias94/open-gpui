@@ -3522,6 +3522,48 @@ impl Window {
         Ok(ticket)
     }
 
+    /// Reinstalls the same destination submission after its candidate was withdrawn.
+    ///
+    /// Withdrawal may retract callbacks without terminally settling this session's affine
+    /// authority. A retry must retain that authority instead of minting another submission.
+    #[doc(hidden)]
+    pub fn resume_provisional_destination_semantics(
+        &mut self,
+        session: &WindowProvisionalSession,
+        ticket: &WindowProvisionalSemanticsTicket,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            self.provisional_session
+                .as_ref()
+                .is_some_and(|owned| owned.same_authority(session))
+                && session.owns_destination_semantics_submission(
+                    self.handle.window_id(),
+                    ticket.frame_submission()
+                ),
+            "window does not own this provisional destination submission"
+        );
+        anyhow::ensure!(
+            self.creation_can_commit()
+                && self.presentation_shutdown.is_none()
+                && matches!(
+                    session.snapshot().phase(),
+                    WindowProvisionalSessionPhase::ProjectingDestinationSemantics
+                        | WindowProvisionalSessionPhase::DestinationSemanticsAccepted
+                )
+                && matches!(
+                    ticket.snapshot().outcome(),
+                    WindowProvisionalSemanticsOutcome::Pending
+                        | WindowProvisionalSemanticsOutcome::Accepted
+                )
+                && ticket.snapshot().placement_mutation_generation()
+                    == self
+                        .window_mutations
+                        .last_generation(WindowMutationDomain::Placement),
+            "provisional destination submission is no longer resumable"
+        );
+        self.install_frame_submission_ticket(ticket.frame_submission())
+    }
+
     /// Accepts the exact destination-semantics marker produced by a focus-stable candidate frame.
     #[doc(hidden)]
     pub fn accept_provisional_destination_semantics_frame(
@@ -4310,6 +4352,20 @@ impl Window {
             Ok(result) => result,
             Err(payload) => std::panic::resume_unwind(payload),
         }
+    }
+
+    /// Closes a framework-owned window while retaining its original presentation shutdown.
+    ///
+    /// The returned authority independently observes renderer quiescence and native terminal;
+    /// logical removal alone does not prove either boundary.
+    #[doc(hidden)]
+    pub fn remove_window_with_retirement(
+        &mut self,
+        cx: &mut App,
+    ) -> crate::WindowPresentationShutdownTicket {
+        let ticket = self.claim_presentation_shutdown().ticket().clone();
+        self.remove_window(cx);
+        ticket
     }
 
     /// Close this window.
@@ -13636,8 +13692,14 @@ impl Window {
         if let Some(event) = event.downcast_ref::<crate::MouseDownEvent>() {
             self.pressed_mouse_buttons.insert(event.button);
         }
-        cx.lock_native_captured_drag_event(self.handle.window_id(), self, event);
+        let native_release = event.downcast_ref::<MouseUpEvent>().and_then(|event| {
+            cx.reserve_active_native_captured_drag_mouse_release(
+                self.handle.window_id(),
+                event.button,
+            )
+        });
         let dispatch = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            cx.lock_native_captured_drag_event(self.handle.window_id(), self, event);
             let is_pointer_cancel = event.is::<PointerCancelEvent>();
             let is_touch_cancel = touch_gestures::is_touch_cancellation(event);
             let exited_window = event.is::<crate::MouseExitEvent>()
@@ -13770,6 +13832,10 @@ impl Window {
                 self.mouse_hit_test = HitTest::default();
             }
             self.finish_mouse_session_event(event, cx);
+            if let Some(release) = native_release {
+                self.platform_command_sink
+                    .settle_pointer_capture_release(release, !self.has_active_pointer_session(cx));
+            }
             self.finish_touch_gesture_event(event);
             self.flush_touch_cancellations(cx);
             self.reset_cursor_style(cx);

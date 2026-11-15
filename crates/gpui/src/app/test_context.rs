@@ -150,6 +150,28 @@ impl Drop for TestWindowNativeTerminalHold {
     }
 }
 
+/// Retains a test renderer shutdown gate after its logical Window leaves the registry.
+pub struct TestWindowPresentationShutdownHold {
+    window: Option<TestWindow>,
+}
+
+impl TestWindowPresentationShutdownHold {
+    /// Allows the owning retirement to acknowledge renderer quiescence on its next retry.
+    pub fn release(mut self) {
+        if let Some(window) = self.window.take() {
+            window.block_presentation_shutdown(false);
+        }
+    }
+}
+
+impl Drop for TestWindowPresentationShutdownHold {
+    fn drop(&mut self) {
+        if let Some(window) = self.window.take() {
+            window.block_presentation_shutdown(false);
+        }
+    }
+}
+
 /// A TestAppContext is provided to tests created with `#[open_gpui::test]`, it provides
 /// an implementation of `Context` with additional methods that are useful in tests.
 #[derive(Clone)]
@@ -668,6 +690,16 @@ impl TestAppContext {
     /// Reports the current display publication without changing its properties.
     pub fn simulate_displays_changed(&self) {
         self.test_platform.simulate_displays_changed();
+        self.run_until_parked();
+    }
+
+    /// Publishes the complete physical projection of the current test display generation.
+    pub fn simulate_physical_display_roster(
+        &self,
+        observations: Option<Vec<crate::PlatformPhysicalDisplayObservation>>,
+    ) {
+        self.test_platform
+            .simulate_physical_display_roster(observations);
         self.run_until_parked();
     }
 
@@ -1265,6 +1297,18 @@ impl TestAppContext {
     }
 
     /// Controls whether `window` can acknowledge presentation shutdown.
+    pub fn hold_window_presentation_shutdown(
+        &self,
+        window: AnyWindowHandle,
+    ) -> TestWindowPresentationShutdownHold {
+        let window = self.test_window(window);
+        window.block_presentation_shutdown(true);
+        TestWindowPresentationShutdownHold {
+            window: Some(window),
+        }
+    }
+
+    /// Controls whether a live `window` can acknowledge presentation shutdown.
     pub fn block_window_presentation_shutdown(&self, window: AnyWindowHandle, blocked: bool) {
         self.test_window(window)
             .block_presentation_shutdown(blocked);

@@ -20,7 +20,10 @@ pub use crate::native_test_window::{
     native_test_window_rect,
 };
 use anyhow::{Context as _, Result, ensure};
-use open_gpui::{AnyWindowHandle, Bounds, DevicePixels, DisplayId, Point, WindowId, point};
+use open_gpui::{
+    AnyWindowHandle, Bounds, DevicePixels, DisplayId, Point, WindowId,
+    WindowPresentationShutdownTicket, point,
+};
 use parking_lot::Mutex;
 use std::collections::HashSet;
 use std::sync::{
@@ -335,6 +338,35 @@ pub fn native_test_acquire_foreground_window(native_handle: isize) -> Result<()>
     crate::native_test_foreground::acquire_foreground_window(HWND(
         native_handle as *mut core::ffi::c_void,
     ))
+}
+
+/// Retires an exact backend-owned HWND without issuing a semantic close request.
+///
+/// This models native loss to the application while retaining the renderer's original
+/// quiescence and native-terminal authority. It must run on the owning UI thread; it neither
+/// posts `WM_CLOSE` nor removes the logical Window. The actual native callbacks do that work.
+#[doc(hidden)]
+pub fn native_test_retire_window_without_close_request(
+    window: AnyWindowHandle,
+    native_handle: isize,
+) -> Result<WindowPresentationShutdownTicket> {
+    let hwnd = HWND(native_handle as *mut core::ffi::c_void);
+    let native = crate::window::window_from_hwnd(hwnd)
+        .context("native loss requires a registered HWND on the owning UI thread")?;
+    ensure!(
+        native.handle.window_id() == window.window_id() && !native.is_attached(),
+        "native loss target does not match the exact owned GPUI window"
+    );
+    let shutdown = native.presentation_shutdown_ticket();
+    ensure!(
+        native.destroy_native_window(),
+        "native loss could not quiesce and retire its original HWND"
+    );
+    ensure!(
+        shutdown.snapshot().quiesced() && shutdown.snapshot().native_terminal(),
+        "native loss returned before its original renderer/native terminal"
+    );
+    Ok(shutdown)
 }
 
 /// A live process-owned HWND census collected before the process exits.

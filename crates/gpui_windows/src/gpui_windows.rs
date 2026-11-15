@@ -121,8 +121,8 @@ pub use native_test_harness::{
     native_test_logical_client_point_to_screen, native_test_mixed_dpi_display_pair,
     native_test_non_shell_root_window_at, native_test_process_window_census,
     native_test_raise_window, native_test_release_primary_button_best_effort,
-    native_test_virtual_screen_bounds, native_test_window_is_above, native_test_window_probe,
-    native_test_window_rect,
+    native_test_retire_window_without_close_request, native_test_virtual_screen_bounds,
+    native_test_window_is_above, native_test_window_probe, native_test_window_rect,
 };
 
 #[cfg(target_os = "windows")]

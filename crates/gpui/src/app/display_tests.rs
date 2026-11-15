@@ -162,6 +162,79 @@ fn display_events_report_bounds_refresh_and_spurious_notifications(cx: &mut Test
 }
 
 #[crate::test]
+fn physical_display_publications_include_work_area_and_availability_only_changes(
+    cx: &mut TestAppContext,
+) {
+    use crate::{DevicePixels, PlatformDisplaySnapshot, PlatformPhysicalDisplayObservation, Point};
+
+    let publications = Rc::new(RefCell::new(Vec::new()));
+    let legacy_events = Rc::new(RefCell::new(Vec::new()));
+    let _publication = cx.update({
+        let publications = publications.clone();
+        move |cx| {
+            cx.observe_display_publication(move |snapshot, _| {
+                publications.borrow_mut().push((
+                    snapshot.generation(),
+                    snapshot
+                        .physical_displays()
+                        .map(|displays| displays.to_vec()),
+                ));
+            })
+        }
+    });
+    let _legacy = cx.update({
+        let legacy_events = legacy_events.clone();
+        move |cx| cx.observe_displays(move |event, _| legacy_events.borrow_mut().push(event))
+    });
+    let (displays, primary) = cx.update(|cx| {
+        (
+            cx.displays(),
+            cx.primary_display().map(|display| display.id()),
+        )
+    });
+    assert_eq!(displays.len(), 1);
+    let physical = |generation, work_height| {
+        PlatformPhysicalDisplayObservation::try_new(
+            generation,
+            displays[0].id(),
+            Bounds::new(
+                Point::default(),
+                size(DevicePixels(2400), DevicePixels(1350)),
+            ),
+            Bounds::new(
+                Point::default(),
+                size(DevicePixels(2400), DevicePixels(work_height)),
+            ),
+            1.25,
+        )
+        .unwrap()
+    };
+    let snapshot = |generation| {
+        PlatformDisplaySnapshot::try_new(Some(generation), displays.clone(), primary).unwrap()
+    };
+    let first = physical(1, 1290);
+    let taskbar_changed = physical(2, 1230);
+    cx.update(|cx| {
+        cx.apply_display_snapshot(snapshot(1).with_physical_displays(vec![first]).unwrap());
+        cx.apply_display_snapshot(
+            snapshot(2)
+                .with_physical_displays(vec![taskbar_changed])
+                .unwrap(),
+        );
+        cx.apply_display_snapshot(snapshot(3));
+    });
+    assert_eq!(
+        *publications.borrow(),
+        [
+            (Some(1), Some(vec![first])),
+            (Some(2), Some(vec![taskbar_changed])),
+            (Some(3), None),
+        ]
+    );
+    assert!(legacy_events.borrow().is_empty());
+}
+
+#[crate::test]
 fn complete_app_display_state_is_fresh_before_app_and_window_observers(cx: &mut TestAppContext) {
     let first = DisplayId::new(1);
     let second = DisplayId::new(2);

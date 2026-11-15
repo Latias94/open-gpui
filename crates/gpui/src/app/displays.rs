@@ -4,10 +4,12 @@ use open_gpui_collections::HashMap;
 
 use crate::{
     App, AppContext as _, Bounds, DisplayChanges, DisplayEvent, DisplayId, Pixels, Platform,
-    Subscription,
+    PlatformDisplaySnapshot, Subscription,
 };
 
 pub(super) type DisplayHandler = Box<dyn FnMut(DisplayEvent, &mut App) -> bool + 'static>;
+pub(super) type DisplayPublicationHandler =
+    Box<dyn FnMut(&PlatformDisplaySnapshot, &mut App) -> bool + 'static>;
 
 #[derive(Clone, Copy, PartialEq)]
 pub(super) struct DisplayState {
@@ -28,8 +30,11 @@ impl DisplayState {
 }
 
 pub(super) fn read_displays(platform: &dyn Platform) -> HashMap<DisplayId, DisplayState> {
-    platform
-        .display_snapshot()
+    read_snapshot(&platform.display_snapshot())
+}
+
+fn read_snapshot(snapshot: &PlatformDisplaySnapshot) -> HashMap<DisplayId, DisplayState> {
+    snapshot
         .displays()
         .into_iter()
         .map(|display| {
@@ -64,7 +69,11 @@ fn display_events(
 
 impl App {
     pub(crate) fn displays_changed(&mut self) {
-        let current = read_displays(self.platform.as_ref());
+        self.apply_display_snapshot(self.platform.display_snapshot());
+    }
+
+    pub(super) fn apply_display_snapshot(&mut self, snapshot: PlatformDisplaySnapshot) {
+        let current = read_snapshot(&snapshot);
         let events = display_events(&self.displays, &current);
         self.displays = current;
         for event in &events {
@@ -84,6 +93,9 @@ impl App {
                 .clone()
                 .retain(&(), |callback| callback(event, self));
         }
+        self.display_publication_observers
+            .clone()
+            .retain(&(), |callback| callback(&snapshot, self));
     }
 
     pub(crate) fn knows_display(&self, id: DisplayId) -> bool {
@@ -104,6 +116,26 @@ impl App {
             (),
             Box::new(move |event, cx| {
                 callback(event, cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    /// Observes complete backend publications, including work-area, scale and availability changes.
+    ///
+    /// Unlike per-display events, this also runs when logical bounds and refresh intervals are
+    /// unchanged. The immutable snapshot belongs to the publication that produced this callback.
+    #[doc(hidden)]
+    pub fn observe_display_publication(
+        &self,
+        mut callback: impl FnMut(&PlatformDisplaySnapshot, &mut App) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.display_publication_observers.insert(
+            (),
+            Box::new(move |snapshot, cx| {
+                callback(snapshot, cx);
                 true
             }),
         );

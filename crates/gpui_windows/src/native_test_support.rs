@@ -5582,6 +5582,72 @@ fn native_mouse_leave_dispatches_exact_input_before_hover_fact() {
 }
 
 #[test]
+fn native_close_dispatch_keeps_its_window_alive_after_reentrant_native_destruction() {
+    discard_stale_quit_messages();
+    let platform = Rc::new(WindowsPlatform::new_windowed_for_test().unwrap());
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let window = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(240.0), px(160.0)), cx)),
+                    focus_on_appearing: false,
+                    show: false,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .unwrap();
+    let hwnd = platform.raw_window_handles.read().last().unwrap().as_raw();
+    let native = platform.window_from_hwnd(hwnd).unwrap();
+    let weak = Rc::downgrade(&native);
+    let dispatch_owner_count = Rc::new(Cell::new(0));
+    let retained_after_destroy = Rc::new(Cell::new(None));
+    native.state.callbacks.should_close.set(Box::new({
+        let weak = weak.clone();
+        let dispatch_owner_count = dispatch_owner_count.clone();
+        let retained_after_destroy = retained_after_destroy.clone();
+        move || {
+            dispatch_owner_count.set(weak.strong_count());
+            let native = weak
+                .upgrade()
+                .expect("WM_CLOSE must enter with a live native owner");
+            assert!(native.destroy_native_window());
+            assert!(!unsafe { IsWindow(Some(hwnd)).as_bool() });
+            drop(native);
+            // The HWND's owner is gone, but the outer WndProc must still own its
+            // receiver until handle_msg finishes its post-callback work.
+            retained_after_destroy.set(Some(weak.upgrade().is_some()));
+            false
+        }
+    }));
+    drop(native);
+    let idle_owner_count = weak.strong_count();
+
+    let result = unsafe { SendMessageW(hwnd, WM_CLOSE, None, None) };
+    assert_eq!(result.0, 0);
+    assert!(
+        dispatch_owner_count.get() > idle_owner_count,
+        "WndProc must acquire an independent owner before invoking a destructive callback"
+    );
+    assert_eq!(retained_after_destroy.get(), Some(true));
+    assert!(!is_registered(&platform, hwnd));
+    app.update_for_test(|cx| {
+        if !cx.windows().is_empty() {
+            window
+                .update(cx, |_, window, cx| window.remove_window(cx))
+                .unwrap();
+        }
+    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "reentrant native close dispatch ownership retirement",
+        || weak.upgrade().is_none(),
+    );
+}
+
+#[test]
 fn nested_native_close_is_prevented_while_should_close_slot_is_checked_out() {
     discard_stale_quit_messages();
 

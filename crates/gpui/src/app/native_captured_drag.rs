@@ -9,8 +9,9 @@ use std::{
 
 use crate::{
     App, AppCell, Bounds, DevicePixels, MouseMoveEvent, MouseUpEvent, Pixels,
-    PlatformNativePointerPhysicalFrame, PlatformWindowHitStack, PlatformWindowPhysicalGeometry,
-    Point, PointerCancelEvent, PointerCancelReason, Subscription, Window, WindowId,
+    PlatformNativePointerCaptureOwner, PlatformNativePointerPhysicalFrame, PlatformWindowHitStack,
+    PlatformWindowPhysicalGeometry, Point, PointerCancelEvent, PointerCancelReason, Subscription,
+    Window, WindowId,
 };
 
 /// Monotonic identity assigned by GPUI's native ingress authority.
@@ -352,7 +353,7 @@ impl NativeCapturedDragEvent {
         self.generation
     }
 
-    /// Returns the source window that owns native pointer capture.
+    /// Returns the source window for this drag generation.
     pub fn source_window(&self) -> WindowId {
         self.source_window
     }
@@ -380,6 +381,14 @@ impl NativeCapturedDragEvent {
     /// Returns the callback-scoped physical pointer frame for move and release facts.
     pub fn physical_frame(&self) -> Option<PlatformNativePointerPhysicalFrame> {
         self.physical_frame
+    }
+
+    /// Returns the callback's native capture observation, or unavailable without a physical frame.
+    pub fn capture_owner(&self) -> PlatformNativePointerCaptureOwner {
+        self.physical_frame
+            .map_or(PlatformNativePointerCaptureOwner::Unavailable, |frame| {
+                frame.capture_owner()
+            })
     }
 
     /// Returns the pointer position in physical desktop coordinates when supported.
@@ -1140,6 +1149,51 @@ impl App {
             .map(|authority| authority.source_window)
     }
 
+    /// Observes an already reserved release without cancelling the drag or creating a new barrier.
+    ///
+    /// Natural MouseUp reserves its original barrier before the route locker and user listeners.
+    /// The continuation must attach there, before post-borrow release completion can retire it.
+    #[doc(hidden)]
+    pub fn observe_native_captured_drag_release(
+        &self,
+        source_window: WindowId,
+        generation: NativeCapturedDragGeneration,
+        on_terminal: impl FnOnce(
+            NativeCapturedDragReleaseBarrier,
+            NativeCapturedDragReleaseTerminal,
+            &mut App,
+        ) + 'static,
+    ) -> Option<NativeCapturedDragReleaseBarrier> {
+        let mut continuation: Option<NativeCapturedDragReleaseContinuation> =
+            Some(Box::new(on_terminal));
+        self.this
+            .upgrade()?
+            .attach_native_captured_drag_release_continuation(
+                source_window,
+                generation,
+                &mut continuation,
+            )
+    }
+
+    pub(crate) fn reserve_active_native_captured_drag_mouse_release(
+        &self,
+        source_window: WindowId,
+        button: crate::MouseButton,
+    ) -> Option<super::NativePointerCaptureReleaseToken> {
+        let authority = self
+            .active_native_captured_drag
+            .as_ref()
+            .filter(|authority| {
+                authority.source_window == source_window
+                    && authority.button == button
+                    && self
+                        .active_drag
+                        .as_ref()
+                        .is_some_and(|drag| authority.matches(drag))
+            })?;
+        self.reserve_native_pointer_capture_release(source_window, Some(authority.generation))
+    }
+
     /// Cancels one exact native captured drag and invokes `on_terminal` after its release barrier
     /// reaches a terminal outcome.
     ///
@@ -1751,6 +1805,10 @@ mod tests {
         );
         assert_eq!(terminal.event.payload::<&'static str>(), Some(&"payload"));
         assert_eq!(terminal.event.physical_frame(), None);
+        assert_eq!(
+            terminal.event.capture_owner(),
+            PlatformNativePointerCaptureOwner::Unavailable
+        );
         assert_eq!(
             terminal.event.window_hit_stack(),
             &PlatformWindowHitStack::Unavailable

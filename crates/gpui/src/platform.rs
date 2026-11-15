@@ -358,6 +358,23 @@ pub struct PlatformWindowPhysicalCoverage {
     bounds: Bounds<DevicePixels>,
 }
 
+/// The native pointer capture owner observed during one platform input callback.
+///
+/// This observation does not grant capture authority and may be retained after capture changes.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PlatformNativePointerCaptureOwner {
+    /// The backend cannot establish the desktop's capture owner for this callback.
+    #[default]
+    Unavailable,
+    /// The backend proved that no native window owns pointer capture on the desktop.
+    None,
+    /// The capture owner resolved to this exact, currently registered application window.
+    Window(WindowId),
+    /// A native capture owner was observed without a current registered application identity.
+    UnregisteredWindow,
+}
+
 /// One physical pointer observation retained only for the active native input callback.
 ///
 /// Platform backends use this frame to prevent a logical-coordinate round trip from mixing the
@@ -368,6 +385,7 @@ pub struct PlatformNativePointerPhysicalFrame {
     global_position: Point<DevicePixels>,
     source_geometry: PlatformWindowPhysicalGeometry,
     target_display: Option<PlatformPhysicalDisplayObservation>,
+    capture_owner: PlatformNativePointerCaptureOwner,
 }
 
 /// One checked native drag hysteresis observation in physical device pixels.
@@ -458,7 +476,15 @@ impl PlatformNativePointerPhysicalFrame {
             global_position,
             source_geometry,
             target_display: None,
+            capture_owner: PlatformNativePointerCaptureOwner::Unavailable,
         }
+    }
+
+    /// Binds the native capture owner observed during this input callback.
+    #[doc(hidden)]
+    pub fn with_capture_owner(mut self, capture_owner: PlatformNativePointerCaptureOwner) -> Self {
+        self.capture_owner = capture_owner;
+        self
     }
 
     /// Binds the display observed at the callback-scoped physical point.
@@ -487,6 +513,11 @@ impl PlatformNativePointerPhysicalFrame {
     /// Returns the display observed at the pointer point, when the backend can prove it.
     pub fn target_display(self) -> Option<PlatformPhysicalDisplayObservation> {
         self.target_display
+    }
+
+    /// Returns the native capture owner observed during this input callback.
+    pub fn capture_owner(self) -> PlatformNativePointerCaptureOwner {
+        self.capture_owner
     }
 }
 
@@ -1123,6 +1154,12 @@ pub struct PlatformViewportCapabilities {
     pub window_stack: bool,
     /// The platform can classify every native top-level covering a sampled physical point.
     pub window_hit_stack: bool,
+    /// Native pointer callbacks can report event-time physical desktop coordinates.
+    /// Individual callbacks may still report that the observation is unavailable.
+    pub native_pointer_desktop_position: bool,
+    /// Native mouse-button state queries and ordered button edges are authoritative.
+    /// An unavailable state observation must still remain explicit.
+    pub native_pointer_button_state: bool,
     /// Display visible bounds exclude system-reserved work areas.
     pub display_work_area: bool,
     /// Per-window DPI scale facts are reliable for placement decisions.
@@ -1405,13 +1442,17 @@ impl WindowPhysicalPlacementRequest {
     }
 
     /// Creates a display-bound physical placement request.
+    ///
+    /// The selecting point may lie on the native frame outside the client area.
+    /// A provisional backend validates that the requested outer frame contains its
+    /// original Z-order anchor; changing the point would change that proof.
     #[doc(hidden)]
     pub fn try_new_for_display(
         client_bounds: Bounds<DevicePixels>,
         target_point: Point<DevicePixels>,
         target_display: PlatformPhysicalDisplayObservation,
     ) -> Option<Self> {
-        if !client_bounds.contains(&target_point) || !target_display.contains(target_point) {
+        if !target_display.contains(target_point) {
             return None;
         }
         let mut request = Self::try_new(client_bounds)?;
@@ -2655,7 +2696,9 @@ impl WindowFrameSubmissionTicket {
         };
     }
 
-    pub(crate) fn same_authority(&self, other: &Self) -> bool {
+    /// Returns whether both handles retain the same exact submission authority.
+    #[doc(hidden)]
+    pub fn same_authority(&self, other: &Self) -> bool {
         self.window_id == other.window_id && Arc::ptr_eq(&self.state, &other.state)
     }
 }
@@ -4156,6 +4199,7 @@ pub struct PlatformDisplaySnapshot {
     generation: Option<u64>,
     displays: Rc<[Rc<dyn PlatformDisplay>]>,
     primary_display: Option<Rc<dyn PlatformDisplay>>,
+    physical_displays: Option<Rc<[PlatformPhysicalDisplayObservation]>>,
 }
 
 impl PlatformDisplaySnapshot {
@@ -4187,6 +4231,7 @@ impl PlatformDisplaySnapshot {
             generation,
             displays: Rc::from(displays),
             primary_display,
+            physical_displays: None,
         })
     }
 
@@ -4198,7 +4243,35 @@ impl PlatformDisplaySnapshot {
             generation: None,
             displays: Rc::from(displays),
             primary_display: primary,
+            physical_displays: None,
         }
+    }
+
+    /// Attaches the complete physical projection of this same atomic publication.
+    #[doc(hidden)]
+    pub fn with_physical_displays(
+        mut self,
+        observations: Vec<PlatformPhysicalDisplayObservation>,
+    ) -> Option<Self> {
+        let generation = self.generation?;
+        if observations.len() != self.displays.len() {
+            return None;
+        }
+        let mut identities = std::collections::HashSet::with_capacity(observations.len());
+        if observations.iter().any(|observation| {
+            observation.topology_generation() != generation
+                || !identities.insert(observation.display_id())
+                || self.find_display(observation.display_id()).is_none()
+        }) {
+            return None;
+        }
+        self.physical_displays = Some(Rc::from(observations));
+        Some(self)
+    }
+
+    /// Returns a complete physical display roster from this publication, when supported.
+    pub fn physical_displays(&self) -> Option<&[PlatformPhysicalDisplayObservation]> {
+        self.physical_displays.as_deref()
     }
 
     /// Returns the atomic publication generation when the backend provides one.
@@ -9508,6 +9581,98 @@ mod physical_display_observation_tests {
             .expect("the target geometry should be coherent");
 
         assert!(request.matches_geometry(geometry));
+    }
+
+    #[test]
+    fn display_bound_placement_preserves_a_caption_anchor_outside_the_client() {
+        let outer = Bounds::new(
+            point(DevicePixels(-1_600), DevicePixels(-200)),
+            size(DevicePixels(824), DevicePixels(657)),
+        );
+        let client = Bounds::new(
+            point(DevicePixels(-1_588), DevicePixels(-155)),
+            size(DevicePixels(800), DevicePixels(600)),
+        );
+        let anchor = point(DevicePixels(-1_560), DevicePixels(-190));
+        let display = PlatformPhysicalDisplayObservation::try_new(
+            13,
+            DisplayId::from(2),
+            Bounds::new(
+                point(DevicePixels(-1_920), DevicePixels(-300)),
+                size(DevicePixels(1_920), DevicePixels(1_080)),
+            ),
+            Bounds::new(
+                point(DevicePixels(-1_920), DevicePixels(-300)),
+                size(DevicePixels(1_920), DevicePixels(1_040)),
+            ),
+            1.5,
+        )
+        .unwrap();
+        assert!(outer.contains(&anchor));
+        assert!(!client.contains(&anchor));
+
+        let physical = WindowPhysicalPlacementRequest::try_new_for_display(client, anchor, display)
+            .expect("a native caption anchor must retain its original desktop position");
+        assert_eq!(physical.target_point(), Some(anchor));
+        assert_eq!(physical.client_bounds(), client);
+        assert_eq!(physical.target_display(), Some(display));
+        let geometry = PlatformWindowPhysicalGeometry::try_new(client, display.scale_factor())
+            .and_then(|geometry| geometry.with_outer_bounds(outer))
+            .and_then(|geometry| geometry.with_display_observation(display))
+            .unwrap();
+        assert!(physical.matches_geometry(geometry));
+
+        for purpose in [
+            WindowProvisionalPlacementPurpose::LiveRoute,
+            WindowProvisionalPlacementPurpose::FinalRelease,
+        ] {
+            let provisional =
+                WindowProvisionalPlacementRequest::try_new(7, purpose, client, anchor, display)
+                    .expect("provisional Z-order must use the original caption anchor");
+            assert_eq!(provisional.anchor_point(), anchor);
+            assert_eq!(provisional.target_display(), display);
+            assert_eq!(provisional.physical_request(), physical);
+        }
+    }
+
+    #[test]
+    fn display_bound_placement_rejects_invalid_bounds_and_unrelated_anchor_display() {
+        let display = PlatformPhysicalDisplayObservation::try_new(
+            1,
+            DisplayId::from(1),
+            Bounds::new(
+                point(DevicePixels(0), DevicePixels(0)),
+                size(DevicePixels(1_920), DevicePixels(1_080)),
+            ),
+            Bounds::new(
+                point(DevicePixels(0), DevicePixels(0)),
+                size(DevicePixels(1_920), DevicePixels(1_040)),
+            ),
+            1.0,
+        )
+        .unwrap();
+        let anchor = point(DevicePixels(120), DevicePixels(90));
+        for client in [
+            Bounds::new(anchor, size(DevicePixels(0), DevicePixels(480))),
+            Bounds::new(anchor, size(DevicePixels(640), DevicePixels(-1))),
+            Bounds::new(
+                point(DevicePixels(i32::MAX - 1), DevicePixels(0)),
+                size(DevicePixels(640), DevicePixels(480)),
+            ),
+        ] {
+            assert!(
+                WindowPhysicalPlacementRequest::try_new_for_display(client, anchor, display)
+                    .is_none()
+            );
+        }
+        assert!(
+            WindowPhysicalPlacementRequest::try_new_for_display(
+                Bounds::new(anchor, size(DevicePixels(640), DevicePixels(480))),
+                point(DevicePixels(-1), DevicePixels(90)),
+                display,
+            )
+            .is_none()
+        );
     }
 }
 

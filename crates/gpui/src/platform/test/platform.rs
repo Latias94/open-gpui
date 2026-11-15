@@ -65,6 +65,7 @@ pub(crate) struct TestPlatform {
     displays: RefCell<Vec<TestDisplay>>,
     displays_changed_callback: TestDisplayChangeCallback,
     display_generation: Cell<u64>,
+    physical_displays: RefCell<Option<Vec<crate::PlatformPhysicalDisplayObservation>>>,
     display_snapshot_query_count: Cell<usize>,
     active_cursor: Mutex<CursorStyle>,
     pressed_mouse_buttons: Mutex<Option<Vec<MouseButton>>>,
@@ -274,6 +275,7 @@ impl TestPlatform {
             displays: RefCell::new(vec![TestDisplay::new()]),
             displays_changed_callback: TestDisplayChangeCallback::default(),
             display_generation: Cell::new(1),
+            physical_displays: RefCell::new(None),
             display_snapshot_query_count: Cell::new(0),
             active_window: Default::default(),
             focused_window_available: RefCell::new(true),
@@ -443,7 +445,24 @@ impl TestPlatform {
         self.displays_changed_callback.call();
     }
 
+    pub(crate) fn simulate_physical_display_roster(
+        &self,
+        observations: Option<Vec<crate::PlatformPhysicalDisplayObservation>>,
+    ) {
+        if let Some(observations) = &observations {
+            assert!(
+                self.display_snapshot()
+                    .with_physical_displays(observations.clone())
+                    .is_some(),
+                "physical observations must cover the current test display generation"
+            );
+        }
+        *self.physical_displays.borrow_mut() = observations;
+        self.simulate_displays_changed();
+    }
+
     fn advance_display_generation(&self) {
+        self.physical_displays.borrow_mut().take();
         self.display_generation.set(
             self.display_generation
                 .get()
@@ -1150,8 +1169,18 @@ impl Platform for TestPlatform {
             .set(self.display_snapshot_query_count.get() + 1);
         let displays = self.displays();
         let primary = displays.first().map(|display| display.id());
-        PlatformDisplaySnapshot::try_new(Some(self.display_generation.get()), displays, primary)
-            .expect("test platform display publication must be valid")
+        let snapshot = PlatformDisplaySnapshot::try_new(
+            Some(self.display_generation.get()),
+            displays,
+            primary,
+        )
+        .expect("test platform display publication must be valid");
+        match self.physical_displays.borrow().as_ref() {
+            Some(observations) => snapshot
+                .with_physical_displays(observations.clone())
+                .expect("test physical roster must match the current display publication"),
+            None => snapshot,
+        }
     }
 
     fn is_screen_capture_supported(&self) -> bool {
@@ -1235,6 +1264,8 @@ impl Platform for TestPlatform {
                 .borrow()
                 .as_ref()
                 .is_some_and(|stack| stack.observation().is_some()),
+            native_pointer_desktop_position: true,
+            native_pointer_button_state: self.pressed_mouse_buttons.lock().is_some(),
             display_work_area: true,
             dpi_scale: true,
             hovered_window_ignores_no_input: true,

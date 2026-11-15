@@ -1379,6 +1379,31 @@ impl WindowsWindowInner {
         client_position: Point<DevicePixels>,
         expected_global_position: Option<Point<DevicePixels>>,
     ) -> Result<PlatformNativePointerPhysicalFrame> {
+        let capture_hwnd = unsafe { GetCapture() };
+        let capture_owner = if capture_hwnd.is_invalid() {
+            // GetCapture only observes this thread. NULL cannot prove that the desktop has no
+            // capture owner on another thread or in another process.
+            PlatformNativePointerCaptureOwner::Unavailable
+        } else {
+            self.raw_window_handles
+                .upgrade()
+                .and_then(|registry| {
+                    let registration = registry
+                        .read()
+                        .iter()
+                        .copied()
+                        .find(|registration| registration.as_raw() == capture_hwnd)?;
+                    RegisteredWindowAuthority::from_registration(registration, registry).ok()
+                })
+                .map_or(
+                    PlatformNativePointerCaptureOwner::UnregisteredWindow,
+                    |authority| {
+                        PlatformNativePointerCaptureOwner::Window(
+                            authority.registration.window_id(),
+                        )
+                    },
+                )
+        };
         let coordinator = self
             .native_retirement_coordinator
             .upgrade()
@@ -1448,6 +1473,7 @@ impl WindowsWindowInner {
             );
         }
         PlatformNativePointerPhysicalFrame::new(global_position, second_geometry)
+            .with_capture_owner(capture_owner)
             .with_target_display(first_target_display)
             .context("native pointer point is outside its sampled target display")
     }
@@ -10108,7 +10134,9 @@ unsafe fn window_procedure_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: L
     if ptr.is_null() {
         return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
     }
-    let inner = unsafe { &*ptr };
+    // A callback can synchronously destroy its HWND and release the boxed Rc in
+    // GWLP_USERDATA. Keep a separate Rc alive through all post-callback work.
+    let inner = unsafe { (*ptr).clone() };
     inner.invalidate_frame_submission_for_native_message(msg);
     if msg == WM_NCDESTROY {
         inner.mark_native_window_destroyed();

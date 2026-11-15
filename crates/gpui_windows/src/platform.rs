@@ -2869,6 +2869,8 @@ impl Platform for WindowsPlatform {
             platform_viewport_windows: true,
             global_window_bounds: false,
             window_hit_stack: true,
+            native_pointer_desktop_position: true,
+            native_pointer_button_state: true,
             display_work_area: true,
             dpi_scale: true,
             hovered_window_ignores_no_input: true,

@@ -1,11 +1,14 @@
 use super::{
     WM_GPUI_DISPLAY_TOPOLOGY_PUBLISHED, WM_GPUI_FORCE_UPDATE_WINDOW, WM_GPUI_GPU_DEVICE_LOST,
 };
-use crate::{WindowsPlatform, WindowsWindowInner};
+use crate::{
+    WindowsPlatform, WindowsWindowInner, native_test_pointer::NativeTestSystemPointerGuard,
+    native_test_window::NativeTestOpaqueWindow,
+};
 use open_gpui::{
-    AppContext as _, Application, Empty, GraphicalEnvironment, MouseButton, Platform as _,
-    QuitMode, RequestFrameOptions, WindowBounds, WindowHandle, WindowMouseEvent, WindowOptions,
-    WindowingRequest, px, size,
+    AppContext as _, Application, Bounds, DevicePixels, Empty, GraphicalEnvironment, MouseButton,
+    Platform as _, PlatformNativePointerCaptureOwner, QuitMode, RequestFrameOptions, WindowBounds,
+    WindowHandle, WindowMouseEvent, WindowOptions, WindowingRequest, point, px, size,
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::{
@@ -17,7 +20,7 @@ use windows::Win32::{
     System::SystemServices::MK_LBUTTON,
     UI::{
         Controls::WM_MOUSELEAVE,
-        Input::KeyboardAndMouse::VK_SHIFT,
+        Input::KeyboardAndMouse::{GetCapture, ReleaseCapture, SetCapture, VK_SHIFT},
         WindowsAndMessaging::{
             GetWindowRect, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SendMessageW, SetWindowPos,
             WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
@@ -25,7 +28,12 @@ use windows::Win32::{
     },
 };
 
-fn native_input_window() -> (Application, WindowHandle<Empty>, Rc<WindowsWindowInner>) {
+fn native_input_window() -> (
+    Application,
+    WindowHandle<Empty>,
+    Rc<WindowsWindowInner>,
+    Rc<WindowsPlatform>,
+) {
     let platform = Rc::new(
         WindowsPlatform::new_returning_for_test(false)
             .expect("native input test platform should initialize"),
@@ -62,12 +70,12 @@ fn native_input_window() -> (Application, WindowHandle<Empty>, Rc<WindowsWindowI
     let native_window = platform
         .window_from_hwnd(hwnd)
         .expect("native input test HWND should have an exact registered owner");
-    (app, window, native_window)
+    (app, window, native_window, platform)
 }
 
 #[test]
 fn stationary_mouse_moves_preserve_reentry_capture_and_exact_physical_updates() {
-    let (mut app, window, native_window) = native_input_window();
+    let (mut app, window, native_window, _) = native_input_window();
     let moves = Rc::new(RefCell::new(Vec::new()));
     let exits = Rc::new(RefCell::new(Vec::new()));
     let _subscription = app
@@ -192,8 +200,136 @@ fn stationary_mouse_moves_preserve_reentry_capture_and_exact_physical_updates() 
 }
 
 #[test]
+fn native_pointer_frames_retain_callback_capture_and_validate_registered_owners() {
+    let (mut app, window, native_window, platform) = native_input_window();
+    let other_window = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
+                    focus_on_appearing: false,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("capture observation test should open another registered window");
+    let other_native_window = app
+        .update_for_test(|cx| {
+            other_window.update(cx, |_, window, _| {
+                let handle = HasWindowHandle::window_handle(window)
+                    .expect("capture observation test window should have a handle");
+                let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+                    panic!("capture observation test window should have a Win32 handle");
+                };
+                platform
+                    .window_from_hwnd(HWND(handle.hwnd.get() as *mut std::ffi::c_void))
+                    .expect("capture observation test window should have a registered owner")
+            })
+        })
+        .expect("capture observation test window should remain registered");
+    let unknown_window = NativeTestOpaqueWindow::create_hidden(Bounds::new(
+        point(DevicePixels(0), DevicePixels(0)),
+        size(DevicePixels(32), DevicePixels(32)),
+    ))
+    .expect("capture observation test should create an unregistered native window");
+    let pointer_guard = NativeTestSystemPointerGuard::capture()
+        .expect("capture observation test should retain the original native pointer state");
+    let frames = Rc::new(RefCell::new(Vec::new()));
+    let replacement_capture = Rc::new(Cell::new(Some(other_native_window.hwnd)));
+    let subscription = app
+        .update_for_test(|cx| {
+            window.update(cx, |_, window, _| {
+                window.intercept_window_mouse_events({
+                    let frames = frames.clone();
+                    let replacement_capture = replacement_capture.clone();
+                    let native_window = native_window.clone();
+                    move |event, _, _| {
+                        if let WindowMouseEvent::Move(_) = event {
+                            let frame = native_window.native_pointer_physical_frame_for_test();
+                            if let Some(replacement) = replacement_capture.take() {
+                                unsafe { SetCapture(replacement) };
+                            }
+                            frames.borrow_mut().push((
+                                frame,
+                                native_window.native_pointer_physical_frame_for_test(),
+                            ));
+                        }
+                    }
+                })
+            })
+        })
+        .expect("capture observation test should install a native mouse interceptor");
+    let send_move = |x: i32| unsafe {
+        SendMessageW(
+            native_window.hwnd,
+            WM_MOUSEMOVE,
+            Some(WPARAM(MK_LBUTTON.0 as usize)),
+            Some(LPARAM(((30 << 16) | x) as isize)),
+        )
+    };
+
+    unsafe { SetCapture(native_window.hwnd) };
+    assert_eq!(unsafe { GetCapture() }, native_window.hwnd);
+    send_move(24);
+    assert_eq!(frames.borrow().len(), 1);
+    let source_frame = frames.borrow()[0]
+        .0
+        .expect("the source callback should retain its physical frame");
+    assert_eq!(
+        source_frame.capture_owner(),
+        PlatformNativePointerCaptureOwner::Window(window.window_id()),
+    );
+    assert_eq!(unsafe { GetCapture() }, other_native_window.hwnd);
+    assert_eq!(frames.borrow()[0].1, None);
+    assert_eq!(native_window.native_pointer_physical_frame_for_test(), None);
+
+    send_move(25);
+    let other_frame = frames.borrow()[1]
+        .0
+        .expect("the next callback should observe the new capture owner");
+    assert_eq!(
+        other_frame.capture_owner(),
+        PlatformNativePointerCaptureOwner::Window(other_window.window_id()),
+    );
+    assert_eq!(frames.borrow()[1].1, Some(other_frame));
+    assert_eq!(native_window.native_pointer_physical_frame_for_test(), None);
+
+    unsafe { SetCapture(unknown_window.hwnd()) };
+    assert_eq!(unsafe { GetCapture() }, unknown_window.hwnd());
+    send_move(27);
+    assert_eq!(
+        frames.borrow()[2].0.unwrap().capture_owner(),
+        PlatformNativePointerCaptureOwner::UnregisteredWindow,
+    );
+
+    unsafe { ReleaseCapture() }.expect("capture observation test should release native capture");
+    assert_eq!(unsafe { GetCapture() }, HWND::default());
+    send_move(28);
+    assert_eq!(
+        frames.borrow()[3].0.unwrap().capture_owner(),
+        PlatformNativePointerCaptureOwner::Unavailable,
+        "thread-local absence of capture cannot prove desktop-wide absence",
+    );
+    assert_eq!(frames.borrow().len(), 4);
+    assert_eq!(frames.borrow()[0].0, Some(source_frame));
+    assert_eq!(frames.borrow()[1].0, Some(other_frame));
+    assert_eq!(native_window.native_pointer_physical_frame_for_test(), None);
+
+    drop(subscription);
+    drop(pointer_guard);
+    app.update_for_test(|cx| {
+        other_window.update(cx, |_, window, cx| window.remove_window(cx))?;
+        window.update(cx, |_, window, cx| window.remove_window(cx))
+    })
+    .expect("capture observation test windows should retire");
+    assert!(native_window.is_native_window_terminal());
+    assert!(other_native_window.is_native_window_terminal());
+}
+
+#[test]
 fn private_input_messages_require_validation_and_the_current_native_generation() {
-    let (mut app, window, native_window) = native_input_window();
+    let (mut app, window, native_window, _) = native_input_window();
     let frame_requests = Rc::new(Cell::new(0usize));
     let request_frame: Rc<dyn Fn(RequestFrameOptions)> = Rc::new({
         let frame_requests = frame_requests.clone();
