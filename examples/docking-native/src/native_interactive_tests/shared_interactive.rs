@@ -797,6 +797,24 @@ impl SharedScenarioWorker {
             Ok(!unsafe { IsWindow(Some(provisional.hwnd)).as_bool() })
         })
         .await?;
+        let promoted_root = session
+            .dock
+            .with_view(|view| view.item(source.item).map(|item| item.root()))
+            .context("shared recovery tear-off did not retain a promoted root")?;
+        cx.update(|app| {
+            session
+                .dock
+                .submit_native_dock_back_for_test(promoted_root, app)
+        })?;
+        wait_until(cx, "shared dock-back recovery commit", |cx| {
+            session.pump(cx);
+            session.check_health()?;
+            Ok(
+                shared_surface_contains_item(session, source.item, source.surface)
+                    && shared_item_selected(session, source.item),
+            )
+        })
+        .await?;
         ensure!(
             session
                 .dock
@@ -804,6 +822,9 @@ impl SharedScenarioWorker {
             "shared recovery lost the retained item after child loss"
         );
         session.assert_release_terminal(source, drag.generation)?;
+        session
+            .milestones
+            .push("shared.committed-loss-dock-back".to_owned());
         Ok(())
     }
 

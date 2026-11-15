@@ -1538,6 +1538,7 @@ fn run_native_interactive_worker(registration: NativeScenarioRegistration) -> ! 
             | NativeDockBehavior::NoInputPassThrough
             | NativeDockBehavior::MixedDpiPlacement
             | NativeDockBehavior::ProcessConvergence
+            | NativeDockBehavior::CommittedLossRecovery
     ) {
         shared_interactive::run_worker(registration);
     }

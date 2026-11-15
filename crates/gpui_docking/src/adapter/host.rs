@@ -10,7 +10,7 @@ use std::{
 use anyhow::{Result, ensure};
 use dockspace::{
     geometry::{LogicalPoint, LogicalRect, LogicalSize},
-    model::{DockPlacement, DockspaceView, ItemId, SurfaceId},
+    model::{DockPlacement, DockspaceView, ItemId, RootId, SurfaceId},
     runtime::{
         DockspaceHostFrame, DockspaceSession, HostFrameReport, HostInputOutcome,
         NativeEffectRequest, SurfacePresentationArtifact, SurfaceUnavailableReason,
@@ -319,6 +319,30 @@ impl DockSurface {
         cx.refresh_windows();
         host_native::pump(&self.host, cx);
         Ok(value)
+    }
+
+    /// Submits the core-owned dock-back command for an exact root in tests.
+    ///
+    /// This keeps recovery qualification on the shared session's presentation command path. It
+    /// is intentionally available only with `test-support`; applications should expose their
+    /// own recovery command or presentation affordance instead of using this seam.
+    #[cfg(feature = "test-support")]
+    pub fn submit_native_dock_back_for_test(&self, root: RootId, cx: &mut App) -> Result<()> {
+        let action = {
+            let host = self.host.borrow();
+            host.session
+                .presentation_commands(root)
+                .dock_back()?
+                .into_prepared()
+                .map_err(|error| anyhow::anyhow!("native dock-back is unavailable: {error}"))?
+        };
+        self.update(
+            |frame| {
+                frame.submit_prepared_action(action)?;
+                Ok(())
+            },
+            cx,
+        )
     }
 
     /// Returns the primary background diagnostic, if any.
