@@ -942,6 +942,99 @@ fn managed_chrome_clicks_use_the_native_producer_and_submitted_receivers(cx: &mu
 }
 
 #[open_gpui::test]
+fn managed_shutdown_waits_for_capture_release_before_the_first_native_motion(
+    cx: &mut TestAppContext,
+) {
+    use open_gpui::{
+        MouseButton, NativeCapturedDragPhase, NativeCapturedDragReleaseTerminal,
+        PlatformPointerCaptureReleaseOutcome,
+    };
+
+    cx.defer_next_window_frame_requests();
+    let (dock, _, _, windows) = managed_fixture(cx);
+    frames(&mut VisualTestContext::from_window(windows[0], cx), &dock);
+    let mut source = VisualTestContext::from_window(windows[1], cx);
+    source.update(|window, _| {
+        let _ = window.activate_window();
+    });
+    frames(&mut source, &dock);
+    let drag_events = Rc::new(RefCell::new(Vec::new()));
+    let _observer = source.cx.update({
+        let drag_events = drag_events.clone();
+        move |cx| {
+            cx.observe_native_captured_drag(move |event, _| drag_events.borrow_mut().push(event))
+        }
+    });
+    let release_allowed = Rc::new(Cell::new(false));
+    source.cx.set_pointer_capture_release_callback(windows[1], {
+        let release_allowed = release_allowed.clone();
+        move |_| {
+            if release_allowed.get() {
+                PlatformPointerCaptureReleaseOutcome::Released
+            } else {
+                PlatformPointerCaptureReleaseOutcome::Rejected
+            }
+        }
+    });
+    let tab = source.debug_bounds("dockspace:tab:22").unwrap();
+    source.simulate_mouse_down(tab.center(), MouseButton::Left, Modifiers::none());
+    source.simulate_mouse_move(
+        tab.center() + open_gpui::point(px(24.0), px(0.0)),
+        Some(MouseButton::Left),
+        Modifiers::none(),
+    );
+    source.cx.update(|cx| {
+        assert_eq!(
+            cx.active_native_captured_drag_source_window(),
+            Some(windows[1].window_id())
+        );
+        assert!(
+            drag_events.borrow().is_empty(),
+            "the original start precedes native motion"
+        );
+        dock.begin_native_shutdown(cx).unwrap();
+    });
+    source.run_until_parked();
+    source.cx.update(|cx| {
+        assert!(
+            cx.windows().contains(&windows[1]),
+            "the source closed before its original release"
+        );
+        assert!(cx.windows().contains(&windows[0]));
+    });
+    assert!(!dock.native_is_quiescent());
+    release_allowed.set(true);
+    source
+        .background_executor
+        .advance_clock(std::time::Duration::from_millis(8));
+    source.run_until_parked();
+    source.cx.update(|cx| dock.pump_native(cx));
+    source.run_until_parked();
+    assert!(dock.native_is_quiescent());
+    let events = drag_events.borrow();
+    assert_eq!(events.len(), 1);
+    assert!(matches!(
+        events[0].phase(),
+        NativeCapturedDragPhase::Cancelled(_)
+    ));
+    let generation = events[0].generation();
+    let reports = dock.take_native_reports();
+    assert_eq!(
+        reports
+            .iter()
+            .filter(|report| matches!(report,
+                super::native::NativeReport::CaptureTerminal { barrier, terminal, .. }
+                    if barrier.source_window() == windows[1].window_id()
+                        && barrier.drag_generation() == generation
+                        && *terminal == NativeCapturedDragReleaseTerminal::Released
+            ))
+            .count(),
+        1,
+        "{reports:?}"
+    );
+}
+
+#[open_gpui::test]
 fn managed_anchor_close_drains_both_windows_after_delayed_native_terminal(cx: &mut TestAppContext) {
     cx.defer_next_window_frame_requests();
     let (dock, _, _, windows) = managed_fixture(cx);

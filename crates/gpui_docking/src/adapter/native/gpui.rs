@@ -129,6 +129,7 @@ struct CallbackState {
     sealed: Cell<bool>,
     anchor: Cell<bool>,
     capture: Cell<Option<NativeCapture>>,
+    capture_start: Cell<Option<NativeCapture>>,
     capture_release: Cell<Option<(NativeWindowBinding, NativeCapturedDragReleaseBarrier)>>,
     capture_failed: Cell<bool>,
     capture_cancellations: RefCell<VecDeque<NativeCapture>>,
@@ -170,6 +171,7 @@ impl NativeCallbacks {
             sealed: Cell::new(false),
             anchor: Cell::new(false),
             capture: Cell::new(None),
+            capture_start: Cell::new(None),
             capture_release: Cell::new(None),
             capture_failed: Cell::new(false),
             capture_cancellations: RefCell::new(VecDeque::new()),
@@ -267,6 +269,7 @@ impl NativeCallbacks {
             }
             state.native_terminal.set(true);
             state.capture.set(None);
+            state.capture_start.set(None);
             state.capture_release.set(None);
             state.capture_failed.set(false);
             state.capture_cancellations.borrow_mut().clear();
@@ -535,10 +538,30 @@ impl NativeCallbacks {
         }
         self.0.capture_ingress.set(event.sequence().ordinal());
         self.0.capture.set(Some(capture));
+        if self.0.capture_start.get() == Some(capture) {
+            self.0.capture_start.set(None);
+        }
+    }
+
+    pub(crate) fn retain_capture_start(
+        &self,
+        source: open_gpui::WindowId,
+        consumer: &open_gpui::PreparedNativeCapturedDragConsumer,
+    ) {
+        if self.window_id() == Some(source) && consumer.is_active() && !self.0.sealed.get() {
+            // GPUI has already activated this original generation. Closing may
+            // race its first native motion, so custody begins at activation.
+            self.0.capture_start.set(Some(NativeCapture {
+                source,
+                generation: consumer.generation(),
+            }));
+            self.0.capture_observation_missing.set(false);
+        }
     }
 
     pub(super) fn request_capture_cancellation(&self, capture: NativeCapture) {
         if self.0.native_terminal.get()
+            || self.0.capture_failed.get()
             || self.0.capture_release.get().is_some_and(|(_, barrier)| {
                 barrier.source_window() == capture.source
                     && barrier.drag_generation() == capture.generation
@@ -575,19 +598,34 @@ impl NativeCallbacks {
             }) {
                 self.0.capture.set(None);
             }
-            self.0.capture_failed.set(false);
+            if self.0.capture_start.get().is_some_and(|capture| {
+                capture.source == barrier.source_window()
+                    && capture.generation == barrier.drag_generation()
+            }) {
+                self.0.capture_start.set(None);
+            }
         }
     }
 
     /// Cancels the original GPUI native capture and retains its exact release barrier.
+    /// A failed or unobservable release blocks close until the real native
+    /// terminal; service calls do not retry an already retired barrier.
     pub fn cancel_capture(&self, cx: &mut App) {
         if let Some(capture) = self.0.capture.get() {
+            self.request_capture_cancellation(capture);
+        }
+        if let Some(capture) = self.0.capture_start.get() {
             self.request_capture_cancellation(capture);
         }
         self.dispatch_capture_cancellations(cx);
     }
 
     fn dispatch_capture_cancellations(&self, cx: &mut App) {
+        // A terminal failure quarantines this physical callback until its true
+        // native terminal. Retrying a retired barrier cannot prove release.
+        if self.0.capture_failed.get() {
+            return;
+        }
         if self.0.native_terminal.get() {
             self.0.capture_cancellations.borrow_mut().clear();
             return;
@@ -1373,6 +1411,16 @@ impl NativeBridge {
             return;
         }
         callbacks.cancel_capture(cx);
+        // Only collection of the original release terminal clears this custody.
+        // Native destruction cannot substitute for proving capture/route cleanup.
+        if callbacks.0.capture.get().is_some()
+            || callbacks.0.capture_start.get().is_some()
+            || callbacks.0.capture_release.get().is_some()
+            || !callbacks.0.capture_cancellations.borrow().is_empty()
+            || callbacks.0.capture_failed.get()
+        {
+            return;
+        }
         if let Some(handle) = callbacks.handle() {
             if handle
                 .update(cx, |_, window, cx| window.remove_window(cx))

@@ -41,6 +41,141 @@ impl Render for DragView {
     }
 }
 
+struct ObservedStartView(Rc<RefCell<Option<open_gpui::PreparedNativeCapturedDragConsumer>>>);
+
+impl Render for ObservedStartView {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let starts = self.0.clone();
+        div().id("observed-native-start").size_full().on_drag(
+            "original prepared capture",
+            move |_, geometry, _, cx| {
+                *starts.borrow_mut() = Some(geometry.prepare_native_captured_drag_consumer());
+                cx.new(|_| Empty)
+            },
+        )
+    }
+}
+
+#[open_gpui::test]
+fn a_later_activated_start_does_not_overtake_a_queued_native_terminal(cx: &mut TestAppContext) {
+    let (mut session, mut bridge, bindings, windows) =
+        cx.update(crate::adapter::native::tests::fixture);
+    let source = windows[1];
+    let callbacks = bridge.callbacks(bindings[1].window()).unwrap();
+    let transport = bridge.transport();
+    let starts = Rc::new(RefCell::new(None));
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let _route = cx.update({
+        let events = events.clone();
+        let transport = transport.clone();
+        move |cx| {
+            cx.consume_native_captured_drag(
+                |_, _, _| Arc::new(()),
+                move |event, cx| {
+                    events.borrow_mut().push(event.clone());
+                    transport.captured_drag(
+                        bindings[1].window(),
+                        event,
+                        NativePointerId::new(1),
+                        PointerEventMetadata::new(
+                            PointerDeviceKind::Mouse,
+                            Duration::from_millis(31),
+                        ),
+                        cx,
+                    );
+                },
+            )
+        }
+    });
+    cx.update_window(source, |_, window, cx| {
+        window.replace_root(cx, |_, _| ObservedStartView(starts.clone()));
+        let _ = window.activate_window();
+        window.draw(cx).clear(cx);
+    })
+    .unwrap();
+    for _ in 0..4 {
+        cx.run_until_parked();
+        if transport.is_empty() {
+            break;
+        }
+        commit_capture_transport(&mut session, &mut bridge);
+    }
+    let mut visual = VisualTestContext::from_window(source, cx);
+    visual.simulate_mouse_down(
+        point(px(20.0), px(20.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    visual.simulate_mouse_move(
+        point(px(60.0), px(20.0)),
+        Some(MouseButton::Left),
+        Modifiers::none(),
+    );
+    visual.simulate_mouse_move(
+        point(px(80.0), px(20.0)),
+        Some(MouseButton::Left),
+        Modifiers::none(),
+    );
+    let first = events
+        .borrow()
+        .last()
+        .expect("original native move")
+        .generation();
+    commit_capture_transport(&mut session, &mut bridge);
+    bridge.take_reports();
+    let update = session
+        .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+        .unwrap()
+        .suspend();
+    visual.simulate_mouse_up(
+        point(px(80.0), px(20.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    visual.simulate_mouse_down(
+        point(px(100.0), px(20.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    visual.simulate_mouse_move(
+        point(px(140.0), px(20.0)),
+        Some(MouseButton::Left),
+        Modifiers::none(),
+    );
+    let second = starts
+        .borrow()
+        .clone()
+        .expect("second original prepared consumer");
+    assert!(second.is_active());
+    assert_ne!(first, second.generation());
+    assert!(
+        events
+            .borrow()
+            .iter()
+            .any(|event| event.generation() == first
+                && event.phase() == NativeCapturedDragPhase::Released)
+    );
+    assert!(
+        events
+            .borrow()
+            .iter()
+            .all(|event| event.generation() == first),
+        "the second native generation has not moved"
+    );
+    callbacks.retain_capture_start(source.window_id(), &second);
+    drop(update);
+    bridge.collect(&mut session).unwrap();
+    let reports = bridge.take_reports();
+    assert!(reports.iter().all(|report| !matches!(report, NativeReport::StaleCallback(binding) if *binding == bindings[1].window())),
+        "an activated cleanup start cannot invalidate a preceding legitimate terminal: {reports:?}");
+    visual.update(|_, cx| {
+        assert_eq!(
+            cx.active_native_captured_drag_source_window(),
+            Some(source.window_id())
+        )
+    });
+}
+
 #[open_gpui::test]
 fn captured_motion_keeps_its_fifo_position_while_an_update_lease_is_held(cx: &mut TestAppContext) {
     let (mut session, mut bridge, bindings, windows) =
@@ -487,6 +622,133 @@ fn continued_capture(cx: &mut TestAppContext) -> ContinuedCapture {
         release_allowed,
         _subscription: subscription,
     }
+}
+
+#[open_gpui::test]
+fn a_failed_capture_release_keeps_shutdown_blocked_without_repeated_cancellation(
+    cx: &mut TestAppContext,
+) {
+    let mut capture = continued_capture(cx);
+    cx.update(|cx| capture.bridge.begin_shutdown(cx)).unwrap();
+    for delay in [8, 32, 128] {
+        cx.background_executor
+            .advance_clock(Duration::from_millis(delay));
+        cx.run_until_parked();
+        commit_capture_transport(&mut capture.session, &mut capture.bridge);
+    }
+    let reports = capture.bridge.take_reports();
+    assert_eq!(
+        reports
+            .iter()
+            .filter(|report| matches!(report,
+                NativeReport::CaptureTerminal { barrier, terminal, .. }
+                    if barrier.drag_generation() == capture.generation
+                        && *terminal == NativeCapturedDragReleaseTerminal::Failed
+            ))
+            .count(),
+        1,
+        "the bounded original release must actually fail: {reports:?}"
+    );
+    for _ in 0..3 {
+        cx.update(|cx| {
+            capture
+                .bridge
+                .dispatch_effects(&mut |_, _, _| panic!("shutdown cannot create"), cx)
+                .unwrap();
+            capture.bridge.drive_shutdown(cx).unwrap();
+        });
+        cx.run_until_parked();
+        commit_capture_transport(&mut capture.session, &mut capture.bridge);
+        let repeated = capture.bridge.take_reports();
+        assert!(
+            repeated.is_empty(),
+            "a failed original barrier must not restart cancellation: {repeated:?}"
+        );
+        assert!(capture.bridge.transport().is_empty());
+    }
+    cx.update(|cx| assert!(cx.windows().contains(&capture.source)));
+    assert!(!capture.bridge.is_quiescent());
+}
+
+#[open_gpui::test]
+fn shutdown_waits_for_the_original_capture_release_before_dispatching_close(
+    cx: &mut TestAppContext,
+) {
+    let mut capture = continued_capture(cx);
+    let source = capture.source;
+    let anchor = cx.update(|cx| {
+        cx.windows()
+            .into_iter()
+            .find(|window| *window != source)
+            .unwrap()
+    });
+    let release_collected = Rc::new(Cell::new(false));
+    let closed = Rc::new(RefCell::new(Vec::new()));
+    let _observer = cx.update({
+        let release_collected = release_collected.clone();
+        let closed = closed.clone();
+        move |cx| {
+            cx.on_window_closed(move |_, window| {
+                closed.borrow_mut().push((window, release_collected.get()));
+            })
+        }
+    });
+    cx.update(|cx| capture.bridge.begin_shutdown(cx)).unwrap();
+    cx.run_until_parked();
+    assert!(
+        closed.borrow().is_empty(),
+        "a rejected original capture release must prevent logical close dispatch"
+    );
+    cx.update(|cx| {
+        assert!(cx.windows().contains(&source));
+        assert!(cx.windows().contains(&anchor));
+    });
+    capture.release_allowed.set(true);
+    cx.background_executor
+        .advance_clock(Duration::from_millis(8));
+    cx.run_until_parked();
+    assert!(
+        capture.bridge.transport().0.queue.borrow().iter().any(|record| {
+            matches!(record,
+                Inbound::CaptureTerminal(_, barrier, NativeCapturedDragReleaseTerminal::Released, _)
+                    if barrier.source_window() == source.window_id()
+                        && barrier.drag_generation() == capture.generation
+            )
+        }),
+        "the real release callback must reach its original transport before collection"
+    );
+    cx.update(|cx| capture.bridge.drive_shutdown(cx)).unwrap();
+    assert!(
+        closed.borrow().is_empty(),
+        "an uncollected release terminal must not authorize close dispatch"
+    );
+    commit_capture_transport(&mut capture.session, &mut capture.bridge);
+    let releases = capture.bridge.take_reports();
+    assert_eq!(
+        releases
+            .iter()
+            .filter(|report| matches!(report,
+                NativeReport::CaptureTerminal { binding, barrier, terminal }
+                    if *binding == capture.before.window()
+                        && barrier.source_window() == source.window_id()
+                        && barrier.drag_generation() == capture.generation
+                        && *terminal == NativeCapturedDragReleaseTerminal::Released
+            ))
+            .count(),
+        1,
+        "{releases:?}"
+    );
+    release_collected.set(true);
+    for _ in 0..3 {
+        cx.update(|cx| capture.bridge.drive_shutdown(cx)).unwrap();
+        cx.run_until_parked();
+        commit_capture_transport(&mut capture.session, &mut capture.bridge);
+    }
+    assert_eq!(
+        *closed.borrow(),
+        vec![(source.window_id(), true), (anchor.window_id(), true)],
+        "only the exact collected capture terminal can authorize dependent-first close"
+    );
 }
 
 #[open_gpui::test]

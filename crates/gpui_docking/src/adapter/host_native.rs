@@ -370,14 +370,13 @@ fn start_drag(
         return;
     };
     let binding = callbacks.binding();
-    let Some(sample) = local_sample(&host.session, binding, geometry.window_position(), window)
-    else {
-        return;
-    };
+    let sample = local_sample(&host.session, binding, geometry.window_position(), window);
     let metadata = dockspace::runtime::PointerEventMetadata::new(
         dockspace::runtime::PointerDeviceKind::Mouse,
         host.observed_at(),
     );
+    let callbacks = callbacks.clone();
+    let source = window.window_handle().window_id();
     let transport = native.transport.clone();
     let weak = Rc::downgrade(shared);
     drop(host);
@@ -385,6 +384,10 @@ fn start_drag(
         if !consumer.is_active() {
             return;
         }
+        callbacks.retain_capture_start(source, &consumer);
+        let Some(sample) = sample else {
+            return;
+        };
         use dockspace::runtime::{
             NativeLocalPointerLocation, NativePointerEvent, NativePointerId, NativePointerInput,
             NativePointerOwner,

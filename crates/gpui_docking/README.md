@@ -61,6 +61,9 @@ Native close policy supports allow, veto and defer. `begin_native_shutdown`
 freezes admission and drains the exact workspace group, with dependents before
 the anchor. `native_is_quiescent` waits for the original physical owners; logical
 close, renderer/capture quiescence and actual native destruction are separate.
+Native close dispatch waits until the original captured-drag release terminal
+has been collected. The original activated drag generation is retained even
+before its first native motion callback arrives.
 `take_native_reports` transfers observations to the application. Read-only
 `inspection` returns an owned snapshot or `DockInspectionError::Busy` during a
 mutable host borrow; it does not consume reports or drive the runtime. DevTools'
