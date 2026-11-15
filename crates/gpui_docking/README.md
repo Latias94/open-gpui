@@ -137,7 +137,8 @@ The displaced engine is available only through `open_gpui_docking::legacy` and
 its explicit `legacy-docking` feature. Enabling it never changes the root or
 prelude types. It is not a fallback or a second writer for a migrated workspace.
 The old Windows native dogfood example retains its compatibility qualification
-until its ten shared-session replacement scenarios run:
+while the ten shared-session replacement scenarios receive physical Windows
+qualification:
 
 ```sh
 cargo run -p open-gpui-docking-native --features legacy-docking
@@ -152,8 +153,8 @@ files now live under `src/legacy/`.
 
 The browser unsupported-native-window probe now uses the shared session. Unused
 canonical migration and detached payload experiments have been removed. The
-[remote adoption record](../../docs/knowledge/engineering/verification/dockspace-remote-adoption-20261114.md)
-lists the exact remaining Windows retirement boundary. Copy a logical recovery
+[shared-session migration record](../../docs/knowledge/engineering/verification/dockspace-shutdown-migration-20261115.md)
+lists the exact source commits and physical Windows qualification boundary. Copy a logical recovery
 checkpoint with `dock.with_view(|view| view.to_layout())`; continue using the
 document envelope when external View-key history and save generations matter.
 

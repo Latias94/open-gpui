@@ -613,6 +613,25 @@ Those are paths relative to the sibling Nara checkout. They distinguish implemen
 from proposals and record the supplied compositor document and critique article. The supplied
 files are background inputs; current source and matching native measurements are evidence.
 
+## Windows Shared-Session Native Migration
+
+The Windows interactive docking journey migration is now source-complete. Keep the
+manifest coordinates and process protocol stable while running the physical Windows
+qualification. The commits are intentionally behavior-sized for failure isolation:
+
+| Commit | Scope |
+| --- | --- |
+| `6f8d3747` | Captured anchor shutdown and dependent-first shared cleanup. |
+| `bcf59a3b` | Source capture, complex workflow, opaque occlusion, provisional same-HWND promotion, live release lock, no-input pass-through and mixed-DPI placement. |
+| `dd04d853` | Process convergence with independent survivor plus `LastWindowClosed` and `AppShutdown`. |
+| `0f9262c9` | Committed native loss followed by shared core dock-back recovery. |
+
+The Mac host and Windows MSVC target checks pass for these source changes. Physical
+Windows execution is still required before removing the compatibility runtime,
+legacy fixture catalog or package-wide `legacy-docking` feature. The shared
+committed-loss test seam calls the dockspace presentation command and does not
+reintroduce the old payload recovery registry.
+
 ## First Maintenance Session
 
 1. Verify the current checkout, local commits and remote pin; read this handoff's Mac continuation

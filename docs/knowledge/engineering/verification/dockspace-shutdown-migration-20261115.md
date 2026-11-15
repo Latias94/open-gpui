@@ -210,11 +210,29 @@ reconstruction.
 
 ## Remaining work
 
-Continue migrating the nine old Windows journeys in behavior-sized slices,
-starting with process convergence and its last-window/App-shutdown subcases.
-Keep creation-in-progress, provisional-window and injected cleanup-failure
-coverage visible rather than replacing them with a simpler happy path. Execute
-the migrated shutdown journey on the owning Windows interactive runner.
+### Windows shared-session migration follow-up
+
+The complete ten-behavior source migration is now recorded in four behavior-sized
+commits. The manifest coordinates, exact nextest selectors, START/REPORT/RELEASE
+protocol, Job cleanup and native generation census remain unchanged.
+
+| Open-GPUI commit | Migrated scope | Shared-session contract retained |
+| --- | --- | --- |
+| `6f8d3747` | `surface-shutdown` | Original capture release, dependent-first close and native terminal ordering. |
+| `bcf59a3b` | `source-capture`, `complex-dockspace-workflow`, `opaque-occlusion`, `provisional-same-hwnd-promotion`, `live-route-and-release-lock`, `no-input-pass-through`, `mixed-dpi-placement` | Managed `DockSurface`, real SendInput/WndProc observations, same-HWND staging and target-display worker plan. |
+| `dd04d853` | `process-convergence` | Independent survivor session plus `LastWindowClosed` and `AppShutdown` worker subcases. |
+| `0f9262c9` | `committed-loss-recovery` | Shared native child terminal followed by the core `presentation_commands(root).dock_back()` recovery seam. |
+
+The Mac host ran the package checks and the Windows MSVC target check after each
+implementation slice. Physical Windows execution remains the next qualification
+step; source migration, compiler qualification and physical-input qualification
+are recorded separately. The test-only dock-back seam belongs to the shared
+adapter and does not restore the legacy payload recovery registry.
+
+The remaining work is to run the ten manifest rows on the owning Windows runner,
+capture their reports and logs, then inspect failures one behavior at a time. Keep
+the legacy runtime, fixture catalog and dogfood diagnostics until those physical
+receipts pass and their remaining consumers have been audited.
 
 General fatal recovery remains open. An ordinary unrecorded pointer carries no
 affine result, but native effect results, capture acknowledgements, lifecycle
