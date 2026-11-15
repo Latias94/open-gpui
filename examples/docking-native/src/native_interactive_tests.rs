@@ -706,6 +706,7 @@ fn select_native_mixed_dpi_display_pair(
 
 mod process_harness;
 mod scenario_runner;
+mod shared_shutdown;
 
 use scenario_runner::{
     NativeDockspaceRunBinding, NativeDockspaceWorkflow, build_native_dockspace_workflow_scenario,
@@ -788,7 +789,7 @@ impl NativeDockBehavior {
                 .await
             }
             Self::SurfaceShutdown => {
-                run_captured_surface_shutdown_scenario(cx, scenario, scenario_id).await
+                bail!("surface shutdown must use its shared-session worker")
             }
             Self::ProcessConvergence if worker_subcase.uses_app_shutdown() => {
                 run_process_convergence_app_shutdown_scenario(cx, scenario, scenario_id).await
@@ -1522,6 +1523,9 @@ fn run_native_interactive_manifest_scenario(expected_behavior: NativeDockBehavio
 
 fn run_native_interactive_worker(registration: NativeScenarioRegistration) -> ! {
     process_harness::await_worker_start();
+    if registration.behavior == NativeDockBehavior::SurfaceShutdown {
+        shared_shutdown::run_worker(registration);
+    }
     let scenario_id = registration.id.clone();
     let behavior = registration.behavior;
     let dockspace_binding = matches!(
@@ -4535,71 +4539,6 @@ async fn run_committed_loss_recovery(
         scenario.surface_changes.borrow()
     );
     Ok((promoted_space, lost_snapshot.revision()))
-}
-
-async fn run_captured_surface_shutdown_scenario(
-    cx: &mut AsyncApp,
-    scenario: &mut NativeDockScenario,
-    scenario_id: &str,
-) -> Result<()> {
-    let (mut pointer_guard, _) = begin_native_captured_drag(cx, scenario).await?;
-    unsafe {
-        PostMessageW(
-            Some(scenario.target_hwnd),
-            WM_CLOSE,
-            WPARAM::default(),
-            LPARAM::default(),
-        )
-    }
-    .context("the native Dock scenario could not post WM_CLOSE to its primary anchor")?;
-
-    wait_until(
-        cx,
-        "surface-owned capture cancellation and dependent-before-anchor convergence",
-        |cx| {
-            let (session_closed, runtime_empty, no_gpui_windows, active_drag, tickets_settled) = cx
-                .update(|app| {
-                    let status = scenario.surface.window_session_status(app);
-                    (
-                        status.phase() == DockSurfaceWindowSessionPhase::Closed,
-                        status.runtime_empty() == Some(true),
-                        app.windows().is_empty(),
-                        app.has_active_drag(),
-                        status.pending_terminal_ticket_count() == 0
-                            && status.failed_terminal_ticket_count() == 0,
-                    )
-                });
-            Ok(session_closed
-                && runtime_empty
-                && no_gpui_windows
-                && !active_drag
-                && tickets_settled
-                && unsafe { GetCapture() } == HWND::default()
-                && !unsafe { IsWindow(Some(scenario.source_hwnd)).as_bool() }
-                && !unsafe { IsWindow(Some(scenario.target_hwnd)).as_bool() })
-        },
-    )
-    .await?;
-
-    assert_surface_shutdown_capture_cleanup_precedes_close_dispatch(
-        &scenario.shutdown_observation,
-        scenario.target_window.window_id(),
-        &[scenario.source_window.window_id()],
-        SurfaceShutdownAnchorTerminalAuthority::ExplicitCloseDispatch,
-    )?;
-    assert_native_shutdown_lifecycle(scenario)?;
-
-    ensure!(
-        pointer_guard.release_primary_button_best_effort(),
-        "the native Dock scenario could not restore the primary button after shutdown"
-    );
-    log::info!(
-        "scenario={} source_hwnd={:?} anchor_hwnd={:?} completed",
-        scenario_id,
-        scenario.source_hwnd,
-        scenario.target_hwnd
-    );
-    Ok(())
 }
 
 async fn run_process_convergence_scenario(
