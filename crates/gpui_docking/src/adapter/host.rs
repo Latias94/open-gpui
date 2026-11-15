@@ -22,7 +22,9 @@ use open_gpui::{
 };
 use web_time::Instant;
 
-use super::{GpuiDockspaceConfig, continuation, element, host_native, input, presentation};
+use super::{
+    DockHostFailure, GpuiDockspaceConfig, continuation, element, host_native, input, presentation,
+};
 
 pub(super) type SharedHost = Rc<RefCell<HostState>>;
 
@@ -178,7 +180,7 @@ impl DockSurface {
                 inputs: Vec::new(),
                 native_effects: VecDeque::new(),
                 presentation_pending: false,
-                error: None,
+                failure: None,
                 close_handler: None,
                 close_requests: VecDeque::new(),
                 close_pump_scheduled: false,
@@ -319,9 +321,22 @@ impl DockSurface {
         Ok(value)
     }
 
-    /// Returns the last transport error, if any.
+    /// Returns the primary background diagnostic, if any.
+    ///
+    /// The first classified protocol, internal or foreign-update failure is
+    /// retained across later cleanup errors. Other failures retain the latest
+    /// diagnostic. Use [`Self::failure`] for the original core categories.
     pub fn error(&self) -> Option<String> {
-        self.host.borrow().error.clone()
+        self.failure().map(|failure| failure.message)
+    }
+
+    /// Copies the primary background failure without consuming any failed owner.
+    ///
+    /// This is diagnostic only. A protocol failure can retain a rejected FIFO
+    /// head and prevent quiescence; neither inspecting the failure nor closing
+    /// its windows authorizes clearing that input or reusing the old session.
+    pub fn failure(&self) -> Option<DockHostFailure> {
+        self.host.borrow().failure.clone()
     }
 
     /// Reports whether an unaccepted GPUI candidate owns the semantic update.
@@ -347,7 +362,7 @@ pub(super) struct HostState {
     pub(super) inputs: Vec<input::QueuedPointer>,
     pub(super) native_effects: VecDeque<NativeEffectRequest>,
     pub(super) presentation_pending: bool,
-    pub(super) error: Option<String>,
+    pub(super) failure: Option<DockHostFailure>,
     pub(super) close_handler: Option<Rc<super::close::CloseHandler>>,
     pub(super) close_requests: VecDeque<dockspace::runtime::DockspaceClosePlan>,
     pub(super) close_pump_scheduled: bool,
@@ -556,10 +571,16 @@ impl HostState {
             .saturating_duration_since(self.clock_origin)
     }
 
-    pub(super) fn fail(&mut self, error: impl std::fmt::Display) {
-        let message = format!("{error:#}");
-        log::error!("GPUI docking: {message}");
-        self.error = Some(message);
+    pub(super) fn fail(&mut self, error: &(dyn std::error::Error + 'static)) {
+        let failure = DockHostFailure::from_error(error);
+        log::error!("GPUI docking: {}", failure.message);
+        if !self
+            .failure
+            .as_ref()
+            .is_some_and(DockHostFailure::is_primary_protocol_failure)
+        {
+            self.failure = Some(failure);
+        }
     }
 }
 

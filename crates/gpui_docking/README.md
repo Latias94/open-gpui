@@ -66,6 +66,17 @@ close, renderer/capture quiescence and actual native destruction are separate.
 mutable host borrow; it does not consume reports or drive the runtime. DevTools'
 `docking` feature projects that snapshot; it does not enable the old engine.
 
+After shutdown starts, `update` rejects application intent before invoking its
+callback and `open_pane` leaves its View unregistered. Original renderer terminals,
+native observations and cleanup still progress through their existing owners.
+`failure` copies the primary background diagnostic with the original core/native
+error categories, when available. The first protocol/internal failure survives
+later cleanup errors; `error` retains its text-only convenience interface.
+Neither diagnostic consumes an affine result or authorizes input replay. A
+permanently rejected native FIFO head can prevent semantic drain even after the
+windows close. There is no in-place error-clear/restart API; a fresh workspace
+must wait for actual old-host quiescence and retain application documents and Views.
+
 Register `set_close_handler` before opening windows to decide the original
 committed content plans, including tab-close and native surface plans. The
 handler receives its surface without needing to capture a strong clone. It runs

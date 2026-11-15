@@ -8,6 +8,7 @@ mod close;
 mod config;
 mod continuation;
 mod element;
+mod failure;
 mod host;
 mod host_native;
 mod input;
@@ -20,6 +21,7 @@ mod tests;
 
 pub use config::{DockspaceColors, DockspaceInputBindings, GpuiDockspaceConfig};
 pub use dockspace;
+pub use failure::DockHostFailure;
 pub use host::{DockPane, DockRegion, DockSurface};
 pub use inspection::{
     DockInspectionError, DockModelSurfaceInspection, DockMountInspection, DockNativeInspection,

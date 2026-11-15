@@ -193,7 +193,7 @@ impl Element for DockspaceElement {
             }
             Ok(false) => {}
             Err(error) => {
-                self.host.borrow_mut().fail(&error);
+                self.host.borrow_mut().fail(error.as_ref());
                 return self.failure(error, bounds, window, cx);
             }
         }
@@ -218,7 +218,7 @@ impl Element for DockspaceElement {
         match self.prepare(bounds, capture, window, cx) {
             Ok(prepared) => PreparedState::Frame(prepared),
             Err(error) => {
-                self.host.borrow_mut().fail(&error);
+                self.host.borrow_mut().fail(error.as_ref());
                 self.failure(error, bounds, window, cx)
             }
         }

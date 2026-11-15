@@ -164,7 +164,7 @@ mod inspection_tests {
                     .unwrap()
                     .commit()
                     .unwrap();
-                host.error = Some("retained original error".to_owned());
+                host.fail(&std::io::Error::other("retained original error"));
                 let native = host.native.as_mut().unwrap();
                 let bridge = native.bridge.take().unwrap();
                 accept_owned_report(native, report);
@@ -588,7 +588,7 @@ impl DockSurface {
             if let Err(error) =
                 bridge.retain_root_retirement_dependencies(native.retirements.keys().copied(), cx)
             {
-                host.fail(error);
+                host.fail(&error);
             }
         }
         drop(host);
@@ -932,7 +932,7 @@ pub(super) fn prepare_window(shared: &SharedHost, window: &mut Window, cx: &mut 
     let more = match collect_host(&mut host, &mut bridge, Some(window), cx) {
         Ok(more) => more,
         Err(error) => {
-            host.fail(error);
+            host.fail(error.as_ref());
             false
         }
     };
@@ -1142,10 +1142,9 @@ fn collect_host(
     }
     recover_root_registrations(host, bridge, current, cx)?;
     for _ in 0..4 {
-        let collected = bridge.collect(&mut host.session);
-        if let Err(error) = &collected {
+        if let Err(error) = bridge.collect(&mut host.session) {
             if !host.session.has_pending_native_input() {
-                return Err(anyhow!(error.to_string()));
+                return Err(error.into());
             }
         }
         process_reports(host, bridge, cx)?;
@@ -1328,7 +1327,7 @@ pub(super) fn pump(shared: &SharedHost, cx: &mut App) {
     let mut more = match collect_host(&mut host, &mut bridge, None, cx) {
         Ok(more) => more,
         Err(error) => {
-            host.fail(error);
+            host.fail(error.as_ref());
             false
         }
     };
@@ -1343,10 +1342,10 @@ pub(super) fn pump(shared: &SharedHost, cx: &mut App) {
         &mut |request, callbacks, cx| factory(&dock, request, callbacks, cx),
         cx,
     ) {
-        shared.borrow_mut().fail(error);
+        shared.borrow_mut().fail(&error);
     }
     if let Err(error) = bridge.drive_shutdown(cx) {
-        shared.borrow_mut().fail(error);
+        shared.borrow_mut().fail(&error);
     }
     let mut host = shared.borrow_mut();
     while let Some(report) = host.native.as_mut().unwrap().pending_reports.pop_front() {
@@ -1354,7 +1353,7 @@ pub(super) fn pump(shared: &SharedHost, cx: &mut App) {
         more = true;
     }
     if let Err(error) = process_reports(&mut host, &mut bridge, cx) {
-        host.fail(error);
+        host.fail(error.as_ref());
     }
     if !host.session.has_pending_native_input() {
         let retired: Vec<_> = host
@@ -1402,7 +1401,7 @@ pub(super) fn pump(shared: &SharedHost, cx: &mut App) {
                     more = true;
                 }
                 Err(NativeBridgeError::NotQuiescent) => {}
-                Err(error) => host.fail(error),
+                Err(error) => host.fail(&error),
             }
         }
     }

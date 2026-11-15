@@ -473,7 +473,7 @@ fn an_original_submitted_output_waits_for_a_sibling_candidate_before_admission(
     }));
     let output = {
         let host = dock.host.borrow();
-        assert!(host.error.is_none(), "{:?}", host.error);
+        assert!(host.failure.is_none(), "{:?}", host.failure);
         assert_eq!(
             ticket.snapshot().outcome(),
             open_gpui::WindowFrameSubmissionOutcome::Submitted

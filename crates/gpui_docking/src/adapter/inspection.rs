@@ -53,7 +53,7 @@ pub struct DockSurfaceInspection {
     pub pending_native_create: bool,
     /// Managed native owner facts, absent for an unmanaged workspace.
     pub native: Option<DockNativeInspection>,
-    /// Latest retained transport error, without diagnostic redaction.
+    /// Primary retained background error, as returned by `DockSurface::error`.
     pub last_error: Option<String>,
 }
 
@@ -239,7 +239,7 @@ impl DockSurface {
             pending_native_input: host.session.has_pending_native_input(),
             pending_native_create: host.session.has_pending_native_create(),
             native: host_native::inspection(&host),
-            last_error: host.error.clone(),
+            last_error: host.failure.as_ref().map(|failure| failure.message.clone()),
         })
     }
 }

@@ -117,7 +117,7 @@ pub(super) fn observe(
         retire_pending(&mut host, owner, pending, result, cx);
         if host.native.is_none() && reported_outputs {
             if let Err(error) = settle_pending(&mut host, Some(window), cx) {
-                host.fail(error);
+                host.fail(error.as_ref());
             }
         }
         // The submitted packet was prepainted inert until this original
@@ -205,7 +205,7 @@ pub(super) fn accept(
             Err(error) => {
                 pending.inputs.append(&mut host.inputs);
                 host.inputs = pending.inputs;
-                host.fail(error);
+                host.fail(&error);
                 window.retire_exact_frame_submission(&pending.ticket);
                 window.refresh();
                 return;
@@ -255,7 +255,7 @@ pub(super) fn accept_focus_stable(
     {
         let mut host = shared.borrow_mut();
         if let Err(error) = settle_pending(&mut host, Some(window), cx) {
-            host.fail(error);
+            host.fail(error.as_ref());
         }
         wake_waiting(&mut host, cx);
     }
@@ -278,7 +278,7 @@ pub(super) fn discard(shared: &SharedHost, window: &mut Window, cx: &mut App) {
         region.presented = None;
     }
     if let Err(error) = settle_pending(&mut host, Some(window), cx) {
-        host.fail(error);
+        host.fail(error.as_ref());
     }
     wake_waiting(&mut host, cx);
     drop(host);
@@ -364,7 +364,7 @@ fn apply_presentation(host: &mut HostState, terminal: PendingPresentation) {
                     }
                 }
             }
-            Err(error) => host.fail(error),
+            Err(error) => host.fail(&error),
         }
     }
 }
@@ -425,7 +425,7 @@ pub(super) fn close(host: &mut HostState, owner: WindowId, cx: &mut App) {
         }
     }
     if let Err(error) = settle_pending(host, None, cx) {
-        host.fail(error);
+        host.fail(error.as_ref());
     }
     wake_waiting(host, cx);
 }
