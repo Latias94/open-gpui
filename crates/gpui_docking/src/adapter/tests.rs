@@ -957,7 +957,11 @@ fn managed_anchor_close_drains_both_windows_after_delayed_native_terminal(cx: &m
         assert!(
             cx.windows().contains(&windows[0]),
             "anchor awaits its exact dependent terminal"
-        )
+        );
+        assert!(
+            dock.update::<()>(|_| panic!("shutdown admitted new intent"), cx)
+                .is_err()
+        );
     });
     assert!(hold.release());
     cx.run_until_parked();

@@ -102,6 +102,61 @@ fn collect_without_report_dispatch(
 }
 
 #[open_gpui::test]
+fn shutdown_rejects_application_updates_before_invoking_their_callback(cx: &mut TestAppContext) {
+    let dock = cx.update(workspace);
+    cx.update(|cx| {
+        dock.begin_native_shutdown(cx).unwrap();
+        let before = dock.inspection().unwrap();
+        let mut invoked = false;
+        let error = dock
+            .update(
+                |_| {
+                    invoked = true;
+                    Ok(())
+                },
+                cx,
+            )
+            .expect_err("shutdown must reject new application intent");
+        assert!(!invoked, "rejected intent must not enter application code");
+        assert!(matches!(
+            error.downcast_ref::<NativeBridgeError>(),
+            Some(NativeBridgeError::Draining)
+        ));
+        assert_eq!(dock.inspection().unwrap(), before);
+    });
+    finish(cx, &dock);
+    assert!(dock.native_is_quiescent());
+}
+
+#[open_gpui::test]
+fn shutdown_rejects_pane_registration_without_changing_the_host(cx: &mut TestAppContext) {
+    let dock = cx.update(workspace);
+    cx.update(|cx| {
+        dock.begin_native_shutdown(cx).unwrap();
+        let before = dock.inspection().unwrap();
+        let item = ItemId::new(3);
+        let pane = DockPane::new(item, "Rejected View", cx.new(|_| Empty));
+        let error = dock
+            .open_pane(
+                pane,
+                dockspace::model::DockPlacement::Center(dockspace::model::DockAnchor::Item(
+                    ItemId::new(1),
+                )),
+                cx,
+            )
+            .expect_err("shutdown must reject new pane registration");
+        assert!(matches!(
+            error.downcast_ref::<NativeBridgeError>(),
+            Some(NativeBridgeError::Draining)
+        ));
+        assert_eq!(dock.inspection().unwrap(), before);
+        assert!(!dock.host.borrow().panels.contains_key(&item));
+    });
+    finish(cx, &dock);
+    assert!(dock.native_is_quiescent());
+}
+
+#[open_gpui::test]
 fn a_close_retired_by_the_same_native_reset_does_not_lose_the_terminal_suffix(
     cx: &mut TestAppContext,
 ) {

@@ -239,11 +239,13 @@ impl DockSurface {
     /// replaced. Reopen an already registered pane through [`Self::update`].
     /// The registration publishes only after the sole semantic frame commits.
     /// A busy lease, rejected placement or failed commit leaves it unregistered.
+    /// A managed workspace rejects registration after native shutdown begins.
     pub fn open_pane(&self, pane: DockPane, placement: DockPlacement, cx: &mut App) -> Result<()> {
         let mut host = self
             .host
             .try_borrow_mut()
             .map_err(|_| anyhow::anyhow!("dockspace host is already borrowed"))?;
+        host.ensure_application_admission()?;
         ensure!(
             !host.panels.contains_key(&pane.id),
             "docking pane identity is already registered"
@@ -292,12 +294,15 @@ impl DockSurface {
     /// cannot manufacture a painted output or a submitted presentation.
     /// A still-prepared candidate owns the sole semantic update; callers may
     /// wait on [`Self::is_update_pending`] before issuing a new synchronous intent.
+    /// Native shutdown rejects new intent before invoking the callback. Original
+    /// renderer and native cleanup continue through their separate owners.
     pub fn update<R>(
         &self,
         update: impl FnOnce(&mut DockspaceHostFrame<'_>) -> Result<R>,
         cx: &mut App,
     ) -> Result<R> {
         let mut host = self.host.borrow_mut();
+        host.ensure_application_admission()?;
         let HostState {
             session,
             mounts,
@@ -377,6 +382,17 @@ pub(super) struct RegionState {
 }
 
 impl HostState {
+    fn ensure_application_admission(&self) -> Result<()> {
+        if self
+            .native
+            .as_ref()
+            .is_some_and(|native| native.transport.is_frozen())
+        {
+            return Err(super::native::NativeBridgeError::Draining.into());
+        }
+        Ok(())
+    }
+
     pub(super) fn has_unaccepted_update(&self) -> bool {
         self.mounts.values().any(|mount| {
             mount
