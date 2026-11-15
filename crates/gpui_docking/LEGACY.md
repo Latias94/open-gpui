@@ -41,3 +41,8 @@ runtime or its feature.
 
 The [remote adoption record](../../docs/knowledge/engineering/verification/dockspace-remote-adoption-20261114.md)
 lists the ten remaining Windows behaviors and the exact fixed dependency.
+The [shutdown continuation](../../docs/knowledge/engineering/verification/dockspace-shutdown-migration-20261115.md)
+migrates the captured-anchor shutdown worker to the shared session while retaining
+its manifest coordinate and physical process/input protocol. Its Windows execution
+is still pending. The other nine journeys and the package-wide dogfood remain
+legacy consumers, so this feature is still required for that suite.

@@ -248,3 +248,9 @@ then evaluate large pending values or candidate ownership only if measurements
 justify them. Do not introduce a second transaction protocol in the GPUI adapter.
 Fatal-host classification and drain-then-rebuild recovery remain a separate,
 explicit contract; logical checkpoints already supply its topology input.
+
+The [November 15 continuation](dockspace-shutdown-migration-20261115.md) closes
+application admission during native shutdown, adds typed failure diagnostics and
+migrates the captured-anchor shutdown worker. Its physical Windows qualification
+and the other nine legacy journeys remain open. The fixed dependency and this
+record's historical executed results remain unchanged.

@@ -66,6 +66,16 @@ before deleting those compatibility owners. Historical source paths below are
 relative to their recorded commits; incumbent files now live under
 `crates/gpui_docking/src/legacy/`.
 
+The [November 15 shutdown continuation](../knowledge/engineering/verification/dockspace-shutdown-migration-20261115.md)
+keeps the published dockspace pin, closes application admission during native
+shutdown, and retains typed background failures without discarding their queued
+owners. The first Windows physical journey, captured anchor shutdown, now uses
+the shared session and original process/input receipts. Its owning Windows
+execution remains pending; nine other journeys still use the old runtime.
+General fatal drain/reconstruction and the measured wasm debug-stack reduction
+remain explicit work rather than implied recovery guarantees. See that record
+for the source mapping, actual verification and remaining retirement boundary.
+
 The cutover implementation is `e7bf156a`, preceded by generic JSON diagnostic
 redaction `28ce4963`. Final default docking passes 65 cases, all-feature docking
 passes 1,541, complete DevTools passes 123 and the migrated example pair passes
