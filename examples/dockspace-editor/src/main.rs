@@ -251,5 +251,6 @@ fn main() {
             eprintln!("dockspace-editor startup failed: {error:#}");
             std::process::exit(1);
         }
+        cx.activate(true);
     });
 }

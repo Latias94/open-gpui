@@ -75,6 +75,16 @@ pub(super) fn run(workspace: Workspace, root: AnyWindowHandle, cx: &mut App) -> 
                 Err(error) => fail(format!("{:?}: {error:#}", smoke.phase)),
             }
             if Instant::now() >= deadline {
+                cx.update(|cx| {
+                    eprintln!("subject host: {:?}", smoke.workspace.dock.inspection());
+                    eprintln!("sibling host: {:?}", smoke.sibling.dock.inspection());
+                    eprintln!("native window state: {}", cx.debug_state()["windows"]);
+                    for window in cx.windows() {
+                        let _ = window.update(cx, |_, window, _| {
+                            eprintln!("window {:?}: {:?}", window.window_handle().window_id(), window.presentation_facts());
+                        });
+                    }
+                });
                 fail(format!(
                     "timed out after 30s in {:?}; admitted={:?}; update pending={}; submitted={:?}; native terminals={:?}",
                     smoke.phase, smoke.admitted, smoke.workspace.dock.is_update_pending(), smoke.submitted, smoke.terminals

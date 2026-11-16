@@ -16,6 +16,8 @@ import time
 
 
 def success_marker(executable, arguments):
+    if executable == "open-gpui-dockspace-editor" and "--smoke-recovery" in arguments:
+        return "DOCKSPACE RECOVERY SMOKE OK:"
     if executable == "native_windowing":
         mode = arguments[0] if arguments else "default"
         return {
