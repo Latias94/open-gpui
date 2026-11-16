@@ -45,7 +45,7 @@ use thiserror::Error;
 pub use gpui::{NativeCallbacks, NativeGeometry, NativeOpenFailure, NativeWindowRequest};
 pub(crate) use input::native_capture_owner;
 pub use input::{NativeCapture, NativePointerFacts};
-pub use transport::NativeTransport;
+pub use transport::{NativeTransport, NativeTransportInspection};
 
 /// Facts delivered to the host without acknowledging its semantic outputs.
 #[derive(Debug)]
@@ -120,6 +120,9 @@ pub enum NativeCloseDecision {
 /// A bridge error retains its queued input or effect for explicit recovery.
 #[derive(Debug, Error)]
 pub enum NativeBridgeError {
+    /// Application-owned creation was rejected after an original primary failure.
+    #[error(transparent)]
+    Admission(#[from] super::DockHostAdmissionError),
     /// The sole semantic runtime rejected an ingress or lifecycle operation.
     #[error(transparent)]
     Core(#[from] DockspaceRuntimeError),
@@ -253,6 +256,17 @@ impl NativeBridge {
         }
         if cx.display_snapshot().physical_displays().is_some() {
             capabilities = capabilities.with(NativeHostCapability::WorkArea);
+        }
+        if cx.window_capabilities().activation
+            == open_gpui::PlatformWindowActivationSupport::Observed
+            && !matches!(
+                cx.focused_window(),
+                open_gpui::PlatformFocusedWindow::Unavailable
+            )
+        {
+            capabilities = capabilities
+                .with(NativeHostCapability::GlobalFocusObservation)
+                .with(NativeHostCapability::WindowActivationControl);
         }
         capabilities
     }

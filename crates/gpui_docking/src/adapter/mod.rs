@@ -14,6 +14,7 @@ mod host_native;
 mod input;
 mod inspection;
 pub mod native;
+pub mod native_restore;
 pub mod persistence;
 mod presentation;
 #[cfg(test)]
@@ -22,10 +23,11 @@ mod tests;
 pub use config::{DockspaceColors, DockspaceInputBindings, GpuiDockspaceConfig};
 pub use dockspace;
 pub use failure::DockHostFailure;
-pub use host::{DockPane, DockRegion, DockSurface};
+pub use host::{DockHostAdmissionError, DockPane, DockPaneError, DockRegion, DockSurface};
 pub use inspection::{
     DockInspectionError, DockModelSurfaceInspection, DockMountInspection, DockNativeInspection,
     DockRegionInspection, DockSurfaceInspection,
 };
+pub use native_restore::DockNativeRestoreError;
 
 use host::{HostState, SharedHost};

@@ -1223,3 +1223,292 @@ fn managed_pre_root_map_failure_keeps_original_retirement_authority(cx: &mut Tes
     frames(&mut second, &dock);
     assert_eq!(views[1].read_with(&second, |view, _| view.clicks), 1);
 }
+
+fn managed_stationary_drag_fixture(
+    cx: &mut TestAppContext,
+) -> (
+    DockSurface,
+    open_gpui::AnyWindowHandle,
+    open_gpui::PlatformNativePointerPhysicalFrame,
+) {
+    use open_gpui::{
+        DevicePixels, MouseButton, MouseDownEvent, MouseMoveEvent, PlatformInput,
+        PlatformNativeDragHysteresis, PlatformNativePointerCaptureOwner,
+        PlatformNativePointerPhysicalFrame, PlatformWindowHit, PlatformWindowHitStack,
+        PlatformWindowPhysicalCoverage, point,
+    };
+
+    cx.defer_next_window_frame_requests();
+    let (dock, _, _, windows) = managed_fixture(cx);
+    for window in windows {
+        let (bounds, scale) = cx
+            .update_window(window, |_, window, _| {
+                let facts = window.platform_facts();
+                (
+                    facts.bounds.to_device_pixels(facts.scale_factor),
+                    facts.scale_factor,
+                )
+            })
+            .unwrap();
+        cx.set_platform_window_physical_client_geometry(window, Some(bounds), scale);
+        cx.simulate_window_scale_factor_change(window, scale);
+    }
+    cx.set_platform_native_drag_hysteresis(Some(
+        PlatformNativeDragHysteresis::try_new(DevicePixels(4), DevicePixels(4)).unwrap(),
+    ));
+    let mut source = VisualTestContext::from_window(windows[0], cx);
+    let mut sibling = VisualTestContext::from_window(windows[1], cx);
+    frames(&mut source, &dock);
+    frames(&mut sibling, &dock);
+    source.update(|window, cx| {
+        let _ = window.activate_window();
+        dock.update(
+            |frame| {
+                frame.dock_item_current(B, DockPlacement::Center(DockAnchor::Item(A)))?;
+                frame.select_item_current(B)?;
+                Ok(())
+            },
+            cx,
+        )
+        .unwrap();
+    });
+    frames(&mut source, &dock);
+    frames(&mut sibling, &dock);
+    assert_painted_pane(&dock, windows[0], FIRST, B);
+    let pressed = source.debug_bounds("dockspace:tab:22").unwrap().center();
+    let hovered = source.debug_bounds("dockspace:tab:21").unwrap().center();
+    let geometry = source.update(|window, _| {
+        window
+            .platform_facts()
+            .physical_geometry
+            .expect("the live source supplies its actual physical client geometry")
+    });
+    let physical_frame = |position| {
+        PlatformNativePointerPhysicalFrame::new(
+            geometry.local_to_global(position).unwrap(),
+            geometry,
+        )
+        .with_capture_owner(PlatformNativePointerCaptureOwner::Window(
+            windows[0].window_id(),
+        ))
+    };
+    let frame = physical_frame(hovered);
+    cx.set_platform_window_hit_stack(
+        PlatformWindowHitStack::try_available(
+            frame.global_position(),
+            vec![PlatformWindowHit::RegisteredApplication {
+                window: windows[0],
+                coverage: PlatformWindowPhysicalCoverage::try_new(geometry.client_bounds())
+                    .unwrap(),
+                geometry,
+            }],
+        )
+        .unwrap(),
+    );
+    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(true));
+    cx.simulate_platform_input_with_native_pointer_physical_frame(
+        windows[0],
+        PlatformInput::MouseDown(MouseDownEvent {
+            button: MouseButton::Left,
+            position: pressed,
+            modifiers: Modifiers::none(),
+            click_count: 1,
+            first_mouse: false,
+        }),
+        Some(physical_frame(pressed)),
+    );
+    frames(&mut source, &dock);
+    for position in [pressed + point(px(24.0), px(0.0)), hovered] {
+        cx.simulate_platform_input_with_native_pointer_physical_frame(
+            windows[0],
+            PlatformInput::MouseMove(MouseMoveEvent {
+                position,
+                pressed_button: Some(MouseButton::Left),
+                modifiers: Modifiers::none(),
+            }),
+            Some(physical_frame(position)),
+        );
+        frames(&mut source, &dock);
+    }
+    assert!(dock.has_active_gesture());
+    dock.with_view(|view| {
+        assert!(view.item(B).unwrap().is_selected());
+        assert!(!view.item(A).unwrap().is_selected());
+    });
+    (dock, windows[0], frame)
+}
+
+#[open_gpui::test]
+fn managed_stationary_drag_selects_hovered_tab_without_another_native_move(
+    cx: &mut TestAppContext,
+) {
+    use open_gpui::{MouseButton, MouseUpEvent, NativeCapturedDragPhase, PlatformInput};
+    use std::time::Duration;
+
+    let (dock, window, frame) = managed_stationary_drag_fixture(cx);
+    let callbacks = dock
+        .native_callbacks_for_window(window.window_id())
+        .unwrap();
+    let capture = callbacks
+        .active_capture()
+        .expect("the original native drag");
+    let request = dock
+        .native_pointer_continuation()
+        .expect("holding B over the inactive A tab arms a real core hover deadline");
+    assert_eq!(capture.source_window(), window.window_id());
+    assert_eq!(request.source_binding().window(), callbacks.binding());
+    assert_eq!(request.surface(), FIRST);
+    let remaining = request.deadline() - dock.host.borrow().observed_at();
+    assert!(remaining >= Duration::from_millis(2));
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let _observer = cx.update({
+        let events = events.clone();
+        move |cx| cx.observe_native_captured_drag(move |event, _| events.borrow_mut().push(event))
+    });
+    let recorded = dock.host.borrow().session.native_input_recorded_count();
+    cx.set_platform_window_native_pointer_physical_samples(window, [Some(frame), Some(frame)]);
+    cx.background_executor
+        .advance_clock(remaining - Duration::from_millis(1));
+    cx.run_until_parked();
+    dock.with_view(|view| assert!(!view.item(A).unwrap().is_selected()));
+    assert_eq!(dock.native_pointer_continuation(), Some(request));
+    assert_eq!(
+        dock.host.borrow().session.native_input_recorded_count(),
+        recorded,
+        "no stationary input is recorded before the core deadline"
+    );
+    cx.background_executor
+        .advance_clock(Duration::from_millis(2));
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window, cx);
+    frames(&mut visual, &dock);
+    assert_painted_pane(&dock, window, FIRST, A);
+    dock.with_view(|view| assert!(!view.item(B).unwrap().is_selected()));
+    assert!(dock.host.borrow().session.native_input_recorded_count() > recorded);
+    assert!(
+        events.borrow().is_empty(),
+        "the timer selects A without generating another native captured move"
+    );
+    assert_eq!(callbacks.active_capture(), Some(capture));
+    assert!(dock.has_active_gesture());
+    cx.update(|cx| {
+        assert!(cx.has_active_drag());
+        assert_eq!(
+            cx.active_native_captured_drag_source_window(),
+            Some(window.window_id())
+        );
+    });
+    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
+    cx.simulate_platform_input_with_native_pointer_physical_frame(
+        window,
+        PlatformInput::MouseUp(MouseUpEvent {
+            button: MouseButton::Left,
+            position: frame
+                .source_geometry()
+                .global_to_local(frame.global_position())
+                .unwrap(),
+            modifiers: Modifiers::none(),
+            click_count: 1,
+        }),
+        Some(frame),
+    );
+    frames(&mut visual, &dock);
+    let events = events.borrow();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].phase(), NativeCapturedDragPhase::Released);
+    assert_eq!(events[0].generation(), capture.generation());
+    assert_eq!(events[0].source_window(), window.window_id());
+    assert_eq!(callbacks.active_capture(), None);
+    assert!(!dock.has_active_gesture());
+    cx.update(|cx| assert!(!cx.has_active_drag()));
+}
+
+#[open_gpui::test]
+fn managed_stationary_drag_without_fresh_samples_keeps_the_original_gesture(
+    cx: &mut TestAppContext,
+) {
+    use open_gpui::{MouseButton, MouseUpEvent, NativeCapturedDragPhase, PlatformInput};
+    use std::time::Duration;
+
+    let (dock, window, frame) = managed_stationary_drag_fixture(cx);
+    let callbacks = dock
+        .native_callbacks_for_window(window.window_id())
+        .unwrap();
+    let capture = callbacks
+        .active_capture()
+        .expect("the original native drag");
+    let request = dock.native_pointer_continuation().unwrap();
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let _observer = cx.update({
+        let events = events.clone();
+        move |cx| cx.observe_native_captured_drag(move |event, _| events.borrow_mut().push(event))
+    });
+    let recorded = dock.host.borrow().session.native_input_recorded_count();
+    cx.set_platform_window_native_pointer_physical_samples(window, [None, None]);
+    let remaining = request.deadline() - dock.host.borrow().observed_at();
+    cx.background_executor
+        .advance_clock(remaining + Duration::from_millis(1));
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window, cx);
+    frames(&mut visual, &dock);
+    let reports = dock.take_native_reports();
+    assert_eq!(
+        reports
+            .iter()
+            .filter(|report| matches!(report,
+                super::native::NativeReport::Unsupported { operation }
+                    if *operation == "fresh stationary native pointer, hover and capture sampling"
+            ))
+            .count(),
+        1,
+        "{reports:?}"
+    );
+    assert_painted_pane(&dock, window, FIRST, B);
+    cx.set_platform_window_native_pointer_physical_samples(window, [Some(frame), Some(frame)]);
+    cx.background_executor.advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    frames(&mut visual, &dock);
+    assert_painted_pane(&dock, window, FIRST, B);
+    dock.with_view(|view| assert!(!view.item(A).unwrap().is_selected()));
+    assert_eq!(dock.native_pointer_continuation(), Some(request));
+    assert_eq!(
+        dock.host.borrow().session.native_input_recorded_count(),
+        recorded,
+        "a failed finite sample cannot replay cached motion or retry itself"
+    );
+    assert!(events.borrow().is_empty());
+    assert_eq!(callbacks.active_capture(), Some(capture));
+    assert!(dock.has_active_gesture());
+    cx.update(|cx| assert!(cx.has_active_drag()));
+    assert!(
+        !dock
+            .take_native_reports()
+            .iter()
+            .any(|report| matches!(report,
+                super::native::NativeReport::Unsupported { operation }
+                    if *operation == "fresh stationary native pointer, hover and capture sampling"
+            ))
+    );
+    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
+    cx.simulate_platform_input_with_native_pointer_physical_frame(
+        window,
+        PlatformInput::MouseUp(MouseUpEvent {
+            button: MouseButton::Left,
+            position: frame
+                .source_geometry()
+                .global_to_local(frame.global_position())
+                .unwrap(),
+            modifiers: Modifiers::none(),
+            click_count: 1,
+        }),
+        Some(frame),
+    );
+    frames(&mut visual, &dock);
+    let events = events.borrow();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].phase(), NativeCapturedDragPhase::Released);
+    assert_eq!(events[0].generation(), capture.generation());
+    assert_eq!(callbacks.active_capture(), None);
+    assert!(!dock.has_active_gesture());
+    cx.update(|cx| assert!(!cx.has_active_drag()));
+}

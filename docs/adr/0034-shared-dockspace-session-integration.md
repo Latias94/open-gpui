@@ -95,7 +95,9 @@ until renderer quiescence and native terminal; a failed Window borrow retains a
 close intent for retry. `App` remains the physical retirement owner.
 
 An application-supplied `set_native_window_factory` retains complete creation
-ownership and opts out of the default factory's pre-release shell. Installing a
+ownership and opts out of the default factory's pre-release shell. The core's
+Native visual may still provide a source-hosted placement cue, without creating
+another native window or granting adoption authority. Installing a
 custom factory retires an outstanding default shell on the next native pump.
 The shared dispatch retains the factory's original callbacks during construction and registers
 their exact installed WindowId before staged surface painting, including reentrant first render.

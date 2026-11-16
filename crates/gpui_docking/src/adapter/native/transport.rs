@@ -25,6 +25,7 @@ type Wake = dyn Fn(&mut App);
 
 struct TransportState {
     queue: RefCell<VecDeque<Inbound>>,
+    rejection: RefCell<Option<crate::adapter::DockHostFailure>>,
     wake: Rc<Wake>,
     scheduled: Cell<bool>,
     frozen: Cell<bool>,
@@ -38,11 +39,25 @@ struct TransportState {
 #[derive(Clone)]
 pub struct NativeTransport(Rc<TransportState>);
 
+/// A copy of the original ingress queue's current diagnostic state.
+///
+/// Reading this observation does not pop, retry or acknowledge any record.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeTransportInspection {
+    /// Records still owned by the callback FIFO.
+    pub queued_record_count: usize,
+    /// Diagnostic name of the retained front record, if any.
+    pub front_record: Option<&'static str>,
+    /// Original failure for the currently rejected front, including core categories.
+    pub rejection: Option<crate::adapter::DockHostFailure>,
+}
+
 impl NativeTransport {
     /// Creates a callback queue with an application-owned wakeup.
     pub fn new(wake: impl Fn(&mut App) + 'static) -> Self {
         Self(Rc::new(TransportState {
             queue: RefCell::new(VecDeque::new()),
+            rejection: RefCell::new(None),
             wake: Rc::new(wake),
             scheduled: Cell::new(false),
             frozen: Cell::new(false),
@@ -134,9 +149,23 @@ impl NativeTransport {
         self.push(Inbound::Focus(focus), cx);
     }
 
+    pub(crate) fn focused_window(&self, focus: open_gpui::PlatformFocusedWindow, cx: &mut App) {
+        self.push(Inbound::FocusedWindow(focus), cx);
+    }
+
     /// Returns whether accepted callback work still needs collection.
     pub fn is_empty(&self) -> bool {
         self.0.queue.borrow().is_empty()
+    }
+
+    /// Copies the current FIFO head and its last rejection without driving progress.
+    pub fn inspection(&self) -> NativeTransportInspection {
+        let queue = self.0.queue.borrow();
+        NativeTransportInspection {
+            queued_record_count: queue.len(),
+            front_record: queue.front().map(Inbound::diagnostic_name),
+            rejection: self.0.rejection.borrow().clone(),
+        }
     }
 
     /// Returns the synchronous group admission latch.
@@ -177,10 +206,16 @@ impl NativeTransport {
     }
 
     fn pop(&self) -> Option<Inbound> {
+        self.0.rejection.borrow_mut().take();
         self.0.queue.borrow_mut().pop_front()
     }
     fn retry(&self, record: Inbound) {
         self.0.queue.borrow_mut().push_front(record);
+    }
+
+    fn reject(&self, record: Inbound, error: &NativeBridgeError) {
+        self.retry(record);
+        *self.0.rejection.borrow_mut() = Some(crate::adapter::DockHostFailure::from_error(error));
     }
 }
 
@@ -218,6 +253,7 @@ pub(super) enum Inbound {
     WorkAreas(NativeWorkAreaRoster),
     Desktop(super::desktop::DesktopObservation),
     Focus(NativeGlobalFocus),
+    FocusedWindow(open_gpui::PlatformFocusedWindow),
     DeviceRemoved,
     Effect(NativeEffectResult),
     Freeze,
@@ -225,6 +261,28 @@ pub(super) enum Inbound {
 }
 
 impl Inbound {
+    fn diagnostic_name(&self) -> &'static str {
+        match self {
+            Self::Presentation(_) => "presentation",
+            Self::Observed(..) => "window-observation",
+            Self::Close(..) => "close",
+            Self::LogicalClosed(_) => "logical-close",
+            Self::NativeTerminal(..) => "native-terminal",
+            Self::Submission(..) => "submission",
+            Self::CaptureTerminal(..) => "capture-terminal",
+            Self::CaptureUnobserved(_) => "capture-unobserved",
+            Self::Pointer(_) => "pointer",
+            Self::CapturedDrag { .. } => "captured-drag",
+            Self::PointerRoster(_) => "pointer-roster",
+            Self::WorkAreas(_) | Self::Desktop(_) => "work-areas",
+            Self::Focus(_) | Self::FocusedWindow(_) => "focus",
+            Self::DeviceRemoved => "device-removed",
+            Self::Effect(_) => "effect-result",
+            Self::Freeze => "freeze",
+            Self::Wake => "wake",
+        }
+    }
+
     fn binding(&self) -> Option<NativeWindowBinding> {
         match self {
             Self::Observed(binding, _)
@@ -300,13 +358,14 @@ impl NativeBridge {
                         };
                     if let Err(error) = session.report_native_effect_result(result) {
                         let (kind, result) = error.into_parts();
-                        self.transport.retry(Inbound::Effect(result));
-                        return Err(NativeBridgeError::EffectReport(kind));
+                        let error = NativeBridgeError::EffectReport(kind);
+                        self.transport.reject(Inbound::Effect(result), &error);
+                        return Err(error);
                     }
                 }
                 record => {
                     if let Err(error) = self.collect_record(session, &record) {
-                        self.transport.retry(record);
+                        self.transport.reject(record, &error);
                         return Err(error);
                     }
                 }
@@ -450,6 +509,35 @@ impl NativeBridge {
             }
             Inbound::DeviceRemoved => session.report_native_input_device_removal()?,
             Inbound::Focus(focus) => session.report_native_global_focus(*focus)?,
+            Inbound::FocusedWindow(focus) => {
+                if !self
+                    .capabilities
+                    .supports(dockspace::runtime::NativeHostCapability::GlobalFocusObservation)
+                {
+                    return Ok(());
+                }
+                let focus = match focus {
+                    open_gpui::PlatformFocusedWindow::Unavailable => NativeGlobalFocus::Unknown,
+                    // No focused application window does not distinguish a
+                    // foreign foreground owner from an entirely unfocused desktop.
+                    open_gpui::PlatformFocusedWindow::NoWindow => NativeGlobalFocus::Unknown,
+                    open_gpui::PlatformFocusedWindow::Window(window) => {
+                        match self.binding_for_window(window.window_id()) {
+                            Some(binding)
+                                if session
+                                    .native_window_bindings()
+                                    .any(|current| current == binding) =>
+                            {
+                                NativeGlobalFocus::Dock(binding)
+                            }
+                            // Retained cleanup custody cannot revive a retired core lifetime.
+                            Some(_) => NativeGlobalFocus::Unknown,
+                            None => NativeGlobalFocus::Foreign,
+                        }
+                    }
+                };
+                session.report_native_global_focus(focus)?;
+            }
             Inbound::WorkAreas(areas) => {
                 self.record_snapshot(session, None, Some(areas.clone()))?;
                 self.work_areas = areas.clone();

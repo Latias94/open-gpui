@@ -110,6 +110,81 @@ impl NativeCallbacks {
 }
 
 impl NativeBridge {
+    pub(crate) fn continuation_input(
+        &self,
+        session: &dockspace::runtime::DockspaceSession,
+        request: dockspace::runtime::NativePointerContinuation,
+        frame: open_gpui::PlatformNativePointerPhysicalFrame,
+        stack: &PlatformWindowHitStack,
+        metadata: PointerEventMetadata,
+    ) -> Option<NativePointerInput> {
+        use dockspace::{
+            geometry::{PhysicalSize, ScaleFactor},
+            runtime::{NativeLocalGeometry, NativeLocalPointerFact},
+        };
+
+        let binding = request.source_binding().window();
+        if !session.is_current_native_binding(request.source_binding())
+            || native_capture_owner(frame.capture_owner(), |owner| {
+                self.binding_for_window(owner)
+            }) != NativePointerOwner::Native(binding)
+        {
+            return None;
+        }
+        let input = if let Some(coordinates) = request.local_coordinates() {
+            let geometry = frame.source_geometry();
+            let client = geometry.client_bounds();
+            let scale = ScaleFactor::new(f64::from(geometry.scale_factor())).ok()?;
+            let size = PhysicalSize::new(
+                f64::from(client.size.width.0),
+                f64::from(client.size.height.0),
+            )
+            .ok()?;
+            let point = PhysicalPoint::new(
+                f64::from(frame.global_position().x.0) - f64::from(client.origin.x.0),
+                f64::from(frame.global_position().y.0) - f64::from(client.origin.y.0),
+            )
+            .ok()?;
+            let local = coordinates
+                .capture(
+                    binding,
+                    NativeLocalPointerFact::new(point, size, scale),
+                    NativeLocalGeometry::new(size, scale),
+                )
+                .ok()?;
+            NativePointerInput::new_local(
+                request.pointer(),
+                request.event(),
+                dockspace::runtime::NativeLocalPointerLocation::Exact(local),
+                NativePointerOwner::Native(binding),
+                NativePointerOwner::Native(binding),
+            )
+        } else {
+            let position = frame.global_position();
+            let hover = native_hover(stack, Some(position), |owner| {
+                self.binding_for_window(owner)
+            });
+            let work_area = matches!(hover, NativePointerHover::OutsideAll)
+                .then(|| self.desktop.work_area(session, frame))
+                .flatten();
+            NativePointerInput::new(
+                request.pointer(),
+                request.event(),
+                NativeDesktopPointerLocation::new(
+                    NativeDesktopPosition::Exact(
+                        PhysicalPoint::new(f64::from(position.x.0), f64::from(position.y.0))
+                            .ok()?,
+                    ),
+                    hover,
+                    work_area,
+                ),
+                NativePointerOwner::Native(binding),
+                NativePointerOwner::Native(binding),
+            )
+        };
+        Some(input.with_metadata(metadata))
+    }
+
     /// Translates an actual GPUI captured event from the application's existing router.
     ///
     /// Install one application router and route by full source-window id to the

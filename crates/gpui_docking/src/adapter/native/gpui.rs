@@ -10,7 +10,7 @@ use dockspace::{
         DockspaceSession, NativeCleanupObservation, NativeCloseDisposition,
         NativeCloseEffectAcknowledgement, NativeCloseState, NativeCreateEffectAcknowledgement,
         NativeCreateReadiness, NativeDispatchFailure, NativeEffectAcknowledgement,
-        NativeEffectOperation, NativeEffectRequest, NativeGlobalFocus, NativeHostCapability,
+        NativeEffectOperation, NativeEffectRequest, NativeHostCapability,
         NativeIndeterminateReason, NativeInputEffectAcknowledgement, NativeSurfaceBinding,
         NativeSurfaceRole, NativeUnsupportedReason, NativeWindowBinding, NativeWindowFacts,
         NativeWindowInputState, NativeWindowPresentationState,
@@ -122,7 +122,7 @@ struct CallbackState {
     window: Cell<Option<AnyWindowHandle>>,
     transport: NativeTransport,
     geometry: Option<Rc<NativeGeometry>>,
-    bounds_observer: RefCell<Option<Entity<Subscription>>>,
+    bounds_observer: RefCell<Option<Entity<Vec<Subscription>>>>,
     subscriptions: RefCell<Vec<Subscription>>,
     facts: Cell<Option<NativeWindowFacts>>,
     observed: Cell<Option<NativeWindowFacts>>,
@@ -303,12 +303,22 @@ impl NativeCallbacks {
             }
         });
         let weak = Rc::downgrade(&self.0);
+        let focus = Rc::downgrade(&self.0);
         let bounds = cx.new(|cx| {
-            cx.observe_window_bounds(window, move |_, window, cx| {
+            let bounds = cx.observe_window_bounds(window, move |_, window, cx| {
                 if let Some(state) = weak.upgrade() {
                     NativeCallbacks(state).observe(window, cx);
                 }
-            })
+            });
+            let focus = cx.observe_window_activation(window, move |_, _, cx| {
+                if let Some(state) = focus.upgrade()
+                    && !state.sealed.get()
+                    && !state.logical_closed.get()
+                {
+                    NativeCallbacks(state).schedule_focus_observation(cx);
+                }
+            });
+            vec![bounds, focus]
         });
         self.0.bounds_observer.replace(Some(bounds));
         let weak = Rc::downgrade(&self.0);
@@ -328,7 +338,22 @@ impl NativeCallbacks {
             .borrow_mut()
             .extend([logical, terminal, initial, display, visibility]);
         self.observe(window, cx);
+        self.schedule_focus_observation(cx);
         Ok(())
+    }
+
+    fn schedule_focus_observation(&self, cx: &mut App) {
+        let weak = Rc::downgrade(&self.0);
+        // Installation and native activation are hints. Sample after the current
+        // construction transaction has published its initial window inventory.
+        cx.defer(move |cx| {
+            if let Some(state) = weak.upgrade()
+                && !state.sealed.get()
+                && !state.logical_closed.get()
+            {
+                state.transport.focused_window(cx.focused_window(), cx);
+            }
+        });
     }
 
     /// Captures current platform facts. Call from bounds/DPI/visibility observations.
@@ -601,6 +626,18 @@ impl NativeCallbacks {
         if self.0.capture_start.get() == Some(capture) {
             self.0.capture_start.set(None);
         }
+    }
+
+    pub(crate) fn active_capture(&self) -> Option<NativeCapture> {
+        if self.0.sealed.get()
+            || self.0.logical_closed.get()
+            || self.0.native_terminal.get()
+            || self.0.capture_failed.get()
+            || !self.0.capture_releases.borrow().is_empty()
+        {
+            return None;
+        }
+        self.0.capture.get().or(self.0.capture_start.get())
     }
 
     pub(crate) fn retain_capture_start(
@@ -1275,12 +1312,12 @@ impl NativeBridge {
                     self.pending = Some(pending);
                     return Ok(false);
                 };
-                let binding = pending.callbacks.binding();
                 match terminal {
                     WindowActivationTerminal::Activated => {
                         let _ = pending.request.accepted();
-                        self.transport
-                            .push(Inbound::Focus(NativeGlobalFocus::Dock(binding)), cx);
+                        // The ticket proves that its original command succeeded,
+                        // not that this window still owns global focus now.
+                        self.transport.focused_window(cx.focused_window(), cx);
                     }
                     WindowActivationTerminal::Unsupported => self.transport.push(
                         Inbound::Effect(

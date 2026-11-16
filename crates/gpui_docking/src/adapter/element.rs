@@ -1,24 +1,30 @@
 //! A single retained Element consuming the core's complete ordered paint program.
 
-use std::{cell::Cell, collections::BTreeMap, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::BTreeMap,
+    rc::Rc,
+};
 
 use anyhow::{Context as _, Result, anyhow};
 use dockspace::{
     geometry::{LogicalRect, LogicalSize},
     model::{ItemId, SurfaceId},
     runtime::{
-        DockspaceReceiverDescriptor, DockspaceUpdate, SurfaceMeasurementAnswer as Answer,
+        DockspacePaneFocusObservation, DockspacePaneFocusRequest, DockspaceReceiverDescriptor,
+        DockspaceUpdate, DockspaceVisualId, SurfaceMeasurementAnswer as Answer,
         SurfaceMeasurementRequest as Request, SurfacePointerButton, SurfacePointerCancelReason,
         SurfacePointerEvent, SurfaceUnavailableReason, SurfaceWork, SurfaceWorkDeferred,
-        TabStripMetrics,
+        TabListMenuMetrics, TabStripControlMetric, TabStripControlMetrics,
+        TabStripControlPlacement, TabStripMetrics,
     },
 };
 use open_gpui::{
-    AnyElement, App, AvailableSpace, Bounds, Element, ElementId, GlobalElementId, HitboxBehavior,
-    HitboxId, Hsla, InspectorElementId, IntoElement, KeyDownEvent, LayoutId, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PointerCaptureHandle,
-    PreparedSubtreeClip, Style, SubtreeClip, SubtreePresentation, SubtreePresentationExt, TextRun,
-    Window, div, fill, point, prelude::*, px, relative, size,
+    AccessibleAction, AnyElement, App, AvailableSpace, Bounds, Element, ElementId, FocusHandle,
+    GlobalElementId, HitboxBehavior, HitboxId, Hsla, InspectorElementId, IntoElement, KeyDownEvent,
+    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    PointerCaptureHandle, PreparedSubtreeClip, Role, Style, SubtreeClip, SubtreePresentation,
+    SubtreePresentationExt, TextRun, Window, div, fill, point, prelude::*, px, relative, size,
 };
 
 use crate::adapter::{
@@ -32,8 +38,11 @@ use crate::adapter::{
 mod chrome;
 mod recording;
 
-use chrome::GuideState;
+use chrome::{Control, ControlAction, ControlKind, GuideState, Icon, PresentationMenu};
 use recording::record;
+
+#[cfg(test)]
+mod interaction_tests;
 
 pub(super) struct Packet {
     draws: Vec<Draw>,
@@ -70,6 +79,11 @@ enum Draw {
     Pane(LogicalRect, ItemId),
     Receiver(DockspaceReceiverDescriptor),
     Preview(LogicalRect),
+    NativePreview(host_native::provisional::Preview),
+    Icon(LogicalRect, Icon, bool),
+    Control(Rc<Control>),
+    PresentationMenu(Rc<PresentationMenu>),
+    TabList(LogicalRect, DockspaceVisualId),
 }
 
 enum PreparedDraw {
@@ -81,11 +95,43 @@ enum PreparedDraw {
     Outline(Bounds<Pixels>, Hsla),
     ClippedElement(AnyElement, PreparedSubtreeClip),
     Preview(Bounds<Pixels>, Hsla, Hsla),
+    Icon(Bounds<Pixels>, Icon, bool),
+}
+
+#[derive(Default)]
+struct InteractionState {
+    hovered_tab: Rc<Cell<Option<ItemId>>>,
+    focus: RefCell<BTreeMap<DockspaceVisualId, FocusHandle>>,
+    menu: Cell<Option<DockspaceVisualId>>,
+    menu_row: Cell<usize>,
+    pane_focus: RefCell<BTreeMap<SurfaceId, PaneFocusAttempt>>,
+    pending_tab_focus: RefCell<Option<PendingTabFocus>>,
+    tab_list_focus: RefCell<Option<TabListFocus>>,
+}
+
+struct PaneFocusAttempt {
+    request: DockspacePaneFocusRequest,
+    applied: bool,
+    observation: Option<DockspacePaneFocusObservation>,
+}
+
+struct PendingTabFocus {
+    surface: SurfaceId,
+    visual: DockspaceVisualId,
+    claim_revision: u64,
+}
+
+struct TabListFocus {
+    surface: SurfaceId,
+    bar: DockspaceVisualId,
+    row: DockspaceVisualId,
+    opener: FocusHandle,
+    claim_revision: u64,
 }
 
 pub(crate) struct DockspaceElement {
     host: SharedHost,
-    hovered_tab: Rc<Cell<Option<ItemId>>>,
+    interaction: Rc<InteractionState>,
     regions: Vec<DockRegion>,
 }
 
@@ -103,6 +149,9 @@ pub(crate) struct PreparedRegion {
     serial: u64,
     bounds: Bounds<Pixels>,
     receivers: Vec<(DockspaceReceiverDescriptor, HitboxId)>,
+    controls: Vec<(Rc<Control>, FocusHandle, HitboxId)>,
+    visible_panes: Vec<ItemId>,
+    admitted: bool,
 }
 
 pub(crate) enum PreparedState {
@@ -115,7 +164,7 @@ impl DockspaceElement {
         Self {
             host,
             regions,
-            hovered_tab: Rc::default(),
+            interaction: Rc::default(),
         }
     }
 }
@@ -212,8 +261,8 @@ impl Element for DockspaceElement {
             return self.failure(error, bounds, window, cx);
         }
         if let Some(id) = id {
-            self.hovered_tab =
-                window.with_element_state::<Rc<Cell<Option<ItemId>>>, _>(id, |state, _| {
+            self.interaction =
+                window.with_element_state::<Rc<InteractionState>, _>(id, |state, _| {
                     let state = state.unwrap_or_default();
                     (state.clone(), state)
                 });
@@ -259,7 +308,7 @@ impl Element for DockspaceElement {
                 match draw {
                     PreparedDraw::Fill(bounds, color) => window.paint_quad(fill(*bounds, *color)),
                     PreparedDraw::Tab(bounds, item, color, selected) => {
-                        let hovered = self.hovered_tab.get() == Some(*item);
+                        let hovered = self.interaction.hovered_tab.get() == Some(*item);
                         let background = if hovered && !*selected {
                             colors.hovered_tab
                         } else {
@@ -284,6 +333,9 @@ impl Element for DockspaceElement {
                     PreparedDraw::ClippedElement(element, clip) => {
                         let _ = window
                             .with_prepared_subtree_clip(clip, |window| element.paint(window, cx));
+                    }
+                    PreparedDraw::Icon(bounds, icon, enabled) => {
+                        chrome::paint_icon(*bounds, *icon, *enabled, &colors, window);
                     }
                 }
             }
@@ -402,7 +454,14 @@ impl DockspaceElement {
                 )
             } else {
                 let inputs = std::mem::take(&mut host.inputs);
-                let candidate = build_candidate(&mut host, &inputs, &region_bounds, window, cx);
+                let candidate = build_candidate(
+                    &mut host,
+                    &inputs,
+                    &region_bounds,
+                    self.interaction.menu.get(),
+                    window,
+                    cx,
+                );
                 let (packets, update) = match candidate {
                     Ok(candidate) => candidate,
                     Err(error) => {
@@ -470,7 +529,7 @@ impl DockspaceElement {
         }
         let shared = self.host.clone();
         let discard = self.host.clone();
-        let hovered_tab = self.hovered_tab.clone();
+        let hovered_tab = self.interaction.hovered_tab.clone();
         let accepted_tabs: Vec<_> = regions
             .iter()
             .flat_map(|region| region.tabs.iter().copied())
@@ -489,10 +548,67 @@ impl DockspaceElement {
                 native_binding: None,
             })
             .collect();
+        let interaction = self.interaction.clone();
+        let visible_panes: Vec<_> = regions
+            .iter()
+            .map(|region| (region.surface, region.visible_panes.clone()))
+            .collect();
+        let applied_panes = visible_panes.clone();
+        let admitted_surfaces: Vec<_> = regions
+            .iter()
+            .filter(|region| region.admitted)
+            .map(|region| region.surface)
+            .collect();
+        let focus_controls: Vec<_> = regions
+            .iter()
+            .flat_map(|region| {
+                region.controls.iter().map(move |(control, focus, _)| {
+                    (region.surface, control.clone(), focus.clone())
+                })
+            })
+            .collect();
+        let retained_focus: std::collections::BTreeSet<_> = packets
+            .values()
+            .flat_map(|packet| packet.draws.iter())
+            .filter_map(|draw| match draw {
+                Draw::Control(control) => Some(control.id),
+                Draw::TabList(_, id) => Some(*id),
+                Draw::PresentationMenu(menu) => Some(menu.id),
+                _ => None,
+            })
+            .collect();
         window.record_prepaint_window_transaction(
             publication,
             move |fence, window, cx| {
                 presentation::accept(&shared, serial, input_frames.clone(), fence, window, cx);
+                apply_chrome_focus(
+                    &shared,
+                    &interaction,
+                    serial,
+                    &admitted_surfaces,
+                    &focus_controls,
+                    window,
+                    cx,
+                );
+                apply_pane_focus(&shared, &interaction, serial, &applied_panes, window, cx);
+                // Old prepared elements retain their own handles until actual
+                // retirement; the identity cache need not pin closed controls.
+                let pending = interaction
+                    .pending_tab_focus
+                    .borrow()
+                    .as_ref()
+                    .map(|focus| focus.visual);
+                interaction
+                    .focus
+                    .borrow_mut()
+                    .retain(|id, _| retained_focus.contains(id) || pending == Some(*id));
+                interaction
+                    .pane_focus
+                    .borrow_mut()
+                    .retain(|surface, attempt| {
+                        shared.borrow().session.pane_focus_request(*surface)
+                            == Some(attempt.request)
+                    });
                 let current = hovered_tab_at(&accepted_tabs, window.mouse_position(), window);
                 if hovered_tab.replace(current) != current {
                     window.refresh();
@@ -501,8 +617,10 @@ impl DockspaceElement {
             move |_, window, cx| presentation::discard(&discard, window, cx),
         );
         let shared = self.host.clone();
+        let interaction = self.interaction.clone();
         window.record_prepaint_focus_stable_commit(move |_, window, cx| {
             presentation::accept_focus_stable(&shared, serial, window, cx);
+            observe_pane_focus(&shared, &interaction, serial, &visible_panes, window, cx);
         });
         Ok(PreparedFrame {
             regions,
@@ -526,7 +644,28 @@ impl DockspaceElement {
         let mut draws = Vec::new();
         let mut tabs = Vec::new();
         let mut receivers = Vec::new();
+        let mut controls = Vec::new();
+        let mut visible_panes = Vec::new();
+        let mut menus = Vec::new();
+        let receiver_controls = packet
+            .draws
+            .iter()
+            .filter_map(|draw| match draw {
+                Draw::Control(control) => control
+                    .receiver
+                    .map(|receiver| (receiver.visual_id(), control)),
+                _ => None,
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut prepared_controls = BTreeMap::new();
         let config = self.host.borrow().config.clone();
+        let admitted = allow_input
+            && input::is_presented(
+                &self.host.borrow(),
+                window.window_handle().window_id(),
+                surface,
+                serial,
+            );
         for draw in &packet.draws {
             match draw {
                 Draw::Fill(rect, color) => {
@@ -560,11 +699,144 @@ impl DockspaceElement {
                     config.colors.preview,
                     config.colors.accent,
                 )),
+                Draw::NativePreview(preview) => {
+                    let native = host_native::inspection(&self.host.borrow());
+                    if preview.host_surface == surface
+                        && native.is_none_or(|native| {
+                            !native.provisional_opening && native.provisional_promotion_count == 0
+                        })
+                    {
+                        // When the physical placement lies outside this client (or
+                        // its desktop origin is unavailable), use a small source cue.
+                        // This decoration never claims to be destination geometry.
+                        let rect = source_preview_bounds(
+                            *preview,
+                            bounds,
+                            window.platform_facts().physical_geometry,
+                        )
+                        .unwrap_or_else(|| {
+                            Bounds::new(
+                                bounds.origin,
+                                size(
+                                    px(180.0).min(bounds.size.width),
+                                    px(28.0).min(bounds.size.height),
+                                ),
+                            )
+                        });
+                        draws.push(PreparedDraw::Preview(
+                            rect,
+                            config.colors.preview,
+                            config.colors.accent,
+                        ));
+                        let mut label = div()
+                            .w(rect.size.width)
+                            .h(px(28.0).min(rect.size.height))
+                            .overflow_hidden()
+                            .font(config.font.clone())
+                            .text_size(config.text_size)
+                            .text_color(config.colors.text)
+                            .child("Move to New Window")
+                            .into_any_element();
+                        let clip =
+                            window.prepare_subtree_clip(&SubtreeClip::own_border_box(), rect);
+                        let _ = window.with_prepared_subtree_clip(&clip, |window| {
+                            label.prepaint_as_root(rect.origin, definite(rect), window, cx);
+                        });
+                        draws.push(PreparedDraw::ClippedElement(label, clip));
+                    }
+                }
+                Draw::Icon(rect, icon, enabled) => {
+                    draws.push(PreparedDraw::Icon(to_gpui(*rect, bounds), *icon, *enabled));
+                }
+                Draw::Control(control) => {
+                    if let Some(element) = prepared_controls.remove(&control.id) {
+                        if let Some((element, clip)) = element {
+                            draws.push(PreparedDraw::ClippedElement(element, clip));
+                        }
+                        continue;
+                    }
+                    let focus = self.control_focus(control.id, cx);
+                    let (element, hitbox) = self.prepare_control(
+                        control,
+                        focus.clone(),
+                        surface,
+                        serial,
+                        bounds,
+                        allow_input,
+                        window,
+                        cx,
+                    );
+                    if let Some((element, clip)) = element {
+                        draws.push(PreparedDraw::ClippedElement(element, clip));
+                    }
+                    if let Some(hitbox) = hitbox {
+                        hitboxes.push(hitbox);
+                        if let Some(receiver) = control.receiver {
+                            receivers.push((receiver, hitbox));
+                        }
+                        controls.push((control.clone(), focus, hitbox));
+                        if let ControlKind::Tab(item) = control.kind {
+                            tabs.retain(|(tab, _)| *tab != item);
+                            tabs.push((item, hitbox));
+                        }
+                    }
+                }
+                Draw::PresentationMenu(anchor) => {
+                    menus.push(anchor.clone());
+                }
+                Draw::TabList(rect, id) => {
+                    let rect = to_gpui(*rect, bounds);
+                    let identity = self.control_focus(*id, cx);
+                    let mut element = div()
+                        .id(&identity)
+                        .w(rect.size.width)
+                        .h(rect.size.height)
+                        .role(Role::TabList)
+                        .aria_label("Pane tabs")
+                        .aria_actions([])
+                        .into_any_element();
+                    element.prepaint_as_root(rect.origin, definite(rect), window, cx);
+                    let clip = window.prepare_subtree_clip(&SubtreeClip::own_border_box(), rect);
+                    draws.push(PreparedDraw::ClippedElement(element, clip));
+                }
                 Draw::Receiver(receiver) => {
-                    let hitbox = window
-                        .insert_hitbox(to_gpui(receiver.bounds(), bounds), HitboxBehavior::Normal);
-                    hitboxes.push(hitbox.id);
-                    receivers.push((*receiver, hitbox.id));
+                    // Prepaint focusable chrome at the original core receiver's
+                    // position in the hit graph, using its one actual hitbox as
+                    // the receiver authority. Inert chrome retains the raw
+                    // receiver until the matching output is admitted.
+                    let control_hitbox = if let Some(&control) = receiver_controls
+                        .get(&receiver.visual_id())
+                        .filter(|control| control.receiver == Some(*receiver))
+                    {
+                        let focus = self.control_focus(control.id, cx);
+                        let (element, hitbox) = self.prepare_control(
+                            control,
+                            focus.clone(),
+                            surface,
+                            serial,
+                            bounds,
+                            allow_input,
+                            window,
+                            cx,
+                        );
+                        prepared_controls.insert(control.id, element);
+                        if let Some(hitbox) = hitbox {
+                            controls.push((control.clone(), focus, hitbox));
+                        }
+                        hitbox
+                    } else {
+                        None
+                    };
+                    let hitbox = control_hitbox.unwrap_or_else(|| {
+                        window
+                            .insert_hitbox(
+                                to_gpui(receiver.bounds(), bounds),
+                                HitboxBehavior::Normal,
+                            )
+                            .id
+                    });
+                    hitboxes.push(hitbox);
+                    receivers.push((*receiver, hitbox));
                 }
                 Draw::Text(rect, title, color) | Draw::TabText(rect, _, _, title, color) => {
                     let clip = match draw {
@@ -622,12 +894,24 @@ impl DockspaceElement {
                     } else {
                         SubtreePresentation::Inert
                     };
+                    if presentation == SubtreePresentation::Visible {
+                        visible_panes.push(*item);
+                    }
+                    let label = self
+                        .host
+                        .borrow()
+                        .panels
+                        .get(item)
+                        .map(|pane| pane.title.clone());
                     let mut element = match view {
                         Some(view) => div()
                             .id(format!("pane-{}", item.get()))
                             .w(rect.size.width)
                             .h(rect.size.height)
                             .overflow_hidden()
+                            .role(Role::TabPanel)
+                            .aria_label(label.unwrap_or_else(|| "Pane".into()))
+                            .aria_actions([])
                             .child(view)
                             .with_subtree_presentation(presentation)
                             .into_any_element(),
@@ -650,6 +934,19 @@ impl DockspaceElement {
             }
         }
 
+        for menu in menus {
+            self.prepare_presentation_menu(
+                &menu,
+                surface,
+                serial,
+                bounds,
+                allow_input,
+                &mut draws,
+                window,
+                cx,
+            );
+        }
+
         PreparedRegion {
             surface,
             draws,
@@ -659,14 +956,436 @@ impl DockspaceElement {
             serial,
             bounds,
             receivers,
+            controls,
+            visible_panes,
+            admitted,
         }
+    }
+
+    fn control_focus(&self, id: DockspaceVisualId, cx: &mut App) -> FocusHandle {
+        self.interaction
+            .focus
+            .borrow_mut()
+            .entry(id)
+            .or_insert_with(|| cx.focus_handle())
+            .clone()
+    }
+
+    fn prepare_control(
+        &self,
+        control: &Rc<Control>,
+        focus: FocusHandle,
+        surface: SurfaceId,
+        serial: u64,
+        bounds: Bounds<Pixels>,
+        allow_input: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (Option<(AnyElement, PreparedSubtreeClip)>, Option<HitboxId>) {
+        let admitted = allow_input
+            && input::is_presented(
+                &self.host.borrow(),
+                window.window_handle().window_id(),
+                surface,
+                serial,
+            );
+        let enabled = control
+            .actions
+            .iter()
+            .any(|(_, action)| action.borrow().is_some());
+        let mut actions = Vec::new();
+        if enabled {
+            actions.push(AccessibleAction::Focus);
+            if control.slot(ControlAction::Activate).is_some() {
+                actions.push(AccessibleAction::Click);
+            }
+            if control.slot(ControlAction::Increment).is_some() {
+                actions.push(AccessibleAction::Increment);
+            }
+            if control.slot(ControlAction::Decrement).is_some() {
+                actions.push(AccessibleAction::Decrement);
+            }
+        }
+        let rect = to_gpui(control.bounds, bounds);
+        let shared = self.host.clone();
+        let interaction = self.interaction.clone();
+        let keyboard_control = control.clone();
+        let mut element = div()
+            .id(&focus)
+            .debug_selector({
+                let selector = format!("dockspace:control:{focus:?}");
+                move || selector.clone()
+            })
+            .w(rect.size.width)
+            .h(rect.size.height)
+            .role(control.role())
+            .aria_label(control.label.clone())
+            .aria_disabled(!enabled)
+            .aria_actions(actions)
+            .when(enabled, |element| {
+                element.track_focus(&focus).tab_stop(match control.kind {
+                    ControlKind::Tab(_) => control.selected == Some(true),
+                    _ => true,
+                })
+            })
+            .when_some(control.selected, |element, selected| {
+                element.aria_selected(selected)
+            })
+            .when_some(control.expanded, |element, expanded| {
+                element.aria_expanded(expanded)
+            })
+            .when_some(control.value, |element, (value, minimum, maximum)| {
+                element
+                    .aria_numeric_value(value)
+                    .aria_min_numeric_value(minimum)
+                    .aria_max_numeric_value(maximum)
+            })
+            .on_key_down(move |event, window, cx| {
+                if event.keystroke.modifiers != open_gpui::Modifiers::none() {
+                    return;
+                }
+                if let Some(slot) = keyboard_control
+                    .key_action(&event.keystroke.key)
+                    .and_then(|key| keyboard_control.slot(key))
+                    && activate_action(&shared, &interaction, surface, serial, &slot, window, cx)
+                {
+                    cx.stop_propagation();
+                }
+            });
+        if let ControlKind::Splitter(axis) = control.kind {
+            element = element.aria_orientation(match axis {
+                dockspace::model::DockspaceAxis::Horizontal => open_gpui::Orientation::Vertical,
+                dockspace::model::DockspaceAxis::Vertical => open_gpui::Orientation::Horizontal,
+            });
+        }
+        for (action, key) in [
+            (AccessibleAction::Click, ControlAction::Activate),
+            (AccessibleAction::Increment, ControlAction::Increment),
+            (AccessibleAction::Decrement, ControlAction::Decrement),
+        ] {
+            if let Some(slot) = control.slot(key) {
+                let shared = self.host.clone();
+                let interaction = self.interaction.clone();
+                element = element.on_a11y_action(action, move |_, window, cx| {
+                    activate_action(&shared, &interaction, surface, serial, &slot, window, cx);
+                });
+            }
+        }
+        if self.host.borrow().native.is_none()
+            && matches!(control.kind, ControlKind::Button | ControlKind::MenuRow)
+            && let Some(slot) = control.slot(ControlAction::Activate)
+        {
+            let shared = self.host.clone();
+            let pointer_focus = focus.clone();
+            element = element.on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                if input::is_presented(
+                    &shared.borrow(),
+                    window.window_handle().window_id(),
+                    surface,
+                    serial,
+                ) {
+                    window.focus(&pointer_focus, cx);
+                }
+                cx.stop_propagation();
+            });
+            let shared = self.host.clone();
+            let interaction = self.interaction.clone();
+            element = element.on_click(move |_, window, cx| {
+                activate_action(&shared, &interaction, surface, serial, &slot, window, cx);
+                cx.stop_propagation();
+            });
+        }
+        if enabled {
+            let shared = self.host.clone();
+            element = element.on_a11y_action(AccessibleAction::Focus, move |_, window, cx| {
+                if input::is_presented(
+                    &shared.borrow(),
+                    window.window_handle().window_id(),
+                    surface,
+                    serial,
+                ) {
+                    window.focus(&focus, cx);
+                }
+            });
+        }
+        let hitbox = Rc::new(Cell::new(None));
+        let mut element = chrome::ControlElement {
+            inner: element,
+            hitbox: hitbox.clone(),
+        }
+        .into_any_element()
+        .with_subtree_presentation(if admitted {
+            SubtreePresentation::Visible
+        } else {
+            SubtreePresentation::Inert
+        })
+        .into_any_element();
+        let clip = window.prepare_subtree_clip(&SubtreeClip::own_border_box(), rect);
+        let prepared = window
+            .with_prepared_subtree_clip(&clip, |window| {
+                element.prepaint_as_root(rect.origin, definite(rect), window, cx);
+            })
+            .map(|()| (element, clip));
+        (prepared, hitbox.get())
+    }
+
+    fn prepare_presentation_menu(
+        &self,
+        menu: &Rc<PresentationMenu>,
+        surface: SurfaceId,
+        serial: u64,
+        bounds: Bounds<Pixels>,
+        allow_input: bool,
+        draws: &mut Vec<PreparedDraw>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let rect = to_gpui(menu.bounds, bounds);
+        let focus = self.control_focus(menu.id, cx);
+        let admitted = allow_input
+            && input::is_presented(
+                &self.host.borrow(),
+                window.window_handle().window_id(),
+                surface,
+                serial,
+            );
+        let enabled = admitted && menu.enabled;
+        let open = enabled && self.interaction.menu.get() == Some(menu.id);
+        draws.push(PreparedDraw::Icon(rect, Icon::Menu, menu.enabled));
+        let interaction = self.interaction.clone();
+        let id = menu.id;
+        let shared = self.host.clone();
+        let selector = format!("dockspace:presentation-menu:{focus:?}");
+        let mut button = div()
+            .id(&focus)
+            .debug_selector(move || selector.clone())
+            .w(rect.size.width)
+            .h(rect.size.height)
+            .role(Role::Button)
+            .aria_label("Window actions")
+            .aria_expanded(open)
+            .aria_disabled(!menu.enabled)
+            .aria_actions(if enabled {
+                vec![AccessibleAction::Click, AccessibleAction::Focus]
+            } else {
+                vec![]
+            })
+            .when(enabled, |button| button.track_focus(&focus).tab_stop(true))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(move |_, window, cx| {
+                if enabled
+                    && input::is_presented(
+                        &shared.borrow(),
+                        window.window_handle().window_id(),
+                        surface,
+                        serial,
+                    )
+                {
+                    interaction
+                        .menu
+                        .set((interaction.menu.get() != Some(id)).then_some(id));
+                    interaction.menu_row.set(0);
+                    refresh_menu(&shared, surface, window);
+                    window.refresh();
+                }
+                cx.stop_propagation();
+            });
+        let interaction = self.interaction.clone();
+        let shared = self.host.clone();
+        let keyboard_menu = menu.clone();
+        button = button.on_key_down(move |event, window, cx| {
+            if enabled && event.keystroke.modifiers == open_gpui::Modifiers::none() {
+                let open = interaction.menu.get() == Some(id);
+                let row = interaction.menu_row.get();
+                match event.keystroke.key.as_str() {
+                    "enter" | "space" if open => {
+                        if let Some((_, Some(action))) = keyboard_menu.choices.get(row)
+                            && activate_action(
+                                &shared,
+                                &interaction,
+                                surface,
+                                serial,
+                                action,
+                                window,
+                                cx,
+                            )
+                        {
+                            interaction.menu.set(None);
+                        }
+                    }
+                    "enter" | "space" => {
+                        interaction.menu.set(Some(id));
+                        interaction.menu_row.set(0);
+                    }
+                    "down" => {
+                        interaction.menu.set(Some(id));
+                        interaction.menu_row.set(if open {
+                            (row + 1) % keyboard_menu.choices.len().max(1)
+                        } else {
+                            0
+                        });
+                    }
+                    "up" => {
+                        interaction.menu.set(Some(id));
+                        interaction.menu_row.set(if row == 0 {
+                            keyboard_menu.choices.len().saturating_sub(1)
+                        } else {
+                            row - 1
+                        });
+                    }
+                    "home" if open => interaction.menu_row.set(0),
+                    "end" if open => interaction
+                        .menu_row
+                        .set(keyboard_menu.choices.len().saturating_sub(1)),
+                    "escape" => interaction.menu.set(None),
+                    _ => return,
+                }
+                if !open {
+                    refresh_menu(&shared, surface, window);
+                }
+                window.refresh();
+                cx.stop_propagation();
+            }
+        });
+        let interaction = self.interaction.clone();
+        let shared = self.host.clone();
+        button = button.on_a11y_action(AccessibleAction::Click, move |_, window, _| {
+            if enabled {
+                interaction
+                    .menu
+                    .set((interaction.menu.get() != Some(id)).then_some(id));
+                interaction.menu_row.set(0);
+                refresh_menu(&shared, surface, window);
+                window.refresh();
+            }
+        });
+        let mut button = button
+            .with_subtree_presentation(if admitted {
+                SubtreePresentation::Visible
+            } else {
+                SubtreePresentation::Inert
+            })
+            .into_any_element();
+        button.prepaint_as_root(rect.origin, definite(rect), window, cx);
+        draws.push(PreparedDraw::ClippedElement(
+            button,
+            window.prepare_subtree_clip(&SubtreeClip::own_border_box(), rect),
+        ));
+        if !open {
+            return;
+        }
+
+        let colors = self.host.borrow().config.colors.clone();
+        let width = px(210.0).min(bounds.size.width);
+        let height = px(28.0) * menu.choices.len() as f32;
+        let popup_bounds = Bounds::new(
+            point(
+                rect.right().min(bounds.right() - width).max(bounds.left()),
+                rect.bottom()
+                    .min((bounds.bottom() - height).max(bounds.top())),
+            ),
+            size(width, height.min(bounds.size.height)),
+        );
+        let interaction = self.interaction.clone();
+        let popup_id = ElementId::NamedChild(std::sync::Arc::new((&focus).into()), "popup".into());
+        let mut popup = div()
+            .id(popup_id)
+            .w(width)
+            .h(popup_bounds.size.height)
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .overflow_y_scroll()
+            .bg(colors.selected_tab)
+            .border_1()
+            .border_color(colors.border)
+            .role(Role::Menu)
+            .aria_label("Window actions")
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_down_out(move |event, window, _| {
+                if !rect.contains(&event.window_event().position) {
+                    interaction.menu.set(None);
+                    window.refresh();
+                }
+            });
+        for (index, (label, action)) in menu.choices.iter().enumerate() {
+            let action = action.clone();
+            let shared = self.host.clone();
+            let interaction = self.interaction.clone();
+            let mut row = div()
+                .id(index)
+                .w_full()
+                .h(px(28.0))
+                .flex_shrink_0()
+                .px(px(8.0))
+                .flex()
+                .items_center()
+                .role(Role::MenuItem)
+                .aria_label(*label)
+                .aria_disabled(action.is_none())
+                .aria_selected(self.interaction.menu_row.get() == index)
+                .aria_actions(if action.is_some() {
+                    vec![AccessibleAction::Click]
+                } else {
+                    vec![]
+                })
+                .text_color(if action.is_some() {
+                    colors.text
+                } else {
+                    colors.muted_text
+                })
+                .child(*label);
+            if self.interaction.menu_row.get() == index {
+                row = row.bg(colors.hovered_tab);
+            }
+            if let Some(action) = action {
+                let accessible_action = action.clone();
+                let accessible_shared = shared.clone();
+                let accessible_interaction = interaction.clone();
+                row = row
+                    .on_click(move |_, window, cx| {
+                        if activate_action(
+                            &shared,
+                            &interaction,
+                            surface,
+                            serial,
+                            &action,
+                            window,
+                            cx,
+                        ) {
+                            interaction.menu.set(None);
+                        }
+                        cx.stop_propagation();
+                    })
+                    .on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
+                        if activate_action(
+                            &accessible_shared,
+                            &accessible_interaction,
+                            surface,
+                            serial,
+                            &accessible_action,
+                            window,
+                            cx,
+                        ) {
+                            accessible_interaction.menu.set(None);
+                        }
+                    });
+            }
+            popup = popup.child(row);
+        }
+        let mut popup = popup.into_any_element();
+        let clip = window.prepare_subtree_clip(&SubtreeClip::own_border_box(), popup_bounds);
+        let _ = window.with_prepared_subtree_clip(&clip, |window| {
+            popup.prepaint_as_root(popup_bounds.origin, definite(popup_bounds), window, cx);
+        });
+        draws.push(PreparedDraw::ClippedElement(popup, clip));
     }
 
     fn listen(&self, prepared: &PreparedRegion, window: &mut Window) {
         let surface = prepared.surface;
         let owner = window.window_handle().window_id();
         let tabs = prepared.tabs.clone();
-        let hovered = self.hovered_tab.clone();
+        let hovered = self.interaction.hovered_tab.clone();
         window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, _| {
             if !phase.capture() {
                 return;
@@ -683,6 +1402,7 @@ impl DockspaceElement {
         let capture = prepared.capture;
         let serial = prepared.serial;
         let bounds = prepared.bounds;
+        let controls = prepared.controls.clone();
         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
             if !phase.bubble() || event.button != MouseButton::Left {
                 return;
@@ -709,7 +1429,14 @@ impl DockspaceElement {
                 event.modifiers,
                 window,
             ) {
-                let focus = shared.borrow().mounts[&owner].focus.clone();
+                let focus = controls
+                    .iter()
+                    .rev()
+                    .find_map(|(_, focus, hitbox)| {
+                        (hitbox.window_point_target_rank(event.position, window) == Some(0))
+                            .then(|| focus.clone())
+                    })
+                    .unwrap_or_else(|| shared.borrow().mounts[&owner].focus.clone());
                 window.focus(&focus, cx);
                 window.refresh();
                 if !managed {
@@ -803,6 +1530,47 @@ impl DockspaceElement {
             }
         });
         let shared = self.host.clone();
+        let interaction = self.interaction.clone();
+        let controls = prepared.controls.clone();
+        window.on_key_event(move |event: &KeyDownEvent, phase, window, cx| {
+            if !phase.bubble() || capture.is_captured(window) {
+                return;
+            }
+            let modifiers = event.keystroke.modifiers;
+            if !modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
+                return;
+            }
+            let key = match event.keystroke.key.as_str() {
+                "tab" if modifiers.shift => ControlAction::Previous,
+                "tab" | "pagedown" => ControlAction::Next,
+                "pageup" => ControlAction::Previous,
+                _ => return,
+            };
+            let action = {
+                let host = shared.borrow();
+                let scope = &host.mounts[&owner].focus;
+                controls.iter().find_map(|(control, focus, _)| {
+                    let ControlKind::Tab(item) = control.kind else {
+                        return None;
+                    };
+                    let owns_focus = focus.is_focused(window)
+                        || host
+                            .panels
+                            .get(&item)
+                            .and_then(|pane| pane.content_focus.as_ref())
+                            .is_some_and(|focus| focus.contains_focused(window, cx));
+                    (owns_focus || (scope.is_focused(window) && control.selected == Some(true)))
+                        .then(|| control.slot(key))
+                        .flatten()
+                })
+            };
+            if let Some(action) = action
+                && activate_action(&shared, &interaction, surface, serial, &action, window, cx)
+            {
+                cx.stop_propagation();
+            }
+        });
+        let shared = self.host.clone();
         let hitboxes = prepared.hitboxes.clone();
         window.on_key_event(move |event: &KeyDownEvent, phase, window, cx| {
             if !phase.bubble()
@@ -872,6 +1640,405 @@ impl DockspaceElement {
     }
 }
 
+fn activate_action(
+    shared: &SharedHost,
+    interaction: &InteractionState,
+    surface: SurfaceId,
+    serial: u64,
+    slot: &chrome::ActionSlot,
+    window: &mut Window,
+    cx: &mut App,
+) -> bool {
+    let owner = window.window_handle().window_id();
+    let mut host = shared.borrow_mut();
+    if !input::is_presented(&host, owner, surface, serial)
+        || host.has_unaccepted_update()
+        || !host.inputs.is_empty()
+        || host.session.has_pending_native_input()
+        || host
+            .native
+            .as_ref()
+            .is_some_and(|native| !native.transport.is_empty())
+        || host.ensure_application_admission().is_err()
+    {
+        return false;
+    }
+    if slot
+        .borrow()
+        .as_ref()
+        .is_some_and(|action| action.expected_version() != host.session.version())
+    {
+        return false;
+    }
+    let Some(action) = slot.borrow_mut().take() else {
+        return false;
+    };
+    let tab_focus = action.tab_focus_visual().zip(action.tab_focus_target());
+    let result = (|| -> Result<_> {
+        let HostState {
+            session,
+            mounts,
+            native,
+            ..
+        } = &mut *host;
+        let mut frame =
+            host_native::begin_frame(session, mounts, native.as_ref(), Some(window), cx)?;
+        frame.submit_surface_action(action)?;
+        Ok(frame.commit()?)
+    })();
+    match result {
+        Ok(report) => {
+            let rejected = report.inputs().iter().any(|input| {
+                matches!(
+                    input,
+                    dockspace::runtime::HostInputOutcome::StaleRejected { .. }
+                        | dockspace::runtime::HostInputOutcome::ProductActionRejected(_)
+                        | dockspace::runtime::HostInputOutcome::CloseRejected(_)
+                )
+            });
+            host.apply_report(report);
+            // Capabilities are affine even for a valid no-op. Capture a fresh
+            // plan for the next independent key or accessibility activation.
+            if let Some(region) = host
+                .mounts
+                .get_mut(&owner)
+                .and_then(|mount| mount.regions.get_mut(&surface))
+            {
+                region.dirty = true;
+            }
+            if rejected {
+                window.refresh();
+                return false;
+            }
+        }
+        Err(error) => {
+            host.fail(error.as_ref());
+            return false;
+        }
+    }
+    let focus = tab_focus
+        .filter(|(_, item)| {
+            host.session
+                .view()
+                .item(*item)
+                .is_some_and(|item| item.surface() == surface && item.is_selected())
+        })
+        .map(|(visual, _)| {
+            (
+                visual,
+                interaction
+                    .focus
+                    .borrow_mut()
+                    .entry(visual)
+                    .or_insert_with(|| cx.focus_handle())
+                    .clone(),
+            )
+        });
+    drop(host);
+    if let Some((visual, focus)) = focus {
+        window.focus(&focus, cx);
+        *interaction.pending_tab_focus.borrow_mut() = Some(PendingTabFocus {
+            surface,
+            visual,
+            claim_revision: window.focus_claim_revision(),
+        });
+    }
+    window.refresh();
+    cx.refresh_windows();
+    host_native::schedule(shared, cx);
+    true
+}
+
+fn refresh_menu(shared: &SharedHost, surface: SurfaceId, window: &mut Window) {
+    if let Some(region) = shared
+        .borrow_mut()
+        .mounts
+        .get_mut(&window.window_handle().window_id())
+        .and_then(|mount| mount.regions.get_mut(&surface))
+    {
+        region.dirty = true;
+    }
+    window.refresh();
+}
+
+/// Restores framework chrome focus only after the matching output's interactive
+/// replay. A later application focus claim always wins over retained UI intent.
+fn apply_chrome_focus(
+    shared: &SharedHost,
+    interaction: &InteractionState,
+    serial: u64,
+    admitted: &[SurfaceId],
+    controls: &[(SurfaceId, Rc<Control>, FocusHandle)],
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if shared.borrow().ensure_application_admission().is_err() {
+        return;
+    }
+    let owner = window.window_handle().window_id();
+    let presented = |surface| {
+        admitted.contains(&surface) && input::is_presented(&shared.borrow(), owner, surface, serial)
+    };
+    let pending = interaction.pending_tab_focus.borrow_mut().take();
+    if let Some(pending) = pending {
+        if pending.claim_revision == window.focus_claim_revision() {
+            if presented(pending.surface) {
+                if let Some((_, _, focus)) = controls.iter().find(|(surface, control, _)| {
+                    *surface == pending.surface && control.id == pending.visual
+                }) && window.is_focus_handle_rendered(focus)
+                {
+                    window.focus(focus, cx);
+                }
+            } else {
+                *interaction.pending_tab_focus.borrow_mut() = Some(pending);
+            }
+        }
+    }
+    let focused_row = controls.iter().find(|(surface, control, _)| {
+        presented(*surface) && control.focused && control.menu_owner.is_some()
+    });
+    if let Some((surface, control, focus)) = focused_row {
+        let Some(bar) = control.menu_owner else {
+            return;
+        };
+        let mut previous = interaction.tab_list_focus.borrow_mut();
+        if let Some(previous) = previous.as_ref() {
+            if previous.claim_revision != window.focus_claim_revision()
+                || (previous.bar == bar && previous.row == control.id)
+            {
+                return;
+            }
+        } else {
+            let scope = shared.borrow().mounts[&owner].focus.clone();
+            if !scope.contains_focused(window, cx) && window.focused(cx).is_some() {
+                return;
+            }
+        }
+        let opener = controls
+            .iter()
+            .find(|(owner_surface, control, _)| {
+                owner_surface == surface && control.opens_menu == Some(bar)
+            })
+            .map(|(_, _, focus)| focus.clone());
+        if let Some(opener) = opener
+            && window.is_focus_handle_rendered(focus)
+        {
+            window.focus(focus, cx);
+            *previous = Some(TabListFocus {
+                surface: *surface,
+                bar,
+                row: control.id,
+                opener,
+                claim_revision: window.focus_claim_revision(),
+            });
+        }
+    } else {
+        let mut previous = interaction.tab_list_focus.borrow_mut();
+        if previous
+            .as_ref()
+            .is_some_and(|previous| presented(previous.surface))
+            && let Some(previous) = previous.take()
+        {
+            let pane_requested = shared
+                .borrow()
+                .session
+                .pane_focus_request(previous.surface)
+                .is_some();
+            if !pane_requested
+                && previous.claim_revision == window.focus_claim_revision()
+                && window.is_focus_handle_rendered(&previous.opener)
+            {
+                window.focus(&previous.opener, cx);
+            }
+        }
+    }
+}
+
+fn pane_focus_requests(
+    shared: &SharedHost,
+    serial: u64,
+    visible_panes: &[(SurfaceId, Vec<ItemId>)],
+    window: &Window,
+) -> Vec<(DockspacePaneFocusRequest, Option<FocusHandle>, FocusHandle)> {
+    let owner = window.window_handle().window_id();
+    let host = shared.borrow();
+    if host.has_unaccepted_update()
+        || !host.inputs.is_empty()
+        || host
+            .native
+            .as_ref()
+            .is_some_and(|native| native.transport.is_frozen())
+    {
+        return Vec::new();
+    }
+    visible_panes
+        .iter()
+        .filter_map(|(surface, panes)| {
+            if !input::is_presented(&host, owner, *surface, serial) {
+                return None;
+            }
+            let request = host.session.pane_focus_request(*surface)?;
+            let focus = match request.item() {
+                Some(item) => {
+                    if !panes.contains(&item) {
+                        return None;
+                    }
+                    host.panels
+                        .get(&item)
+                        .and_then(|pane| pane.content_focus.clone())
+                }
+                None => Some(host.mounts[&owner].focus.clone()),
+            };
+            Some((request, focus, host.mounts[&owner].focus.clone()))
+        })
+        .collect()
+}
+
+/// Applies an admitted content request in the normal accepted-publication phase.
+/// FocusStable is deliberately reserved for observing the resulting authority.
+fn apply_pane_focus(
+    shared: &SharedHost,
+    interaction: &InteractionState,
+    serial: u64,
+    visible_panes: &[(SurfaceId, Vec<ItemId>)],
+    window: &mut Window,
+    cx: &mut App,
+) {
+    for (request, target, scope) in pane_focus_requests(shared, serial, visible_panes, window) {
+        let mut attempts = interaction.pane_focus.borrow_mut();
+        let attempt = attempts
+            .entry(request.surface())
+            .or_insert(PaneFocusAttempt {
+                request,
+                applied: false,
+                observation: None,
+            });
+        if attempt.request != request {
+            *attempt = PaneFocusAttempt {
+                request,
+                applied: false,
+                observation: None,
+            };
+        }
+        if !attempt.applied {
+            attempt.applied = true;
+            if let Some(target) = target
+                && window.is_focus_handle_rendered(&target)
+                && (scope.contains_focused(window, cx) || window.focused(cx).is_none())
+            {
+                window.focus(&target, cx);
+            }
+        }
+    }
+}
+
+fn observe_pane_focus(
+    shared: &SharedHost,
+    interaction: &InteractionState,
+    serial: u64,
+    visible_panes: &[(SurfaceId, Vec<ItemId>)],
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let mut observations = Vec::new();
+    for (request, target, _) in pane_focus_requests(shared, serial, visible_panes, window) {
+        let observation = match target {
+            Some(target) if window.is_focus_handle_rendered(&target) => {
+                if target.contains_focused(window, cx) {
+                    DockspacePaneFocusObservation::Focused
+                } else {
+                    DockspacePaneFocusObservation::NotFocused
+                }
+            }
+            _ => DockspacePaneFocusObservation::Unavailable,
+        };
+        let mut attempts = interaction.pane_focus.borrow_mut();
+        let attempt = attempts
+            .entry(request.surface())
+            .or_insert(PaneFocusAttempt {
+                request,
+                applied: false,
+                observation: None,
+            });
+        if attempt.request != request {
+            *attempt = PaneFocusAttempt {
+                request,
+                applied: false,
+                observation: None,
+            };
+        }
+        if attempt.observation != Some(observation) {
+            observations.push((request, observation));
+        }
+    }
+    if observations.is_empty() {
+        return;
+    }
+    let mut host = shared.borrow_mut();
+    let result = (|| -> Result<_> {
+        let HostState {
+            session,
+            mounts,
+            native,
+            ..
+        } = &mut *host;
+        let mut frame =
+            host_native::begin_frame(session, mounts, native.as_ref(), Some(window), cx)?;
+        for (request, observation) in &observations {
+            if frame.pane_focus_request(request.surface()) == Some(*request) {
+                frame.submit_pane_focus_observation(request.prepare_observation(*observation))?;
+            }
+        }
+        Ok(frame.commit()?)
+    })();
+    match result {
+        Ok(report) => {
+            let repaint = !report.repaint_surfaces().is_empty() || report.workspace_changed();
+            host.apply_report(report);
+            for (request, observation) in observations {
+                if let Some(attempt) = interaction
+                    .pane_focus
+                    .borrow_mut()
+                    .get_mut(&request.surface())
+                {
+                    attempt.observation = Some(observation);
+                }
+            }
+            if repaint {
+                window.refresh();
+            }
+        }
+        Err(error) => host.fail(error.as_ref()),
+    }
+    drop(host);
+    host_native::schedule(shared, cx);
+}
+
+fn source_preview_bounds(
+    preview: host_native::provisional::Preview,
+    surface: Bounds<Pixels>,
+    geometry: Option<open_gpui::PlatformWindowPhysicalGeometry>,
+) -> Option<Bounds<Pixels>> {
+    // Do not derive desktop coordinates from logical window bounds. The observed
+    // physical client origin and DPI must come from the same platform snapshot.
+    let geometry = geometry?;
+    let client = geometry.client_bounds();
+    let scale = f64::from(geometry.scale_factor());
+    let placement = preview.placement;
+    let projected = Bounds::new(
+        point(
+            px(((placement.x() - f64::from(client.origin.x.0)) / scale) as f32),
+            px(((placement.y() - f64::from(client.origin.y.0)) / scale) as f32),
+        ),
+        size(
+            px((placement.width() / scale) as f32),
+            px((placement.height() / scale) as f32),
+        ),
+    );
+    let clipped = projected.intersect(&surface);
+    (!clipped.is_empty()).then_some(clipped)
+}
+
 fn hovered_tab_at(
     tabs: &[(ItemId, HitboxId)],
     position: open_gpui::Point<Pixels>,
@@ -889,6 +2056,7 @@ fn build_candidate(
     host: &mut HostState,
     inputs: &[input::QueuedPointer],
     regions: &BTreeMap<SurfaceId, Bounds<Pixels>>,
+    open_menu: Option<DockspaceVisualId>,
     window: &Window,
     cx: &mut App,
 ) -> Result<(BTreeMap<SurfaceId, Rc<Packet>>, DockspaceUpdate)> {
@@ -906,6 +2074,23 @@ fn build_candidate(
         .iter()
         .map(|(surface, region)| (*surface, region.pointer))
         .collect();
+    let tab_strip = TabStripMetrics::new(0.0, 0.0)?
+        .with_controls(
+            TabStripControlMetrics::new(2.0)?
+                .with_scroll_backward(TabStripControlMetric::new(
+                    20.0,
+                    TabStripControlPlacement::OverlayLeading,
+                )?)
+                .with_scroll_forward(TabStripControlMetric::new(
+                    20.0,
+                    TabStripControlPlacement::OverlayTrailing,
+                )?)
+                .with_tab_list_menu(TabStripControlMetric::new(
+                    24.0,
+                    TabStripControlPlacement::ReservedTrailing,
+                )?),
+        )
+        .with_tab_list_menu(TabListMenuMetrics::new(28.0, 8.0, 4.0, 0.0, 280.0, 8.0)?);
     let mut frame = host_native::begin_frame(
         &mut host.session,
         &host.mounts,
@@ -998,9 +2183,7 @@ fn build_candidate(
                     });
                     Answer::TabIntrinsic(width)
                 }
-                Request::TabStrip { .. } => Answer::TabStrip(
-                    TabStripMetrics::new(0.0, 0.0).expect("zero chrome reservation is valid"),
-                ),
+                Request::TabStrip { .. } => Answer::TabStrip(tab_strip),
             })?;
         }
         let Some(plan) = frame.paint_plan(surface)? else {
@@ -1018,7 +2201,8 @@ fn build_candidate(
             );
             continue;
         };
-        let (packet, receipt) = record(plan, panels, pointers[&surface], &config.colors)?;
+        let (packet, receipt) =
+            record(plan, panels, pointers[&surface], &config.colors, open_menu)?;
         frame.confirm_surface_painted(receipt)?;
         packets.insert(surface, Rc::new(packet));
     }

@@ -49,6 +49,20 @@ application document. One entity cannot be registered under two pane identities.
 Use `with_view` to inspect the published session model and `update` to submit
 programmatic changes through the sole semantic frame.
 
+Bind a pane's existing content focus with `DockPane::with_focus_handle`. Default
+chrome exposes close, overflow and presentation controls, keyboard tab navigation
+and accessibility actions through the shared core's revision-bound commands.
+Content activation waits for the original output to become interactive; merely
+painting hidden or deferred content does not grant focus.
+
+Use `update_pane_metadata` to change a registered title or content minimum while
+retaining its View. It invalidates the core's measurement cache as well as the
+GPUI packet. `take_closed_pane` transfers a closed View registration only after
+the old input, packets and renderer obligations drain. Dropping the returned pane
+releases that registration's resources without deleting its durable external key;
+passing it to `open_pane` registers the same View again. Both operations may return
+`DockPaneError::Busy` while existing owners still need to progress.
+
 ## Native Lifecycle And Inspection
 
 Open ordinary roots through `open_native_root`, or use `bind_native_root` inside
@@ -80,6 +94,15 @@ permanently rejected native FIFO head can prevent semantic drain even after the
 windows close. There is no in-place error-clear/restart API; a fresh workspace
 must wait for actual old-host quiescence and retain application documents and Views.
 
+Application observations keep the latest 256 historical entries. Unresolved
+deferred native close decisions remain protected until consumed, resolved or
+made obsolete by their exact native terminal. Inspection includes the historical
+discard count, current ingress head, original rejection categories and blocked
+stationary challenge. This retention policy never truncates internal ingress or
+its original lifecycle receipts. A primary protocol failure rejects subsequent
+application intent with `DockHostAdmissionError`, while existing cleanup owners
+continue to run.
+
 Register `set_close_handler` before opening windows to decide the original
 committed content plans, including tab-close and native surface plans. The
 handler receives its surface without needing to capture a strong clone. It runs
@@ -98,6 +121,23 @@ focus, IME or accessibility. A submitted output retains its original callback
 and binding across physical Root continuation. Desktop physical coordinates,
 target-display DPI, native hit stacks and OS capture require actual platform
 facts; ordinary logical mouse events do not supply them.
+
+Managed stationary hover and strip scrolling use one fresh native sample for the
+core's finite deadline, tied to the original captured-drag generation. Unsupported
+sampling preserves the held gesture and blocks that unchanged challenge until
+real input rearms it. Windows provides the native sampler; other backends remain
+explicitly unsupported until they implement fresh physical observations.
+
+After validating a saved `DockWorkspaceDocument`, construct a fresh managed
+workspace and call `open_restored_native_roots` with its `DockHostDocument` and
+explicit anchor. The helper checks the complete mapping and window options before
+opening, resolves current displays, constrains logical hints to current work
+areas, and drains earlier roots if a later open fails. Keep the host alive until
+its original cleanup becomes quiescent. The multiviewport example demonstrates
+restoring a snapshot into isolated native roots with distinct application Views.
+Use `when_native_quiescent` after opening or starting cleanup to release an
+application registry's workspace entry at that exact boundary. The one-shot
+callback runs outside the host borrow; capture an instance key or weak owner.
 
 ## Save And Restore
 
@@ -178,3 +218,10 @@ cargo run -p xtask -- scan-public-api
 CPU renderer tests establish model, ownership and exact correlation behavior.
 Physical captured dragging, mixed-DPI movement, OS IME and each foreign backend
 retain separate qualification. See [verification](../../docs/verification.md).
+
+Run the shared retained-host CPU workload independently of the legacy/ImGui
+comparator with `python tools/benchmark_docking_drag.py --suite shared --json`
+from the workspace root. Its TestPlatform and simulated-submission measurements
+are labeled separately and do not claim native input or GPU latency. For a quick
+debug-profile execution, use `cargo bench --locked -p open-gpui-docking --bench
+shared_session_cpu --features test-support --profile dev`.

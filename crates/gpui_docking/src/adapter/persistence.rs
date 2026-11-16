@@ -368,7 +368,10 @@ impl DockHostDocument {
         Ok(())
     }
 
-    fn validate_session(&self, session: &DockspaceSession) -> Result<(), DockPersistenceError> {
+    pub(super) fn validate_session(
+        &self,
+        session: &DockspaceSession,
+    ) -> Result<(), DockPersistenceError> {
         self.validate()?;
         let actual = session
             .view()
@@ -536,6 +539,12 @@ impl DockWorkspaceDocument {
 }
 
 /// A fully validated candidate and its host hints, ready for host admission.
+///
+/// Give the session and application-created Views to [`super::DockSurface::new_managed`],
+/// then use [`super::DockSurface::open_restored_native_roots`] with these host hints
+/// to open a separate native workspace. Existing native hosts cannot be replaced
+/// through that helper. Application documents and View-local state remain owned
+/// by the application and are not reconstructed from this envelope.
 #[derive(Debug)]
 pub struct RestoredDockWorkspace {
     /// The sole semantic runtime; numeric pane identities remain core-owned.

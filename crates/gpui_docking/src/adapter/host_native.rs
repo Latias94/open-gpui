@@ -46,6 +46,7 @@ mod receiver_tests;
 
 pub(super) mod provisional;
 mod receiver;
+mod reports;
 use receiver::resolve;
 #[cfg(test)]
 use receiver::resolve_in_window;
@@ -57,13 +58,15 @@ type WindowFactory = dyn Fn(
     &mut App,
 ) -> std::result::Result<AnyWindowHandle, NativeOpenFailure>;
 
+type QuiescenceCallback = Box<dyn FnOnce(&mut App)>;
+
 pub(super) struct ManagedHost {
     bridge: Option<NativeBridge>,
     pub(super) transport: NativeTransport,
     pub(super) callbacks: BTreeMap<WindowId, NativeCallbacks>,
     roots: BTreeSet<WindowId>,
     pending_reports: VecDeque<HostFrameReport>,
-    reports: VecDeque<NativeReport>,
+    reports: reports::Reports,
     retired: BTreeSet<NativeSurfaceBinding>,
     close_policy: Option<NativeCloseDecision>,
     factory: Option<Rc<WindowFactory>>,
@@ -72,6 +75,8 @@ pub(super) struct ManagedHost {
     _quit: Subscription,
     pump_scheduled: bool,
     wake: Option<NativeWake>,
+    blocked_continuation: Option<dockspace::runtime::NativePointerContinuation>,
+    quiescence_callbacks: Vec<QuiescenceCallback>,
     registrations: BTreeMap<WindowId, RootRegistration>,
     retirements: BTreeMap<WindowId, open_gpui::WindowPresentationShutdownTicket>,
     _terminal: Subscription,
@@ -92,6 +97,7 @@ struct RootRegistration {
 
 struct NativeWake {
     request: dockspace::runtime::NativePointerContinuation,
+    capture: Option<super::native::NativeCapture>,
     _task: open_gpui::Task<()>,
 }
 
@@ -117,7 +123,9 @@ pub(super) fn inspection(host: &HostState) -> Option<super::DockNativeInspection
         bridge_available: native.bridge.is_some(),
         quiescent: is_quiescent(host, native),
         transport_empty: native.transport.is_empty(),
+        transport: native.transport.inspection(),
         retained_report_count: native.reports.len(),
+        discarded_report_count: native.reports.discarded(),
         pending_host_report_count: native.pending_reports.len(),
         callback_window_count: native.callbacks.len(),
         root_window_count: native.roots.len(),
@@ -131,6 +139,7 @@ pub(super) fn inspection(host: &HostState) -> Option<super::DockNativeInspection
         pending_root_quiescence_count: tickets.iter().filter(|ticket| !ticket.quiesced()).count(),
         pump_scheduled: native.pump_scheduled,
         continuation_pending: native.wake.is_some(),
+        continuation_blocked: native.blocked_continuation.is_some(),
         provisional_opening,
         provisional_promotion_count,
         provisional_retirement_count,
@@ -294,7 +303,7 @@ pub(super) fn enroll(shared: &SharedHost, cx: &mut App) -> Result<()> {
         callbacks: BTreeMap::new(),
         roots: BTreeSet::new(),
         pending_reports: VecDeque::new(),
-        reports: VecDeque::new(),
+        reports: reports::Reports::default(),
         retired: BTreeSet::new(),
         close_policy: None,
         factory: None,
@@ -303,6 +312,8 @@ pub(super) fn enroll(shared: &SharedHost, cx: &mut App) -> Result<()> {
         _quit: quit,
         pump_scheduled: false,
         wake: None,
+        blocked_continuation: None,
+        quiescence_callbacks: Vec::new(),
         registrations: BTreeMap::new(),
         retirements: BTreeMap::new(),
         _terminal: terminal,
@@ -345,14 +356,17 @@ fn install_router(cx: &mut App) {
                 return;
             };
             {
-                let host = shared.borrow();
+                let mut host = shared.borrow_mut();
                 let metadata = dockspace::runtime::PointerEventMetadata::new(
                     dockspace::runtime::PointerDeviceKind::Mouse,
                     host.observed_at(),
                 );
-                if let Some(native) = &host.native
+                if let Some(native) = &mut host.native
                     && let Some(callbacks) = native.callbacks.get(&event.source_window())
                 {
+                    // Real ingress may rearm an unchanged finite challenge.
+                    // The callback is queued before scheduling can sample it.
+                    native.blocked_continuation = None;
                     native.transport.captured_drag(
                         callbacks.binding(),
                         super::native::native_capture_owner(event.capture_owner(), |owner| {
@@ -524,6 +538,7 @@ impl DockSurface {
     ) -> std::result::Result<(), NativeBridgeError> {
         let owner = window.window_handle().window_id();
         let mut host = self.host.borrow_mut();
+        reject_primary_failure(&host)?;
         let native = host
             .native
             .as_ref()
@@ -611,6 +626,15 @@ impl DockSurface {
         options: WindowOptions,
         cx: &mut App,
     ) -> std::result::Result<AnyWindowHandle, NativeOpenFailure> {
+        if let Err(error) = reject_primary_failure(&self.host.borrow()) {
+            return Err(NativeOpenFailure {
+                message: error.to_string(),
+                root_binding: Some(error),
+                stage: None,
+                retirement_ticket: None,
+                source: None,
+            });
+        }
         let dock = self.clone();
         let failure = Rc::new(std::cell::RefCell::new(None));
         let root_failure = failure.clone();
@@ -700,6 +724,9 @@ impl DockSurface {
             .and_then(|native| native.bridge.as_mut())
             .ok_or_else(|| anyhow!("native dispatch is already running or disabled"))?
             .decide_close(session, close, decision)?;
+        if !matches!(decision, NativeCloseDecision::Defer) {
+            native.as_mut().unwrap().reports.resolve_close(close);
+        }
         drop(host);
         pump(&self.host, cx);
         Ok(())
@@ -708,7 +735,9 @@ impl DockSurface {
     /// Installs an application root factory while preserving the original native callbacks.
     ///
     /// Custom factories own window creation options and opt out of the default factory's
-    /// pre-release native preview. Any outstanding default preview retires through GPUI.
+    /// pre-release native window. The core's source-hosted placement cue remains
+    /// available without creating a competing HWND. Any outstanding default
+    /// preview window retires through GPUI.
     /// Open through [`NativeCallbacks::open`] or install the supplied callbacks during
     /// root construction. The managed host routes that exact lifetime before staged
     /// surface painting; the factory must not register a second application root.
@@ -731,13 +760,19 @@ impl DockSurface {
         Ok(())
     }
 
-    /// Drains native facts and deferred close edges intended for application policy/UI.
+    /// Drains native observations and original deferred close decisions.
+    ///
+    /// Observational history retains the latest 256 entries. Unresolved deferred
+    /// close decisions are retained separately from that budget until consumed,
+    /// resolved or made obsolete by the original native terminal. Inspection's
+    /// `discarded_report_count` records historical observations discarded so far.
+    /// The ordered ingress and internal lifecycle receipts are never truncated.
     pub fn take_native_reports(&self) -> Vec<NativeReport> {
         self.host
             .borrow_mut()
             .native
             .as_mut()
-            .map_or_else(Vec::new, |native| native.reports.drain(..).collect())
+            .map_or_else(Vec::new, |native| native.reports.take())
     }
 
     /// Retries native progress after an application close decision or external wakeup.
@@ -778,6 +813,55 @@ impl DockSurface {
             .as_ref()
             .is_some_and(|native| is_quiescent(&host, native))
     }
+
+    /// Runs once, outside host borrows, after all original physical owners retire.
+    ///
+    /// Register after opening roots or starting failure cleanup. An already
+    /// quiescent host defers the callback through App. This observes the same
+    /// full predicate as [`Self::native_is_quiescent`]; it does not clear errors,
+    /// retire owners or authorize reuse of an undrained session. Capture weak
+    /// application owners rather than a strong clone of this surface.
+    pub fn when_native_quiescent(
+        &self,
+        callback: impl FnOnce(&mut App) + 'static,
+        cx: &mut App,
+    ) -> Result<()> {
+        let mut host = self
+            .host
+            .try_borrow_mut()
+            .map_err(|_| anyhow!("docking host is busy"))?;
+        let native = host
+            .native
+            .as_ref()
+            .ok_or_else(|| anyhow!("managed native hosting is not enabled"))?;
+        if is_quiescent(&host, native) {
+            drop(host);
+            cx.defer(callback);
+        } else {
+            host.native
+                .as_mut()
+                .unwrap()
+                .quiescence_callbacks
+                .push(Box::new(callback));
+            drop(host);
+            schedule(&self.host, cx);
+        }
+        Ok(())
+    }
+}
+
+fn reject_primary_failure(host: &HostState) -> std::result::Result<(), NativeBridgeError> {
+    if let Some(failure) = host
+        .failure
+        .as_ref()
+        .filter(|failure| failure.is_primary_protocol_failure())
+    {
+        return Err(super::DockHostAdmissionError {
+            failure: failure.clone(),
+        }
+        .into());
+    }
+    Ok(())
 }
 
 struct NativeRoot {
@@ -1051,6 +1135,7 @@ pub(super) fn queue_pointer(
                 .with_docking_enabled(host.config.input.docking_enabled(modifiers)),
         ),
     );
+    host.native.as_mut().unwrap().blocked_continuation = None;
     if let Some(region) = host
         .mounts
         .get_mut(&owner)
@@ -1236,6 +1321,7 @@ fn recover_root_registrations(
 
 fn process_reports(host: &mut HostState, bridge: &mut NativeBridge, cx: &mut App) -> Result<()> {
     while let Some(mut report) = bridge.pop_report() {
+        let mut deferred_close = false;
         match &report {
             NativeReport::CapturedRelease { capture, frame } => {
                 provisional::observe_release(host.native.as_mut().unwrap(), *capture, *frame);
@@ -1255,6 +1341,8 @@ fn process_reports(host: &mut HostState, bridge: &mut NativeBridge, cx: &mut App
                     } else {
                         NativeSurfaceCloseAction::RecoverPresentation
                     }));
+                deferred_close =
+                    matches!(policy, NativeCloseDecision::Defer) && !native.transport.is_frozen();
                 if !host.native.as_ref().unwrap().transport.is_frozen()
                     && let Err(error) = bridge.decide_close(&mut host.session, *close, policy)
                 {
@@ -1299,7 +1387,13 @@ fn process_reports(host: &mut HostState, bridge: &mut NativeBridge, cx: &mut App
             }
             _ => {}
         }
-        host.native.as_mut().unwrap().reports.push_back(report);
+        let reports = &mut host.native.as_mut().unwrap().reports;
+        match report {
+            NativeReport::CloseRequested(close) if deferred_close => {
+                reports.push_deferred_close(close);
+            }
+            report => reports.push_back(report),
+        }
     }
     Ok(())
 }
@@ -1434,12 +1528,20 @@ pub(super) fn pump(shared: &SharedHost, cx: &mut App) {
         })
         .map(|mount| mount.window)
         .collect();
+    let quiescence_callbacks = if is_quiescent(&host, host.native.as_ref().unwrap()) {
+        std::mem::take(&mut host.native.as_mut().unwrap().quiescence_callbacks)
+    } else {
+        Vec::new()
+    };
     drop(host);
     for window in windows {
         let _ = window.update(cx, |_, window, _| window.refresh());
     }
     if more || super::close::ready(&shared.borrow()) {
         schedule(shared, cx);
+    }
+    for callback in quiescence_callbacks {
+        callback(cx);
     }
 }
 
@@ -1450,8 +1552,14 @@ fn schedule_continuation(shared: &SharedHost, host: &mut HostState, cx: &App) {
         .flatten();
     let Some(request) = request else {
         native.wake = None;
+        native.blocked_continuation = None;
         return;
     };
+    if native.blocked_continuation == Some(request) {
+        native.wake = None;
+        return;
+    }
+    native.blocked_continuation = None;
     if native
         .wake
         .as_ref()
@@ -1459,6 +1567,11 @@ fn schedule_continuation(shared: &SharedHost, host: &mut HostState, cx: &App) {
     {
         return;
     }
+    let capture = native
+        .callbacks
+        .values()
+        .find(|callbacks| callbacks.binding() == request.source_binding().window())
+        .and_then(NativeCallbacks::active_capture);
     let timer = host
         .clock
         .timer(request.deadline().saturating_sub(host.observed_at()));
@@ -1468,68 +1581,84 @@ fn schedule_continuation(shared: &SharedHost, host: &mut HostState, cx: &App) {
         let Some(shared) = weak.upgrade() else {
             return;
         };
-        let _ = cx.update(|cx| continuation_without_native_sample(&shared, request, cx));
+        let _ = cx.update(|cx| continue_native_pointer(&shared, request, capture, cx));
     });
     host.native.as_mut().unwrap().wake = Some(NativeWake {
         request,
+        capture,
         _task: task,
     });
 }
 
-fn continuation_without_native_sample(
+fn continue_native_pointer(
     shared: &SharedHost,
     request: dockspace::runtime::NativePointerContinuation,
+    capture: Option<super::native::NativeCapture>,
     cx: &mut App,
 ) {
-    use dockspace::runtime::{
-        NativeDesktopPointerLocation, NativeDesktopPosition, NativeLocalPointerLocation,
-        NativePointerHover, NativePointerInput, NativePointerOwner, PointerDeviceKind,
-        PointerEventMetadata,
-    };
+    use dockspace::runtime::{PointerDeviceKind, PointerEventMetadata};
+
+    {
+        let mut host = shared.borrow_mut();
+        let current = host.session.native_pointer_continuation() == Some(request)
+            && host.observed_at() >= request.deadline();
+        let Some(native) = host.native.as_mut() else {
+            return;
+        };
+        if !current
+            || !native
+                .wake
+                .as_ref()
+                .is_some_and(|wake| wake.request == request && wake.capture == capture)
+        {
+            return;
+        }
+        native.wake = None;
+        // Earlier original input must commit before this finite observation.
+        if !native.transport.is_empty() || native.transport.is_frozen() {
+            return;
+        }
+    }
+
+    let sample = capture.and_then(|capture| {
+        cx.sample_native_captured_drag(capture.source_window(), capture.generation())
+    });
     let mut host = shared.borrow_mut();
-    if !host.native.as_ref().is_some_and(|native| {
-        native
-            .wake
-            .as_ref()
-            .is_some_and(|wake| wake.request == request)
-            && native.transport.is_empty()
-    }) || host.session.native_pointer_continuation() != Some(request)
-        || host.observed_at() < request.deadline()
+    if host.session.native_pointer_continuation() != Some(request)
+        || host.has_unaccepted_update()
+        || !host.native.as_ref().is_some_and(|native| {
+            !native.transport.is_frozen()
+                && native.transport.is_empty()
+                && native.callbacks.values().any(|callbacks| {
+                    callbacks.binding() == request.source_binding().window()
+                        && callbacks.active_capture() == capture
+                        && capture.is_some()
+                })
+        })
     {
         return;
     }
-    // Cached mouse_position and a logical capture handle cannot execute a
-    // stationary native action. Unknown facts revoke this finite action through
-    // the original journal; later real motion can rearm it.
-    let input = if request.local_coordinates().is_some() {
-        NativePointerInput::new_local(
-            request.pointer(),
-            request.event(),
-            NativeLocalPointerLocation::Unknown,
-            NativePointerOwner::Unknown,
-            NativePointerOwner::Unknown,
+    let input = sample.and_then(|(frame, stack)| {
+        host.native.as_ref()?.bridge.as_ref()?.continuation_input(
+            &host.session,
+            request,
+            frame,
+            &stack,
+            PointerEventMetadata::new(PointerDeviceKind::Mouse, host.observed_at()),
         )
-    } else {
-        NativePointerInput::new(
-            request.pointer(),
-            request.event(),
-            NativeDesktopPointerLocation::new(
-                NativeDesktopPosition::Unknown,
-                NativePointerHover::Unknown,
-                None,
-            ),
-            NativePointerOwner::Unknown,
-            NativePointerOwner::Unknown,
-        )
-    }
-    .with_metadata(PointerEventMetadata::new(
-        PointerDeviceKind::Mouse,
-        host.observed_at(),
-    ));
-    let native = host.native.as_mut().unwrap();
-    native.wake = None;
-    native.reports.push_back(NativeReport::Unsupported {
-        operation: "fresh stationary native pointer, hover and capture sampling",
     });
-    native.transport.pointer(input, cx);
+    let native = host.native.as_mut().unwrap();
+    // Each unchanged challenge gets one finite attempt. Neither a failed sample
+    // nor an accepted continuation can schedule its own overdue timer forever.
+    native.blocked_continuation = Some(request);
+    if let Some(input) = input {
+        native.transport.pointer(input, cx);
+    } else {
+        // A failed finite sample cannot replay cached coordinates or turn
+        // unavailable native-local geometry into a synthetic gesture cancel.
+        // Leave the held gesture intact and wait for a real input/new challenge.
+        native.reports.push_back(NativeReport::Unsupported {
+            operation: "fresh stationary native pointer, hover and capture sampling",
+        });
+    }
 }

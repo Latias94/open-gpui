@@ -16,7 +16,11 @@ use open_gpui_docking::{
         runtime::{DockspaceDocumentBootstrap, DockspaceDocumentId},
     },
     native::NativeReport,
-    persistence::{DockHostDocument, DockSurfaceKeyBinding, DockWorkspaceDocument},
+    persistence::{
+        DockHostDocument, DockLogicalPlacementRect, DockLogicalViewportPlacement,
+        DockLogicalWindowPlacement, DockSurfaceKeyBinding, DockWindowPlacementState,
+        DockWorkspaceDocument,
+    },
     prelude::{
         DockAnchor, DockPane, DockPlacement, DockPolicy, DockSurface, DockspaceAxis,
         DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSession,
@@ -38,6 +42,7 @@ const SNAPSHOT_DEBOUNCE: Duration = Duration::from_millis(250);
 enum WorkspaceKind {
     Shared,
     Isolated,
+    Restored(u64),
 }
 
 impl WorkspaceKind {
@@ -45,19 +50,20 @@ impl WorkspaceKind {
         match self {
             Self::Shared => "shared",
             Self::Isolated => "isolated",
+            Self::Restored(_) => "restored",
         }
     }
 
     fn document_id(self) -> DockspaceDocumentId {
         match self {
-            Self::Shared => DockspaceDocumentId::from_bytes([0x4d; 16]),
+            Self::Shared | Self::Restored(_) => DockspaceDocumentId::from_bytes([0x4d; 16]),
             Self::Isolated => DockspaceDocumentId::from_bytes([0x49; 16]),
         }
     }
 
     fn pane_keys(self) -> &'static [&'static str] {
         match self {
-            Self::Shared => &["project", "editor", "inspector", "preview"],
+            Self::Shared | Self::Restored(_) => &["project", "editor", "inspector", "preview"],
             Self::Isolated => &["activity", "notes"],
         }
     }
@@ -65,7 +71,7 @@ impl WorkspaceKind {
     fn policy(self) -> DockPolicy {
         let mut policy = DockPolicy::default();
         policy.set_allow_contained_floating(true);
-        policy.set_allow_native_surfaces(self == Self::Shared);
+        policy.set_allow_native_surfaces(self != Self::Isolated);
         policy
     }
 }
@@ -82,6 +88,8 @@ struct Workspace {
 struct DemoApp {
     shared: Rc<Workspace>,
     isolated: Rc<Workspace>,
+    restored: BTreeMap<u64, Rc<Workspace>>,
+    next_restore_id: u64,
 }
 
 impl Global for DemoApp {}
@@ -91,6 +99,7 @@ impl DemoApp {
         match kind {
             WorkspaceKind::Shared => self.shared.clone(),
             WorkspaceKind::Isolated => self.isolated.clone(),
+            WorkspaceKind::Restored(id) => self.restored[&id].clone(),
         }
     }
 }
@@ -169,6 +178,20 @@ impl Render for ExamplePanel {
                                 }
                             }))
                             .child("Select Editor"),
+                    )
+                    .child(
+                        div()
+                            .id("restore-isolated-workspace")
+                            .px_3()
+                            .py_2()
+                            .bg(rgb(0xe0f2fe))
+                            .on_click(cx.listener(|panel, _, _, cx| {
+                                let workspace = cx.global::<DemoApp>().workspace(panel.workspace);
+                                if let Err(error) = workspace.restore_isolated_snapshot(cx) {
+                                    log::warn!("isolated native restore failed: {error:#}");
+                                }
+                            }))
+                            .child("Restore last snapshot in a new workspace"),
                     )
                     .child(
                         div()
@@ -532,7 +555,47 @@ impl Workspace {
         .detach();
     }
 
-    fn export_snapshot(&self, cx: &App) -> Result<()> {
+    fn export_snapshot(&self, cx: &mut App) -> Result<()> {
+        let windows = cx.windows();
+        let mut placements = BTreeMap::new();
+        for mount in self.dock.inspection()?.mounts {
+            let Some(handle) = windows
+                .iter()
+                .find(|window| window.window_id().as_u64() == mount.window_id)
+            else {
+                continue;
+            };
+            let placement = handle.update(cx, |_, window, cx| {
+                let window_bounds = window.window_bounds();
+                let bounds = window_bounds.get_bounds();
+                DockLogicalViewportPlacement {
+                    display_id: window.display(cx).map(|display| u64::from(display.id())),
+                    window_bounds: Some(DockLogicalWindowPlacement {
+                        state: match window_bounds {
+                            WindowBounds::Windowed(_) => DockWindowPlacementState::Windowed,
+                            WindowBounds::Maximized(_) => DockWindowPlacementState::Maximized,
+                            WindowBounds::Fullscreen(_) => DockWindowPlacementState::Fullscreen,
+                        },
+                        bounds: DockLogicalPlacementRect {
+                            x: bounds.origin.x.into(),
+                            y: bounds.origin.y.into(),
+                            width: bounds.size.width.into(),
+                            height: bounds.size.height.into(),
+                        },
+                    }),
+                    // Each root in this example fills its own window.
+                    host_bounds: Some(DockLogicalPlacementRect {
+                        x: 0.0,
+                        y: 0.0,
+                        width: window.viewport_size().width.into(),
+                        height: window.viewport_size().height.into(),
+                    }),
+                }
+            })?;
+            for region in mount.regions {
+                placements.insert(region.surface, placement.clone());
+            }
+        }
         let host = DockHostDocument {
             surfaces: self.dock.with_view(|view| {
                 view.surfaces()
@@ -543,7 +606,7 @@ impl Workspace {
                             surface => format!("surface-{}", surface.get()),
                         },
                         surface: surface.id(),
-                        logical_placement: None,
+                        logical_placement: placements.remove(&surface.id()),
                         central_policy: None,
                     })
                     .collect()
@@ -557,10 +620,16 @@ impl Workspace {
                 document == kind.document_id() && kind.pane_keys().contains(&key)
             })?;
         log::info!(
-            "{} snapshot exported: bytes={} surfaces={} saved_surface_preferences={} retained_view_edits={}; document decode validated without opening native windows",
+            "{} snapshot exported: bytes={} surfaces={} logical_window_hints={} saved_surface_preferences={} retained_view_edits={}",
             kind.name(),
             encoded.len(),
             restored.session.view().surfaces().count(),
+            restored
+                .host
+                .surfaces
+                .iter()
+                .filter(|surface| surface.logical_placement.is_some())
+                .count(),
             restored.session.surface_presentation_preferences().count(),
             self.panels
                 .iter()
@@ -569,6 +638,91 @@ impl Workspace {
         );
         *self.last_snapshot.borrow_mut() = Some(encoded);
         Ok(())
+    }
+
+    fn restore_isolated_snapshot(&self, cx: &mut App) -> Result<Rc<Workspace>> {
+        ensure!(
+            self.kind == WorkspaceKind::Shared,
+            "restore this demo's shared workspace"
+        );
+        let encoded = self
+            .last_snapshot
+            .borrow()
+            .clone()
+            .context("export a workspace snapshot before restoring it")?;
+        let restored =
+            DockWorkspaceDocument::restore_json(&encoded, self.kind.policy(), |document, key| {
+                document == self.kind.document_id() && self.kind.pane_keys().contains(&key)
+            })?;
+        let anchor = restored
+            .host
+            .surfaces
+            .iter()
+            .find(|binding| binding.surface == MAIN)
+            .or_else(|| restored.host.surfaces.first())
+            .context("the saved workspace has no surfaces")?
+            .surface;
+        let id = {
+            let app = cx.global_mut::<DemoApp>();
+            let id = app.next_restore_id;
+            app.next_restore_id = id
+                .checked_add(1)
+                .context("restore instance identities exhausted")?;
+            id
+        };
+        let kind = WorkspaceKind::Restored(id);
+        let mut panels = Vec::new();
+        for (key, original) in self.kind.pane_keys().iter().zip(&self.panels) {
+            let item = restored
+                .session
+                .item_id_for_external_key(key)
+                .with_context(|| format!("restored workspace has no pane key {key:?}"))?;
+            let original = original.read(cx);
+            // View state is application-owned. Copy it explicitly into a distinct
+            // View; the source entities and their edits continue to live unchanged.
+            let panel = ExamplePanel {
+                workspace: kind,
+                title: original.title,
+                accent: original.accent,
+                lines: original.lines,
+                edits: original.edits,
+            };
+            panels.push((item, cx.new(|_| panel)));
+        }
+        let workspace = retain_workspace(kind, restored.session, panels, cx)?;
+        *workspace.last_snapshot.borrow_mut() = Some(encoded);
+        // Native open draws immediately. Publish the unique application routing
+        // identity first, and retain it through asynchronous failure cleanup too.
+        cx.global_mut::<DemoApp>()
+            .restored
+            .insert(id, workspace.clone());
+        let opened = workspace.dock.open_restored_native_roots(
+            &restored.host,
+            anchor,
+            |_, _| WindowOptions {
+                titlebar: Some(TitlebarOptions {
+                    title: Some(format!("Open GPUI Restored Workspace {id}").into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            cx,
+        );
+        workspace.dock.when_native_quiescent(
+            move |cx| {
+                if cx.has_global::<DemoApp>() {
+                    cx.global_mut::<DemoApp>().restored.remove(&id);
+                }
+            },
+            cx,
+        )?;
+        let roots = opened?;
+        log::info!(
+            "restored workspace {id}: opened {} fresh native roots; saved presentation states are requests",
+            roots.len()
+        );
+        *workspace.roots.borrow_mut() = roots;
+        Ok(workspace)
     }
 
     fn log_native_observations(&self, cx: &mut App) {
@@ -664,6 +818,8 @@ fn open(cx: &mut App) -> Result<()> {
     cx.set_global(DemoApp {
         shared: shared.clone(),
         isolated: isolated.clone(),
+        restored: BTreeMap::new(),
+        next_restore_id: 1,
     });
     let primary = shared.open_root(MAIN, true, main_window_options(cx), cx)?;
     let isolated_primary = isolated.open_root(MAIN, true, isolated_window_options(cx), cx)?;
@@ -711,4 +867,197 @@ fn main() {
             std::process::exit(1);
         }
     });
+}
+
+#[cfg(test)]
+mod native_restore_tests {
+    use open_gpui::{QuitMode, TestAppContext};
+
+    use super::*;
+
+    fn settle(cx: &mut TestAppContext, workspaces: &[Rc<Workspace>]) {
+        cx.run_until_parked();
+        cx.update(|cx| {
+            for workspace in workspaces {
+                workspace.dock.pump_native(cx);
+            }
+        });
+        cx.run_until_parked();
+        for workspace in workspaces {
+            assert!(
+                workspace.dock.error().is_none(),
+                "{:?}",
+                workspace.dock.error()
+            );
+            assert!(!workspace.dock.is_update_pending());
+        }
+    }
+
+    #[open_gpui::test]
+    fn saved_placement_opens_distinct_workspaces_and_preserves_application_views(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            cx.set_quit_mode(QuitMode::Explicit);
+            open(cx).unwrap();
+        });
+        let (shared, isolated) =
+            cx.read_global::<DemoApp, _>(|app, _| (app.shared.clone(), app.isolated.clone()));
+        settle(cx, &[shared.clone(), isolated.clone()]);
+        let source_preview = shared.panels[3].clone();
+        let source_entity = source_preview.entity_id();
+        let preview = shared.item("preview").unwrap();
+        cx.update(|cx| {
+            source_preview.update(cx, |panel, cx| {
+                panel.edits = 7;
+                cx.notify();
+            });
+        });
+        settle(cx, &[shared.clone(), isolated.clone()]);
+        cx.update(|cx| shared.export_snapshot(cx)).unwrap();
+        let snapshot =
+            DockWorkspaceDocument::decode_json(shared.last_snapshot.borrow().as_ref().unwrap())
+                .unwrap();
+        assert_eq!(snapshot.host().surfaces.len(), 2);
+        for surface in &snapshot.host().surfaces {
+            let placement = surface
+                .logical_placement
+                .as_ref()
+                .expect("a live root must save its logical placement");
+            let bounds = placement.window_bounds.unwrap();
+            assert!(placement.display_id.is_some());
+            assert!(bounds.bounds.width > 0.0 && bounds.bounds.height > 0.0);
+            cx.update_window(shared.roots.borrow()[&surface.surface], |_, window, _| {
+                assert_eq!(
+                    bounds.bounds.x,
+                    f32::from(window.window_bounds().get_bounds().origin.x)
+                );
+                assert_eq!(
+                    bounds.bounds.width,
+                    f32::from(window.window_bounds().get_bounds().size.width)
+                );
+            })
+            .unwrap();
+        }
+
+        let first = cx
+            .update(|cx| shared.restore_isolated_snapshot(cx))
+            .unwrap();
+        let second = cx
+            .update(|cx| shared.restore_isolated_snapshot(cx))
+            .unwrap();
+        let workspaces = [
+            shared.clone(),
+            isolated.clone(),
+            first.clone(),
+            second.clone(),
+        ];
+        settle(cx, &workspaces);
+        assert!(first.kind != second.kind);
+        assert_eq!(cx.windows().len(), 7);
+        cx.read_global::<DemoApp, _>(|app, _| {
+            assert_eq!(app.restored.len(), 2);
+            assert!(Rc::ptr_eq(&app.workspace(first.kind), &first));
+            assert!(Rc::ptr_eq(&app.workspace(second.kind), &second));
+        });
+        for restored in [&first, &second] {
+            assert_eq!(restored.roots.borrow().len(), 2);
+            assert_eq!(restored.item("preview").unwrap(), preview);
+            assert_ne!(restored.panels[3].entity_id(), source_entity);
+            for window in restored.roots.borrow().values() {
+                assert!(
+                    !shared
+                        .roots
+                        .borrow()
+                        .values()
+                        .any(|source| source == window)
+                );
+                assert!(
+                    restored
+                        .dock
+                        .native_callbacks_for_window(window.window_id())
+                        .is_some()
+                );
+                assert!(
+                    shared
+                        .dock
+                        .native_callbacks_for_window(window.window_id())
+                        .is_none()
+                );
+            }
+        }
+        assert_ne!(first.panels[3].entity_id(), second.panels[3].entity_id());
+        cx.update(|cx| {
+            assert_eq!(first.panels[3].read(cx).edits, 7);
+            first.panels[3].update(cx, |panel, cx| {
+                panel.edits = 11;
+                cx.notify();
+            });
+            assert_eq!(source_preview.read(cx).edits, 7);
+            assert_eq!(second.panels[3].read(cx).edits, 7);
+            shared.dock.begin_native_shutdown(cx).unwrap();
+        });
+        settle(cx, &workspaces);
+        assert!(shared.dock.native_is_quiescent());
+        assert_eq!(cx.windows().len(), 5);
+        assert!(!first.dock.native_is_quiescent());
+        assert!(!second.dock.native_is_quiescent());
+        cx.update(|cx| {
+            assert_eq!(source_preview.entity_id(), source_entity);
+            assert_eq!(source_preview.read(cx).edits, 7);
+            for workspace in [&isolated, &first, &second] {
+                workspace.dock.begin_native_shutdown(cx).unwrap();
+            }
+        });
+        settle(cx, &workspaces);
+        assert!(cx.windows().is_empty());
+        assert!(!cx.did_quit());
+        cx.read_global::<DemoApp, _>(|app, _| {
+            assert!(
+                app.restored.is_empty(),
+                "native cleanup must reclaim copies without another restore"
+            );
+        });
+        let third = cx
+            .update(|cx| shared.restore_isolated_snapshot(cx))
+            .unwrap();
+        settle(cx, std::slice::from_ref(&third));
+        cx.read_global::<DemoApp, _>(|app, _| {
+            assert_eq!(
+                app.restored.len(),
+                1,
+                "only the new live restored copy remains"
+            );
+            assert!(Rc::ptr_eq(&app.workspace(third.kind), &third));
+        });
+        cx.update(|cx| third.dock.begin_native_shutdown(cx))
+            .unwrap();
+        settle(cx, std::slice::from_ref(&third));
+        assert!(cx.windows().is_empty());
+    }
+
+    #[open_gpui::test]
+    fn failed_restore_is_reclaimed_after_native_cleanup_without_another_restore(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            cx.set_quit_mode(QuitMode::Explicit);
+            open(cx).unwrap();
+        });
+        let (shared, isolated) =
+            cx.read_global::<DemoApp, _>(|app, _| (app.shared.clone(), app.isolated.clone()));
+        settle(cx, &[shared.clone(), isolated.clone()]);
+        cx.update(|cx| shared.export_snapshot(cx)).unwrap();
+        let original_windows = cx.windows();
+        cx.set_next_window_present_outcome(open_gpui::PlatformWindowPresentOutcome::Rejected);
+        let error = cx.update(|cx| shared.restore_isolated_snapshot(cx));
+        assert!(
+            error.is_err(),
+            "the original renderer rejection must fail restore"
+        );
+        settle(cx, &[shared, isolated]);
+        cx.read_global::<DemoApp, _>(|app, _| assert!(app.restored.is_empty()));
+        assert_eq!(cx.windows(), original_windows);
+        assert!(!cx.did_quit());
+    }
 }

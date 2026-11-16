@@ -124,10 +124,15 @@ pub struct DockNativeInspection {
     pub quiescent: bool,
     /// Whether the native transport FIFO is empty.
     pub transport_empty: bool,
+    /// Original native FIFO head, queued count and rejection; never a replay authority.
+    pub transport: super::native::NativeTransportInspection,
     /// Application-facing native reports retained by the managed host.
     ///
     /// This excludes reports still privately retained by a checked-out bridge.
     pub retained_report_count: usize,
+    /// Historical application observations discarded by the bounded report history.
+    /// Original ingress, internal receipts and unresolved deferred closes are excluded.
+    pub discarded_report_count: u64,
     /// Committed host reports waiting to be handed to the bridge.
     pub pending_host_report_count: usize,
     /// Callback routes still retained by the managed host.
@@ -148,6 +153,8 @@ pub struct DockNativeInspection {
     pub pump_scheduled: bool,
     /// Whether the managed host retains a native pointer continuation task.
     pub continuation_pending: bool,
+    /// The current finite challenge is blocked until a real input changes it.
+    pub continuation_blocked: bool,
     /// Whether the default factory retains a visual-only native preview.
     pub provisional_opening: bool,
     /// Adopted windows still waiting for exact destination submission and core admission.

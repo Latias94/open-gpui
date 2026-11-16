@@ -1,9 +1,307 @@
 //! Small vector-only chrome primitives using the core's published rectangles.
 
-use dockspace::runtime::DockspaceDropDirection;
-use open_gpui::{Bounds, Corners, Hsla, Pixels, Window, fill, point, px, quad, size};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
+
+use dockspace::{
+    geometry::LogicalRect,
+    model::{DockspaceAxis, ItemId},
+    runtime::{
+        DockspaceDropDirection, DockspaceReceiverDescriptor, DockspaceVisualId,
+        PreparedSurfaceAction,
+    },
+};
+use open_gpui::{
+    App, Bounds, Corners, Div, Element, ElementId, GlobalElementId, HitboxId, Hsla,
+    InspectorElementId, LayoutId, PathBuilder, Pixels, Role, Stateful, Window, accesskit, fill,
+    point, px, quad, size,
+};
 
 use crate::adapter::DockspaceColors;
+
+#[derive(Clone, Copy)]
+pub(super) enum Icon {
+    Close,
+    Back,
+    Forward,
+    List,
+    Reveal,
+    Menu,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum ControlKind {
+    Tab(ItemId),
+    Button,
+    Splitter(DockspaceAxis),
+    Junction,
+    MenuRow,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ControlAction {
+    Activate,
+    Close,
+    Previous,
+    Next,
+    First,
+    Last,
+    Decrement,
+    Increment,
+    Minimum,
+    Maximum,
+    Up,
+    Down,
+    Dismiss,
+}
+
+pub(super) type ActionSlot = Rc<RefCell<Option<PreparedSurfaceAction>>>;
+
+pub(super) struct Control {
+    pub(super) id: DockspaceVisualId,
+    pub(super) bounds: LogicalRect,
+    pub(super) kind: ControlKind,
+    pub(super) label: String,
+    pub(super) selected: Option<bool>,
+    pub(super) expanded: Option<bool>,
+    pub(super) value: Option<(f64, f64, f64)>,
+    pub(super) menu_owner: Option<DockspaceVisualId>,
+    pub(super) opens_menu: Option<DockspaceVisualId>,
+    pub(super) focused: bool,
+    pub(super) receiver: Option<DockspaceReceiverDescriptor>,
+    pub(super) actions: Vec<(ControlAction, ActionSlot)>,
+}
+
+impl Control {
+    pub(super) fn new(
+        id: DockspaceVisualId,
+        bounds: LogicalRect,
+        kind: ControlKind,
+        label: String,
+        receiver: Option<DockspaceReceiverDescriptor>,
+    ) -> Self {
+        Self {
+            id,
+            bounds: receiver.map_or(bounds, |receiver| receiver.bounds()),
+            kind,
+            label,
+            selected: None,
+            expanded: None,
+            value: None,
+            menu_owner: None,
+            opens_menu: None,
+            focused: false,
+            receiver,
+            actions: Vec::new(),
+        }
+    }
+
+    pub(super) fn action(&mut self, key: ControlAction, action: Option<PreparedSurfaceAction>) {
+        if let Some(action) = action {
+            self.actions
+                .push((key, Rc::new(RefCell::new(Some(action)))));
+        }
+    }
+
+    pub(super) fn slot(&self, key: ControlAction) -> Option<ActionSlot> {
+        self.actions.iter().find_map(|(candidate, action)| {
+            (*candidate == key && action.borrow().is_some()).then(|| action.clone())
+        })
+    }
+
+    pub(super) fn role(&self) -> Role {
+        match self.kind {
+            ControlKind::Tab(_) => Role::Tab,
+            ControlKind::Button => Role::Button,
+            ControlKind::Splitter(_) | ControlKind::Junction => Role::Splitter,
+            ControlKind::MenuRow => Role::MenuItem,
+        }
+    }
+
+    pub(super) fn key_action(&self, key: &str) -> Option<ControlAction> {
+        use ControlAction::*;
+        match (self.kind, key) {
+            (_, "enter" | "space") => Some(Activate),
+            (ControlKind::Button, "down" | "up") if self.opens_menu.is_some() => Some(Activate),
+            (ControlKind::Tab(_), "left") | (ControlKind::MenuRow, "up") => Some(Previous),
+            (ControlKind::Tab(_), "right") | (ControlKind::MenuRow, "down") => Some(Next),
+            (ControlKind::Tab(_) | ControlKind::MenuRow, "home") => Some(First),
+            (ControlKind::Tab(_) | ControlKind::MenuRow, "end") => Some(Last),
+            (ControlKind::Tab(_), "delete" | "backspace") => Some(Close),
+            (ControlKind::MenuRow, "escape") => Some(Dismiss),
+            (ControlKind::Splitter(DockspaceAxis::Horizontal) | ControlKind::Junction, "left")
+            | (ControlKind::Splitter(DockspaceAxis::Vertical), "up") => Some(Decrement),
+            (ControlKind::Splitter(DockspaceAxis::Horizontal) | ControlKind::Junction, "right")
+            | (ControlKind::Splitter(DockspaceAxis::Vertical), "down") => Some(Increment),
+            (ControlKind::Junction, "up") => Some(Up),
+            (ControlKind::Junction, "down") => Some(Down),
+            (ControlKind::Splitter(_), "home") => Some(Minimum),
+            (ControlKind::Splitter(_), "end") => Some(Maximum),
+            _ => None,
+        }
+    }
+}
+
+pub(super) struct PresentationMenu {
+    pub(super) id: DockspaceVisualId,
+    pub(super) bounds: LogicalRect,
+    pub(super) enabled: bool,
+    pub(super) choices: Vec<(&'static str, Option<ActionSlot>)>,
+}
+
+/// Observes the control's actual hitbox for use as the original core receiver
+/// authority, without inserting a second hitbox over the same rectangle.
+pub(super) struct ControlElement {
+    pub(super) inner: Stateful<Div>,
+    pub(super) hitbox: Rc<Cell<Option<HitboxId>>>,
+}
+
+impl Element for ControlElement {
+    type RequestLayoutState = <Stateful<Div> as Element>::RequestLayoutState;
+    type PrepaintState = <Stateful<Div> as Element>::PrepaintState;
+
+    fn id(&self) -> Option<ElementId> {
+        Element::id(&self.inner)
+    }
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+    fn a11y_role(&self) -> Option<Role> {
+        self.inner.a11y_role()
+    }
+    fn write_a11y_info(&self, node: &mut accesskit::Node) {
+        self.inner.write_a11y_info(node);
+    }
+    fn infer_a11y_scroll_into_view(&self) -> bool {
+        self.inner.infer_a11y_scroll_into_view()
+    }
+
+    fn request_layout(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        inspector: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        self.inner.request_layout(id, inspector, window, cx)
+    }
+
+    fn prepaint(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        inspector: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        request: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self::PrepaintState {
+        let state = self
+            .inner
+            .prepaint(id, inspector, bounds, request, window, cx);
+        self.hitbox.set(state.0.as_ref().map(|hitbox| hitbox.id));
+        state
+    }
+
+    fn paint(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        inspector: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        request: &mut Self::RequestLayoutState,
+        prepared: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.inner
+            .paint(id, inspector, bounds, request, prepared, window, cx);
+    }
+}
+
+pub(super) fn paint_icon(
+    bounds: Bounds<Pixels>,
+    icon: Icon,
+    enabled: bool,
+    colors: &DockspaceColors,
+    window: &mut Window,
+) {
+    let center = bounds.center();
+    let radius = px(4.0)
+        .min(bounds.size.width / 4.0)
+        .min(bounds.size.height / 4.0);
+    let color = if enabled {
+        colors.muted_text
+    } else {
+        colors.muted_text.opacity(0.4)
+    };
+    if matches!(icon, Icon::Menu) {
+        for offset in [-1.0, 0.0, 1.0] {
+            window.paint_quad(fill(
+                Bounds::new(
+                    center + point(radius * offset - px(1.0), -px(1.0)),
+                    size(px(2.0), px(2.0)),
+                ),
+                color,
+            ));
+        }
+        return;
+    }
+    let mut path = PathBuilder::stroke(px(1.5));
+    let mut line = |from, to| {
+        path.move_to(from);
+        path.line_to(to);
+    };
+    match icon {
+        Icon::Close => {
+            line(
+                center + point(-radius, -radius),
+                center + point(radius, radius),
+            );
+            line(
+                center + point(-radius, radius),
+                center + point(radius, -radius),
+            );
+        }
+        Icon::Back | Icon::Forward => {
+            let direction = if matches!(icon, Icon::Back) {
+                -1.0
+            } else {
+                1.0
+            };
+            line(
+                center + point(-radius * direction / 2.0, -radius),
+                center + point(radius * direction / 2.0, px(0.0)),
+            );
+            line(
+                center + point(radius * direction / 2.0, px(0.0)),
+                center + point(-radius * direction / 2.0, radius),
+            );
+        }
+        Icon::List => {
+            for offset in [-1.0, 0.0, 1.0] {
+                line(
+                    center + point(-radius, radius * offset),
+                    center + point(radius, radius * offset),
+                );
+            }
+        }
+        Icon::Reveal => {
+            line(
+                center + point(-radius, radius / 2.0),
+                center + point(px(0.0), -radius / 2.0),
+            );
+            line(
+                center + point(px(0.0), -radius / 2.0),
+                center + point(radius, radius / 2.0),
+            );
+        }
+        Icon::Menu => {}
+    }
+    if let Ok(path) = path.build() {
+        window.paint_path(path, color);
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(super) struct GuideState {

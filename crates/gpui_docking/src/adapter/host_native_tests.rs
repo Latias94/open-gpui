@@ -66,6 +66,136 @@ fn finish(cx: &mut TestAppContext, dock: &DockSurface) {
     assert!(dock.error().is_none(), "{:?}", dock.error());
 }
 
+#[open_gpui::test]
+fn bounded_observations_preserve_original_deferred_close_decisions(cx: &mut TestAppContext) {
+    let dock = cx.update(workspace);
+    dock.set_native_close_policy(NativeCloseDecision::Defer)
+        .unwrap();
+    cx.update(|cx| dock.open_native_root(SECOND, true, WindowOptions::default(), cx))
+        .unwrap();
+    let window = cx
+        .update(|cx| dock.open_native_root(FIRST, false, WindowOptions::default(), cx))
+        .unwrap();
+    finish(cx, &dock);
+    dock.take_native_reports();
+    assert!(!cx.simulate_window_close(window));
+    finish(cx, &dock);
+    let close = {
+        let mut host = dock.host.borrow_mut();
+        let reports = &mut host.native.as_mut().unwrap().reports;
+        let close = reports
+            .iter()
+            .find_map(|report| match report {
+                NativeReport::CloseRequested(close) => Some(*close),
+                _ => None,
+            })
+            .expect("original deferred close");
+        for _ in 0..1024 {
+            reports.push_deferred_close(close);
+        }
+        for _ in 0..1024 {
+            reports.push_back(NativeReport::Unsupported {
+                operation: "history pressure",
+            });
+        }
+        assert_eq!(reports.len(), 257);
+        close
+    };
+    assert!(
+        dock.inspection()
+            .unwrap()
+            .native
+            .unwrap()
+            .discarded_report_count
+            > 0
+    );
+    let reports = dock.take_native_reports();
+    assert!(
+        matches!(reports.first(), Some(NativeReport::CloseRequested(retained)) if *retained == close)
+    );
+    cx.update(|cx| dock.decide_native_close(close, NativeCloseDecision::Veto, cx))
+        .unwrap();
+    finish(cx, &dock);
+    assert!(cx.update_window(window, |_, _, _| ()).is_ok());
+    cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();
+    finish(cx, &dock);
+    assert!(dock.native_is_quiescent());
+}
+
+#[open_gpui::test]
+fn primary_failure_rejects_new_native_roots_before_creating_physical_owners(
+    cx: &mut TestAppContext,
+) {
+    let dock = cx.update(workspace);
+    dock.host.borrow_mut().failure = Some(crate::DockHostFailure {
+        message: "original protocol rejection".into(),
+        runtime_kind: Some(DockspaceRuntimeErrorKind::HostProtocol),
+        native_kind: None,
+    });
+    let before = dock.inspection().unwrap();
+    cx.update(|cx| {
+        let failure = dock
+            .open_native_root(FIRST, true, WindowOptions::default(), cx)
+            .unwrap_err();
+        assert!(matches!(
+            failure.root_binding,
+            Some(NativeBridgeError::Admission(_))
+        ));
+        assert!(failure.source.is_none());
+        assert!(failure.retirement_ticket.is_none());
+        assert!(cx.windows().is_empty());
+    });
+    assert_eq!(dock.inspection().unwrap(), before);
+    cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();
+    cx.run_until_parked();
+    assert!(
+        dock.native_is_quiescent(),
+        "the admission error must not block original cleanup"
+    );
+    assert_eq!(
+        dock.failure().unwrap().message,
+        "original protocol rejection"
+    );
+}
+
+#[open_gpui::test]
+fn quiescence_notification_waits_for_original_native_terminal_and_runs_outside_the_borrow(
+    cx: &mut TestAppContext,
+) {
+    let dock = cx.update(workspace);
+    let window = cx
+        .update(|cx| dock.open_native_root(FIRST, true, WindowOptions::default(), cx))
+        .unwrap();
+    finish(cx, &dock);
+    let held = cx.hold_window_native_terminal(window);
+    let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+    let observed = calls.clone();
+    let weak = std::rc::Rc::downgrade(&dock.host);
+    cx.update(|cx| {
+        dock.when_native_quiescent(
+            move |_| {
+                let dock = DockSurface {
+                    host: weak.upgrade().unwrap(),
+                };
+                assert!(dock.native_is_quiescent());
+                assert!(dock.inspection().unwrap().native.unwrap().quiescent);
+                observed.set(observed.get() + 1);
+            },
+            cx,
+        )
+        .unwrap();
+        dock.begin_native_shutdown(cx).unwrap();
+    });
+    cx.run_until_parked();
+    assert_eq!(calls.get(), 0);
+    assert!(!dock.native_is_quiescent());
+    assert!(held.release());
+    finish(cx, &dock);
+    assert_eq!(calls.get(), 1);
+    cx.update(|cx| dock.pump_native(cx));
+    assert_eq!(calls.get(), 1);
+}
+
 fn commit_native(session: &mut DockspaceSession) -> HostFrameReport {
     let mut frame = session
         .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)

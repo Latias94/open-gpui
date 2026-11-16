@@ -29,6 +29,45 @@ use crate::adapter::native::{NativeBridge, NativeBridgeError, NativeCallbacks, N
 
 struct DragView;
 
+#[open_gpui::test]
+fn inspection_retains_original_rejected_head_without_consuming_or_replaying_it(
+    cx: &mut TestAppContext,
+) {
+    use dockspace::{
+        policy::DockPolicy,
+        runtime::{NativeHostCapabilities, NativeHostErrorKind},
+    };
+    let mut session =
+        DockspaceSession::from_layout(DockspaceLayout::empty(), DockPolicy::default()).unwrap();
+    let transport = super::NativeTransport::new(|_| {});
+    let mut bridge = NativeBridge::enable(
+        &mut session,
+        transport.clone(),
+        NativeHostCapabilities::none_supported(),
+        None,
+    )
+    .unwrap();
+    cx.update(|cx| transport.device_removed(cx));
+    let mut unavailable =
+        DockspaceSession::from_layout(DockspaceLayout::empty(), DockPolicy::default()).unwrap();
+    assert!(bridge.collect(&mut unavailable).is_err());
+    let before = transport.inspection();
+    assert_eq!(before.front_record, Some("device-removed"));
+    assert_eq!(before.queued_record_count, 1);
+    assert_eq!(
+        before.rejection.as_ref().unwrap().native_kind,
+        Some(NativeHostErrorKind::NotEnabled)
+    );
+    assert_eq!(transport.inspection(), before);
+    assert!(bridge.collect(&mut unavailable).is_err());
+    assert_eq!(transport.inspection(), before);
+    assert_eq!(bridge.collect(&mut session).unwrap(), 1);
+    let after = transport.inspection();
+    assert_eq!(after.queued_record_count, 0);
+    assert!(after.front_record.is_none());
+    assert!(after.rejection.is_none());
+}
+
 impl Render for DragView {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div().id("ordered-native-drag").size_full().on_drag(
@@ -1476,4 +1515,249 @@ fn natural_capture_release_failure_stays_latched_until_the_actual_native_termina
         NativeReport::Unsupported { operation }
             if *operation == "observing the original native capture release after drag retirement"
     )), "{reports:?}");
+}
+
+fn uncollected_focus_transport(
+    cx: &mut open_gpui::App,
+) -> (
+    DockspaceSession,
+    NativeBridge,
+    NativeSurfaceBinding,
+    AnyWindowHandle,
+) {
+    use dockspace::{
+        policy::DockPolicy,
+        runtime::{HostWindowToken, NativeHostCapabilities, NativeHostCapability},
+    };
+    use open_gpui::{AppContext as _, WindowOptions};
+
+    let surface = SurfaceId::new(1);
+    let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+        surface,
+        DockspaceRootLayout::new(RootId::new(1), DockspaceNode::tabs([ItemId::new(1)])),
+    )])
+    .unwrap();
+    let mut session = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
+    let capabilities = NativeHostCapabilities::none_supported()
+        .with(NativeHostCapability::AuthoritativeInventory)
+        .with(NativeHostCapability::GlobalFocusObservation);
+    let mut bridge = NativeBridge::enable(
+        &mut session,
+        super::NativeTransport::new(|_| {}),
+        capabilities,
+        None,
+    )
+    .unwrap();
+    let window: AnyWindowHandle = cx
+        .open_window_detailed(WindowOptions::default(), |_, cx| cx.new(|_| Empty))
+        .unwrap()
+        .into();
+    session
+        .register_native_root(surface, HostWindowToken::new(window.window_id().as_u64()))
+        .unwrap();
+    let mut frame = session
+        .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+        .unwrap();
+    frame
+        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+        .unwrap();
+    let report = frame.commit().unwrap();
+    let binding = report.native_bindings()[0];
+    bridge.accept_report(report);
+    bridge
+        .bind_window(binding.window(), window, false, cx)
+        .unwrap();
+    window
+        .update(cx, |_, window, _| {
+            let _ = window.activate_window();
+        })
+        .unwrap();
+    (session, bridge, binding, window)
+}
+
+#[open_gpui::test]
+fn initial_focus_follows_the_first_window_inventory(cx: &mut TestAppContext) {
+    use dockspace::runtime::HostInputOutcome;
+
+    let (mut session, mut bridge, binding, _) = cx.update(uncollected_focus_transport);
+    cx.run_until_parked();
+    let transport = bridge.transport();
+    let (queued, focus_count) = {
+        let queue = transport.0.queue.borrow();
+        let inventory = queue
+            .iter()
+            .position(|record| matches!(record, Inbound::Observed(owner, _) if *owner == binding.window()))
+            .expect("installation must publish the first window inventory");
+        let focus = queue
+            .iter()
+            .position(|record| matches!(record, Inbound::FocusedWindow(_)))
+            .expect("installation must sample initial focus with the capability enabled");
+        assert!(
+            inventory < focus,
+            "initial focus cannot precede its inventory"
+        );
+        let focus_count = queue
+            .iter()
+            .filter(|record| matches!(record, Inbound::FocusedWindow(_)))
+            .count();
+        (queue.len(), focus_count)
+    };
+    assert_eq!(
+        bridge
+            .collect(&mut session)
+            .expect("initial focus must record"),
+        queued,
+    );
+    let mut frame = session
+        .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+        .unwrap();
+    frame
+        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+        .unwrap();
+    let report = frame.commit().unwrap();
+    let inventory = report
+        .inputs()
+        .iter()
+        .position(|input| {
+            matches!(
+                input,
+                HostInputOutcome::NativePlatformSnapshotApplied { .. }
+            )
+        })
+        .expect("the initial inventory must commit");
+    let focus = report
+        .inputs()
+        .iter()
+        .position(|input| matches!(input, HostInputOutcome::NativeFocusObservationApplied))
+        .expect("initial focus must reach the core instead of being silently skipped");
+    assert!(inventory < focus);
+    assert_eq!(
+        report
+            .inputs()
+            .iter()
+            .filter(|input| matches!(input, HostInputOutcome::NativeFocusObservationApplied))
+            .count(),
+        focus_count,
+    );
+    bridge.accept_report(report);
+    assert!(session.is_current_native_binding(binding));
+    assert!(!session.has_pending_native_input());
+    assert!(transport.is_empty());
+    assert!(transport.inspection().rejection.is_none());
+}
+
+#[open_gpui::test]
+fn retired_focus_does_not_block_the_original_native_terminal_suffix(cx: &mut TestAppContext) {
+    use dockspace::runtime::{HostInputOutcome, NativeGlobalFocus, NativeHostErrorKind};
+    use open_gpui::PlatformFocusedWindow;
+
+    let (mut session, mut bridge, binding, window) = cx.update(uncollected_focus_transport);
+    cx.run_until_parked();
+    commit_capture_transport(&mut session, &mut bridge);
+    let transport = bridge.transport();
+    assert!(transport.is_empty());
+    let observed_focus = cx.update(|cx| cx.focused_window());
+    assert_eq!(observed_focus, PlatformFocusedWindow::Window(window));
+    assert!(session.is_current_native_binding(binding));
+    let callbacks = bridge.callbacks(binding.window()).unwrap();
+
+    // Removing the surface retires its whole native window, unlike a same-surface
+    // root continuation, which installs a current successor on the same handle.
+    let reset = session
+        .prepare_layout_reset(DockspaceLayout::empty())
+        .unwrap();
+    let mut frame = session
+        .begin_native_layout_reset_frame(&reset, |_| NativeReceiverAnswer::Unknown)
+        .unwrap();
+    frame
+        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+        .unwrap();
+    let report = frame.commit().unwrap();
+    assert!(report.native_root_continuations().is_empty());
+    bridge.accept_report(report);
+    bridge.take_reports();
+    assert!(!session.is_current_native_binding(binding));
+    assert!(session.recognizes_native_window_binding(binding.window()));
+    let current: Vec<_> = session.native_window_bindings().collect();
+    assert!(
+        current.is_empty(),
+        "the removed window must be retired: {current:?}"
+    );
+    assert_eq!(
+        bridge.binding_for_window(window.window_id()),
+        Some(binding.window())
+    );
+    let recorded = session.native_input_recorded_count();
+    let error = session
+        .report_native_global_focus(NativeGlobalFocus::Dock(binding.window()))
+        .expect_err("the real retired binding must reject its old Dock focus");
+    assert_eq!(error.native_kind(), Some(NativeHostErrorKind::StaleBinding));
+    assert_eq!(session.native_input_recorded_count(), recorded);
+
+    cx.update(|cx| transport.focused_window(observed_focus, cx));
+    let held = cx.hold_window_native_terminal(window);
+    cx.update_window(window, |_, window, cx| window.remove_window(cx))
+        .unwrap();
+    cx.run_until_parked();
+    assert!(held.release());
+    cx.run_until_parked();
+    let queued = {
+        let queue = transport.0.queue.borrow();
+        assert!(
+            matches!(queue.front(), Some(Inbound::FocusedWindow(focus)) if *focus == observed_focus)
+        );
+        assert!(
+            queue.iter().any(|record| matches!(record,
+                Inbound::NativeTerminal(owner, _) if *owner == binding.window()
+            )),
+            "the real terminal must be queued behind the delayed focus"
+        );
+        queue.len()
+    };
+    assert_eq!(
+        bridge
+            .collect(&mut session)
+            .expect("retired focus must not retain the FIFO head ahead of native terminal"),
+        queued,
+    );
+    assert!(transport.is_empty());
+    assert!(transport.inspection().rejection.is_none());
+    let reports = bridge.take_reports();
+    let logical = reports
+        .iter()
+        .position(|report| matches!(report, NativeReport::LogicalClosed(owner) if *owner == binding.window()))
+        .expect("the original logical close must be consumed");
+    let terminal = reports
+        .iter()
+        .position(|report| matches!(report, NativeReport::NativeTerminal(owner) if *owner == binding.window()))
+        .expect("the original native terminal must be consumed");
+    assert!(logical < terminal);
+    let mut frame = session
+        .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+        .unwrap();
+    frame
+        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+        .unwrap();
+    let report = frame.commit().unwrap();
+    let focus = report
+        .inputs()
+        .iter()
+        .position(|input| matches!(input, HostInputOutcome::NativeFocusObservationApplied))
+        .expect("the retired focus observation must commit");
+    let terminal = report
+        .inputs()
+        .iter()
+        .position(|input| {
+            matches!(
+                input,
+                HostInputOutcome::NativePlatformSnapshotApplied { .. }
+            )
+        })
+        .expect("the original terminal snapshot must commit");
+    assert!(focus < terminal);
+    bridge.accept_report(report);
+    assert!(!session.has_pending_native_input());
+    callbacks
+        .seal()
+        .expect("the real terminal must settle callback custody");
 }

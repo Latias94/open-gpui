@@ -29,10 +29,10 @@ pub mod prelude;
 mod visual_style;
 
 pub use adapter::{
-    DockHostFailure, DockInspectionError, DockModelSurfaceInspection, DockMountInspection,
-    DockNativeInspection, DockPane, DockRegion, DockRegionInspection, DockSurface,
-    DockSurfaceInspection, DockspaceColors, DockspaceInputBindings, GpuiDockspaceConfig, dockspace,
-    native, persistence,
+    DockHostAdmissionError, DockHostFailure, DockInspectionError, DockModelSurfaceInspection,
+    DockMountInspection, DockNativeInspection, DockNativeRestoreError, DockPane, DockPaneError,
+    DockRegion, DockRegionInspection, DockSurface, DockSurfaceInspection, DockspaceColors,
+    DockspaceInputBindings, GpuiDockspaceConfig, dockspace, native, native_restore, persistence,
 };
 pub use visual_style::{
     DockDragVisualStyle, DockDropGuidePalette, DockDropGuideVisualState, DockFloatingVisualStyle,

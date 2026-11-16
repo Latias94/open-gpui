@@ -10,7 +10,7 @@ use std::{
 use anyhow::{Result, ensure};
 use dockspace::{
     geometry::{LogicalPoint, LogicalRect, LogicalSize},
-    model::{DockPlacement, DockspaceView, ItemId, RootId, SurfaceId},
+    model::{DockPlacement, DockspaceView, ItemId, SurfaceId},
     runtime::{
         DockspaceHostFrame, DockspaceSession, HostFrameReport, HostInputOutcome,
         NativeEffectRequest, SurfacePresentationArtifact, SurfaceUnavailableReason,
@@ -28,6 +28,34 @@ use super::{
 
 pub(super) type SharedHost = Rc<RefCell<HostState>>;
 
+/// Application intent was rejected after an original protocol or internal failure.
+///
+/// This diagnostic does not reset the session or revoke the original owners'
+/// native, input and renderer cleanup paths.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("docking host rejected application intent after a primary failure: {}", .failure.message)]
+pub struct DockHostAdmissionError {
+    /// The retained primary failure, copied without consuming its original owner.
+    pub failure: DockHostFailure,
+}
+
+/// Admission failures for pane metadata and registration lifecycle operations.
+///
+/// Pane methods return `anyhow::Result`; these failures can be downcast separately
+/// from core runtime errors and native shutdown's `NativeBridgeError::Draining`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum DockPaneError {
+    /// An original update, input, presentation or retained packet still owns the content.
+    #[error("docking pane lifecycle is busy")]
+    Busy,
+    /// No application View is registered for this identity, including closed history.
+    #[error("docking pane {0:?} is not registered")]
+    UnknownPane(ItemId),
+    /// An open pane must complete its semantic close before releasing its View.
+    #[error("docking pane {0:?} is still open")]
+    PaneOpen(ItemId),
+}
+
 /// A distinct View instance. Multiple Views may share an application document.
 #[derive(Clone)]
 pub struct DockPane {
@@ -35,6 +63,7 @@ pub struct DockPane {
     pub(super) title: SharedString,
     pub(super) view: AnyView,
     pub(super) minimum_size: LogicalSize,
+    pub(super) content_focus: Option<FocusHandle>,
 }
 
 impl DockPane {
@@ -45,12 +74,19 @@ impl DockPane {
             title: title.into(),
             view: view.into(),
             minimum_size: LogicalSize::new(120.0, 90.0).expect("valid default pane size"),
+            content_focus: None,
         }
     }
 
     /// Sets the content minimum used by the session's layout projection.
     pub fn with_minimum_size(mut self, minimum_size: LogicalSize) -> Self {
         self.minimum_size = minimum_size;
+        self
+    }
+
+    /// Binds the content's existing focus target without replacing its View.
+    pub fn with_focus_handle(mut self, focus: FocusHandle) -> Self {
+        self.content_focus = Some(focus);
         self
     }
 
@@ -242,7 +278,8 @@ impl DockSurface {
     /// replaced. Reopen an already registered pane through [`Self::update`].
     /// The registration publishes only after the sole semantic frame commits.
     /// A busy lease, rejected placement or failed commit leaves it unregistered.
-    /// A managed workspace rejects registration after native shutdown begins.
+    /// Native shutdown and a primary protocol failure reject registration before
+    /// the session or application registry changes.
     pub fn open_pane(&self, pane: DockPane, placement: DockPlacement, cx: &mut App) -> Result<()> {
         let mut host = self
             .host
@@ -291,14 +328,121 @@ impl DockSurface {
         Ok(())
     }
 
+    /// Atomically replaces a registered pane's title and content minimum.
+    ///
+    /// The original View, identity and content focus binding remain retained.
+    /// Closed registrations can be updated before reopening. Unknown identities
+    /// return [`DockPaneError::UnknownPane`]. An unaccepted candidate, queued
+    /// input, gesture or presentation transition returns [`DockPaneError::Busy`].
+    /// Accepted renderer outputs may finish with their original metadata; the
+    /// next encoding uses fresh measurements. Native shutdown and a primary
+    /// protocol failure reject changes before publishing metadata.
+    /// A failed operation leaves both metadata and measurement authority intact.
+    pub fn update_pane_metadata(
+        &self,
+        item: ItemId,
+        title: impl Into<SharedString>,
+        minimum_size: LogicalSize,
+        cx: &mut App,
+    ) -> Result<()> {
+        let title = title.into();
+        let mut host = self
+            .host
+            .try_borrow_mut()
+            .map_err(|_| DockPaneError::Busy)?;
+        host.ensure_application_admission()?;
+        ensure!(
+            host.panels.contains_key(&item),
+            DockPaneError::UnknownPane(item)
+        );
+        ensure!(!host.has_pane_lifecycle_work(), DockPaneError::Busy);
+        let HostState {
+            session,
+            mounts,
+            native,
+            panels,
+            ..
+        } = &mut *host;
+        let pane = panels
+            .get_mut(&item)
+            .ok_or(DockPaneError::UnknownPane(item))?;
+        // Even an unchanged value must respect the session's original update lease.
+        let mut frame = host_native::begin_frame(session, mounts, native.as_ref(), None, cx)?;
+        if pane.title == title && pane.minimum_size == minimum_size {
+            return Ok(());
+        }
+        let surface = frame.view().item(item).map(|item| item.surface());
+        if let Some(surface) = surface {
+            // Dirty GPUI packets alone do not revoke cached core measurements.
+            // A deferred contribution requires the next pass to measure again.
+            frame.defer_surface(surface, SurfaceUnavailableReason::Deferred)?;
+        }
+        let report = frame.commit()?;
+        pane.title = title;
+        pane.minimum_size = minimum_size;
+        host.apply_report(report);
+        if let Some(surface) = surface {
+            if let Some(owner) = host.owners.get(&surface).copied() {
+                if let Some(region) = host
+                    .mounts
+                    .get_mut(&owner)
+                    .and_then(|mount| mount.regions.get_mut(&surface))
+                {
+                    region.dirty = true;
+                }
+            }
+        }
+        drop(host);
+        cx.refresh_windows();
+        host_native::pump(&self.host, cx);
+        Ok(())
+    }
+
+    /// Takes a closed pane's registration and its original application View.
+    ///
+    /// Drop the returned pane to release the registration's content ownership,
+    /// or pass it to [`Self::open_pane`] to register that same View again. The
+    /// session's external-key history and document generation are preserved.
+    ///
+    /// Returns [`DockPaneError::Busy`] until input and presentation work drains
+    /// and every retained mount has replaced its pre-close packet and input
+    /// tree, or retired. Dirty or detached mounts and deferred renderer outputs
+    /// cannot prove this boundary. A pruned surface with a retained diagnostic
+    /// must retire its mount. Retry after real frames or mount retirement;
+    /// this method never discards their owners.
+    /// Open and unknown panes return their respective [`DockPaneError`] values.
+    /// Native shutdown and a primary protocol failure reject registration changes
+    /// before removing any content.
+    pub fn take_closed_pane(&self, item: ItemId) -> Result<DockPane> {
+        let mut host = self
+            .host
+            .try_borrow_mut()
+            .map_err(|_| DockPaneError::Busy)?;
+        host.ensure_application_admission()?;
+        ensure!(
+            host.panels.contains_key(&item),
+            DockPaneError::UnknownPane(item)
+        );
+        ensure!(
+            host.session.view().item(item).is_none(),
+            DockPaneError::PaneOpen(item)
+        );
+        ensure!(host.can_release_closed_pane(), DockPaneError::Busy);
+        host.panels
+            .remove(&item)
+            .ok_or_else(|| DockPaneError::UnknownPane(item).into())
+    }
+
     /// Applies application intent atomically and requests fresh physical frames.
     ///
     /// The callback can use current-frame docking and close-decision APIs. It
     /// cannot manufacture a painted output or a submitted presentation.
     /// A still-prepared candidate owns the sole semantic update; callers may
     /// wait on [`Self::is_update_pending`] before issuing a new synchronous intent.
-    /// Native shutdown rejects new intent before invoking the callback. Original
-    /// renderer and native cleanup continue through their separate owners.
+    /// Native shutdown and a primary protocol failure reject new intent before
+    /// invoking the callback. The latter returns [`DockHostAdmissionError`]
+    /// with the retained original diagnostic. Renderer and native cleanup
+    /// continue through their separate owners.
     pub fn update<R>(
         &self,
         update: impl FnOnce(&mut DockspaceHostFrame<'_>) -> Result<R>,
@@ -328,7 +472,11 @@ impl DockSurface {
     /// is intentionally available only with `test-support`; applications should expose their
     /// own recovery command or presentation affordance instead of using this seam.
     #[cfg(feature = "test-support")]
-    pub fn submit_native_dock_back_for_test(&self, root: RootId, cx: &mut App) -> Result<()> {
+    pub fn submit_native_dock_back_for_test(
+        &self,
+        root: dockspace::model::RootId,
+        cx: &mut App,
+    ) -> Result<()> {
         let action = {
             let host = self.host.borrow();
             host.session
@@ -424,7 +572,17 @@ pub(super) struct RegionState {
 }
 
 impl HostState {
-    fn ensure_application_admission(&self) -> Result<()> {
+    pub(super) fn ensure_application_admission(&self) -> Result<()> {
+        if let Some(failure) = self
+            .failure
+            .as_ref()
+            .filter(|failure| failure.is_primary_protocol_failure())
+        {
+            return Err(DockHostAdmissionError {
+                failure: failure.clone(),
+            }
+            .into());
+        }
         if self
             .native
             .as_ref()
@@ -441,6 +599,58 @@ impl HostState {
                 .pending
                 .as_ref()
                 .is_some_and(|pending| pending.update.is_some())
+        })
+    }
+
+    fn has_pane_lifecycle_work(&self) -> bool {
+        self.has_unaccepted_update()
+            || !self.inputs.is_empty()
+            || self.session.has_active_gesture()
+            || self.session.has_pending_presentation()
+            || self.session.has_pending_native_input()
+            || self
+                .native
+                .as_ref()
+                .is_some_and(|native| !native.can_dispatch_close() || !native.transport.is_empty())
+    }
+
+    fn can_release_closed_pane(&self) -> bool {
+        if self.has_pane_lifecycle_work()
+            || self.presentation_pending
+            || !self.unavailable_surfaces.is_empty()
+            || !self.native_effects.is_empty()
+            || self.session.has_pending_native_create()
+            || !self.close_requests.is_empty()
+            || self.close_dispatching
+        {
+            return false;
+        }
+        self.mounts.iter().all(|(owner, mount)| {
+            mount.pending.is_none()
+                && mount.wake.is_none()
+                && mount.regions.iter().all(|(surface, region)| {
+                    if region.packet.is_none() {
+                        return mount
+                            .input_frames
+                            .iter()
+                            .all(|frame| frame.surface != *surface);
+                    }
+                    // Every topology commit dirties all regions. Only accepting a
+                    // replacement packet can clear that dirt with no pending ticket.
+                    // Require its corresponding input tree and real presentation too.
+                    // A pruned surface instead encodes an empty physical slot.
+                    // Without an artifact to check, an earlier failed candidate
+                    // makes that proof unavailable until the mount retires.
+                    mount.attached
+                        && !region.dirty
+                        && mount
+                            .input_frames
+                            .iter()
+                            .any(|frame| frame.surface == *surface && frame.serial == mount.serial)
+                        && (input::is_presented(self, *owner, *surface, mount.serial)
+                            || (self.failure.is_none()
+                                && self.session.view().surface(*surface).is_none()))
+                })
         })
     }
 
@@ -614,3 +824,7 @@ impl HostState {
 #[cfg(test)]
 #[path = "host_facade_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "host_pane_lifecycle_tests.rs"]
+mod pane_lifecycle_tests;

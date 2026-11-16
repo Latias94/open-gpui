@@ -65,7 +65,13 @@ fn inspection() -> DockSurfaceInspection {
             bridge_available: false,
             quiescent: false,
             transport_empty: false,
+            transport: open_gpui_docking::native::NativeTransportInspection {
+                queued_record_count: 1,
+                front_record: Some("pointer"),
+                rejection: None,
+            },
             retained_report_count: 4,
+            discarded_report_count: 0,
             pending_host_report_count: 2,
             callback_window_count: 1,
             root_window_count: 1,
@@ -79,6 +85,7 @@ fn inspection() -> DockSurfaceInspection {
             provisional_retirement_count: 0,
             pump_scheduled: true,
             continuation_pending: false,
+            continuation_blocked: false,
         }),
         last_error: None,
     }

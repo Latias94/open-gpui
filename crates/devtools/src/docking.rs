@@ -166,8 +166,23 @@ pub struct DockingNativeRow {
     pub quiescent: bool,
     /// Whether the transport FIFO is empty.
     pub transport_empty: bool,
+    /// Records retained by the original native callback FIFO.
+    #[serde(default)]
+    pub queued_ingress_count: usize,
+    /// Diagnostic record kind at the original FIFO head.
+    #[serde(default)]
+    pub ingress_head: Option<String>,
+    /// Stable core failure category of the retained rejection, if classified.
+    #[serde(default)]
+    pub ingress_runtime_error: Option<String>,
+    /// Stable native failure category of the retained rejection, if classified.
+    #[serde(default)]
+    pub ingress_native_error: Option<String>,
     /// Application-facing reports retained by the managed host.
     pub retained_report_count: usize,
+    /// Historical observations discarded after internal processing.
+    #[serde(default)]
+    pub discarded_report_count: u64,
     /// Committed host reports waiting for the bridge.
     pub pending_host_report_count: usize,
     /// Retained physical callback routes.
@@ -188,6 +203,9 @@ pub struct DockingNativeRow {
     pub pump_scheduled: bool,
     /// Whether the host retains a pointer continuation task.
     pub continuation_pending: bool,
+    /// The finite stationary challenge awaits real input after unavailable sampling.
+    #[serde(default)]
+    pub continuation_blocked: bool,
 }
 
 /// Projects an owned inspection without reading or advancing the live host.
@@ -341,7 +359,22 @@ impl From<&DockNativeInspection> for DockingNativeRow {
             bridge_available: source.bridge_available,
             quiescent: source.quiescent,
             transport_empty: source.transport_empty,
+            queued_ingress_count: source.transport.queued_record_count,
+            ingress_head: source.transport.front_record.map(str::to_owned),
+            ingress_runtime_error: source
+                .transport
+                .rejection
+                .as_ref()
+                .and_then(|failure| failure.runtime_kind)
+                .map(|kind| format!("{kind:?}")),
+            ingress_native_error: source
+                .transport
+                .rejection
+                .as_ref()
+                .and_then(|failure| failure.native_kind)
+                .map(|kind| format!("{kind:?}")),
             retained_report_count: source.retained_report_count,
+            discarded_report_count: source.discarded_report_count,
             pending_host_report_count: source.pending_host_report_count,
             callback_window_count: source.callback_window_count,
             root_window_count: source.root_window_count,
@@ -352,6 +385,7 @@ impl From<&DockNativeInspection> for DockingNativeRow {
             pending_root_quiescence_count: source.pending_root_quiescence_count,
             pump_scheduled: source.pump_scheduled,
             continuation_pending: source.continuation_pending,
+            continuation_blocked: source.continuation_blocked,
         }
     }
 }
