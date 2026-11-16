@@ -8,6 +8,10 @@ git_commit: b42e138306195ac03e7d8288b5fe3fdd6742ba2a
 
 # Dockspace Core Follow-ups and GPUI Integration Repairs
 
+The later [e812 adoption record](dockspace-e812-adoption-20261116.md) tracks
+upstream fixes for this backlog and their GPUI migration. This record retains
+the earlier dependency pin and original qualification results.
+
 ## Baseline and ownership
 
 The investigation starts at Open-GPUI `77eaead0b388` and dockspace
