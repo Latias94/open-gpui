@@ -70,6 +70,24 @@ ADRs 0029, 0030 and 0031 continue to govern platform and renderer ownership:
   A current replacement owner suppresses stale loss, and ordinary prepaint rejection does not
   by itself revoke the previous displayed scene.
 
+Successful native drain and failed-generation termination are separate results.
+The application may explicitly call `begin_failed_native_shutdown` after an
+original protocol/internal failure when retrying that generation is no longer
+appropriate. The host freezes admission and retains the session, accepted FIFO,
+requests, results and output owners while GPUI independently retires physical
+resources. Children and provisional resources retire before the anchor. Anchor
+rollback tickets must not block closing the non-anchor roots they depend on.
+Capture completion delivery, mutation/focus handoffs, renderer shutdown and
+original native terminal callbacks remain independent obligations.
+
+`native_is_quiescent` and `when_native_quiescent` continue to mean successful
+semantic drain. `native_termination` and `when_native_terminated` additionally
+report `DockNativeTermination::Failed` after physical termination, without
+consuming the rejected prefix or reusing its protocol. Reconstruction uses a
+fresh session/provider and the last committed layout plus application-owned
+panes. A failure category alone never triggers forced teardown automatically.
+See the [failure and backpressure verification](../knowledge/engineering/verification/dockspace-failure-backpressure-20261116.md).
+
 ## Native preview ownership
 
 The default managed factory may create a GPUI provisional window for the core's

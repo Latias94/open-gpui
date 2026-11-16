@@ -8,6 +8,10 @@ git_commit: 03f9603b4e362ae5e0d79efb2be37518e8fa6804
 
 # Dockspace e812 Adoption and Windows Qualification
 
+The subsequent [failure and backpressure record](dockspace-failure-backpressure-20261116.md)
+tracks implementation of the adapter gaps listed here. This record retains the
+dependency-adoption source and its original physical receipts.
+
 ## Fixed sources
 
 This adoption is based on Open-GPUI `03f9603b4e362ae5e0d79efb2be37518e8fa6804`
