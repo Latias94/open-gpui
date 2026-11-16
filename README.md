@@ -117,6 +117,9 @@ cargo run -p open-gpui-ui-foundation-gallery
 cargo run -p open-gpui-ui-foundation-gallery -- --page devtools
 ```
 
+The [dockspace editor example](examples/dockspace-editor/README.md) demonstrates
+explicit workspace reconstruction with retained View entities and document edits.
+
 ## Verification
 
 Run the local verification gate with:

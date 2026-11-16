@@ -324,7 +324,7 @@ impl Smoke {
     }
 }
 
-fn presented(
+pub(super) fn presented(
     view: &Entity<EditorView>,
     window: AnyWindowHandle,
     draft: usize,

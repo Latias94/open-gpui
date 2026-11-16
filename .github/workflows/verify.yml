@@ -101,7 +101,7 @@ jobs:
         run: cargo nextest run --locked -p open-gpui --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test default libraries and default docking
-        run: cargo nextest run --locked -p open-gpui-motion -p open-gpui-form -p open-gpui-resource -p open-gpui-devtools -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery -p open-gpui-docking --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui-motion -p open-gpui-form -p open-gpui-resource -p open-gpui-devtools -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery -p open-gpui-docking -p open-gpui-dockspace-editor --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Check repository contracts
         run: |

@@ -91,8 +91,20 @@ error categories, when available. The first protocol/internal failure survives
 later cleanup errors; `error` retains its text-only convenience interface.
 Neither diagnostic consumes an affine result or authorizes input replay. A
 permanently rejected native FIFO head can prevent semantic drain even after the
-windows close. There is no in-place error-clear/restart API; a fresh workspace
-must wait for actual old-host quiescence and retain application documents and Views.
+windows close. There is no in-place error-clear/restart API. An application can
+explicitly choose `begin_failed_native_shutdown` when it decides to replace a
+failed generation. Wait for `when_native_terminated` before reconstructing a fresh
+managed session from committed logical state and application-owned Views.
+`DockNativeTermination::Drained` proves semantic drain;
+`DockNativeTermination::Failed` proves physical termination while the old rejected
+FIFO remains owned by its original session. `native_is_quiescent` stays false for
+that failed generation. No old bindings, input, effects or outputs enter the new
+session. A diagnostic category alone never starts failed shutdown automatically.
+
+Retain an application owner outside the retiring group, and keep the process alive
+under its last-window exit policy. The [dockspace editor example](../../examples/dockspace-editor/README.md)
+demonstrates an independent recovery window, deferred application callback,
+retained View entities and explicit retry after partial native-open cleanup.
 
 Application observations keep the latest 256 historical entries. Unresolved
 deferred native close decisions remain protected until consumed, resolved or
@@ -138,6 +150,11 @@ restoring a snapshot into isolated native roots with distinct application Views.
 Use `when_native_quiescent` after opening or starting cleanup to release an
 application registry's workspace entry at that exact boundary. The one-shot
 callback runs outside the host borrow; capture an instance key or weak owner.
+
+Platform focus hints wait for earlier native visibility/lifecycle input to commit
+before the bridge maps a GPUI window to known Dock focus. A retained binding may
+still be hidden, unobserved or cleanup-only; existence alone cannot grant focus
+authority. The core's `native_binding_can_report_focus` query decides that state.
 
 ## Save And Restore
 

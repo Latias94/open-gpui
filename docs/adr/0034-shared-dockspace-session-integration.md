@@ -87,6 +87,12 @@ consuming the rejected prefix or reusing its protocol. Reconstruction uses a
 fresh session/provider and the last committed layout plus application-owned
 panes. A failure category alone never triggers forced teardown automatically.
 See the [failure and backpressure verification](../knowledge/engineering/verification/dockspace-failure-backpressure-20261116.md).
+The [dockspace editor recovery example](../../examples/dockspace-editor/README.md)
+demonstrates an application owner that retains its Views and committed layout,
+awaits termination and creates a fresh managed session. Its independent recovery
+window preserves the last-window exit contract; partial reconstruction and App
+shutdown retain explicit application decisions. See the
+[application recovery verification](../knowledge/engineering/verification/dockspace-editor-recovery-20261116.md).
 
 ## Native preview ownership
 

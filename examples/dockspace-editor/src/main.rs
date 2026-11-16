@@ -1,11 +1,12 @@
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use open_gpui::{
-    AnyWindowHandle, App, AppContext as _, Context, Entity, EntityId, IntoElement,
-    PrepaintPublicationId, Render, Window, WindowId, WindowOptions, div, prelude::*, rgb,
+    App, AppContext as _, Context, Entity, EntityId, IntoElement, PrepaintPublicationId, Render,
+    Window, WindowId, WindowOptions, div, prelude::*, rgb,
 };
 
+mod recovery;
 mod smoke;
 use open_gpui_docking::{
     DockPane, DockSurface, GpuiDockspaceConfig,
@@ -131,13 +132,27 @@ fn workspace(cx: &mut App) -> Result<Workspace> {
             )
         },
     ))?;
+    let views = [first, second];
+    let dock = create_dock(layout, &views, cx)?;
+    Ok(Workspace {
+        dock,
+        views,
+        document,
+    })
+}
+
+fn create_dock(
+    layout: DockspaceLayout,
+    views: &[Entity<EditorView>; 2],
+    cx: &mut App,
+) -> Result<DockSurface> {
     let mut policy = DockPolicy::default();
     policy.set_allow_native_surfaces(true);
     let dock = DockSurface::new_managed(
         DockspaceSession::from_layout(layout, policy)?,
         [
-            DockPane::new(FIRST, "Editing View", first.clone()),
-            DockPane::new(SECOND, "Inspector View", second.clone()),
+            DockPane::new(FIRST, "Editing View", views[0].clone()),
+            DockPane::new(SECOND, "Inspector View", views[1].clone()),
         ],
         GpuiDockspaceConfig::default(),
         cx,
@@ -165,25 +180,45 @@ fn workspace(cx: &mut App) -> Result<Workspace> {
         },
         cx,
     )?;
-    Ok(Workspace {
-        dock,
-        views: [first, second],
-        document,
-    })
+    Ok(dock)
 }
 
 fn open(cx: &mut App) -> Result<()> {
     let workspace = workspace(cx)?;
-    let dock = &workspace.dock;
-    let first_window = dock.open_native_root(EDITOR, true, WindowOptions::default(), cx)?;
-    if std::env::args().any(|argument| argument == "--smoke-native") {
+    let smoke_native = std::env::args().any(|argument| argument == "--smoke-native");
+    let smoke_recovery = std::env::args().any(|argument| argument == "--smoke-recovery");
+    if smoke_native || smoke_recovery {
+        // Keep the process alive until each bounded smoke observes its final receipt.
+        cx.set_quit_mode(open_gpui::QuitMode::Explicit);
+    }
+    if smoke_native {
+        let first_window =
+            workspace
+                .dock
+                .open_native_root(EDITOR, true, WindowOptions::default(), cx)?;
         smoke::run(workspace, first_window, cx)?;
         return Ok(());
     }
-    let second_window: AnyWindowHandle =
-        dock.open_native_root(INSPECTOR, false, WindowOptions::default(), cx)?;
+    let recovery = recovery::open(workspace, cx)?;
+    if smoke_recovery {
+        recovery::run_smoke(recovery, cx)?;
+        return Ok(());
+    }
     if std::env::args().any(|argument| argument == "--smoke-move") {
-        let observe = workspace.dock.clone();
+        let (observe, first_window, second_window) = {
+            let recovery = recovery.read(cx);
+            (
+                recovery.workspace.dock.clone(),
+                *recovery
+                    .roots
+                    .get(&EDITOR)
+                    .context("editing root did not open")?,
+                *recovery
+                    .roots
+                    .get(&INSPECTOR)
+                    .context("inspector root did not open")?,
+            )
+        };
         first_window.update(cx, |_, window, _| {
             window.on_next_frame(move |_, cx| {
                 if let Err(error) = observe.update(
