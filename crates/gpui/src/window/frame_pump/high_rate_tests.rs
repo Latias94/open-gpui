@@ -38,7 +38,12 @@ fn high_rate_input_alone_obeys_power_limits_reuses_the_scene_and_expires(cx: &mu
                 app,
             );
         }
-        assert!(window.input_rate_tracker.borrow().is_high_rate());
+        assert!(
+            window
+                .input_rate_tracker
+                .borrow()
+                .is_high_rate(app.background_executor.now())
+        );
         window.draw(app).clear(app);
         assert_eq!(window.present(app), PlatformWindowPresentOutcome::Submitted);
         window.next_frame_callbacks.borrow_mut().clear();
@@ -47,14 +52,15 @@ fn high_rate_input_alone_obeys_power_limits_reuses_the_scene_and_expires(cx: &mu
         window.active.set(false);
         let baseline = window.presentation_facts();
         let draws = platform.draw_count();
-        let previous = Instant::now();
+        let previous = app.background_executor.now();
         window.frame_pacer.last_frame = Some(previous);
         window.native_frame_requested(RequestFrameOptions::default(), app);
         assert_eq!(platform.draw_count(), draws);
         assert_eq!(window.presentation_facts(), baseline);
         assert_eq!(window.frame_pacer.last_frame, Some(previous));
 
-        window.frame_pacer.last_frame = Some(Instant::now() - Duration::from_secs(2));
+        window.frame_pacer.last_frame =
+            Some(app.background_executor.now() - Duration::from_secs(2));
         window.native_frame_requested(RequestFrameOptions::default(), app);
         assert_eq!(platform.draw_count(), draws + 1);
         assert_eq!(
@@ -67,10 +73,80 @@ fn high_rate_input_alone_obeys_power_limits_reuses_the_scene_and_expires(cx: &mu
         );
         let cadence = window.frame_pacer.last_frame;
         window.input_rate_tracker.borrow_mut().sustain_until =
-            Instant::now() - Duration::from_secs(1);
+            Some(app.background_executor.now() - Duration::from_secs(1));
         window.native_frame_requested(RequestFrameOptions::default(), app);
         assert_eq!(platform.draw_count(), draws + 1);
         assert_eq!(window.frame_pacer.last_frame, cadence);
+    });
+}
+
+#[crate::test]
+fn scheduler_clock_expires_high_rate_demand_without_another_input(cx: &mut TestAppContext) {
+    let (_, visual) = cx.add_window_view(|_, _| InputRoot);
+    visual.run_until_parked();
+    visual.update(|window, app| {
+        window.active.set(true);
+        for _ in 0..8 {
+            window.dispatch_event(
+                PlatformInput::MouseDown(MouseDownEvent {
+                    button: MouseButton::Left,
+                    position: point(px(8.), px(8.)),
+                    click_count: 1,
+                    ..Default::default()
+                }),
+                app,
+            );
+        }
+        assert!(
+            window
+                .input_rate_tracker
+                .borrow()
+                .is_high_rate(app.background_executor.now())
+        );
+    });
+    visual
+        .background_executor
+        .advance_clock(Duration::from_secs(2));
+    visual.update(|window, app| {
+        assert!(
+            !window
+                .input_rate_tracker
+                .borrow()
+                .is_high_rate(app.background_executor.now()),
+            "the scheduler clock must expire input demand without waiting on wall time"
+        );
+    });
+}
+
+#[crate::test]
+fn scheduler_clock_releases_inactive_frame_throttling(cx: &mut TestAppContext) {
+    let (_, visual) = cx.add_window_view(|_, _| InputRoot);
+    visual.run_until_parked();
+    let handle = visual.update(|window, _| window.window_handle());
+    let platform = visual.test_window(handle);
+    platform.defer_frame_requests_for_test();
+    let accepted = visual.update(|window, app| {
+        window.active.set(false);
+        window.inactive_frame_interval = Some(Duration::from_secs(1));
+        window.frame_pacer.last_frame = Some(app.background_executor.now());
+        let accepted = window.presentation_facts().frame_accepted_generation;
+        window.refresh();
+        window.native_frame_requested(RequestFrameOptions::default(), app);
+        assert_eq!(
+            window.presentation_facts().frame_accepted_generation,
+            accepted
+        );
+        accepted
+    });
+    visual
+        .background_executor
+        .advance_clock(Duration::from_secs(2));
+    visual.update(|window, app| {
+        window.native_frame_requested(RequestFrameOptions::default(), app);
+        assert!(
+            window.presentation_facts().frame_accepted_generation > accepted,
+            "elapsed scheduler time must admit the original throttled frame"
+        );
     });
 }
 

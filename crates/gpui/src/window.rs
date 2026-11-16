@@ -2148,7 +2148,7 @@ pub(crate) struct InputRateTracker {
     timestamps: Vec<Instant>,
     window: Duration,
     inputs_per_second: u32,
-    sustain_until: Instant,
+    sustain_until: Option<Instant>,
     sustain_duration: Duration,
 }
 
@@ -2158,26 +2158,25 @@ impl Default for InputRateTracker {
             timestamps: Vec::new(),
             window: Duration::from_millis(100),
             inputs_per_second: 60,
-            sustain_until: Instant::now(),
+            sustain_until: None,
             sustain_duration: Duration::from_secs(1),
         }
     }
 }
 
 impl InputRateTracker {
-    pub fn record_input(&mut self) {
-        let now = Instant::now();
+    pub fn record_input(&mut self, now: Instant) {
         self.timestamps.push(now);
         self.prune_old_timestamps(now);
 
         let min_events = self.inputs_per_second as u128 * self.window.as_millis() / 1000;
         if self.timestamps.len() as u128 >= min_events {
-            self.sustain_until = now + self.sustain_duration;
+            self.sustain_until = Some(now + self.sustain_duration);
         }
     }
 
-    pub fn is_high_rate(&self) -> bool {
-        Instant::now() < self.sustain_until
+    pub fn is_high_rate(&self, now: Instant) -> bool {
+        self.sustain_until.is_some_and(|deadline| now < deadline)
     }
 
     fn prune_old_timestamps(&mut self, now: Instant) {
@@ -7739,7 +7738,8 @@ impl Window {
             mem::take(&mut self.deferred_force_render) | request_frame_options.force_render;
         let force_render = fresh_frame_required
             || (requested_force_render && !(initial_presentation_pending && !fresh_frame_required));
-        let high_rate_input = self.input_rate_tracker.borrow_mut().is_high_rate();
+        let now = cx.background_executor.now();
+        let high_rate_input = self.input_rate_tracker.borrow().is_high_rate(now);
         let has_demand_besides_animation = self.invalidator.is_dirty()
             || force_render
             || !self.next_frame_callbacks.borrow().is_empty()
@@ -7772,7 +7772,6 @@ impl Window {
             }
             .min_frame_interval()
         };
-        let now = Instant::now();
         if has_frame_demand
             && self
                 .frame_pacer
@@ -7815,7 +7814,10 @@ impl Window {
         let needs_present = PresentFacts {
             require_presentation: request_frame_options.require_presentation,
             needs_present: self.needs_present.get() || self.has_scene_animations(),
-            high_rate_input: self.input_rate_tracker.borrow_mut().is_high_rate(),
+            high_rate_input: self
+                .input_rate_tracker
+                .borrow()
+                .is_high_rate(cx.background_executor.now()),
         }
         .needs_present();
 
@@ -13687,7 +13689,9 @@ impl Window {
         }
 
         if self.invalidator.update_count() > update_count_before {
-            self.input_rate_tracker.borrow_mut().record_input();
+            self.input_rate_tracker
+                .borrow_mut()
+                .record_input(cx.background_executor.now());
         }
 
         let result = DispatchEventResult {

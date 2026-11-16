@@ -255,13 +255,13 @@ fn idle_callbacks_do_not_consume_cadence_and_dirty_work_waits_for_its_slot(
         window.invalidator.set_dirty(false);
         window.needs_present.set(false);
         let baseline = window.presentation_facts();
-        let old = Instant::now() - Duration::from_secs(10);
+        let old = app.background_executor.now() - Duration::from_secs(10);
         window.frame_pacer.last_frame = Some(old);
         window.native_frame_requested(RequestFrameOptions::default(), app);
         assert_eq!(window.frame_pacer.last_frame, Some(old));
         assert_eq!(window.presentation_facts(), baseline);
 
-        let previous = Instant::now();
+        let previous = app.background_executor.now();
         window.frame_pacer.last_frame = Some(previous);
         window.refresh();
         window.native_frame_requested(RequestFrameOptions::default(), app);
