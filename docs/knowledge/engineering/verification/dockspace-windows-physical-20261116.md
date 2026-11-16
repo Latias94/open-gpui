@@ -8,6 +8,10 @@ git_commit: fffd7b93a50bdab029e22a9669052c858d4b49ed
 
 # Windows Dockspace Physical Follow-up
 
+The later [GPUI integration follow-ups](dockspace-gpui-followups-20261116.md)
+record additional repairs, the copyable shared-core backlog and a new independent
+single-display physical cohort. The receipts below retain their original scope.
+
 ## Scope and execution
 
 This follow-up starts at published commit
