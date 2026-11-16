@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::{Result, ensure};
 use dockspace::{
-    geometry::{LogicalPoint, LogicalRect, LogicalSize},
+    geometry::{LogicalPoint, LogicalRect, LogicalSize, PaneSizing},
     model::{DockPlacement, DockspaceView, ItemId, SurfaceId},
     runtime::{
         DockspaceHostFrame, DockspaceSession, HostFrameReport, HostInputOutcome,
@@ -62,7 +62,7 @@ pub struct DockPane {
     pub(super) id: ItemId,
     pub(super) title: SharedString,
     pub(super) view: AnyView,
-    pub(super) minimum_size: LogicalSize,
+    pub(super) sizing: PaneSizing,
     pub(super) content_focus: Option<FocusHandle>,
 }
 
@@ -73,15 +73,32 @@ impl DockPane {
             id,
             title: title.into(),
             view: view.into(),
-            minimum_size: LogicalSize::new(120.0, 90.0).expect("valid default pane size"),
+            sizing: LogicalSize::new(120.0, 90.0)
+                .expect("valid default pane size")
+                .into(),
             content_focus: None,
         }
     }
 
-    /// Sets the content minimum used by the session's layout projection.
-    pub fn with_minimum_size(mut self, minimum_size: LogicalSize) -> Self {
-        self.minimum_size = minimum_size;
+    /// Sets complete content sizing in logical points, before docking chrome.
+    ///
+    /// Maximum and fixed extents constrain the content frame. Preferred extents
+    /// apply only to an explicit preferred-size splitter adjustment; ordinary
+    /// layout retains user weights. Minimum-only declarations can pass a
+    /// [`LogicalSize`] directly. The validated value is retained across moves.
+    pub fn with_sizing(mut self, sizing: impl Into<PaneSizing>) -> Self {
+        self.sizing = sizing.into();
         self
+    }
+
+    /// Replaces sizing with content minimums and unbounded maximums.
+    pub fn with_minimum_size(self, minimum_size: LogicalSize) -> Self {
+        self.with_sizing(minimum_size)
+    }
+
+    /// Returns the application-owned content sizing declaration.
+    pub fn sizing(&self) -> PaneSizing {
+        self.sizing
     }
 
     /// Binds the content's existing focus target without replacing its View.
@@ -222,6 +239,10 @@ impl DockSurface {
                 close_requests: VecDeque::new(),
                 close_pump_scheduled: false,
                 close_dispatching: false,
+                commit_handler: None,
+                commit_notifications: VecDeque::new(),
+                commit_pump_scheduled: false,
+                commit_dispatching: false,
                 clock,
                 clock_origin,
                 native: None,
@@ -328,7 +349,10 @@ impl DockSurface {
         Ok(())
     }
 
-    /// Atomically replaces a registered pane's title and content minimum.
+    /// Atomically replaces a registered pane's title and complete content sizing.
+    ///
+    /// Pass validated [`PaneSizing`] for maximum, fixed or preferred extents,
+    /// or [`LogicalSize`] for minimum-only sizing. Core adds docking chrome.
     ///
     /// The original View, identity and content focus binding remain retained.
     /// Closed registrations can be updated before reopening. Unknown identities
@@ -342,10 +366,11 @@ impl DockSurface {
         &self,
         item: ItemId,
         title: impl Into<SharedString>,
-        minimum_size: LogicalSize,
+        sizing: impl Into<PaneSizing>,
         cx: &mut App,
     ) -> Result<()> {
         let title = title.into();
+        let sizing = sizing.into();
         let mut host = self
             .host
             .try_borrow_mut()
@@ -368,7 +393,7 @@ impl DockSurface {
             .ok_or(DockPaneError::UnknownPane(item))?;
         // Even an unchanged value must respect the session's original update lease.
         let mut frame = host_native::begin_frame(session, mounts, native.as_ref(), None, cx)?;
-        if pane.title == title && pane.minimum_size == minimum_size {
+        if pane.title == title && pane.sizing == sizing {
             return Ok(());
         }
         let surface = frame.view().item(item).map(|item| item.surface());
@@ -379,7 +404,7 @@ impl DockSurface {
         }
         let report = frame.commit()?;
         pane.title = title;
-        pane.minimum_size = minimum_size;
+        pane.sizing = sizing;
         host.apply_report(report);
         if let Some(surface) = surface {
             if let Some(owner) = host.owners.get(&surface).copied() {
@@ -448,6 +473,49 @@ impl DockSurface {
         update: impl FnOnce(&mut DockspaceHostFrame<'_>) -> Result<R>,
         cx: &mut App,
     ) -> Result<R> {
+        self.update_with_report(update, |_, value| value, cx)
+    }
+
+    /// Commits application intent and maps the exact submitted action's outcome.
+    ///
+    /// Return the token produced by the desired action from the callback. A
+    /// successful frame can return a product rejection or `StaleRejected`;
+    /// these remain ordinary [`HostInputOutcome`] values. The mapper receives
+    /// `None` when this report has no outcome for the token, including one from
+    /// another session, frame or rolled-back attempt, or an action superseded
+    /// by a layout/document replacement in the same frame.
+    ///
+    /// A `ProductPresentationActionRequested` is pending, not a terminal success.
+    /// Correlate its transition identity with [`Self::set_commit_handler`].
+    ///
+    /// The mapper runs synchronously after commit, while the host is borrowed,
+    /// before the report is consumed. It must not reenter this surface. Copy
+    /// only the application-owned information needed in the returned value.
+    /// The original report and all native and renderer capabilities retain
+    /// their existing host owners, including when the token does not match.
+    /// If the mapper panics, the host consumes the committed report and
+    /// schedules its work before resuming the panic.
+    pub fn update_action<T>(
+        &self,
+        update: impl FnOnce(
+            &mut DockspaceHostFrame<'_>,
+        ) -> Result<dockspace::runtime::DockspaceSubmittedAction>,
+        map: impl FnOnce(Option<&HostInputOutcome>) -> T,
+        cx: &mut App,
+    ) -> Result<T> {
+        self.update_with_report(
+            update,
+            |report, submitted| map(report.submitted_action_outcome(submitted)),
+            cx,
+        )
+    }
+
+    fn update_with_report<R, T>(
+        &self,
+        update: impl FnOnce(&mut DockspaceHostFrame<'_>) -> Result<R>,
+        inspect: impl FnOnce(&HostFrameReport, R) -> T,
+        cx: &mut App,
+    ) -> Result<T> {
         let mut host = self.host.borrow_mut();
         host.ensure_application_admission()?;
         let HostState {
@@ -459,11 +527,16 @@ impl DockSurface {
         let mut frame = host_native::begin_frame(session, mounts, native.as_ref(), None, cx)?;
         let value = update(&mut frame)?;
         let report = frame.commit()?;
+        let value =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| inspect(&report, value)));
         host.apply_report(report);
         drop(host);
         cx.refresh_windows();
         host_native::pump(&self.host, cx);
-        Ok(value)
+        match value {
+            Ok(value) => Ok(value),
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
     }
 
     /// Submits the core-owned dock-back command for an exact root in tests.
@@ -545,6 +618,10 @@ pub(super) struct HostState {
     pub(super) close_requests: VecDeque<dockspace::runtime::DockspaceClosePlan>,
     pub(super) close_pump_scheduled: bool,
     pub(super) close_dispatching: bool,
+    pub(super) commit_handler: Option<Rc<super::notifications::CommitHandler>>,
+    pub(super) commit_notifications: VecDeque<super::notifications::DockCommitNotification>,
+    pub(super) commit_pump_scheduled: bool,
+    pub(super) commit_dispatching: bool,
     pub(super) clock: open_gpui::BackgroundExecutor,
     pub(super) clock_origin: Instant,
     pub(super) native: Option<host_native::ManagedHost>,
@@ -762,6 +839,7 @@ impl HostState {
     }
 
     pub(super) fn invalidate_report(&mut self, report: &HostFrameReport) {
+        super::notifications::observe(self, report);
         super::close::observe(self, report);
         if !report.surface_presentation_commits().is_empty() {
             for mount in self.mounts.values_mut() {

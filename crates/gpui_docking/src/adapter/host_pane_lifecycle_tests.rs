@@ -2,7 +2,7 @@
 
 use dockspace::{
     close::CloseDecision,
-    geometry::LogicalSize,
+    geometry::{LogicalSize, PaneSizing},
     model::{
         DockAnchor, DockPlacement, DockspaceAxis, DockspaceLayout, DockspaceNode,
         DockspaceRootLayout, DockspaceSurfaceLayout, ItemId, RootId, SurfaceId,
@@ -194,7 +194,7 @@ fn metadata_remeasures_titles_and_minima_without_replacing_content(cx: &mut Test
     let content = format!("pane-content:{}", item.get());
     let old_tab = visual.debug_bounds(&tab).unwrap();
     let old_content = visual.debug_bounds(&content).unwrap();
-    let minimum = dock.host.borrow().panels[&item].minimum_size;
+    let minimum = dock.host.borrow().panels[&item].sizing.minimum_size();
     let title = "A much longer pane title";
     let version = dock.host.borrow().session.version();
     let generation = dock.host.borrow().session.next_document_generation();
@@ -229,9 +229,146 @@ fn metadata_remeasures_titles_and_minima_without_replacing_content(cx: &mut Test
         Some(views[0].read_with(&visual, |view, _| view.focus.clone()))
     );
     assert_eq!(pane.title.as_ref(), title);
-    assert_eq!(pane.minimum_size, minimum);
+    assert_eq!(pane.sizing.minimum_size(), minimum);
     assert_eq!(host.session.version(), version);
     assert_eq!(host.session.next_document_generation(), generation);
+}
+
+#[open_gpui::test]
+fn complete_sizing_tracks_the_selected_tab_and_refreshes_inactive_metadata(
+    cx: &mut TestAppContext,
+) {
+    cx.defer_next_window_frame_requests();
+    let Fixture { dock, views, items } = fixture(cx, false);
+    let fixed = |width, height| {
+        PaneSizing::builder()
+            .fixed_width(width)
+            .fixed_height(height)
+            .build()
+            .unwrap()
+    };
+    cx.update(|cx| {
+        dock.update(
+            |frame| {
+                frame.dock_item_current(
+                    items[1],
+                    DockPlacement::Center(DockAnchor::Item(items[0])),
+                )?;
+                frame.select_item_current(items[0])?;
+                Ok(())
+            },
+            cx,
+        )
+        .unwrap();
+        dock.update_pane_metadata(items[0], "First", fixed(240.0, 160.0), cx)
+            .unwrap();
+        dock.update_pane_metadata(items[1], "Second", fixed(360.0, 220.0), cx)
+            .unwrap();
+    });
+    let window = cx.open_window(size(px(800.0), px(600.0)), |_, _| Root {
+        dock: dock.clone(),
+        surface: FIRST,
+    });
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    visual.update(|window, _| {
+        let _ = window.activate_window();
+    });
+    frames(&mut visual, &dock);
+    let first = format!("pane-content:{}", items[0].get());
+    let second = format!("pane-content:{}", items[1].get());
+    let before = visual.debug_bounds(&first).unwrap();
+    assert_eq!(before.size, size(px(240.0), px(160.0)));
+    assert!(visual.debug_bounds(&second).is_none());
+
+    // An inactive visible tab must be measured too. Its hard limits must not
+    // constrain the selected content, but must apply on its first selection.
+    let sizing = fixed(80.0, 60.0);
+    visual.update(|_, cx| {
+        dock.update_pane_metadata(items[1], "Second", sizing, cx)
+            .unwrap();
+    });
+    frames(&mut visual, &dock);
+    assert_eq!(visual.debug_bounds(&first).unwrap(), before);
+    let tab = visual
+        .debug_bounds(&format!("dockspace:tab:{}", items[1].get()))
+        .unwrap();
+    visual.simulate_click(tab.center(), Modifiers::none());
+    frames(&mut visual, &dock);
+    assert_eq!(
+        visual.debug_bounds(&second).unwrap().size,
+        size(px(80.0), px(60.0))
+    );
+    assert!(visual.debug_bounds(&first).is_none());
+    let host = dock.host.borrow();
+    assert_eq!(host.panels[&items[1]].sizing(), sizing);
+    assert_eq!(
+        host.panels[&items[1]].view.entity_id(),
+        views[1].entity_id()
+    );
+}
+
+#[open_gpui::test]
+fn preferred_sizing_preserves_user_weights_and_maxima_cap_the_content(cx: &mut TestAppContext) {
+    cx.defer_next_window_frame_requests();
+    let Fixture { dock, views, items } = fixture(cx, false);
+    let window = cx.open_window(size(px(800.0), px(600.0)), |_, _| Root {
+        dock: dock.clone(),
+        surface: FIRST,
+    });
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    frames(&mut visual, &dock);
+    let content = format!("pane-content:{}", items[0].get());
+    let before = visual.debug_bounds(&content).unwrap();
+    let weights = || {
+        dock.with_view(|view| {
+            view.surface(FIRST)
+                .unwrap()
+                .main_root()
+                .unwrap()
+                .content()
+                .unwrap()
+                .split()
+                .unwrap()
+                .weights()
+                .collect::<Vec<_>>()
+        })
+    };
+    let before_weights = weights();
+    let preferred = PaneSizing::builder()
+        .min_width(120.0)
+        .min_height(90.0)
+        .preferred_width(250.0)
+        .build()
+        .unwrap();
+    visual.update(|_, cx| {
+        dock.update_pane_metadata(items[0], "Pane", preferred, cx)
+            .unwrap();
+    });
+    frames(&mut visual, &dock);
+    assert_eq!(visual.debug_bounds(&content).unwrap(), before);
+    assert_eq!(weights(), before_weights);
+
+    let capped = PaneSizing::builder()
+        .min_width(120.0)
+        .max_width(280.0)
+        .max_height(190.0)
+        .preferred_width(250.0)
+        .build()
+        .unwrap();
+    visual.update(|_, cx| {
+        dock.update_pane_metadata(items[0], "Pane", capped, cx)
+            .unwrap();
+    });
+    frames(&mut visual, &dock);
+    assert_eq!(
+        visual.debug_bounds(&content).unwrap().size,
+        size(px(280.0), px(190.0))
+    );
+    assert_eq!(weights(), before_weights);
+    assert_eq!(
+        dock.host.borrow().panels[&items[0]].view.entity_id(),
+        views[0].entity_id()
+    );
 }
 
 #[open_gpui::test]
@@ -248,7 +385,7 @@ fn unchanged_and_closed_metadata_preserve_measurements_and_document_history(
     frames(&mut visual, &dock);
     let before = dock.inspection().unwrap();
     let generation = dock.host.borrow().session.next_document_generation();
-    let minimum = dock.host.borrow().panels[&items[0]].minimum_size;
+    let minimum = dock.host.borrow().panels[&items[0]].sizing.minimum_size();
     visual.update(|_, cx| {
         dock.update_pane_metadata(items[0], "Pane", minimum, cx)
             .unwrap();
@@ -268,7 +405,10 @@ fn unchanged_and_closed_metadata_preserve_measurements_and_document_history(
     let pane = dock.take_closed_pane(items[3]).unwrap();
     assert_eq!(pane.title.as_ref(), "Closed metadata");
     assert_eq!(pane.view.entity_id(), views[3].entity_id());
-    assert_eq!(pane.minimum_size, LogicalSize::new(200.0, 100.0).unwrap());
+    assert_eq!(
+        pane.sizing.minimum_size(),
+        LogicalSize::new(200.0, 100.0).unwrap()
+    );
     assert_eq!(dock.item_id_for_external_key(KEYS[3]), Some(items[3]));
     assert_pane_error(
         dock.take_closed_pane(items[3]),
@@ -345,7 +485,7 @@ fn original_candidate_lease_blocks_metadata_and_closed_registration_release(
         let before = dock.inspection().unwrap();
         let version = dock.host.borrow().session.version();
         let generation = dock.host.borrow().session.next_document_generation();
-        let minimum = dock.host.borrow().panels[&items[0]].minimum_size;
+        let minimum = dock.host.borrow().panels[&items[0]].sizing.minimum_size();
         {
             let mut host = dock.host.borrow_mut();
             let mut frame = host.session.begin_host_frame().unwrap();

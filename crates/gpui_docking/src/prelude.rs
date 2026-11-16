@@ -5,8 +5,8 @@
 //! [`crate::persistence`].
 
 pub use crate::{
-    DockPane, DockRegion, DockSurface, DockVisualPalette, DockVisualStyle, DockspaceColors,
-    DockspaceInputBindings, GpuiDockspaceConfig,
+    DockCommitNotification, DockPane, DockRegion, DockSurface, DockVisualPalette, DockVisualStyle,
+    DockspaceColors, DockspaceInputBindings, GpuiDockspaceConfig,
 };
 pub use dockspace::{
     model::{

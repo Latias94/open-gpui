@@ -15,6 +15,7 @@ mod input;
 mod inspection;
 pub mod native;
 pub mod native_restore;
+mod notifications;
 pub mod persistence;
 mod presentation;
 #[cfg(test)]
@@ -29,5 +30,6 @@ pub use inspection::{
     DockRegionInspection, DockSurfaceInspection,
 };
 pub use native_restore::DockNativeRestoreError;
+pub use notifications::DockCommitNotification;
 
 use host::{HostState, SharedHost};

@@ -1048,6 +1048,7 @@ pub(super) fn output_binding(
 }
 
 pub(super) fn schedule(shared: &SharedHost, cx: &mut App) {
+    super::notifications::schedule(shared, cx);
     {
         let mut host = shared.borrow_mut();
         let scheduled = if let Some(native) = &mut host.native {
@@ -1412,6 +1413,7 @@ fn process_reports(host: &mut HostState, bridge: &mut NativeBridge, cx: &mut App
 }
 
 pub(super) fn pump(shared: &SharedHost, cx: &mut App) {
+    super::notifications::schedule(shared, cx);
     if shared.try_borrow().is_ok_and(|host| {
         host.native
             .as_ref()
@@ -1565,6 +1567,7 @@ pub(super) fn pump(shared: &SharedHost, cx: &mut App) {
     for window in windows {
         let _ = window.update(cx, |_, window, _| window.refresh());
     }
+    super::notifications::schedule(shared, cx);
     if more || super::close::ready(&shared.borrow()) {
         schedule(shared, cx);
     }

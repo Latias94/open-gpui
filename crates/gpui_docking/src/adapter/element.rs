@@ -2220,10 +2220,14 @@ fn build_candidate(
                 Request::DockBounds { .. } | Request::PopupPlaneBounds { .. } => {
                     Answer::Bounds(bounds)
                 }
-                Request::PaneMinimum { item, .. } => {
-                    Answer::PaneMinimum(item.and_then(|item| panels.get(&item)).map_or_else(
-                        || LogicalSize::new(120.0, 90.0).expect("default minimum is valid"),
-                        |pane| pane.minimum_size,
+                Request::PaneSizing { item, .. } => {
+                    Answer::PaneSizing(item.and_then(|item| panels.get(&item)).map_or_else(
+                        || {
+                            LogicalSize::new(120.0, 90.0)
+                                .expect("default minimum is valid")
+                                .into()
+                        },
+                        |pane| pane.sizing,
                     ))
                 }
                 Request::TabIntrinsic { item, .. } => {
