@@ -706,11 +706,20 @@ impl NativeCallbacks {
         !self.0.capture_observation_missing.replace(true)
     }
 
-    pub(crate) fn observe_capture_release(
-        &self,
-        event: &open_gpui::NativeCapturedDragEvent,
-        cx: &App,
-    ) {
+    /// Retains GPUI's original release barrier for this event's drag generation.
+    ///
+    /// Call this during the ReleaseLocker phase: the first callback of
+    /// [`App::consume_native_captured_drag`], before the later event consumer calls
+    /// [`NativeBridge::captured_drag`]. Resolve this callback owner from the event's
+    /// full source-window id. The original native binding, drag generation and
+    /// release barrier remain owned until their actual terminal enters the same FIFO.
+    ///
+    /// This only observes a barrier already reserved by GPUI; it does not cancel
+    /// the drag, create another release or acknowledge a docking output. Repeated
+    /// observations of the same pending release are harmless. Calling only from
+    /// the later event consumer cannot recover a retired barrier, and a missing
+    /// observation never authorizes release or shutdown.
+    pub fn observe_capture_release(&self, event: &open_gpui::NativeCapturedDragEvent, cx: &App) {
         if !self.can_accept_capture_event(event)
             || self.0.capture_failed.get()
             || self.0.capture_releases.borrow().iter().any(|(_, barrier)| {

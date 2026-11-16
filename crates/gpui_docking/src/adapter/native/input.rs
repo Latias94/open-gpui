@@ -206,6 +206,11 @@ impl NativeBridge {
     /// observer, start a second drag, poll hover later, or create a semantic drop.
     /// Initial press/local events must use this same managed producer; never call
     /// `submit_host_pointer` in a managed session.
+    ///
+    /// In the ReleaseLocker callback of [`App::consume_native_captured_drag`],
+    /// first call [`NativeCallbacks::observe_capture_release`] on the event's
+    /// source-window callback owner. This later consumer only queues the event;
+    /// it cannot recover a natural release barrier that has already retired.
     pub fn captured_drag(
         &mut self,
         event: &NativeCapturedDragEvent,

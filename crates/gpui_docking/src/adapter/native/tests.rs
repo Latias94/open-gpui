@@ -19,6 +19,9 @@ use open_gpui::{
 
 use super::{NativeBridge, NativeBridgeError, NativeCloseDecision, NativeReport, NativeTransport};
 
+#[path = "capture_api_tests.rs"]
+mod capture_api_tests;
+
 struct SubmissionView(WindowFrameSubmissionTicket);
 
 impl Render for SubmissionView {
