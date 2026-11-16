@@ -17,9 +17,10 @@ use open_gpui::{
 };
 use open_gpui_docking::{dockspace::geometry::PhysicalRect, native::NativeReport};
 use open_gpui_windows::{
-    NativeWindowTestEventKind, NativeWindowTestMessage, NativeWindowTestObservation,
-    WindowsPlatform, begin_native_window_test_observation, native_test_acquire_foreground_window,
-    native_test_non_shell_root_window_at, native_test_window_rect,
+    NativeTestPointerAction, NativeWindowTestEventKind, NativeWindowTestMessage,
+    NativeWindowTestObservation, WindowsPlatform, begin_native_window_test_observation,
+    native_test_acquire_foreground_window, native_test_non_shell_root_window_at,
+    native_test_window_rect,
 };
 use windows::Win32::{
     Foundation::{HWND, LPARAM, POINT, WPARAM},
@@ -45,15 +46,15 @@ use super::shared_session::{
 };
 use super::{
     INPUT_CANARY, NATIVE_SCENARIO_ENV, NATIVE_TEST_INPUT_CANARY, NativeDockBehavior,
-    NativeNoInputOverlay, NativeOpaqueBarrier, NativeScenarioRegistration, NativeWorkerCompletion,
-    capture_worker_app_census_without_surface, close_no_input_overlay, native_generation_label,
-    native_system_mouse_message_observed, native_test_display_at, native_test_displays,
-    open_desktop_release_point, open_desktop_release_point_away_from,
-    open_desktop_release_point_away_from_all, open_desktop_release_point_on_display,
-    open_no_input_overlay, panic_message, panic_payload_message, point_is_open_desktop,
-    process_harness, raise_native_window, raw_hwnd, rect_contains, screen_point_lparam,
-    shutdown_native_worker_application_without_surface, unique_matching_debug_bounds, wait_until,
-    window_has_non_empty_frame, window_scale_factor,
+    NativeNoInputOverlay, NativeOpaqueBarrier, NativeReleasePointAuthority,
+    NativeScenarioRegistration, NativeWorkerCompletion, capture_worker_app_census_without_surface,
+    close_no_input_overlay, native_generation_label, native_system_mouse_message_observed,
+    native_test_display_at, native_test_displays, open_desktop_release_point,
+    open_desktop_release_point_away_from, open_desktop_release_point_away_from_all,
+    open_desktop_release_point_on_display, open_no_input_overlay, panic_message,
+    panic_payload_message, point_is_open_desktop, process_harness, raise_native_window, raw_hwnd,
+    rect_contains, screen_point_lparam, shutdown_native_worker_application_without_surface,
+    unique_matching_debug_bounds, wait_until, window_has_non_empty_frame, window_scale_factor,
 };
 
 const SHARED_SCENARIO_ENV: &str = "OPEN_GPUI_NATIVE_SHARED_SCENARIO";
@@ -682,16 +683,32 @@ impl SharedScenarioWorker {
             let delivered = session
                 .move_captured_pointer(cx, route_point, "shared provisional live route")
                 .await?;
-            ensure!(
-                native_system_mouse_message_observed(
+            wait_until(cx, "shared live route source WndProc move", |cx| {
+                session.pump(cx);
+                session.check_health()?;
+                Ok(native_system_mouse_message_observed(
                     &observation,
                     source.window,
                     NativeWindowTestMessage::MouseMove,
                     delivered,
-                ),
-                "shared live route point was not observed by the original source WndProc"
-            );
-            wait_shared_live_placement(cx, session, provisional, source, delivered).await?;
+                ))
+            })
+            .await?;
+            wait_shared_live_placement(cx, session, provisional, source, delivered)
+                .await
+                .with_context(|| {
+                    format!(
+                        "shared live route point={delivered:?}, inspection={:?}, recent_drag={:?}",
+                        session.dock.inspection(),
+                        session
+                            .drag_events
+                            .borrow()
+                            .iter()
+                            .rev()
+                            .take(4)
+                            .collect::<Vec<_>>(),
+                    )
+                })?;
         }
         let delivered_release = session
             .move_captured_pointer(cx, release_point, "shared provisional release")
@@ -739,8 +756,67 @@ impl SharedScenarioWorker {
             wait_shared_live_placement(cx, session, provisional, source, delivered_release).await?;
         }
         let release_display = native_test_display_at(delivered_release)?;
-        session.release_captured_pointer(delivered_release)?;
+        let divergence = if behavior == NativeDockBehavior::LiveRouteAndReleaseLock {
+            let mut used_points = vec![reveal_point];
+            used_points.extend(route_points.iter().copied());
+            Some(open_desktop_release_point_away_from_all(
+                source.hwnd,
+                target.hwnd,
+                &used_points,
+            )?)
+        } else {
+            None
+        };
+        let release_authority = barrier
+            .as_ref()
+            .map_or(NativeReleasePointAuthority::OpenDesktop, |barrier| {
+                NativeReleasePointAuthority::OpaqueBarrier(barrier.hwnd())
+            });
+        if barrier.is_some() {
+            release_authority.validate_current(delivered_release)?;
+        }
+        if let Some(divergence) = divergence {
+            session
+                .pointer
+                .as_mut()
+                .context("shared pointer guard is unavailable")?
+                .inject_sequence(&[
+                    (delivered_release, NativeTestPointerAction::PrimaryUp),
+                    (divergence, NativeTestPointerAction::Move),
+                ])?;
+        } else {
+            session.release_captured_pointer(delivered_release)?;
+        }
         session.wait_drag_released(cx).await?;
+        if let Some(divergence) = divergence {
+            super::wait_for_cursor(cx, divergence, "shared post-release pointer divergence")
+                .await?;
+        }
+        let release = session
+            .drag_events
+            .borrow()
+            .iter()
+            .find(|event| {
+                event.source_window() == source.window.window_id()
+                    && event.generation() == drag.generation
+                    && event.phase() == open_gpui::NativeCapturedDragPhase::Released
+            })
+            .cloned()
+            .context("shared promotion lost its original captured release")?;
+        ensure!(
+            release.global_position()
+                == Some(open_gpui::point(
+                    open_gpui::DevicePixels(delivered_release.x),
+                    open_gpui::DevicePixels(delivered_release.y),
+                ))
+                && release
+                    .window_hit_stack()
+                    .observation()
+                    .is_some_and(|observation| {
+                        release_authority.matches_hit_terminus(observation.terminus())
+                    }),
+            "shared promotion lost the original release position or typed hit terminus: {release:?}"
+        );
         let mut placement = None;
         wait_until(cx, "shared provisional same-HWND promotion", |cx| {
             session.pump(cx);
@@ -775,7 +851,16 @@ impl SharedScenarioWorker {
                 && !shared_surface_contains_item(session, source.item, source.surface)
                 && unsafe { IsWindow(Some(provisional.hwnd)).as_bool() })
         })
-        .await?;
+        .await
+        .with_context(|| {
+            format!(
+                "shared promotion inspection={:?}, original_hwnd_live={}, placement={placement:?}, reports={:?}, recent_drag={:?}",
+                session.dock.inspection(),
+                unsafe { IsWindow(Some(provisional.hwnd)).as_bool() },
+                session.reports,
+                session.drag_events.borrow().iter().rev().take(4).collect::<Vec<_>>(),
+            )
+        })?;
         let promoted = cx.update(|app| raw_hwnd(app, provisional.window))?;
         ensure!(
             promoted == provisional.hwnd,
@@ -838,6 +923,7 @@ impl SharedScenarioWorker {
         );
         session.assert_release_terminal(source, drag.generation)?;
         if let Some(barrier) = barrier {
+            barrier.assert_point_scoped_band(promoted, delivered_release)?;
             drop(barrier);
         }
         session
@@ -1417,7 +1503,16 @@ async fn wait_for_new_shared_window(
             && unsafe { IsWindowVisible(hwnd).as_bool() }
             && cx.update(|app| window_has_non_empty_frame(app, window))?)
     })
-    .await?;
+    .await
+    .with_context(|| {
+        format!(
+            "shared provisional inspection={:?}, windows={:?}, reports={:?}, drag={:?}",
+            session.dock.inspection(),
+            cx.update(|app| app.windows()),
+            session.reports,
+            session.drag_events.borrow().last(),
+        )
+    })?;
     let window = candidate.context("shared provisional window disappeared")?;
     let hwnd = cx.update(|app| raw_hwnd(app, window))?;
     let identity = super::unique_native_identity_for_window(

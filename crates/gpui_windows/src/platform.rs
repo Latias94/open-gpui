@@ -1811,6 +1811,8 @@ struct NativeProvisionalWindowObservation {
     window: AnyWindowHandle,
     session_generation: u64,
     geometry: PlatformWindowPhysicalGeometry,
+    placement_epoch: u64,
+    non_client_hit_transparent: bool,
 }
 
 impl PartialEq for NativeProvisionalWindowObservation {
@@ -1819,6 +1821,8 @@ impl PartialEq for NativeProvisionalWindowObservation {
             && self.window == other.window
             && self.session_generation == other.session_generation
             && self.geometry == other.geometry
+            && self.placement_epoch == other.placement_epoch
+            && self.non_client_hit_transparent == other.non_client_hit_transparent
     }
 }
 
@@ -1872,12 +1876,17 @@ enum RegisteredPointHitInspection {
 fn inspect_registered_window_for_point(
     platform: &WindowsPlatform,
     registered: RegisteredWindow,
+    point: Point<DevicePixels>,
 ) -> RegisteredPointHitInspection {
     let Some(window) = current_registered_window(platform, registered) else {
         return RegisteredPointHitInspection::Failed;
     };
+    if window.state.interaction_is_quiesced() {
+        return RegisteredPointHitInspection::Failed;
+    }
     let first_snapshot = window.provisional_session_snapshot();
     let first_requires_hit_transparency = window.provisional_requires_hit_transparency();
+    let placement_epoch = window.state.native_placement_epoch();
     let first_accepts_pointer_input = window.state.accepts_pointer_input();
     let first_pointer_input_generation = window.pointer_input_observation_generation();
     let provisional_geometry = match first_snapshot {
@@ -1903,15 +1912,35 @@ fn inspect_registered_window_for_point(
         }
         Some(_) | None => return RegisteredPointHitInspection::Failed,
     };
+    let non_client_hit_transparent = if let Some((_, geometry)) = provisional_geometry
+        && !geometry.client_bounds().contains(&point)
+    {
+        // WindowFromPoint can name a gated HWND over its native non-client
+        // frame. Require the original point's real hit test, not the intended
+        // input policy, before treating that native target as a prefix.
+        if geometry
+            .outer_bounds()
+            .is_none_or(|outer| !outer.contains(&point))
+            || !window.provisional_native_hit_is_transparent(point)
+            || window.physical_geometry_from_native().ok() != Some(geometry)
+        {
+            return RegisteredPointHitInspection::Failed;
+        }
+        true
+    } else {
+        false
+    };
 
     let Some(current_window) = current_registered_window(platform, registered) else {
         return RegisteredPointHitInspection::Failed;
     };
     if !Rc::ptr_eq(&window, &current_window)
+        || current_window.state.interaction_is_quiesced()
         || current_window.provisional_session_snapshot() != first_snapshot
         || current_window.provisional_requires_hit_transparency() != first_requires_hit_transparency
         || current_window.state.accepts_pointer_input() != first_accepts_pointer_input
         || current_window.pointer_input_observation_generation() != first_pointer_input_generation
+        || current_window.state.native_placement_epoch() != placement_epoch
     {
         return RegisteredPointHitInspection::Failed;
     }
@@ -1923,6 +1952,8 @@ fn inspect_registered_window_for_point(
                 window: window.handle,
                 session_generation: snapshot.generation(),
                 geometry,
+                placement_epoch,
+                non_client_hit_transparent,
             },
         ),
         None if first_accepts_pointer_input => RegisteredPointHitInspection::Terminal,
@@ -2027,7 +2058,7 @@ fn inspect_point_bound_window(
         return classify_point_bound_window_candidate(observation, native_target, None);
     }
     let registered = registered_window_hit_candidate(hwnd, child_root, registered_windows)
-        .map(|registered| inspect_registered_window_for_point(platform, registered));
+        .map(|registered| inspect_registered_window_for_point(platform, registered, point));
     classify_point_bound_window_candidate(observation, native_target, registered)
 }
 
@@ -2040,7 +2071,7 @@ fn classify_point_bound_window_candidate(
     match registered {
         None => PointBoundWindowInspection::Terminal(observation),
         Some(RegisteredPointHitInspection::ProvisionalPassThrough(provisional)) => {
-            if is_native_target {
+            if is_native_target && !provisional.non_client_hit_transparent {
                 return PointBoundWindowInspection::Failed;
             }
             observation.role = NativeCoveringWindowRole::ProvisionalPassThrough(provisional);
@@ -2062,6 +2093,7 @@ fn classify_point_bound_window_candidate(
 
 fn classify_covering_windows(
     platform: &WindowsPlatform,
+    point: Point<DevicePixels>,
     observations: &[NativeCoveringWindowObservation],
     registered_windows: &[RegisteredWindow],
 ) -> Option<Vec<PlatformWindowHit>> {
@@ -2071,7 +2103,7 @@ fn classify_covering_windows(
             match observation.role {
                 NativeCoveringWindowRole::ProvisionalPassThrough(expected) => {
                     let RegisteredPointHitInspection::ProvisionalPassThrough(current) =
-                        inspect_registered_window_for_point(platform, expected.registered)
+                        inspect_registered_window_for_point(platform, expected.registered, point)
                     else {
                         return None;
                     };
@@ -2087,7 +2119,7 @@ fn classify_covering_windows(
                 }
                 NativeCoveringWindowRole::NoInputPassThrough(expected) => {
                     let RegisteredPointHitInspection::NoInputPassThrough(current) =
-                        inspect_registered_window_for_point(platform, expected.registered)
+                        inspect_registered_window_for_point(platform, expected.registered, point)
                     else {
                         return None;
                     };
@@ -2526,8 +2558,12 @@ fn finish_point_bound_window_enumeration(
     let observations = enumeration.finish(native_completed)?;
     match native_target {
         Some(target)
-            if observations.last().is_some_and(|observation| {
-                observation.hwnd == target && observation.is_terminal()
+            if observations.iter().any(|observation| {
+                observation.hwnd == target
+                    && (observation.is_terminal()
+                        || matches!(observation.role,
+                            NativeCoveringWindowRole::ProvisionalPassThrough(provisional)
+                                if provisional.non_client_hit_transparent))
             }) =>
         {
             Some(observations)
@@ -2846,8 +2882,12 @@ impl Platform for WindowsPlatform {
             point,
             || point_covering_windows_in_z_order(self, point, registered_windows.as_slice()),
             |observations| {
-                let hits =
-                    classify_covering_windows(self, observations, registered_windows.as_slice());
+                let hits = classify_covering_windows(
+                    self,
+                    point,
+                    observations,
+                    registered_windows.as_slice(),
+                );
                 #[cfg(feature = "test-support")]
                 if first_classification {
                     first_classification = false;
@@ -5397,6 +5437,8 @@ mod tests {
                     window,
                     session_generation,
                     geometry,
+                    placement_epoch: 0,
+                    non_client_hit_transparent: false,
                 },
             ),
         }
@@ -5769,6 +5811,94 @@ mod tests {
             ),
             super::PointBoundWindowInspection::Failed
         ));
+    }
+
+    #[test]
+    fn native_non_client_target_requires_exact_provisional_hit_transparency() {
+        let coverage = checked_coverage(
+            point(DevicePixels(0), DevicePixels(0)),
+            size(DevicePixels(100), DevicePixels(100)),
+        );
+        let window = AnyWindowHandle::from(WindowHandle::<Empty>::new(WindowId::from(208_u64)));
+        let mut provisional = provisional_observation(
+            HWND(0xd4usize as *mut core::ffi::c_void),
+            28,
+            window,
+            38,
+            coverage,
+            checked_geometry(
+                point(DevicePixels(5), DevicePixels(20)),
+                size(DevicePixels(90), DevicePixels(75)),
+                1.0,
+            )
+            .with_outer_bounds(Bounds::new(
+                point(DevicePixels(0), DevicePixels(0)),
+                size(DevicePixels(100), DevicePixels(100)),
+            ))
+            .unwrap(),
+        );
+        let super::NativeCoveringWindowRole::ProvisionalPassThrough(ref mut authority) =
+            provisional.role
+        else {
+            unreachable!()
+        };
+        authority.non_client_hit_transparent = true;
+        let authority = *authority;
+        let mut changed_epoch = provisional;
+        changed_epoch.role = super::NativeCoveringWindowRole::ProvisionalPassThrough(
+            super::NativeProvisionalWindowObservation {
+                placement_epoch: authority.placement_epoch + 1,
+                ..authority
+            },
+        );
+        assert_eq!(
+            stabilize_identical_observations(
+                point(DevicePixels(50), DevicePixels(10)),
+                &[provisional],
+                vec![provisional_hit(provisional)],
+                &[changed_epoch],
+            ),
+            PlatformWindowHitStack::Unavailable,
+            "placement ABA cannot preserve a non-client transparency proof"
+        );
+        let inspection = super::classify_point_bound_window_candidate(
+            provisional,
+            Some(provisional.hwnd),
+            Some(super::RegisteredPointHitInspection::ProvisionalPassThrough(
+                authority,
+            )),
+        );
+        assert!(
+            matches!(
+                inspection,
+                super::PointBoundWindowInspection::PassThrough(_)
+            ),
+            "an exact native non-client hit test must preserve the provisional prefix"
+        );
+        for terminal in [
+            None,
+            Some(covering_observation(
+                HWND(0xd5usize as *mut core::ffi::c_void),
+                coverage,
+            )),
+        ] {
+            let mut enumeration = super::PointBoundWindowEnumeration::new();
+            assert!(enumeration.visit_with(provisional.hwnd, |_| inspection));
+            if let Some(terminal) = terminal {
+                assert!(!enumeration.visit_with(terminal.hwnd, |_| {
+                    super::PointBoundWindowInspection::Terminal(terminal)
+                }));
+            }
+            assert!(
+                super::finish_point_bound_window_enumeration(
+                    enumeration,
+                    true,
+                    Some(provisional.hwnd)
+                )
+                .is_some(),
+                "the original native target remains an independently verified provisional prefix"
+            );
+        }
     }
 
     #[test]
@@ -6381,8 +6511,11 @@ mod tests {
             assert_eq!(observed.outcome, WindowMutationOutcome::Exact);
             assert_eq!(observed.facts.accepts_pointer_input, accepts_pointer_input);
             assert_eq!(committed_window_facts(&mut app, window), observed.facts);
-            let registered_inspection =
-                super::inspect_registered_window_for_point(&platform, registered_window);
+            let registered_inspection = super::inspect_registered_window_for_point(
+                &platform,
+                registered_window,
+                point(DevicePixels(0), DevicePixels(0)),
+            );
             if let super::RegisteredPointHitInspection::NoInputPassThrough(observation) =
                 registered_inspection
             {
@@ -6444,7 +6577,11 @@ mod tests {
         );
         assert_eq!(observed.outcome, WindowMutationOutcome::Exact);
         let super::RegisteredPointHitInspection::NoInputPassThrough(current_no_input) =
-            super::inspect_registered_window_for_point(&platform, registered_window)
+            super::inspect_registered_window_for_point(
+                &platform,
+                registered_window,
+                point(DevicePixels(0), DevicePixels(0)),
+            )
         else {
             panic!("the second no-input mutation must publish a pass-through observation");
         };
@@ -6503,6 +6640,23 @@ mod tests {
             );
             assert_eq!(committed_window_facts(&mut app, window), observed.facts);
         }
+
+        app.update_for_test(|cx| {
+            window
+                .update(cx, |_, window, cx| window.quiesce_interaction(cx))
+                .expect("native test window should remain registered while quiesced");
+        });
+        assert!(
+            matches!(
+                super::inspect_registered_window_for_point(
+                    &platform,
+                    registered_window,
+                    point(DevicePixels(0), DevicePixels(0)),
+                ),
+                super::RegisteredPointHitInspection::Failed
+            ),
+            "quiesced windows cannot remain pass-through observations"
+        );
 
         let window = open_gpui::AnyWindowHandle::from(window);
         app.update_for_test(|cx| {

@@ -3587,32 +3587,42 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     let semantics_ticket = app
         .borrow_mut()
         .update_for_test(|cx| {
-            any_window.update(cx, |_, window, cx| {
-                window
+            any_window.update(cx, |root, window, cx| {
+                let ticket = window
                     .begin_provisional_destination_semantics(&session, 81, cx)
-                    .expect("the exact revealed HWND should project its destination in place")
+                    .expect("the exact revealed HWND should project its destination in place");
+                // Publish the marker before App borrow release can drain the requested frame.
+                *semantics_authority.borrow_mut() = Some((session.clone(), ticket.clone()));
+                root.downcast::<ProvisionalSemanticsMarkerRoot>()
+                    .expect("the native provisional root should retain its marker type")
+                    .update(cx, |_, root_cx| root_cx.notify());
+                ticket
             })
         })
         .expect("native provisional window should remain live during semantic projection");
-    *semantics_authority.borrow_mut() = Some((session.clone(), semantics_ticket.clone()));
-    app.borrow_mut().update_for_test(|cx| {
-        cx.update_window(any_window, |root, _, cx| {
-            root.downcast::<ProvisionalSemanticsMarkerRoot>()
-                .expect("the native provisional root should retain its marker type")
-                .update(cx, |_, root_cx| root_cx.notify());
-        })
-        .expect("native provisional marker root should remain live");
-    });
-    pump_messages_until(
-        &Rc::downgrade(&platform.inner),
-        "real provisional destination-semantics submission",
-        || {
-            app.borrow_mut().update_for_test(|_| {
-                semantics_ticket.snapshot().outcome()
-                    == WindowProvisionalSemanticsOutcome::Submitted
-            })
-        },
-    );
+    let semantics_wait_started = Instant::now();
+    let semantics_wait = catch_unwind(AssertUnwindSafe(|| {
+        pump_messages_until_with_delay(
+            &Rc::downgrade(&platform.inner),
+            "real provisional destination-semantics submission",
+            Duration::from_millis(1),
+            || {
+                app.borrow_mut().update_for_test(|_| {
+                    semantics_ticket.snapshot().outcome()
+                        == WindowProvisionalSemanticsOutcome::Submitted
+                })
+            },
+        );
+    }));
+    if let Err(panic) = semantics_wait {
+        let semantics = semantics_ticket.snapshot();
+        let session = session.snapshot();
+        eprintln!(
+            "provisional destination-semantics wait failed: elapsed={:?}; target_hwnd={hwnd:?}; ticket={semantics:?}; session={session:?}",
+            semantics_wait_started.elapsed(),
+        );
+        std::panic::resume_unwind(panic);
+    }
     let semantics = semantics_ticket.snapshot();
     assert_eq!(
         semantics.outcome(),

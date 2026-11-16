@@ -1176,7 +1176,7 @@ impl WindowsWindowState {
         );
     }
 
-    fn native_placement_epoch(&self) -> u64 {
+    pub(crate) fn native_placement_epoch(&self) -> u64 {
         self.native_placement_epoch.get()
     }
 
@@ -4083,7 +4083,10 @@ impl WindowsWindowInner {
         verified.unwrap_or(WindowProvisionalRevealZOrder::Unavailable)
     }
 
-    fn provisional_native_hit_is_transparent(&self, point: Point<DevicePixels>) -> bool {
+    pub(crate) fn provisional_native_hit_is_transparent(&self, point: Point<DevicePixels>) -> bool {
+        if i16::try_from(point.x.0).is_err() || i16::try_from(point.y.0).is_err() {
+            return false;
+        }
         let Ok(Some(rect)) = Self::native_rect(self.hwnd) else {
             return false;
         };

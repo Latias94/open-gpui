@@ -246,6 +246,28 @@ pub(super) fn prepare(
     if state.session.snapshot().phase() == WindowProvisionalSessionPhase::Promoted {
         return None;
     }
+    advance_presentation(&mut state, &dock.host, window, cx);
+    if state.semantics.is_some() {
+        return None;
+    }
+    wake_after_frame(&dock.host, window);
+    let colors = dock.host.borrow().config.colors.clone();
+    Some(
+        div()
+            .size_full()
+            .bg(colors.preview)
+            .border_1()
+            .border_color(colors.accent)
+            .into_any_element(),
+    )
+}
+
+fn advance_presentation(
+    state: &mut ProvisionalWindow,
+    shared: &SharedHost,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let progress = (|| -> Result<()> {
         if state.reveal.is_none()
             && state.session.snapshot().phase() == WindowProvisionalSessionPhase::Gated
@@ -283,21 +305,8 @@ pub(super) fn prepare(
     if let Err(error) = progress {
         log::warn!("native docking preview preparation failed: {error:#}");
         state.failure = Some(error.to_string());
-        super::schedule(&dock.host, cx);
+        super::schedule(shared, cx);
     }
-    if state.semantics.is_some() {
-        return None;
-    }
-    wake_after_frame(&dock.host, window);
-    let colors = dock.host.borrow().config.colors.clone();
-    Some(
-        div()
-            .size_full()
-            .bg(colors.preview)
-            .border_1()
-            .border_color(colors.accent)
-            .into_any_element(),
-    )
 }
 
 fn retire(shared: &SharedHost, state: Rc<RefCell<ProvisionalWindow>>, cx: &mut App) {
@@ -369,9 +378,15 @@ fn open_preview(
     };
     let window = cx.open_window_detailed(options, move |window, cx| {
         let weak = Rc::downgrade(&dock.host);
+        let initial_state = Rc::downgrade(&root_state);
         let initial = window.observe_window_initial_presentation(move |window, cx| {
             window.refresh();
             if let Some(shared) = weak.upgrade() {
+                if let Some(state) = initial_state.upgrade() {
+                    // Hidden windows have no ordinary paint pump. Arm reveal
+                    // from the original initial-presentation terminal itself.
+                    advance_presentation(&mut state.borrow_mut(), &shared, window, cx);
+                }
                 super::schedule(&shared, cx);
             }
         });

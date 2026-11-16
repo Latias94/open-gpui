@@ -173,6 +173,9 @@ pub struct NativeBridge {
     work_areas: NativeWorkAreaRoster,
     desktop: desktop::DesktopObservation,
     desktop_pending_commit: bool,
+    // Retained until the collected input prefix commits; renderer facts alone
+    // must not continuously invalidate retained interaction visuals.
+    pointer_repaint_pending: bool,
     // Original captured packet from the accepted FIFO prefix, never a later cursor query.
     pointer_frame: Option<open_gpui::PlatformNativePointerPhysicalFrame>,
     pointer_capture: Option<NativeCapture>,
@@ -224,6 +227,7 @@ impl NativeBridge {
             work_areas: NativeWorkAreaRoster::Unknown,
             desktop: desktop::DesktopObservation::default(),
             desktop_pending_commit: false,
+            pointer_repaint_pending: false,
             pointer_frame: None,
             pointer_capture: None,
         })

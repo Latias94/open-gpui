@@ -356,22 +356,30 @@ fn a_real_hit_without_matching_presentation_authority_remains_unknown(cx: &mut T
 
 #[open_gpui::test]
 fn managed_desktop_drag_delivers_to_another_presented_window(cx: &mut TestAppContext) {
-    managed_desktop_drag(cx, true);
+    managed_desktop_drag(cx, true, false);
 }
 
 #[open_gpui::test]
 fn managed_desktop_drag_without_button_authority_keeps_the_source(cx: &mut TestAppContext) {
-    managed_desktop_drag(cx, false);
+    managed_desktop_drag(cx, false, false);
 }
 
-fn managed_desktop_drag(cx: &mut TestAppContext, button_state_available: bool) {
+#[open_gpui::test]
+fn managed_desktop_drag_outside_all_records_a_native_preview(cx: &mut TestAppContext) {
+    managed_desktop_drag(cx, true, true);
+}
+
+fn managed_desktop_drag(cx: &mut TestAppContext, button_state_available: bool, outside_all: bool) {
     use std::time::Duration;
 
     use dockspace::{
         geometry::PhysicalPoint,
         runtime::{NativeDesktopPointerLocation, NativeDesktopPosition, NativePointerHover},
     };
-    use open_gpui::{Bounds, DevicePixels, MouseButton, PlatformWindowHitStack, WindowOptions};
+    use open_gpui::{
+        Bounds, DevicePixels, MouseButton, PlatformPhysicalDisplayObservation,
+        PlatformWindowHitStack, WindowOptions,
+    };
 
     let source = SurfaceId::new(1);
     let target = SurfaceId::new(2);
@@ -388,6 +396,22 @@ fn managed_desktop_drag(cx: &mut TestAppContext, button_state_available: bool) {
         )
         .unwrap(),
     );
+    let display = cx.update(|cx| {
+        let snapshot = cx.display_snapshot();
+        let bounds = Bounds::new(
+            point(DevicePixels(0), DevicePixels(0)),
+            size(DevicePixels(3200), DevicePixels(1800)),
+        );
+        PlatformPhysicalDisplayObservation::try_new(
+            snapshot.generation().unwrap(),
+            snapshot.displays()[0].id(),
+            bounds,
+            bounds,
+            1.0,
+        )
+        .unwrap()
+    });
+    cx.simulate_physical_display_roster(Some(vec![display]));
     let dock = cx.update(|cx| {
         let layout = DockspaceLayout::new([
             DockspaceSurfaceLayout::new(
@@ -405,8 +429,10 @@ fn managed_desktop_drag(cx: &mut TestAppContext, button_state_available: bool) {
         .unwrap();
         let panes = [item, ItemId::new(2), ItemId::new(3)]
             .map(|item| DockPane::new(item, "Pane", cx.new(|_| Empty)));
+        let mut policy = DockPolicy::default();
+        policy.set_allow_native_surfaces(true);
         DockSurface::new_managed(
-            DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap(),
+            DockspaceSession::from_layout(layout, policy).unwrap(),
             panes,
             GpuiDockspaceConfig::default(),
             cx,
@@ -464,13 +490,25 @@ fn managed_desktop_drag(cx: &mut TestAppContext, button_state_available: bool) {
     .into_iter()
     .enumerate()
     {
+        if outside_all && matches!(event, NativePointerEvent::ButtonReleased(_)) {
+            break;
+        }
+        let (x, y, hover, work_area) = if outside_all && index == 2 {
+            let work_area = dock.host.borrow().session.native_work_area(
+                dockspace::runtime::HostWorkAreaToken::new(u64::from(display.display_id())),
+            );
+            assert!(work_area.is_some());
+            (900.0, 700.0, NativePointerHover::OutsideAll, work_area)
+        } else {
+            (x, 14.0, NativePointerHover::Dock(hover), None)
+        };
         let input = NativePointerInput::new(
             NativePointerId::new(1),
             event,
             NativeDesktopPointerLocation::new(
-                NativeDesktopPosition::Exact(PhysicalPoint::new(x, 14.0).unwrap()),
-                NativePointerHover::Dock(hover),
-                None,
+                NativeDesktopPosition::Exact(PhysicalPoint::new(x, y).unwrap()),
+                hover,
+                work_area,
             ),
             NativePointerOwner::Native(source_binding),
             NativePointerOwner::Native(source_binding),
@@ -482,19 +520,50 @@ fn managed_desktop_drag(cx: &mut TestAppContext, button_state_available: bool) {
         cx.update(|cx| dock.native_transport().unwrap().pointer(input, cx));
         paint(&mut visuals, cx);
     }
-    dock.with_view(|view| {
-        let moved = view.item(item).unwrap();
-        assert_eq!(
-            moved.surface(),
-            if button_state_available {
-                target
-            } else {
-                source
-            },
-            "desktop delivery must respect the backend's button authority"
+    if outside_all {
+        assert!(dock.has_active_gesture());
+        assert!(
+            dock.host.borrow().mounts[&windows[0].window_id()].regions[&source]
+                .packet
+                .as_ref()
+                .unwrap()
+                .native_preview
+                .is_some(),
+            "an authoritative outside-all move must repaint the source's native preview"
         );
-        assert!(moved.is_selected());
-    });
+        let serial = dock.host.borrow().mounts[&windows[0].window_id()].serial;
+        paint(&mut visuals, cx);
+        assert_eq!(
+            dock.host.borrow().mounts[&windows[0].window_id()].serial,
+            serial,
+            "presentation feedback must not continuously re-encode the preview"
+        );
+        cx.update(|cx| dock.native_transport().unwrap().device_removed(cx));
+        paint(&mut visuals, cx);
+        assert!(
+            dock.host.borrow().mounts[&windows[0].window_id()].regions[&source]
+                .packet
+                .as_ref()
+                .unwrap()
+                .native_preview
+                .is_none(),
+            "cancellation must repaint the source to clear the retained native preview"
+        );
+    } else {
+        dock.with_view(|view| {
+            let moved = view.item(item).unwrap();
+            assert_eq!(
+                moved.surface(),
+                if button_state_available {
+                    target
+                } else {
+                    source
+                },
+                "desktop delivery must respect the backend's button authority"
+            );
+            assert!(moved.is_selected());
+        });
+    }
     assert!(!dock.has_active_gesture());
     cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();
     cx.run_until_parked();
