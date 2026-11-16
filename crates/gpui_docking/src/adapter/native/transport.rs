@@ -348,6 +348,8 @@ impl NativeBridge {
     ///
     /// This does not begin or commit a host frame. InputCapacity and pending-roster
     /// failures need the host to commit its accepted native prefix before retrying.
+    /// Platform focus mapping also waits for earlier recorded input to commit so
+    /// visibility and lifecycle changes determine whether known focus is valid.
     pub fn collect(&mut self, session: &mut DockspaceSession) -> Result<usize, NativeBridgeError> {
         if self.desktop_pending_commit {
             if session.has_pending_native_input() {
@@ -358,9 +360,16 @@ impl NativeBridge {
         let mut collected = 0;
         while let Some(record) = self.transport.pop() {
             let desktop = matches!(record, Inbound::Desktop(_));
+            let platform_focus = matches!(record, Inbound::FocusedWindow(_))
+                && self
+                    .capabilities
+                    .supports(dockspace::runtime::NativeHostCapability::GlobalFocusObservation);
             if matches!(record, Inbound::Presentation(_))
-                || (desktop && session.has_pending_native_input())
+                || ((desktop || platform_focus) && session.has_pending_native_input())
             {
+                // Platform focus is mapped against the committed core roster.
+                // Earlier visibility/lifecycle facts must reduce before that
+                // mapping can decide whether a retained binding is reportable.
                 self.transport.retry(record);
                 break;
             }
@@ -555,14 +564,11 @@ impl NativeBridge {
                     open_gpui::PlatformFocusedWindow::NoWindow => NativeGlobalFocus::Unknown,
                     open_gpui::PlatformFocusedWindow::Window(window) => {
                         match self.binding_for_window(window.window_id()) {
-                            Some(binding)
-                                if session
-                                    .native_window_bindings()
-                                    .any(|current| current == binding) =>
-                            {
+                            Some(binding) if session.native_binding_can_report_focus(binding) => {
                                 NativeGlobalFocus::Dock(binding)
                             }
-                            // Retained cleanup custody cannot revive a retired core lifetime.
+                            // Existence alone does not authorize known focus:
+                            // hidden, unobserved and cleanup-only owners stay Unknown.
                             Some(_) => NativeGlobalFocus::Unknown,
                             None => NativeGlobalFocus::Foreign,
                         }

@@ -1903,48 +1903,112 @@ fn initial_focus_follows_the_first_window_inventory(cx: &mut TestAppContext) {
             .count();
         (queue.len(), focus_count)
     };
-    assert_eq!(
-        bridge
+    let mut collected = 0;
+    let mut inventory_committed = false;
+    let mut focus_committed = 0;
+    while !transport.is_empty() {
+        let count = bridge
             .collect(&mut session)
-            .expect("initial focus must record"),
-        queued,
-    );
-    let mut frame = session
-        .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
-        .unwrap();
-    frame
-        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
-        .unwrap();
-    let report = frame.commit().unwrap();
-    let inventory = report
-        .inputs()
-        .iter()
-        .position(|input| {
-            matches!(
-                input,
-                HostInputOutcome::NativePlatformSnapshotApplied { .. }
-            )
-        })
-        .expect("the initial inventory must commit");
-    let focus = report
-        .inputs()
-        .iter()
-        .position(|input| matches!(input, HostInputOutcome::NativeFocusObservationApplied))
-        .expect("initial focus must reach the core instead of being silently skipped");
-    assert!(inventory < focus);
+            .expect("initial focus must record");
+        assert!(
+            count > 0,
+            "committing each prefix must release the next observation"
+        );
+        collected += count;
+        let mut frame = session
+            .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+            .unwrap();
+        frame
+            .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+            .unwrap();
+        let report = frame.commit().unwrap();
+        for input in report.inputs() {
+            match input {
+                HostInputOutcome::NativePlatformSnapshotApplied { .. } => {
+                    inventory_committed = true
+                }
+                HostInputOutcome::NativeFocusObservationApplied => {
+                    assert!(
+                        inventory_committed,
+                        "initial focus cannot precede its committed inventory"
+                    );
+                    focus_committed += 1;
+                }
+                _ => {}
+            }
+        }
+        bridge.accept_report(report);
+    }
+    assert!(inventory_committed);
+    assert_eq!(collected, queued);
     assert_eq!(
-        report
-            .inputs()
-            .iter()
-            .filter(|input| matches!(input, HostInputOutcome::NativeFocusObservationApplied))
-            .count(),
-        focus_count,
+        focus_committed, focus_count,
+        "initial focus must reach the core instead of being silently skipped"
     );
-    bridge.accept_report(report);
     assert!(session.is_current_native_binding(binding));
     assert!(!session.has_pending_native_input());
     assert!(transport.is_empty());
     assert!(transport.inspection().rejection.is_none());
+}
+
+#[open_gpui::test]
+fn delayed_platform_focus_revalidates_the_committed_visibility_prefix(cx: &mut TestAppContext) {
+    use dockspace::runtime::{HostInputOutcome, NativeWindowFacts, NativeWindowPresentationState};
+    use open_gpui::PlatformFocusedWindow;
+
+    for presentation in [
+        Some(NativeWindowPresentationState::Hidden),
+        Some(NativeWindowPresentationState::Minimized),
+        None,
+    ] {
+        let (mut session, mut bridge, binding, window) = cx.update(uncollected_focus_transport);
+        cx.run_until_parked();
+        let transport = bridge.transport();
+        while !transport.is_empty() {
+            commit_capture_transport(&mut session, &mut bridge);
+        }
+        assert!(session.native_binding_can_report_focus(binding));
+        let unavailable = presentation.map_or_else(NativeWindowFacts::live, |state| {
+            NativeWindowFacts::live().with_presentation(state)
+        });
+        // A native focus hint names a real retained Window, but the preceding
+        // complete snapshot revokes its authority before that hint is reduced.
+        // The original FIFO must commit that prefix before mapping the hint.
+        let visible =
+            NativeWindowFacts::live().with_presentation(NativeWindowPresentationState::Visible);
+        for (facts, reportable) in [(unavailable, false), (visible, true)] {
+            cx.update(|cx| {
+                transport.push(Inbound::Observed(binding.window(), facts), cx);
+                transport.focused_window(PlatformFocusedWindow::Window(window), cx);
+            });
+            let mut focus_committed = 0;
+            while !transport.is_empty() {
+                assert!(bridge.collect(&mut session).unwrap() > 0);
+                let mut frame = session
+                    .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+                    .unwrap();
+                frame
+                    .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+                    .unwrap();
+                let report = frame.commit().unwrap();
+                focus_committed += report
+                    .inputs()
+                    .iter()
+                    .filter(|input| {
+                        matches!(input, HostInputOutcome::NativeFocusObservationApplied)
+                    })
+                    .count();
+                bridge.accept_report(report);
+            }
+            assert_eq!(
+                focus_committed, 1,
+                "the delayed focus must commit exactly once"
+            );
+            assert_eq!(session.native_binding_can_report_focus(binding), reportable);
+            assert!(transport.inspection().rejection.is_none());
+            assert!(!session.has_pending_native_input());
+        }
+    }
 }
 
 #[open_gpui::test]
@@ -1954,8 +2018,10 @@ fn retired_focus_does_not_block_the_original_native_terminal_suffix(cx: &mut Tes
 
     let (mut session, mut bridge, binding, window) = cx.update(uncollected_focus_transport);
     cx.run_until_parked();
-    commit_capture_transport(&mut session, &mut bridge);
     let transport = bridge.transport();
+    while !transport.is_empty() {
+        commit_capture_transport(&mut session, &mut bridge);
+    }
     assert!(transport.is_empty());
     let observed_focus = cx.update(|cx| cx.focused_window());
     assert_eq!(observed_focus, PlatformFocusedWindow::Window(window));
