@@ -9,8 +9,8 @@ use dockspace::{
     geometry::LogicalRect,
     model::{DockspaceAxis, ItemId},
     runtime::{
-        DockspaceDropDirection, DockspaceReceiverDescriptor, DockspaceVisualId,
-        PreparedSurfaceAction,
+        DeferredSurfaceAction, DockspaceDropDirection, DockspaceReceiverDescriptor,
+        DockspaceVisualId, PreparedSurfaceAction,
     },
 };
 use open_gpui::{
@@ -29,6 +29,7 @@ pub(super) enum Icon {
     List,
     Reveal,
     Menu,
+    Grip,
 }
 
 #[derive(Clone, Copy)]
@@ -57,7 +58,26 @@ pub(super) enum ControlAction {
     Dismiss,
 }
 
-pub(super) type ActionSlot = Rc<RefCell<Option<PreparedSurfaceAction>>>;
+/// A frozen witness may authorize multiple independent framework events. Each
+/// event submits its own deferred copy; core revalidates its original target.
+#[derive(Clone)]
+pub(super) struct Action {
+    pub(super) intent: DeferredSurfaceAction,
+    pub(super) tab_focus: Option<(DockspaceVisualId, ItemId)>,
+    pub(super) yields_content: bool,
+}
+
+pub(super) type ActionSlot = Rc<RefCell<Option<Action>>>;
+
+impl From<PreparedSurfaceAction> for Action {
+    fn from(action: PreparedSurfaceAction) -> Self {
+        Self {
+            tab_focus: action.tab_focus_visual().zip(action.tab_focus_target()),
+            intent: action.into_deferred(),
+            yields_content: false,
+        }
+    }
+}
 
 pub(super) struct Control {
     pub(super) id: DockspaceVisualId,
@@ -72,6 +92,7 @@ pub(super) struct Control {
     pub(super) focused: bool,
     pub(super) receiver: Option<DockspaceReceiverDescriptor>,
     pub(super) actions: Vec<(ControlAction, ActionSlot)>,
+    pub(super) tab_keys: Option<Rc<super::keyboard::TabKeys>>,
 }
 
 impl Control {
@@ -95,11 +116,15 @@ impl Control {
             focused: false,
             receiver,
             actions: Vec::new(),
+            tab_keys: None,
         }
     }
 
     pub(super) fn action(&mut self, key: ControlAction, action: Option<PreparedSurfaceAction>) {
         if let Some(action) = action {
+            let mut action = Action::from(action);
+            action.yields_content = key == ControlAction::Activate
+                && matches!(self.kind, ControlKind::Tab(_) | ControlKind::MenuRow);
             self.actions
                 .push((key, Rc::new(RefCell::new(Some(action)))));
         }
@@ -247,6 +272,21 @@ pub(super) fn paint_icon(
         }
         return;
     }
+    if matches!(icon, Icon::Grip) {
+        let dot = radius / 3.0;
+        for x in [-1.0, 1.0] {
+            for y in [-1.0, 0.0, 1.0] {
+                window.paint_quad(fill(
+                    Bounds::new(
+                        center + point(radius * x / 2.0 - dot / 2.0, radius * y - dot / 2.0),
+                        size(dot, dot),
+                    ),
+                    color,
+                ));
+            }
+        }
+        return;
+    }
     let mut path = PathBuilder::stroke(px(1.5));
     let mut line = |from, to| {
         path.move_to(from);
@@ -296,7 +336,7 @@ pub(super) fn paint_icon(
                 center + point(radius, radius / 2.0),
             );
         }
-        Icon::Menu => {}
+        Icon::Menu | Icon::Grip => {}
     }
     if let Ok(path) = path.build() {
         window.paint_path(path, color);

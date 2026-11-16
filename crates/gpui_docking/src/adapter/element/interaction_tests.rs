@@ -20,6 +20,9 @@ const SURFACE: SurfaceId = SurfaceId::new(51);
 const FIRST: ItemId = ItemId::new(61);
 const SECOND: ItemId = ItemId::new(62);
 
+mod keyboard;
+mod wheel;
+
 struct Pane {
     focus: FocusHandle,
 }
@@ -451,7 +454,7 @@ fn presentation_menu_activates_the_frozen_core_float_command(cx: &mut TestAppCon
         .iter()
         .find(|(_, node)| {
             node.role() == Role::MenuItem
-                && node.label() == Some("Float")
+                && node.label() == Some("Float Layout")
                 && node.supports_action(AccessibleAction::Click)
         })
         .unwrap();
@@ -567,4 +570,220 @@ fn source_preview_uses_the_observed_physical_client_origin_and_its_own_dpi() {
         source_preview_bounds(preview, surface, None).is_none(),
         "a source cue must never manufacture a physical desktop origin"
     );
+}
+
+fn presentation_menu_with_content_focus(
+    cx: &mut TestAppContext,
+) -> (DockSurface, FocusHandle, VisualTestContext, Bounds<Pixels>) {
+    cx.defer_next_window_frame_requests();
+    let (dock, handles) = fixture(cx, false);
+    let window = cx.open_window(size(px(800.0), px(600.0)), |_, _| Root {
+        dock: dock.clone(),
+    });
+    let mut visual = active_visual(window.into(), cx);
+    assert!(visual.activate_accessibility());
+    frames(&mut visual, &dock);
+    visual.update(|window, cx| window.focus(&handles[0], cx));
+    frames(&mut visual, &dock);
+    assert!(visual.update(|window, cx| handles[0].contains_focused(window, cx)));
+    let anchor = visual.update(|window, _| {
+        let host = dock.host.borrow();
+        let region = &host.mounts[&window.window_handle().window_id()].regions[&SURFACE];
+        let menu = region
+            .packet
+            .as_ref()
+            .unwrap()
+            .draws
+            .iter()
+            .find_map(|draw| match draw {
+                Draw::PresentationMenu(menu) if menu.enabled => Some(menu),
+                _ => None,
+            })
+            .unwrap();
+        to_gpui(menu.bounds, region.bounds.unwrap())
+    });
+    (dock, handles[0].clone(), visual, anchor)
+}
+
+fn presentation_menu_is_open(visual: &VisualTestContext) -> bool {
+    visual
+        .latest_accessibility_tree_update()
+        .unwrap()
+        .nodes
+        .iter()
+        .any(|(_, node)| node.role() == Role::Menu && node.label() == Some("Layout actions"))
+}
+
+fn selected_presentation_menu_row(visual: &VisualTestContext) -> Option<String> {
+    visual
+        .latest_accessibility_tree_update()
+        .unwrap()
+        .nodes
+        .iter()
+        .find_map(|(_, node)| {
+            (node.role() == Role::MenuItem && node.is_selected() == Some(true))
+                .then(|| node.label().map(str::to_owned))
+                .flatten()
+        })
+}
+
+#[open_gpui::test]
+fn presentation_menu_pointer_open_from_content_owns_escape_and_restores_its_opener(
+    cx: &mut TestAppContext,
+) {
+    let (dock, content_focus, mut visual, anchor) = presentation_menu_with_content_focus(cx);
+    visual.simulate_click(anchor.center(), Modifiers::none());
+    frames(&mut visual, &dock);
+    assert!(presentation_menu_is_open(&visual));
+    assert_accessibility_focus(&visual, Role::Button, "Layout actions");
+    assert!(!visual.update(|window, cx| content_focus.contains_focused(window, cx)));
+    visual.simulate_keystrokes("escape");
+    frames(&mut visual, &dock);
+    assert!(!presentation_menu_is_open(&visual));
+    assert_accessibility_focus(&visual, Role::Button, "Layout actions");
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().contained().is_none()));
+}
+
+#[open_gpui::test]
+fn presentation_menu_pointer_open_from_content_routes_arrows_before_enter(cx: &mut TestAppContext) {
+    let (dock, _, mut visual, anchor) = presentation_menu_with_content_focus(cx);
+    visual.simulate_click(anchor.center(), Modifiers::none());
+    frames(&mut visual, &dock);
+    assert_eq!(
+        selected_presentation_menu_row(&visual).as_deref(),
+        Some("Float Layout")
+    );
+    visual.simulate_keystrokes("down");
+    frames(&mut visual, &dock);
+    assert!(selected_presentation_menu_row(&visual).is_some());
+    assert_ne!(
+        selected_presentation_menu_row(&visual).as_deref(),
+        Some("Float Layout")
+    );
+    assert_accessibility_focus(&visual, Role::Button, "Layout actions");
+    visual.simulate_keystrokes("up");
+    frames(&mut visual, &dock);
+    assert_eq!(
+        selected_presentation_menu_row(&visual).as_deref(),
+        Some("Float Layout")
+    );
+    visual.simulate_keystrokes("enter");
+    frames(&mut visual, &dock);
+    assert!(!presentation_menu_is_open(&visual));
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().contained().is_some()));
+}
+
+#[open_gpui::test]
+fn presentation_menu_accessibility_open_focuses_its_opener_and_preserves_later_claims(
+    cx: &mut TestAppContext,
+) {
+    let (dock, content_focus, mut visual, _) = presentation_menu_with_content_focus(cx);
+    let tree = visual.latest_accessibility_tree_update().unwrap();
+    let target = tree
+        .nodes
+        .iter()
+        .find_map(|(id, node)| {
+            (node.role() == Role::Button && node.label() == Some("Layout actions")).then_some(*id)
+        })
+        .unwrap();
+    let click = || accesskit::ActionRequest {
+        action: AccessibleAction::Click,
+        target_tree: accesskit::TreeId::ROOT,
+        target_node: target,
+        data: None,
+    };
+    assert!(visual.dispatch_accessibility_action(click()));
+    frames(&mut visual, &dock);
+    assert!(presentation_menu_is_open(&visual));
+    assert_accessibility_focus(&visual, Role::Button, "Layout actions");
+    let (claim_revision, serial) = visual.update(|window, cx| {
+        window.focus(&content_focus, cx);
+        let serial = dock.host.borrow().mounts[&window.window_handle().window_id()].serial;
+        (window.focus_claim_revision(), serial)
+    });
+    assert!(visual.dispatch_accessibility_action(click()));
+    frames(&mut visual, &dock);
+    assert!(!presentation_menu_is_open(&visual));
+    visual.update(|window, cx| {
+        assert_eq!(
+            dock.host.borrow().mounts[&window.window_handle().window_id()].serial,
+            serial,
+            "dismissing adapter-owned chrome must retain the presented core output"
+        );
+        assert!(content_focus.contains_focused(window, cx));
+        assert_eq!(window.focus_claim_revision(), claim_revision);
+    });
+
+    assert!(visual.dispatch_accessibility_action(click()));
+    frames(&mut visual, &dock);
+    assert_accessibility_focus(&visual, Role::Button, "Layout actions");
+    let float_target = visual
+        .latest_accessibility_tree_update()
+        .unwrap()
+        .nodes
+        .iter()
+        .find_map(|(id, node)| {
+            (node.role() == Role::MenuItem && node.label() == Some("Float Layout")).then_some(*id)
+        })
+        .unwrap();
+    let claim_revision = visual.update(|window, cx| {
+        window.dispatch_keystroke(open_gpui::Keystroke::parse("escape").unwrap(), cx);
+        window.focus(&content_focus, cx);
+        window.focus_claim_revision()
+    });
+    assert!(
+        visual.dispatch_accessibility_action(accesskit::ActionRequest {
+            action: AccessibleAction::Click,
+            target_tree: accesskit::TreeId::ROOT,
+            target_node: float_target,
+            data: None,
+        })
+    );
+    frames(&mut visual, &dock);
+    assert!(!presentation_menu_is_open(&visual));
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().contained().is_none()));
+    visual.update(|window, cx| {
+        assert!(content_focus.contains_focused(window, cx));
+        assert_eq!(window.focus_claim_revision(), claim_revision);
+    });
+}
+
+#[open_gpui::test]
+fn presentation_menu_pointer_open_waits_for_the_exact_output_to_be_presented(
+    cx: &mut TestAppContext,
+) {
+    let (dock, _, mut visual, anchor) = presentation_menu_with_content_focus(cx);
+    let window = visual.update(|window, _| window.window_handle());
+    visual.set_window_present_outcome(window, PlatformWindowPresentOutcome::Deferred);
+    visual.update(|_, cx| {
+        dock.update(
+            |frame| {
+                let _ = frame.select_item_current(SECOND)?;
+                Ok(())
+            },
+            cx,
+        )
+        .unwrap();
+    });
+    frames(&mut visual, &dock);
+    let claim_revision = visual.update(|window, _| {
+        let host = dock.host.borrow();
+        let owner = window.window_handle().window_id();
+        let serial = host.mounts[&owner].serial;
+        assert!(!input::is_presented(&host, owner, SURFACE, serial));
+        window.focus_claim_revision()
+    });
+    visual.simulate_click(anchor.center(), Modifiers::none());
+    frames(&mut visual, &dock);
+    assert!(!presentation_menu_is_open(&visual));
+    assert_eq!(
+        visual.update(|window, _| window.focus_claim_revision()),
+        claim_revision
+    );
+    visual.set_window_present_outcome(window, PlatformWindowPresentOutcome::Submitted);
+    frames(&mut visual, &dock);
+    visual.simulate_click(anchor.center(), Modifiers::none());
+    frames(&mut visual, &dock);
+    assert!(presentation_menu_is_open(&visual));
+    assert_accessibility_focus(&visual, Role::Button, "Layout actions");
 }

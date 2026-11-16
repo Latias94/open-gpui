@@ -35,7 +35,9 @@ use crate::adapter::{
 };
 
 mod chrome;
+mod keyboard;
 mod recording;
+mod wheel;
 
 use chrome::{Control, ControlAction, ControlKind, GuideState, Icon, PresentationMenu};
 use recording::record;
@@ -91,6 +93,7 @@ enum Draw {
     Control(Rc<Control>),
     PresentationMenu(Rc<PresentationMenu>),
     TabList(LogicalRect, DockspaceVisualId),
+    Scroll(wheel::ScrollTarget),
 }
 
 enum PreparedDraw {
@@ -114,6 +117,9 @@ struct InteractionState {
     pane_focus: RefCell<BTreeMap<SurfaceId, PaneFocusAttempt>>,
     pending_tab_focus: RefCell<Option<PendingTabFocus>>,
     tab_list_focus: RefCell<Option<TabListFocus>>,
+    wheel_gesture: Cell<Option<wheel::WheelGesture>>,
+    keyboard: RefCell<Option<keyboard::Continuation>>,
+    keyboard_subscription: RefCell<Option<open_gpui::Subscription>>,
 }
 
 struct PaneFocusAttempt {
@@ -125,6 +131,7 @@ struct PaneFocusAttempt {
 struct PendingTabFocus {
     surface: SurfaceId,
     visual: DockspaceVisualId,
+    version: dockspace::model::WorkspaceVersion,
     claim_revision: u64,
 }
 
@@ -159,6 +166,7 @@ pub(crate) struct PreparedRegion {
     controls: Vec<(Rc<Control>, FocusHandle, HitboxId)>,
     visible_panes: Vec<ItemId>,
     admitted: bool,
+    scrolls: Vec<wheel::ScrollTarget>,
 }
 
 pub(crate) enum PreparedState {
@@ -274,6 +282,7 @@ impl Element for DockspaceElement {
                     (state.clone(), state)
                 });
         }
+        keyboard::install(&self.host, &self.interaction, window, cx);
         window.set_focus_handle(&self.host.borrow().mounts[&owner].focus, cx);
         match self.prepare(bounds, capture, window, cx) {
             Ok(prepared) => PreparedState::Frame(prepared),
@@ -714,6 +723,7 @@ impl DockspaceElement {
         let mut controls = Vec::new();
         let mut visible_panes = Vec::new();
         let mut menus = Vec::new();
+        let mut scrolls = Vec::new();
         let receiver_controls = packet
             .draws
             .iter()
@@ -851,6 +861,7 @@ impl DockspaceElement {
                 Draw::PresentationMenu(anchor) => {
                     menus.push(anchor.clone());
                 }
+                Draw::Scroll(target) => scrolls.push(*target),
                 Draw::TabList(rect, id) => {
                     let rect = to_gpui(*rect, bounds);
                     let identity = self.control_focus(*id, cx);
@@ -898,7 +909,11 @@ impl DockspaceElement {
                         window
                             .insert_hitbox(
                                 to_gpui(receiver.bounds(), bounds),
-                                HitboxBehavior::Normal,
+                                if matches!(receiver.role(), dockspace::runtime::DockspaceReceiverRole::TabListMenuBlocker | dockspace::runtime::DockspaceReceiverRole::TabListMenuBackdrop) {
+                                    HitboxBehavior::BlockMouse
+                                } else {
+                                    HitboxBehavior::Normal
+                                },
                             )
                             .id
                     });
@@ -1026,6 +1041,7 @@ impl DockspaceElement {
             controls,
             visible_panes,
             admitted,
+            scrolls,
         }
     }
 
@@ -1111,11 +1127,16 @@ impl DockspaceElement {
                 if event.keystroke.modifiers != open_gpui::Modifiers::none() {
                     return;
                 }
-                if let Some(slot) = keyboard_control
-                    .key_action(&event.keystroke.key)
-                    .and_then(|key| keyboard_control.slot(key))
-                    && activate_action(&shared, &interaction, surface, serial, &slot, window, cx)
-                {
+                if keyboard::handle(
+                    &shared,
+                    &interaction,
+                    surface,
+                    serial,
+                    &keyboard_control,
+                    &event.keystroke,
+                    window,
+                    cx,
+                ) {
                     cx.stop_propagation();
                 }
             });
@@ -1123,6 +1144,18 @@ impl DockspaceElement {
             element = element.aria_orientation(match axis {
                 dockspace::model::DockspaceAxis::Horizontal => open_gpui::Orientation::Vertical,
                 dockspace::model::DockspaceAxis::Vertical => open_gpui::Orientation::Horizontal,
+            });
+        }
+        if enabled {
+            element = element.cursor(match control.kind {
+                ControlKind::Splitter(dockspace::model::DockspaceAxis::Horizontal) => {
+                    open_gpui::CursorStyle::ResizeLeftRight
+                }
+                ControlKind::Splitter(dockspace::model::DockspaceAxis::Vertical) => {
+                    open_gpui::CursorStyle::ResizeUpDown
+                }
+                ControlKind::Junction => open_gpui::CursorStyle::Crosshair,
+                _ => open_gpui::CursorStyle::PointingHand,
             });
         }
         for (action, key) in [
@@ -1219,9 +1252,65 @@ impl DockspaceElement {
         let enabled = admitted && menu.enabled;
         let open = enabled && self.interaction.menu.get() == Some(menu.id);
         draws.push(PreparedDraw::Icon(rect, Icon::Menu, menu.enabled));
-        let interaction = self.interaction.clone();
         let id = menu.id;
-        let shared = self.host.clone();
+        let focus_claim = window.with_global_id(
+            ElementId::NamedChild(std::sync::Arc::new((&focus).into()), "menu-focus".into()),
+            |id, window| {
+                window.with_element_state::<Rc<Cell<Option<u64>>>, _>(id, |state, _| {
+                    let state = state.unwrap_or_default();
+                    (state.clone(), state)
+                })
+            },
+        );
+        let close_menu = {
+            let interaction = self.interaction.clone();
+            let focus = focus.clone();
+            let focus_claim = focus_claim.clone();
+            move |window: &mut Window, cx: &mut App| {
+                if interaction.menu.get() != Some(id) {
+                    return;
+                }
+                interaction.menu.set(None);
+                if focus_claim.get() == Some(window.focus_claim_revision())
+                    && window.is_focus_handle_rendered(&focus)
+                {
+                    window.focus(&focus, cx);
+                    focus_claim.set(Some(window.focus_claim_revision()));
+                } else {
+                    focus_claim.set(None);
+                }
+                window.refresh();
+            }
+        };
+        let toggle_menu = {
+            let shared = self.host.clone();
+            let interaction = self.interaction.clone();
+            let focus = focus.clone();
+            let focus_claim = focus_claim.clone();
+            let close_menu = close_menu.clone();
+            move |window: &mut Window, cx: &mut App| {
+                if !enabled
+                    || !input::is_presented(
+                        &shared.borrow(),
+                        window.window_handle().window_id(),
+                        surface,
+                        serial,
+                    )
+                {
+                    return;
+                }
+                if interaction.menu.get() == Some(id) {
+                    close_menu(window, cx);
+                } else {
+                    interaction.menu.set(Some(id));
+                    interaction.menu_row.set(0);
+                    window.focus(&focus, cx);
+                    focus_claim.set(Some(window.focus_claim_revision()));
+                    refresh_menu(&shared, surface, window);
+                }
+            }
+        };
+        let pointer_toggle = toggle_menu.clone();
         let selector = format!("dockspace:presentation-menu:{focus:?}");
         let mut button = div()
             .id(&focus)
@@ -1229,7 +1318,7 @@ impl DockspaceElement {
             .w(rect.size.width)
             .h(rect.size.height)
             .role(Role::Button)
-            .aria_label("Window actions")
+            .aria_label("Layout actions")
             .aria_expanded(open)
             .aria_disabled(!menu.enabled)
             .aria_actions(if enabled {
@@ -1240,28 +1329,24 @@ impl DockspaceElement {
             .when(enabled, |button| button.track_focus(&focus).tab_stop(true))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(move |_, window, cx| {
-                if enabled
-                    && input::is_presented(
-                        &shared.borrow(),
-                        window.window_handle().window_id(),
-                        surface,
-                        serial,
-                    )
-                {
-                    interaction
-                        .menu
-                        .set((interaction.menu.get() != Some(id)).then_some(id));
-                    interaction.menu_row.set(0);
-                    refresh_menu(&shared, surface, window);
-                    window.refresh();
-                }
+                pointer_toggle(window, cx);
                 cx.stop_propagation();
             });
         let interaction = self.interaction.clone();
         let shared = self.host.clone();
         let keyboard_menu = menu.clone();
+        let keyboard_toggle = toggle_menu.clone();
+        let keyboard_close = close_menu.clone();
         button = button.on_key_down(move |event, window, cx| {
-            if enabled && event.keystroke.modifiers == open_gpui::Modifiers::none() {
+            if enabled
+                && event.keystroke.modifiers == open_gpui::Modifiers::none()
+                && input::is_presented(
+                    &shared.borrow(),
+                    window.window_handle().window_id(),
+                    surface,
+                    serial,
+                )
+            {
                 let open = interaction.menu.get() == Some(id);
                 let row = interaction.menu_row.get();
                 match event.keystroke.key.as_str() {
@@ -1277,15 +1362,16 @@ impl DockspaceElement {
                                 cx,
                             )
                         {
-                            interaction.menu.set(None);
+                            keyboard_close(window, cx);
                         }
                     }
                     "enter" | "space" => {
-                        interaction.menu.set(Some(id));
-                        interaction.menu_row.set(0);
+                        keyboard_toggle(window, cx);
                     }
                     "down" => {
-                        interaction.menu.set(Some(id));
+                        if !open {
+                            keyboard_toggle(window, cx);
+                        }
                         interaction.menu_row.set(if open {
                             (row + 1) % keyboard_menu.choices.len().max(1)
                         } else {
@@ -1293,7 +1379,9 @@ impl DockspaceElement {
                         });
                     }
                     "up" => {
-                        interaction.menu.set(Some(id));
+                        if !open {
+                            keyboard_toggle(window, cx);
+                        }
                         interaction.menu_row.set(if row == 0 {
                             keyboard_menu.choices.len().saturating_sub(1)
                         } else {
@@ -1304,27 +1392,15 @@ impl DockspaceElement {
                     "end" if open => interaction
                         .menu_row
                         .set(keyboard_menu.choices.len().saturating_sub(1)),
-                    "escape" => interaction.menu.set(None),
+                    "escape" => keyboard_close(window, cx),
                     _ => return,
-                }
-                if !open {
-                    refresh_menu(&shared, surface, window);
                 }
                 window.refresh();
                 cx.stop_propagation();
             }
         });
-        let interaction = self.interaction.clone();
-        let shared = self.host.clone();
-        button = button.on_a11y_action(AccessibleAction::Click, move |_, window, _| {
-            if enabled {
-                interaction
-                    .menu
-                    .set((interaction.menu.get() != Some(id)).then_some(id));
-                interaction.menu_row.set(0);
-                refresh_menu(&shared, surface, window);
-                window.refresh();
-            }
+        button = button.on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
+            toggle_menu(window, cx);
         });
         let mut button = button
             .with_subtree_presentation(if admitted {
@@ -1338,6 +1414,35 @@ impl DockspaceElement {
             button,
             window.prepare_subtree_clip(&SubtreeClip::own_border_box(), rect),
         ));
+        if enabled {
+            let shared = self.host.clone();
+            let interaction = self.interaction.clone();
+            let focus = focus.clone();
+            window.record_prepaint_window_commit(move |_, window, cx| {
+                let Some(revision) = focus_claim.get() else {
+                    return;
+                };
+                if revision != window.focus_claim_revision() {
+                    focus_claim.set(None);
+                    return;
+                }
+                if input::is_presented(
+                    &shared.borrow(),
+                    window.window_handle().window_id(),
+                    surface,
+                    serial,
+                ) && window.is_focus_handle_rendered(&focus)
+                {
+                    if !focus.is_focused(window) {
+                        window.focus(&focus, cx);
+                        focus_claim.set(Some(window.focus_claim_revision()));
+                    }
+                    if interaction.menu.get() != Some(id) {
+                        focus_claim.set(None);
+                    }
+                }
+            });
+        }
         if !open {
             return;
         }
@@ -1353,7 +1458,8 @@ impl DockspaceElement {
             ),
             size(width, height.min(bounds.size.height)),
         );
-        let interaction = self.interaction.clone();
+        let shared = self.host.clone();
+        let outside_close = close_menu.clone();
         let popup_id = ElementId::NamedChild(std::sync::Arc::new((&focus).into()), "popup".into());
         let mut popup = div()
             .id(popup_id)
@@ -1367,12 +1473,18 @@ impl DockspaceElement {
             .border_1()
             .border_color(colors.border)
             .role(Role::Menu)
-            .aria_label("Window actions")
+            .aria_label("Layout actions")
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_mouse_down_out(move |event, window, _| {
-                if !rect.contains(&event.window_event().position) {
-                    interaction.menu.set(None);
-                    window.refresh();
+            .on_mouse_down_out(move |event, window, cx| {
+                if !rect.contains(&event.window_event().position)
+                    && input::is_presented(
+                        &shared.borrow(),
+                        window.window_handle().window_id(),
+                        surface,
+                        serial,
+                    )
+                {
+                    outside_close(window, cx);
                 }
             });
         for (index, (label, action)) in menu.choices.iter().enumerate() {
@@ -1409,32 +1521,50 @@ impl DockspaceElement {
                 let accessible_action = action.clone();
                 let accessible_shared = shared.clone();
                 let accessible_interaction = interaction.clone();
+                let pointer_close = close_menu.clone();
+                let accessible_close = close_menu.clone();
                 row = row
                     .on_click(move |_, window, cx| {
-                        if activate_action(
-                            &shared,
-                            &interaction,
-                            surface,
-                            serial,
-                            &action,
-                            window,
-                            cx,
-                        ) {
-                            interaction.menu.set(None);
+                        if interaction.menu.get() == Some(id)
+                            && input::is_presented(
+                                &shared.borrow(),
+                                window.window_handle().window_id(),
+                                surface,
+                                serial,
+                            )
+                            && activate_action(
+                                &shared,
+                                &interaction,
+                                surface,
+                                serial,
+                                &action,
+                                window,
+                                cx,
+                            )
+                        {
+                            pointer_close(window, cx);
                         }
                         cx.stop_propagation();
                     })
                     .on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
-                        if activate_action(
-                            &accessible_shared,
-                            &accessible_interaction,
-                            surface,
-                            serial,
-                            &accessible_action,
-                            window,
-                            cx,
-                        ) {
-                            accessible_interaction.menu.set(None);
+                        if accessible_interaction.menu.get() == Some(id)
+                            && input::is_presented(
+                                &accessible_shared.borrow(),
+                                window.window_handle().window_id(),
+                                surface,
+                                serial,
+                            )
+                            && activate_action(
+                                &accessible_shared,
+                                &accessible_interaction,
+                                surface,
+                                serial,
+                                &accessible_action,
+                                window,
+                                cx,
+                            )
+                        {
+                            accessible_close(window, cx);
                         }
                     });
             }
@@ -1449,6 +1579,7 @@ impl DockspaceElement {
     }
 
     fn listen(&self, prepared: &PreparedRegion, window: &mut Window) {
+        wheel::listen(&self.host, &self.interaction, prepared, window);
         let surface = prepared.surface;
         let owner = window.window_handle().window_id();
         let tabs = prepared.tabs.clone();
@@ -1603,17 +1734,10 @@ impl DockspaceElement {
             if !phase.bubble() || capture.is_captured(window) {
                 return;
             }
-            let modifiers = event.keystroke.modifiers;
-            if !modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
+            if keyboard::document_cycle(&event.keystroke).is_none() {
                 return;
             }
-            let key = match event.keystroke.key.as_str() {
-                "tab" if modifiers.shift => ControlAction::Previous,
-                "tab" | "pagedown" => ControlAction::Next,
-                "pageup" => ControlAction::Previous,
-                _ => return,
-            };
-            let action = {
+            let control = {
                 let host = shared.borrow();
                 let scope = &host.mounts[&owner].focus;
                 controls.iter().find_map(|(control, focus, _)| {
@@ -1627,12 +1751,20 @@ impl DockspaceElement {
                             .and_then(|pane| pane.content_focus.as_ref())
                             .is_some_and(|focus| focus.contains_focused(window, cx));
                     (owns_focus || (scope.is_focused(window) && control.selected == Some(true)))
-                        .then(|| control.slot(key))
-                        .flatten()
+                        .then(|| control.clone())
                 })
             };
-            if let Some(action) = action
-                && activate_action(&shared, &interaction, surface, serial, &action, window, cx)
+            if let Some(control) = control
+                && keyboard::handle(
+                    &shared,
+                    &interaction,
+                    surface,
+                    serial,
+                    &control,
+                    &event.keystroke,
+                    window,
+                    cx,
+                )
             {
                 cx.stop_propagation();
             }
@@ -1716,31 +1848,43 @@ fn activate_action(
     window: &mut Window,
     cx: &mut App,
 ) -> bool {
+    activate_action_with_continuation(
+        shared,
+        interaction,
+        surface,
+        serial,
+        slot,
+        false,
+        window,
+        cx,
+    )
+}
+
+fn activate_action_with_continuation(
+    shared: &SharedHost,
+    interaction: &InteractionState,
+    surface: SurfaceId,
+    serial: u64,
+    slot: &chrome::ActionSlot,
+    continuing: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> bool {
     let owner = window.window_handle().window_id();
     let mut host = shared.borrow_mut();
-    if !input::is_presented(&host, owner, surface, serial)
-        || host.has_unaccepted_update()
-        || !host.inputs.is_empty()
-        || host.session.has_pending_native_input()
-        || host
-            .native
-            .as_ref()
-            .is_some_and(|native| !native.transport.is_empty())
-        || host.ensure_application_admission().is_err()
-    {
+    // Semantic events retain the witness of the output still shown by GPUI.
+    // A preceding selection may revoke current pointer receivers before the
+    // next paint, but core can still validate that original deferred command.
+    // A replaced output must never lend its witness to a later callback.
+    if !keyboard::admits_action(&host, interaction, surface, serial, continuing, window) {
         return false;
     }
-    if slot
-        .borrow()
-        .as_ref()
-        .is_some_and(|action| action.expected_version() != host.session.version())
-    {
-        return false;
-    }
-    let Some(action) = slot.borrow_mut().take() else {
+    let Some(action) = slot.borrow().clone() else {
         return false;
     };
-    let tab_focus = action.tab_focus_visual().zip(action.tab_focus_target());
+    let tab_focus = action.tab_focus;
+    let version = action.intent.expected_version();
+    let yields_content = action.yields_content;
     let result = (|| -> Result<_> {
         let HostState {
             session,
@@ -1750,7 +1894,7 @@ fn activate_action(
         } = &mut *host;
         let mut frame =
             host_native::begin_frame(session, mounts, native.as_ref(), Some(window), cx)?;
-        frame.submit_surface_action(action)?;
+        frame.submit_deferred_surface_action(action.intent)?;
         Ok(frame.commit()?)
     })();
     match result {
@@ -1764,8 +1908,9 @@ fn activate_action(
                 )
             });
             host.apply_report(report);
-            // Capabilities are affine even for a valid no-op. Capture a fresh
-            // plan for the next independent key or accessibility activation.
+            // Independent events keep their original witness until presentation
+            // changes. Core revalidates that target after each earlier event;
+            // a fresh packet must reflect the resulting chrome and focus state.
             if let Some(region) = host
                 .mounts
                 .get_mut(&owner)
@@ -1774,6 +1919,8 @@ fn activate_action(
                 region.dirty = true;
             }
             if rejected {
+                interaction.keyboard.borrow_mut().take();
+                interaction.pending_tab_focus.borrow_mut().take();
                 window.refresh();
                 return false;
             }
@@ -1783,7 +1930,23 @@ fn activate_action(
             return false;
         }
     }
+    let content_focus = yields_content
+        .then(|| {
+            host.session
+                .pane_focus_request(surface)
+                .and_then(|request| {
+                    request
+                        .item()
+                        .and_then(|item| host.panels.get(&item))
+                        .and_then(|pane| pane.content_focus.as_ref())
+                        .filter(|focus| window.is_focus_handle_rendered(focus))
+                        .cloned()
+                        .or_else(|| host.mounts.get(&owner).map(|mount| mount.focus.clone()))
+                })
+        })
+        .flatten();
     let focus = tab_focus
+        .filter(|_| !yields_content)
         .filter(|(_, item)| {
             host.session
                 .view()
@@ -1802,11 +1965,21 @@ fn activate_action(
             )
         });
     drop(host);
-    if let Some((visual, focus)) = focus {
+    if yields_content {
+        // Activation ends the header's input prefix even before another paint.
+        // A clipped pane receives focus through the ordinary presentation path;
+        // its rendered mount scope owns the intervening suffix.
+        interaction.keyboard.borrow_mut().take();
+        interaction.pending_tab_focus.borrow_mut().take();
+        if let Some(focus) = content_focus {
+            window.focus(&focus, cx);
+        }
+    } else if let Some((visual, focus)) = focus {
         window.focus(&focus, cx);
         *interaction.pending_tab_focus.borrow_mut() = Some(PendingTabFocus {
             surface,
             visual,
+            version,
             claim_revision: window.focus_claim_revision(),
         });
     }
@@ -1832,7 +2005,7 @@ fn refresh_menu(shared: &SharedHost, surface: SurfaceId, window: &mut Window) {
 /// replay. A later application focus claim always wins over retained UI intent.
 fn apply_chrome_focus(
     shared: &SharedHost,
-    interaction: &InteractionState,
+    interaction: &Rc<InteractionState>,
     serial: u64,
     admitted: &[SurfaceId],
     controls: &[(SurfaceId, Rc<Control>, FocusHandle)],
@@ -1846,9 +2019,14 @@ fn apply_chrome_focus(
     let presented = |surface| {
         admitted.contains(&surface) && input::is_presented(&shared.borrow(), owner, surface, serial)
     };
+    keyboard::restore(shared, interaction, serial, admitted, controls, window, cx);
     let pending = interaction.pending_tab_focus.borrow_mut().take();
     if let Some(pending) = pending {
-        if pending.claim_revision == window.focus_claim_revision() {
+        if pending
+            .version
+            .is_same_epoch(shared.borrow().session.version())
+            && pending.claim_revision == window.focus_claim_revision()
+        {
             if presented(pending.surface) {
                 if let Some((_, _, focus)) = controls.iter().find(|(surface, control, _)| {
                     *surface == pending.surface && control.id == pending.visual

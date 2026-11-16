@@ -10,8 +10,8 @@ use dockspace::{
         ContainedResizeDirection, DockspaceDropEligibility, DockspacePresentationCommandKind,
         DockspacePreviewVisual, DockspaceReceiverDescriptor, SurfaceContainedResizeAdjustment,
         SurfacePaintPlan, SurfacePaintProgramOperation as Operation,
-        SurfacePaintProgramStep as Step, SurfaceSplitterAdjustment, SurfaceTabListNavigation,
-        SurfaceTabNavigation, TabStripControlKind,
+        SurfacePaintProgramStep as Step, SurfaceSplitterAdjustment, SurfaceTabInput,
+        SurfaceTabListNavigation, SurfaceTabNavigation, TabStripControlKind,
     },
 };
 
@@ -32,6 +32,7 @@ pub(super) fn record(
     let mut draws = Vec::new();
     let mut native_preview = None;
     let mut menu_backdrop = None;
+    let mut tab_keys = BTreeMap::new();
     let label = |item: Option<ItemId>| {
         item.and_then(|item| panels.get(&item))
             .map_or_else(|| "Workspace".to_owned(), |pane| pane.title.to_string())
@@ -68,8 +69,19 @@ pub(super) fn record(
                     }
                     Operation::TabBar(bar) => {
                         if !paint.is_source_gap() {
+                            if let Some(keys) = super::keyboard::TabKeys::record(plan, bar) {
+                                tab_keys.insert(bar.visual_id(), Rc::new(keys));
+                            }
+                            if let Some(receiver) = plan.receiver_for_tab_strip_scroll(bar) {
+                                draws.push(Draw::Scroll(super::wheel::ScrollTarget::Strip(
+                                    receiver,
+                                )));
+                            }
                             draws.push(Draw::Fill(bar.bounds(), colors.tab_bar));
                             draws.push(Draw::TabList(bar.bounds(), bar.visual_id()));
+                            if let Some(bounds) = bar.group_grip_bounds() {
+                                draws.push(Draw::Icon(bounds, Icon::Grip, true));
+                            }
                         }
                         for region in bar.group_drag_regions() {
                             receiver(&mut draws, plan.receiver_for_tab_group_drag_region(region));
@@ -108,6 +120,7 @@ pub(super) fn record(
                                 body,
                             );
                             control.selected = Some(tab.selected());
+                            control.tab_keys = tab_keys.get(&tab.tab_bar_visual_id()).cloned();
                             control.action(
                                 ControlAction::Activate,
                                 plan.prepare_tab_select(tab.item()),
@@ -122,7 +135,11 @@ pub(super) fn record(
                             ] {
                                 control.action(
                                     key,
-                                    plan.prepare_tab_navigation(tab.item(), navigation),
+                                    plan.prepare_tab_input_sequence(
+                                        tab.item(),
+                                        tab.item(),
+                                        [SurfaceTabInput::Navigate(navigation)],
+                                    ),
                                 );
                             }
                             draws.push(Draw::Control(Rc::new(control)));
@@ -167,6 +184,10 @@ pub(super) fn record(
                                 splitter.maximum_extents().0,
                             ));
                             for (key, adjustment) in [
+                                (
+                                    ControlAction::Activate,
+                                    SurfaceSplitterAdjustment::Preferred,
+                                ),
                                 (
                                     ControlAction::Decrement,
                                     SurfaceSplitterAdjustment::Decrement,
@@ -301,7 +322,7 @@ pub(super) fn record(
                                     close.visual_id(),
                                     close.bounds(),
                                     ControlKind::Button,
-                                    "Close floating group".into(),
+                                    "Close floating layout".into(),
                                     Some(close),
                                 );
                                 control.action(
@@ -352,10 +373,10 @@ pub(super) fn record(
                             let mut choices = Vec::new();
                             if open_menu == Some(anchor.visual_id()) {
                                 for (kind, label) in [
-                                    (DockspacePresentationCommandKind::Float, "Float"),
+                                    (DockspacePresentationCommandKind::Float, "Float Layout"),
                                     (
                                         DockspacePresentationCommandKind::MoveToNewWindow,
-                                        "Move to New Window",
+                                        "Move Layout to New Window",
                                     ),
                                     (DockspacePresentationCommandKind::DockBack, "Dock Back"),
                                     (DockspacePresentationCommandKind::DockLeft, "Dock Left"),
@@ -367,16 +388,17 @@ pub(super) fn record(
                                     if let Some(command) =
                                         plan.presentation_command(anchor.root(), kind)?
                                     {
-                                        let action = plan
-                                            .prepare_presentation_command(command)
-                                            .map(|action| Rc::new(RefCell::new(Some(action))));
+                                        let action =
+                                            plan.prepare_presentation_command(command).map(
+                                                |action| Rc::new(RefCell::new(Some(action.into()))),
+                                            );
                                         choices.push((label, action));
                                     }
                                 }
                                 choices.push((
-                                    "Close Group",
+                                    "Close Layout",
                                     plan.prepare_root_close(anchor.root())
-                                        .map(|action| Rc::new(RefCell::new(Some(action)))),
+                                        .map(|action| Rc::new(RefCell::new(Some(action.into())))),
                                 ));
                             }
                             draws.push(Draw::PresentationMenu(Rc::new(PresentationMenu {
@@ -471,6 +493,9 @@ pub(super) fn record(
                 }
                 Step::PopupMenu { menu, .. } => {
                     draws.push(Draw::Fill(menu.bounds(), colors.selected_tab));
+                    if let Some(receiver) = plan.receiver_for_tab_list_menu_scroll(menu) {
+                        draws.push(Draw::Scroll(super::wheel::ScrollTarget::Menu(receiver)));
+                    }
                     receiver(&mut draws, plan.receiver_for_tab_list_menu_frame(menu));
                     for row in menu.rows() {
                         receiver(&mut draws, plan.receiver_for_tab_list_menu_row(row));
