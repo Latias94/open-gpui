@@ -8760,6 +8760,64 @@ impl PlatformWindow for WindowsWindow {
         self.state.native_pointer_physical_frame.current.get()
     }
 
+    fn sample_native_pointer_physical_frame(&self) -> Option<PlatformNativePointerPhysicalFrame> {
+        if !self.accepts_generation_bound_message(self.registration.generation())
+            || self.state.interaction_is_quiesced()
+            || self.presentation_shutdown_claimed()
+        {
+            return None;
+        }
+        let authority = RegisteredWindowAuthority::capture(&self.0).ok()?;
+        let placement_epoch = self.state.native_placement_epoch();
+        let coordinator = self.native_retirement_coordinator.upgrade()?;
+        let snapshot = coordinator.exact_display_topology_snapshot().ok()?;
+        let (geometry, _) = self.physical_geometry_native_sample(&snapshot).ok()?;
+        let mut cursor = POINT::default();
+        // SAFETY: The output pointer remains valid for the native call.
+        unsafe { GetCursorPos(&mut cursor) }.ok()?;
+        let capture = unsafe { GetCapture() };
+        let global_position = point(DevicePixels(cursor.x), DevicePixels(cursor.y));
+        let client_position =
+            native_pointer_client_position(global_position, geometry.client_bounds().origin)?;
+        let frame = self
+            .native_pointer_physical_frame_from_client_position(
+                client_position,
+                Some(global_position),
+            )
+            .ok()?;
+        let final_frame = self
+            .native_pointer_physical_frame_from_client_position(
+                client_position,
+                Some(global_position),
+            )
+            .ok()?;
+        let final_snapshot = coordinator.exact_display_topology_snapshot().ok()?;
+        let mut final_cursor = POINT::default();
+        // SAFETY: The output pointer remains valid for the native call.
+        unsafe { GetCursorPos(&mut final_cursor) }.ok()?;
+        let final_capture = unsafe { GetCapture() };
+        if cursor != final_cursor
+            || capture != final_capture
+            || frame != final_frame
+            || frame.target_display()?.topology_generation() != snapshot.generation()
+            || !physical_geometry_sample_is_stable(
+                placement_epoch,
+                self.state.native_placement_epoch(),
+                snapshot.generation(),
+                final_snapshot.generation(),
+                geometry,
+                final_frame.source_geometry(),
+            )
+            || !authority.is_current()
+            || !self.accepts_generation_bound_message(self.registration.generation())
+            || self.state.interaction_is_quiesced()
+            || self.presentation_shutdown_claimed()
+        {
+            return None;
+        }
+        Some(frame)
+    }
+
     fn is_maximized(&self) -> bool {
         self.state.is_maximized()
     }
@@ -10361,6 +10419,16 @@ fn target_monitor_dpi_for_physical_placement(
     Ok(dpi_x)
 }
 
+fn native_pointer_client_position(
+    global_position: Point<DevicePixels>,
+    client_origin: Point<DevicePixels>,
+) -> Option<Point<DevicePixels>> {
+    Some(point(
+        DevicePixels(global_position.x.0.checked_sub(client_origin.x.0)?),
+        DevicePixels(global_position.y.0.checked_sub(client_origin.y.0)?),
+    ))
+}
+
 fn physical_geometry_sample_is_stable(
     first_placement_epoch: u64,
     final_placement_epoch: u64,
@@ -10610,9 +10678,10 @@ mod tests {
         WindowOpenState, WindowOpenStatus, WindowsNativePointerPhysicalFrameScope,
         WindowsNativePointerPhysicalFrameState, WindowsNonClientPolicy,
         adjusted_window_rect_for_dpi, classify_activation_geometry_authority,
-        client_bounds_from_adjusted_frame, non_rude_hwnd_for_fullscreen,
-        physical_bounds_from_native_rect, physical_geometry_sample_is_stable,
-        window_rect_from_observed_frame, with_windows_callback, with_windows_shared_callback,
+        client_bounds_from_adjusted_frame, native_pointer_client_position,
+        non_rude_hwnd_for_fullscreen, physical_bounds_from_native_rect,
+        physical_geometry_sample_is_stable, window_rect_from_observed_frame, with_windows_callback,
+        with_windows_shared_callback,
     };
     use open_gpui::{
         Bounds, DevicePixels, DisplayId, MouseButton, PlatformNativePointerPhysicalFrame,
@@ -11443,6 +11512,46 @@ mod tests {
             cx: 0,
             cy: 0,
         })));
+    }
+
+    #[test]
+    fn native_pointer_client_position_preserves_signed_physical_desktop_coordinates() {
+        let client_origin = point(DevicePixels(-1_920), DevicePixels(-1_080));
+        assert_eq!(
+            native_pointer_client_position(
+                point(DevicePixels(-1_875), DevicePixels(-1_010)),
+                client_origin,
+            ),
+            Some(point(DevicePixels(45), DevicePixels(70))),
+        );
+        // Capture can keep the pointer bound to a source window while outside its client area.
+        assert_eq!(
+            native_pointer_client_position(
+                point(DevicePixels(-2_000), DevicePixels(-1_200)),
+                client_origin,
+            ),
+            Some(point(DevicePixels(-80), DevicePixels(-120))),
+        );
+    }
+
+    #[test]
+    fn native_pointer_client_position_rejects_overflow_on_either_axis() {
+        for (global, origin) in [(i32::MIN, 1), (i32::MAX, -1)] {
+            assert_eq!(
+                native_pointer_client_position(
+                    point(DevicePixels(global), DevicePixels(0)),
+                    point(DevicePixels(origin), DevicePixels(0)),
+                ),
+                None,
+            );
+            assert_eq!(
+                native_pointer_client_position(
+                    point(DevicePixels(0), DevicePixels(global)),
+                    point(DevicePixels(0), DevicePixels(origin)),
+                ),
+                None,
+            );
+        }
     }
 
     #[test]

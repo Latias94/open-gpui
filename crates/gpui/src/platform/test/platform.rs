@@ -54,7 +54,7 @@ pub(crate) struct TestPlatform {
     window_mutation_capabilities_override: RefCell<Option<PlatformWindowMutationCapabilities>>,
     next_window_map_error: RefCell<Option<String>>,
     #[cfg(any(test, feature = "test-support"))]
-    next_window_present_outcome: Cell<Option<crate::PlatformWindowPresentOutcome>>,
+    next_window_present_outcome: RefCell<VecDeque<crate::PlatformWindowPresentOutcome>>,
     last_created_window: RefCell<Option<TestWindow>>,
     next_window_close_during_map: RefCell<bool>,
     next_window_creation_show_fact: RefCell<Option<bool>>,
@@ -290,7 +290,7 @@ impl TestPlatform {
             window_mutation_capabilities_override: RefCell::new(None),
             next_window_map_error: RefCell::new(None),
             #[cfg(any(test, feature = "test-support"))]
-            next_window_present_outcome: Cell::new(None),
+            next_window_present_outcome: RefCell::new(VecDeque::new()),
             last_created_window: RefCell::new(None),
             next_window_close_during_map: RefCell::new(false),
             next_window_creation_show_fact: RefCell::new(None),
@@ -541,7 +541,15 @@ impl TestPlatform {
         &self,
         outcome: crate::PlatformWindowPresentOutcome,
     ) {
-        self.next_window_present_outcome.set(Some(outcome));
+        self.set_window_open_present_outcomes([outcome]);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn set_window_open_present_outcomes(
+        &self,
+        outcomes: impl IntoIterator<Item = crate::PlatformWindowPresentOutcome>,
+    ) {
+        *self.next_window_present_outcome.borrow_mut() = outcomes.into_iter().collect();
     }
 
     pub(crate) fn close_next_window_during_initial_presentation(&self) {
@@ -1365,7 +1373,7 @@ impl Platform for TestPlatform {
             self.next_window_defer_frame_requests.replace(false),
         );
         #[cfg(any(test, feature = "test-support"))]
-        if let Some(outcome) = self.next_window_present_outcome.take() {
+        if let Some(outcome) = self.next_window_present_outcome.borrow_mut().pop_front() {
             window.set_present_outcome(outcome);
         }
         self.last_created_window

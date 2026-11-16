@@ -6123,6 +6123,38 @@ fn native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture
         hwnd,
         "system pointer down must acquire native capture for the sentinel HWND"
     );
+    let delivered_before_sample = observed.borrow().len();
+    app.update_for_test(|cx| {
+        window.update(cx, |_, window, _| {
+            let frame = window.sample_native_pointer_physical_frame().expect(
+                "a stationary captured native pointer must have a fresh physical observation",
+            );
+            assert_eq!(
+                frame.global_position(),
+                point(
+                    DevicePixels(observed_cursor.x),
+                    DevicePixels(observed_cursor.y)
+                )
+            );
+            assert_eq!(
+                frame.capture_owner(),
+                open_gpui::PlatformNativePointerCaptureOwner::Window(
+                    window.window_handle().window_id()
+                )
+            );
+            assert_eq!(
+                frame,
+                window.sample_native_pointer_physical_frame().unwrap()
+            );
+            assert!(frame.target_display().is_some());
+        })
+    })
+    .expect("stationary native sampling should use the original sentinel window");
+    assert_eq!(
+        observed.borrow().len(),
+        delivered_before_sample,
+        "fresh sampling must not inject or replay pointer input"
+    );
 
     let up_before = observed
         .borrow()

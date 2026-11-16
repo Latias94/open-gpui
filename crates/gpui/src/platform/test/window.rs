@@ -160,6 +160,9 @@ pub(crate) struct TestWindowState {
     scale_factor: f32,
     native_pointer_physical_frame: Option<PlatformNativePointerPhysicalFrame>,
     last_native_pointer_physical_frame: Option<PlatformNativePointerPhysicalFrame>,
+    native_pointer_physical_samples: VecDeque<Option<PlatformNativePointerPhysicalFrame>>,
+    #[cfg(test)]
+    mouse_button_after_next_pointer_sample: Option<(crate::MouseButton, Option<bool>)>,
     native_pointer_capture_release_count: usize,
     native_pointer_capture_release_prepare_history: Vec<u64>,
     native_pointer_capture_release_history: Vec<u64>,
@@ -455,6 +458,9 @@ impl TestWindow {
                 scale_factor: 2.0,
                 native_pointer_physical_frame: None,
                 last_native_pointer_physical_frame: None,
+                native_pointer_physical_samples: VecDeque::new(),
+                #[cfg(test)]
+                mouse_button_after_next_pointer_sample: None,
                 native_pointer_capture_release_count: 0,
                 native_pointer_capture_release_prepare_history: Vec::new(),
                 native_pointer_capture_release_history: Vec::new(),
@@ -566,6 +572,23 @@ impl TestWindow {
             })),
             true,
         )
+    }
+
+    pub(crate) fn set_native_pointer_physical_samples(
+        &self,
+        samples: impl IntoIterator<Item = Option<PlatformNativePointerPhysicalFrame>>,
+    ) {
+        let samples = samples.into_iter().collect();
+        self.0.lock().native_pointer_physical_samples = samples;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_mouse_button_after_next_pointer_sample(
+        &self,
+        button: crate::MouseButton,
+        pressed: Option<bool>,
+    ) {
+        self.0.lock().mouse_button_after_next_pointer_sample = Some((button, pressed));
     }
 
     #[cfg(test)]
@@ -1938,6 +1961,18 @@ impl PlatformWindow for TestWindow {
 
     fn native_pointer_physical_frame(&self) -> Option<PlatformNativePointerPhysicalFrame> {
         self.0.lock().native_pointer_physical_frame
+    }
+
+    fn sample_native_pointer_physical_frame(&self) -> Option<PlatformNativePointerPhysicalFrame> {
+        let mut state = self.0.lock();
+        let sample = state.native_pointer_physical_samples.pop_front().flatten();
+        #[cfg(test)]
+        if let Some((button, pressed)) = state.mouse_button_after_next_pointer_sample.take()
+            && let Some(platform) = state.platform.upgrade()
+        {
+            platform.set_mouse_button_is_pressed(button, pressed);
+        }
+        sample
     }
 
     fn window_bounds(&self) -> WindowBounds {

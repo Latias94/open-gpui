@@ -1149,6 +1149,37 @@ impl TestAppContext {
         self.test_platform.set_window_hit_stack(stack);
     }
 
+    /// Replaces one test window's fresh native pointer samples in FIFO order.
+    ///
+    /// Each call to `sample_native_pointer_physical_frame` consumes one entry.
+    /// `None` and an exhausted queue report unsupported sampling.
+    /// These samples neither read nor change the callback-scoped pointer frame.
+    pub fn set_platform_window_native_pointer_physical_samples(
+        &self,
+        window: AnyWindowHandle,
+        samples: impl IntoIterator<Item = Option<crate::PlatformNativePointerPhysicalFrame>>,
+    ) {
+        self.test_window(window)
+            .set_native_pointer_physical_samples(samples);
+    }
+
+    /// Dispatches one original test input with an explicit callback-scoped physical frame.
+    ///
+    /// Unlike fresh stationary samples, this enters the ordinary input callback
+    /// and reserves its original ingress ordering through the existing dispatcher.
+    pub fn simulate_platform_input_with_native_pointer_physical_frame(
+        &self,
+        window: AnyWindowHandle,
+        input: crate::PlatformInput,
+        frame: Option<crate::PlatformNativePointerPhysicalFrame>,
+    ) -> crate::DispatchEventResult {
+        let result = self
+            .test_window(window)
+            .simulate_input_result_with_native_pointer_physical_frame(input, frame);
+        self.run_until_parked();
+        result
+    }
+
     /// Overrides one test window's physical client geometry and target scale.
     pub fn set_platform_window_physical_client_geometry(
         &self,
@@ -1256,6 +1287,18 @@ impl TestAppContext {
     /// original native window remains available for ordered renderer retirement.
     pub fn set_next_window_present_outcome(&self, outcome: PlatformWindowPresentOutcome) {
         self.test_platform.set_next_window_present_outcome(outcome);
+    }
+
+    /// Assigns creation-time renderer outcomes to the next windows in open order.
+    ///
+    /// Existing windows are unaffected. This supports failure after an earlier
+    /// window has opened without depending on that window's content rendering.
+    pub fn set_window_open_present_outcomes(
+        &self,
+        outcomes: impl IntoIterator<Item = PlatformWindowPresentOutcome>,
+    ) {
+        self.test_platform
+            .set_window_open_present_outcomes(outcomes);
     }
 
     /// Makes the next TestPlatform window synchronously close during its hidden first present.

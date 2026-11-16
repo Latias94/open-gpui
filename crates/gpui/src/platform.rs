@@ -358,13 +358,13 @@ pub struct PlatformWindowPhysicalCoverage {
     bounds: Bounds<DevicePixels>,
 }
 
-/// The native pointer capture owner observed during one platform input callback.
+/// The native pointer capture owner observed during one native pointer observation.
 ///
 /// This observation does not grant capture authority and may be retained after capture changes.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PlatformNativePointerCaptureOwner {
-    /// The backend cannot establish the desktop's capture owner for this callback.
+    /// The backend cannot establish the desktop's capture owner for this observation.
     #[default]
     Unavailable,
     /// The backend proved that no native window owns pointer capture on the desktop.
@@ -375,10 +375,12 @@ pub enum PlatformNativePointerCaptureOwner {
     UnregisteredWindow,
 }
 
-/// One physical pointer observation retained only for the active native input callback.
+/// One immutable native physical pointer observation.
 ///
 /// Platform backends use this frame to prevent a logical-coordinate round trip from mixing the
-/// input event's DPI with a later window DPI observation.
+/// pointer observation's DPI with a later window DPI observation. A frame can belong to an active
+/// native input callback or one explicit fresh sample outside callbacks; neither grants input,
+/// drag, or capture authority.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlatformNativePointerPhysicalFrame {
@@ -466,7 +468,7 @@ impl PlatformNativeDragStartSnapshot {
 }
 
 impl PlatformNativePointerPhysicalFrame {
-    /// Creates a callback-scoped physical pointer observation.
+    /// Creates one native physical pointer observation.
     #[doc(hidden)]
     pub fn new(
         global_position: Point<DevicePixels>,
@@ -480,14 +482,14 @@ impl PlatformNativePointerPhysicalFrame {
         }
     }
 
-    /// Binds the native capture owner observed during this input callback.
+    /// Binds the native capture owner observed with this pointer observation.
     #[doc(hidden)]
     pub fn with_capture_owner(mut self, capture_owner: PlatformNativePointerCaptureOwner) -> Self {
         self.capture_owner = capture_owner;
         self
     }
 
-    /// Binds the display observed at the callback-scoped physical point.
+    /// Binds the display observed at this physical pointer point.
     #[doc(hidden)]
     pub fn with_target_display(
         mut self,
@@ -505,7 +507,7 @@ impl PlatformNativePointerPhysicalFrame {
         self.global_position
     }
 
-    /// Returns the source geometry interpreted with the input event's DPI.
+    /// Returns the source geometry interpreted with the pointer observation's DPI.
     pub fn source_geometry(self) -> PlatformWindowPhysicalGeometry {
         self.source_geometry
     }
@@ -515,7 +517,7 @@ impl PlatformNativePointerPhysicalFrame {
         self.target_display
     }
 
-    /// Returns the native capture owner observed during this input callback.
+    /// Returns the native capture owner observed with this pointer observation.
     pub fn capture_owner(self) -> PlatformNativePointerCaptureOwner {
         self.capture_owner
     }
@@ -6169,6 +6171,15 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// Returns the physical pointer frame scoped to the active native input callback.
     #[doc(hidden)]
     fn native_pointer_physical_frame(&self) -> Option<PlatformNativePointerPhysicalFrame> {
+        None
+    }
+    /// Explicitly samples one fresh native physical pointer observation for use outside callbacks.
+    ///
+    /// This queries the platform now instead of retrieving a callback-scoped or cached frame. It
+    /// must not change the active callback's frame, synthesize input, or grant drag or capture
+    /// authority. Unsupported backends and unavailable or unstable observations return `None`.
+    #[doc(hidden)]
+    fn sample_native_pointer_physical_frame(&self) -> Option<PlatformNativePointerPhysicalFrame> {
         None
     }
     fn is_maximized(&self) -> bool;

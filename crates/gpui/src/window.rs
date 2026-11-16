@@ -128,6 +128,8 @@ mod invalidator;
 mod journal_tests;
 #[cfg(test)]
 mod keyboard_activation_admission_tests;
+#[cfg(test)]
+mod native_pointer_sampling_tests;
 mod pending_input;
 #[cfg(test)]
 mod pending_input_tests;
@@ -7563,6 +7565,30 @@ impl Window {
     /// The position of the mouse relative to the window.
     pub fn mouse_position(&self) -> Point<Pixels> {
         self.mouse_position
+    }
+
+    /// Explicitly samples one fresh native physical pointer observation for use outside callbacks.
+    ///
+    /// This neither retrieves nor changes a callback-scoped or cached frame, emits input, nor
+    /// grants drag or capture authority. Returns `None` when interaction is not admitted, native
+    /// shutdown has begun, or the backend cannot establish a stable fresh observation.
+    #[doc(hidden)]
+    pub fn sample_native_pointer_physical_frame(
+        &self,
+    ) -> Option<crate::PlatformNativePointerPhysicalFrame> {
+        if !self.creation_can_commit()
+            || !self.user_interaction_is_admitted()
+            || self.presentation_shutdown.is_some()
+        {
+            return None;
+        }
+        let frame = self
+            .platform_window
+            .sample_native_pointer_physical_frame()?;
+        (self.creation_can_commit()
+            && self.user_interaction_is_admitted()
+            && self.presentation_shutdown.is_none())
+        .then_some(frame)
     }
 
     /// Whether the mouse is currently inside this window according to the last platform input.

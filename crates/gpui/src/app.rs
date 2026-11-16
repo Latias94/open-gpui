@@ -92,6 +92,8 @@ mod native_captured_drag;
 mod native_event_ingress;
 mod native_platform_commands;
 mod native_query_snapshot;
+#[cfg(test)]
+mod native_stationary_tests;
 mod native_window_activation;
 #[cfg(test)]
 mod power_mode_tests;

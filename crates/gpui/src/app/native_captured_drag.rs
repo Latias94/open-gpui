@@ -584,6 +584,21 @@ pub(super) struct NativeCapturedDragOutbox {
 }
 
 impl NativeCapturedDragOutbox {
+    pub(super) fn permits_stationary_sample(
+        &self,
+        generation: NativeCapturedDragGeneration,
+    ) -> bool {
+        let state = self.state.borrow();
+        Self::current_generation(&state) == Some(generation)
+            && state.terminal_generation != Some(generation)
+            && !state.draining
+            && state.pending_pointer_cancels.is_empty()
+            && state
+                .pending
+                .iter()
+                .all(|envelope| envelope.event.generation != generation)
+    }
+
     pub(super) fn register_observer(
         &self,
         app: Weak<AppCell>,
@@ -1149,6 +1164,48 @@ impl App {
             .map(|authority| authority.source_window)
     }
 
+    /// Samples fresh physical facts for one still-active captured drag.
+    ///
+    /// This finite observation emits no input event, reserves no native ingress
+    /// sequence and cannot revive a released or replaced generation. Unsupported
+    /// sampling, changed geometry, missing capture or a released button returns
+    /// `None`; cached callback frames and logical capture are not substitutes.
+    #[doc(hidden)]
+    pub fn sample_native_captured_drag(
+        &self,
+        source_window: WindowId,
+        generation: NativeCapturedDragGeneration,
+    ) -> Option<(PlatformNativePointerPhysicalFrame, PlatformWindowHitStack)> {
+        let app = self.this.upgrade()?;
+        if !app.native_drag_permits_stationary_sample(generation) {
+            return None;
+        }
+        let authority = self.active_native_captured_drag.as_ref()?;
+        if !authority.matches_generation(source_window, generation)
+            || !self
+                .active_drag
+                .as_ref()
+                .is_some_and(|drag| authority.matches(drag))
+            || self.platform.mouse_button_is_pressed(authority.button) != Some(true)
+        {
+            return None;
+        }
+        let source = self.windows.get(source_window)?.as_ref()?;
+        let first = source.sample_native_pointer_physical_frame()?;
+        if first.capture_owner() != PlatformNativePointerCaptureOwner::Window(source_window) {
+            return None;
+        }
+        let stack = self.platform.window_hit_stack_at(first.global_position());
+        if stack.observation()?.sampled_point() != first.global_position()
+            || source.sample_native_pointer_physical_frame()? != first
+            || self.platform.mouse_button_is_pressed(authority.button) != Some(true)
+            || !app.native_drag_permits_stationary_sample(generation)
+        {
+            return None;
+        }
+        Some((first, stack))
+    }
+
     /// Observes an already reserved release without cancelling the drag or creating a new barrier.
     ///
     /// Natural MouseUp reserves its original barrier before the route locker and user listeners.
@@ -1584,6 +1641,47 @@ mod tests {
             button: crate::MouseButton::Left,
             payload: Arc::new("payload"),
         }
+    }
+
+    #[test]
+    fn stationary_sampling_waits_for_original_delivery_and_rejects_terminal_generations() {
+        let outbox = NativeCapturedDragOutbox::default();
+        let generation = NativeCapturedDragGeneration(71);
+        let source = window_id();
+        let subscription = outbox.register_observer(Weak::new(), Rc::new(|_, _| {}));
+        assert!(!outbox.permits_stationary_sample(generation));
+        outbox.begin_generation(
+            authority(generation, source),
+            NativeCapturedDragRouteBinding::Unprepared,
+        );
+        assert!(outbox.permits_stationary_sample(generation));
+        assert!(!outbox.permits_stationary_sample(NativeCapturedDragGeneration(72)));
+        outbox.enqueue(event(
+            1,
+            generation,
+            source,
+            NativeCapturedDragPhase::Moved,
+            PlatformWindowHitStack::Unavailable,
+        ));
+        assert!(!outbox.permits_stationary_sample(generation));
+        assert!(outbox.begin_drain());
+        let envelope = outbox.pop_front().unwrap();
+        outbox.finish_delivery(&envelope);
+        assert!(
+            !outbox.permits_stationary_sample(generation),
+            "the original consumer still owns delivery"
+        );
+        outbox.finish_drain();
+        assert!(outbox.permits_stationary_sample(generation));
+        outbox.enqueue(event(
+            2,
+            generation,
+            source,
+            NativeCapturedDragPhase::Released,
+            PlatformWindowHitStack::Unavailable,
+        ));
+        assert!(!outbox.permits_stationary_sample(generation));
+        drop(subscription);
     }
 
     #[test]

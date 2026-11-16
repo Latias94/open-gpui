@@ -2307,6 +2307,14 @@ impl AppCell {
         self.native_captured_drags.prepared_route()
     }
 
+    pub(super) fn native_drag_permits_stationary_sample(
+        &self,
+        generation: NativeCapturedDragGeneration,
+    ) -> bool {
+        self.native_captured_drags
+            .permits_stationary_sample(generation)
+    }
+
     pub(super) fn lock_native_captured_drag_release(
         &self,
         event: &NativeCapturedDragEvent,
