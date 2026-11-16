@@ -49,15 +49,52 @@ application document. One entity cannot be registered under two pane identities.
 Use `with_view` to inspect the published session model and `update` to submit
 programmatic changes through the sole semantic frame.
 
+Use `update_action(update, map, cx)` when the caller needs a command result.
+Return the core's submitted token from `update`; `map` receives that token's
+exact `HostInputOutcome` before the host consumes the report. An `Ok` frame can
+still contain a product rejection or a stale action. The mapper receives `None`
+for a token outside that committed frame. Copy the application's result in the
+mapper; it runs synchronously under the host borrow and must not reenter the
+surface. Native effects and output receipts stay with the host.
+
+Register `set_commit_handler` before issuing actions to observe committed core
+notifications and presentation transition terminals outside the host borrow.
+`notification().document_changed()` supports application-owned autosave,
+including native placement changes. Match a pending command's transition ID to
+`presentation_transitions()` for its eventual result. A command's acceptance
+does not prove its destination was presented. `clear_commit_handler` removes
+the observer and its undelivered notification copies; no history is retained
+while no handler is installed.
+
 Bind a pane's existing content focus with `DockPane::with_focus_handle`. Default
 chrome exposes close, overflow and presentation controls, keyboard tab navigation
 and accessibility actions through the shared core's revision-bound commands.
 Content activation waits for the original output to become interactive; merely
 painting hidden or deferred content does not grant focus.
 
-Use `update_pane_metadata` to change a registered title or content minimum while
-retaining its View. It invalidates the core's measurement cache as well as the
-GPUI packet. `take_closed_pane` transfers a closed View registration only after
+Arrow/Home/End navigation follows the focused tab; Ctrl+Tab and Ctrl+Shift+Tab
+cycle documents. Independent key events retain their original core witness
+through the temporary inert packet used for submission, and a later application
+focus or blur claim ends that continuation. Enter hands ownership to pane
+content. Overflowing strips and tab lists accept real scroll events; phased
+precise scrolling keeps its original chrome/content owner through tail events.
+Layout actions operate on the complete Root, including its split tree. Group
+grips drag one tabs group. Neither control implicitly changes its scope to a
+single item or physical window.
+
+Use `DockPane::with_sizing` and `update_pane_metadata` to retain a validated
+`dockspace::geometry::PaneSizing` with each View. Minimum, maximum, fixed and
+preferred extents describe content in logical points; core adds docking chrome.
+Only the selected visible tab constrains its pane, while inactive visible tabs
+also supply metadata for future selection and movement. A maximum or fixed
+extent can leave background inside a larger window. Preferences do not override
+user weights during ordinary layout; focus a splitter and press Enter/Space, or
+use its accessibility Click action, to restore preferred sizes explicitly.
+Without preferences, that action equalizes the adjacent panes within their
+constraints. `LogicalSize` and `with_minimum_size` remain minimum-only shortcuts.
+
+Updating a title or sizing invalidates core measurements and the GPUI packet
+without replacing the View. `take_closed_pane` transfers a closed View registration only after
 the old input, packets and renderer obligations drain. Dropping the returned pane
 releases that registration's resources without deleting its durable external key;
 passing it to `open_pane` registers the same View again. Both operations may return
@@ -133,6 +170,12 @@ focus, IME or accessibility. A submitted output retains its original callback
 and binding across physical Root continuation. Desktop physical coordinates,
 target-display DPI, native hit stacks and OS capture require actual platform
 facts; ordinary logical mouse events do not supply them.
+
+Custom `NativeBridge` hosts using `App::consume_native_captured_drag` must call
+`NativeCallbacks::observe_capture_release` in its early ReleaseLocker callback
+before routing the event to `NativeBridge::captured_drag`. The callback owner
+retains the original natural-release barrier through delayed FIFO collection.
+Observing a completed gesture later cannot reconstruct that release receipt.
 
 Managed stationary hover and strip scrolling use one fresh native sample for the
 core's finite deadline, tied to the original captured-drag generation. Unsupported

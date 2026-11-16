@@ -178,6 +178,23 @@ receipts retain checkpoint `eef07bd0`; the subsequent SVG contribution and newer
 source completion are qualified separately above. Physical-input qualification
 does not follow from these correctness repairs.
 
+## November 17 Dockspace Adapter Parity
+
+The [adapter parity record](knowledge/engineering/verification/dockspace-adapter-parity-20261117.md)
+fixes the dockspace range `e8120864..362aa4c9`, inventories every upstream commit
+and distinguishes core adoption, egui reference behavior and remaining product
+work. It records complete content sizing, exact command outcomes, commit
+notifications, keyboard/focus continuation, overflow input and original native
+release custody. Use its final run IDs and backend boundaries for the current
+adapter; earlier physical Windows cohorts retain their original source pins.
+
+On this Mac, the active display query succeeds but the console is locked.
+AppKit reports both probe windows Hidden with detached CAMetalDisplayLink
+sources; native smoke cannot advance its original second-frame receipt. The
+record preserves that failed observation and the owning unlock/rerun requirement.
+All temporary probe apps are removed after the observed process exits. Contract
+tests and compiler checks are not substitutes for that physical qualification.
+
 ## November 14 Default Docking Cutover
 
 The shared session is now the root/prelude API. Default library checks exercise

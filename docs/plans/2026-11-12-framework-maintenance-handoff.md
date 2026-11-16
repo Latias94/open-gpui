@@ -216,6 +216,14 @@ experiments are removed, while the Windows dogfood and its ten physical-input
 behaviors remain explicitly legacy until their replacements execute. Do not
 attribute the removed experimental tests or egui's receipts to new GPUI coverage.
 
+The [November 17 adapter parity record](../knowledge/engineering/verification/dockspace-adapter-parity-20261117.md)
+tracks the complete `e8120864..362aa4c9` dockspace range and the retained host's
+pane sizing, command feedback, keyboard continuation, menu focus, wheel
+occlusion and public capture-release repairs. It also inventories the remaining
+group-control, splitter double-click, styling and owning-platform qualifications.
+Use its fixed sources and receipts before treating older Windows results as
+coverage for the current adapter.
+
 Continue with the actual remaining integration boundaries:
 
 1. Run Nara's canonical Dialogue Session/file and complete native trajectory on

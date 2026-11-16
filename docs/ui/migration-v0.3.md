@@ -29,6 +29,24 @@ migrated workspace. An application owns persistence scheduling; legacy revision
 subscription and activation-completion APIs are not silently aliased to new
 session operations.
 
+The current dockspace pin uses complete content `PaneSizing` measurements in
+logical points. `DockPane::with_sizing` accepts validated minimum/maximum/fixed/
+preferred metadata; `with_minimum_size` and passing `LogicalSize` to
+`update_pane_metadata` retain the minimum-only convenience path. Applications
+constructing their own measurement resolvers migrate `PaneMinimum` requests and
+answers to `PaneSizing`. `RootAllocation` separately controls central space
+redistribution and does not impose fixed side-pane widths. Only current-revision
+dockspace documents are supported by this unreleased integration; retain the
+existing document integrity checks rather than rewriting old hashes.
+
+Use `update_action(update, map, cx)` to resolve a submitted action's exact result.
+An `Ok` frame alone does not prove product acceptance. Install a
+`set_commit_handler` observer for application-owned autosave notifications and
+presentation transition terminals. These callbacks execute outside the host
+borrow; the synchronous action mapper runs inside it and must not reenter the
+surface. Native effects, renderer receipts and fresh-host recovery retain their
+existing owners.
+
 Register `set_close_handler` before opening roots and resolve the original
 `pending_close_decisions(plan.request())` through `update` using
 `dockspace::close::CloseDecision`. The handler runs after mutable host borrows,
