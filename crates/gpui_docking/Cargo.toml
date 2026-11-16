@@ -30,6 +30,11 @@ name = "tab_drag_allocations"
 harness = false
 required-features = ["test-support", "legacy-docking"]
 
+[[bench]]
+name = "shared_session_cpu"
+harness = false
+required-features = ["test-support"]
+
 [features]
 default = []
 legacy-docking = [

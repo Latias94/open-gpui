@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Open GPUI and Dear ImGui docking benchmarks with strict row pairing."""
+"""Run the legacy docking comparator and a separate shared-session CPU benchmark."""
 
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ DOCKSPACE_SCENARIO_FIXTURES = (
     / "crates"
     / "gpui_docking"
     / "src"
+    / "legacy"
     / "fixtures"
     / "dockspace_scenarios_v2.json"
 )
@@ -72,6 +73,8 @@ THREE_DOCKSPACE_COMPARISON_KEY = (
     "three_dockspaces_8_steps_2_edge_6_center_no_platform_windows",
 )
 REQUIRED_COMPARISON_KEYS = frozenset({THREE_DOCKSPACE_COMPARISON_KEY})
+LEGACY_ADAPTER = "legacy_docking"
+LEGACY_BENCH_FEATURES = "test-support,legacy-docking"
 
 
 def run(
@@ -111,6 +114,24 @@ def last_json_line(output: str) -> dict[str, Any]:
         if isinstance(value, dict):
             return value
     raise RuntimeError(f"command did not emit a JSON object: {output[-1000:]}")
+
+
+def run_rust_benchmark(name: str, *, features: str) -> dict[str, Any]:
+    return last_json_line(
+        run(
+            [
+                "cargo",
+                "bench",
+                "--locked",
+                "-p",
+                "open-gpui-docking",
+                "--bench",
+                name,
+                "--features",
+                features,
+            ]
+        )
+    )
 
 
 def load_three_dockspace_rehome_scenario() -> dict[str, Any]:
@@ -885,6 +906,8 @@ def positive_step_count(value: Any) -> bool:
 
 
 def require_passing_benchmark_reports(result: dict[str, Any]) -> None:
+    if result.get("open_gpui_adapter") != LEGACY_ADAPTER:
+        raise RuntimeError("benchmark comparison requires the explicit legacy_docking adapter")
     for field in ("benchmark_passed", "allocation_benchmark_passed"):
         value = result.get(field)
         if type(value) is not int or value != 1:
@@ -934,6 +957,7 @@ def scenario_comparison_rows(result: dict[str, Any]) -> list[dict[str, Any]]:
                 "operation_family": key[2],
                 "measurement_layer": key[3],
                 "scope": key[4],
+                "open_gpui_adapter": LEGACY_ADAPTER,
                 "open_gpui_ns_per_operation": open_gpui_ns,
                 "imgui_ns_per_operation": imgui_ns,
                 "open_gpui_to_imgui_ratio": open_gpui_ns / imgui_ns,
@@ -997,6 +1021,8 @@ def run_native_latency_benchmark() -> dict[str, Any]:
         "--locked",
         "-p",
         "open-gpui-docking-native",
+        "--features",
+        "legacy-docking",
         "--run-ignored",
         "only",
         "--test-threads",
@@ -1032,6 +1058,7 @@ def run_native_latency_benchmark() -> dict[str, Any]:
     evidence = {
         "schema_version": 1,
         "evidence_kind": "native_three_hwnd_lifecycle_baseline",
+        "docking_adapter": LEGACY_ADAPTER,
         "captured_at_utc": datetime.now(timezone.utc).isoformat(),
         "git": native_benchmark_git_metadata(),
         "environment": native_benchmark_environment(),
@@ -1049,47 +1076,16 @@ def run_native_latency_benchmark() -> dict[str, Any]:
     return {**summary, "native_latency_evidence": evidence}
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--json", action="store_true", help="emit one JSON object")
-    parser.add_argument(
-        "--native-latency",
-        action="store_true",
-        help=(
-            "also run the ignored Windows native three-HWND lifecycle baseline; "
-            "this opens windows and injects mouse input"
-        ),
+def run_legacy_comparison() -> dict[str, Any]:
+    rust_timing = run_rust_benchmark(
+        "tab_drag_latency", features=LEGACY_BENCH_FEATURES
     )
-    arguments = parser.parse_args()
-
-    rust_timing = last_json_line(
-        run(
-            [
-                "cargo",
-                "bench",
-                "-p",
-                "open-gpui-docking",
-                "--bench",
-                "tab_drag_latency",
-                "--features",
-                "test-support",
-            ]
-        )
+    rust_allocations = run_rust_benchmark(
+        "tab_drag_allocations", features=LEGACY_BENCH_FEATURES
     )
-    rust_allocations = last_json_line(
-        run(
-            [
-                "cargo",
-                "bench",
-                "-p",
-                "open-gpui-docking",
-                "--bench",
-                "tab_drag_allocations",
-                "--features",
-                "test-support",
-            ]
-        )
-    )
+    for report in (rust_timing, rust_allocations):
+        if report.get("open_gpui_adapter") != LEGACY_ADAPTER:
+            raise RuntimeError("legacy benchmark did not identify the legacy_docking adapter")
     open_gpui_scenario_rows = merge_open_gpui_scenario_rows(
         rust_timing.get("open_gpui_scenario_rows", []),
         rust_allocations.get("open_gpui_allocation_rows", []),
@@ -1107,10 +1103,62 @@ def main() -> None:
         "operation_step_count+workload_contract"
     )
     result["scenario_comparison_pair_count"] = len(result["scenario_comparison_rows"])
+    result["scenario_comparison_open_gpui_adapter"] = LEGACY_ADAPTER
     result["benchmark_passed"] = int(
         result.get("benchmark_passed", 0) == 1
         and result.get("allocation_benchmark_passed", 0) == 1
     )
+    return result
+
+
+def run_shared_session_benchmark() -> dict[str, Any]:
+    report = run_rust_benchmark("shared_session_cpu", features="test-support")
+    if (
+        report.get("schema_version") != 1
+        or report.get("adapter") != "shared_session"
+        or report.get("measurement_level") != "gpui_retained_host"
+        or report.get("renderer") != "gpui_test_platform"
+        or report.get("native_windows") is not False
+        or type(report.get("benchmark_passed")) is not int
+        or report["benchmark_passed"] != 1
+    ):
+        raise RuntimeError("shared-session benchmark requires passing retained-host test-renderer evidence")
+    rows = report.get("rows")
+    if not isinstance(rows, list) or not rows:
+        raise RuntimeError("shared-session benchmark did not emit timing rows")
+    for row in rows:
+        if not isinstance(row, dict) or not positive_finite_number(row.get("ns_per_cycle")):
+            raise RuntimeError("shared-session benchmark row has invalid cycle timing")
+    return report
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--json", action="store_true", help="emit one JSON object")
+    parser.add_argument(
+        "--suite",
+        choices=("legacy", "shared", "all"),
+        default="legacy",
+        help=(
+            "legacy: graph/controller comparison with Dear ImGui (default); "
+            "shared: retained GPUI host CPU data without comparator ratios; all: both"
+        ),
+    )
+    parser.add_argument(
+        "--native-latency",
+        action="store_true",
+        help=(
+            "also run the ignored legacy Windows native three-HWND lifecycle baseline; "
+            "this opens windows and injects mouse input"
+        ),
+    )
+    arguments = parser.parse_args()
+
+    result: dict[str, Any] = {"benchmark_suite": arguments.suite, "benchmark_passed": 1}
+    if arguments.suite in ("legacy", "all"):
+        result.update(run_legacy_comparison())
+    if arguments.suite in ("shared", "all"):
+        result["shared_session"] = run_shared_session_benchmark()
     if arguments.native_latency:
         result.update(run_native_latency_benchmark())
 

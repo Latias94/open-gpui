@@ -1,3 +1,5 @@
+//! Legacy graph/controller measurements, independent of the shared-session host.
+
 use open_gpui_docking::legacy::benchmark_support::{
     CanonicalGroupEdgePatchBenchmark, DockComplexDockspaceBenchmark, DockDragBenchmark,
     DockMultiViewDragBenchmark, DockspaceBenchmarkCase, DockspaceScenarioSequenceBenchmark,
@@ -131,6 +133,7 @@ fn main() {
     println!(
         "{}",
         json!({
+            "open_gpui_adapter": "legacy_docking",
             "benchmark_passed": i32::from(dockspace_cycle.validate_cycle_state()),
             "open_gpui_ns_per_move": open_gpui_ns_per_move,
             "open_gpui_large_scene_ns_per_move": open_gpui_large_scene_ns_per_move,

@@ -1,6 +1,8 @@
+//! Legacy graph/controller allocations, independent of the shared-session host.
+
 use open_gpui_docking::legacy::benchmark_support::{
-    DockComplexDockspaceBenchmark, DockDragBenchmark, DockMultiViewDragBenchmark,
-    DockspaceBenchmarkCase, DockspaceScenarioSequenceBenchmark,
+    CanonicalGroupEdgePatchBenchmark, DockComplexDockspaceBenchmark, DockDragBenchmark,
+    DockMultiViewDragBenchmark, DockspaceBenchmarkCase, DockspaceScenarioSequenceBenchmark,
 };
 use serde_json::json;
 use std::{
@@ -46,6 +48,9 @@ fn main() {
     let complex = DockComplexDockspaceBenchmark::tabs_split_float_merge();
     let multiview = DockMultiViewDragBenchmark::new(8, 8, 8);
     let mut dockspace_cycle = DockspaceScenarioSequenceBenchmark::three_dockspace_rehome_cycle();
+    let mut canonical_group_edge = CanonicalGroupEdgePatchBenchmark::new();
+    let mut canonical_group_edge_many_spaces =
+        CanonicalGroupEdgePatchBenchmark::with_space_count(64);
     let dockspace_cycle_step_count = dockspace_cycle.step_count();
     let dockspace_cycle_workload_contract = dockspace_cycle.workload_contract().to_owned();
 
@@ -91,6 +96,21 @@ fn main() {
             })
         });
     let sequence_state_restored = dockspace_cycle.validate_cycle_state();
+    let (canonical_allocation_count, canonical_allocated_bytes, all_canonical_committed) =
+        track_allocations(|| {
+            run_iterations(allocation_iterations, |iteration| {
+                canonical_group_edge.run_operation(iteration)
+            })
+        });
+    let (
+        canonical_many_spaces_allocation_count,
+        canonical_many_spaces_allocated_bytes,
+        all_canonical_many_spaces_committed,
+    ) = track_allocations(|| {
+        run_iterations(allocation_iterations, |iteration| {
+            canonical_group_edge_many_spaces.run_operation(iteration)
+        })
+    });
     let hot_paths_zero_allocation = [
         (allocation_count, allocated_bytes),
         (large_allocation_count, large_allocated_bytes),
@@ -151,12 +171,32 @@ fn main() {
             "open_gpui_bytes_per_operation": sequence_allocated_bytes as f64 / sequence_allocation_iterations as f64,
             "operation_step_count": dockspace_cycle_step_count,
             "workload_contract": dockspace_cycle_workload_contract,
+        },
+        {
+            "scenario_id": "canonical_group_edge_patch",
+            "step_id": "prepare_commit",
+            "operation_family": "whole_group_edge_dock",
+            "measurement_layer": "canonical_patch_prepare_commit",
+            "scope": "one_main_dockspace_two_groups_local_parent_rewire",
+            "open_gpui_allocations_per_operation": canonical_allocation_count as f64 / allocation_iterations as f64,
+            "open_gpui_bytes_per_operation": canonical_allocated_bytes as f64 / allocation_iterations as f64,
+        },
+        {
+            "scenario_id": "canonical_group_edge_patch_many_spaces",
+            "step_id": "prepare_commit",
+            "operation_family": "whole_group_edge_dock",
+            "measurement_layer": "canonical_patch_prepare_commit",
+            "scope": "one_touched_dockspace_63_unrelated_dockspaces_local_parent_rewire",
+            "dockspace_count": 64,
+            "open_gpui_allocations_per_operation": canonical_many_spaces_allocation_count as f64 / allocation_iterations as f64,
+            "open_gpui_bytes_per_operation": canonical_many_spaces_allocated_bytes as f64 / allocation_iterations as f64,
         }
     ]);
 
     println!(
         "{}",
         json!({
+            "open_gpui_adapter": "legacy_docking",
             "allocation_benchmark_passed": i32::from(
                 all_resolved
                     && large_all_resolved
@@ -165,6 +205,10 @@ fn main() {
                     && multiview_unknown_all_rejected
                     && all_sequences_committed
                     && sequence_state_restored
+                    && all_canonical_committed
+                    && all_canonical_many_spaces_committed
+                    && canonical_group_edge.validate_state()
+                    && canonical_group_edge_many_spaces.validate_state()
                     && hot_paths_zero_allocation
             ),
             "open_gpui_hot_paths_zero_allocation": hot_paths_zero_allocation,

@@ -1,10 +1,18 @@
+import json
 import math
 import unittest
+from contextlib import redirect_stdout
 from copy import deepcopy
+from io import StringIO
+from unittest.mock import patch
 
+from tools import benchmark_docking_drag as benchmark
 from tools.benchmark_docking_drag import (
+    COMPARISON_KEY_FIELDS,
     IMGUI_SOURCE,
+    LEGACY_ADAPTER,
     NATIVE_LIFECYCLE_BOUNDARIES,
+    THREE_DOCKSPACE_COMPARISON_KEY,
     load_three_dockspace_rehome_scenario,
     merge_open_gpui_scenario_rows,
     render_imgui_rehome_scenario_header,
@@ -31,11 +39,26 @@ def benchmark_row(**overrides):
 
 def passing_benchmark_result(**overrides):
     result = {
+        "open_gpui_adapter": LEGACY_ADAPTER,
         "benchmark_passed": 1,
         "allocation_benchmark_passed": 1,
     }
     result.update(overrides)
     return result
+
+
+def shared_session_report(**overrides):
+    report = {
+        "schema_version": 1,
+        "adapter": "shared_session",
+        "measurement_level": "gpui_retained_host",
+        "renderer": "gpui_test_platform",
+        "native_windows": False,
+        "benchmark_passed": 1,
+        "rows": [{"scenario_id": "shared_retained_host", "ns_per_cycle": 240.0}],
+    }
+    report.update(overrides)
+    return report
 
 
 def native_lifecycle_run(process_index=0, *, graph_status="observed"):
@@ -156,6 +179,7 @@ class ScenarioComparisonRowsTests(unittest.TestCase):
             scenario_comparison_rows(result),
             [
                 benchmark_row(
+                    open_gpui_adapter=LEGACY_ADAPTER,
                     open_gpui_ns_per_operation=120.0,
                     imgui_ns_per_operation=80.0,
                     open_gpui_to_imgui_ratio=1.5,
@@ -163,6 +187,19 @@ class ScenarioComparisonRowsTests(unittest.TestCase):
                 )
             ],
         )
+
+    def test_shared_or_unlabeled_adapter_cannot_supply_legacy_comparison_ratios(self):
+        for adapter in ("shared_session", None):
+            with self.subTest(adapter=adapter):
+                result = passing_benchmark_result(
+                    open_gpui_adapter=adapter,
+                    open_gpui_scenario_rows=[
+                        benchmark_row(open_gpui_ns_per_operation=120.0)
+                    ],
+                    imgui_scenario_rows=[benchmark_row(imgui_ns_per_operation=80.0)],
+                )
+                with self.assertRaisesRegex(RuntimeError, "explicit legacy_docking adapter"):
+                    scenario_comparison_rows(result)
 
     def test_rejects_cross_layer_or_cross_scope_ratios(self):
         result = passing_benchmark_result(
@@ -297,6 +334,123 @@ class ScenarioComparisonRowsTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(RuntimeError, "required benchmark comparison"):
             require_comparison_keys([], required)
+
+
+class BenchmarkRunnerTests(unittest.TestCase):
+    def test_legacy_runner_enables_both_features_and_labels_the_comparator(self):
+        key = dict(zip(COMPARISON_KEY_FIELDS, THREE_DOCKSPACE_COMPARISON_KEY))
+        timing = passing_benchmark_result(
+            open_gpui_scenario_rows=[benchmark_row(**key, open_gpui_ns_per_operation=120.0)]
+        )
+        allocations = {
+            "open_gpui_adapter": LEGACY_ADAPTER,
+            "allocation_benchmark_passed": 1,
+            "open_gpui_allocation_rows": [
+                benchmark_row(
+                    **key,
+                    open_gpui_allocations_per_operation=2.0,
+                    open_gpui_bytes_per_operation=64.0,
+                )
+            ],
+        }
+        imgui = {
+            "imgui_ns_per_preview": 10.0,
+            "imgui_multiview_known_host_ns_per_preview": 10.0,
+            "imgui_dockable_target_ns_per_preview": 10.0,
+            "imgui_multiview_dockable_target_known_host_ns_per_preview": 10.0,
+            "imgui_three_dockspace_rehome_cycle_ns_per_sequence": 80.0,
+            "imgui_three_dockspace_rehome_operation_step_count": 8,
+            "imgui_three_dockspace_rehome_workload_contract": "shared_contract",
+        }
+        with (
+            patch.object(
+                benchmark, "run",
+                side_effect=[json.dumps(report) for report in (timing, allocations, imgui)],
+            ) as run,
+            patch.object(benchmark, "build_imgui_benchmark") as build_imgui,
+        ):
+            result = benchmark.run_legacy_comparison()
+
+        names = ("tab_drag_latency", "tab_drag_allocations")
+        for command_call, name in zip(run.call_args_list[:2], names):
+            command = command_call.args[0]
+            self.assertEqual(command[command.index("--bench") + 1], name)
+            self.assertEqual(
+                set(command[command.index("--features") + 1].split(",")),
+                {"test-support", "legacy-docking"},
+            )
+        build_imgui.assert_called_once_with()
+        self.assertEqual(result["scenario_comparison_pair_count"], 1)
+        comparison = result["scenario_comparison_rows"][0]
+        self.assertEqual(comparison["open_gpui_adapter"], LEGACY_ADAPTER)
+        self.assertEqual(comparison["open_gpui_to_imgui_ratio"], 1.5)
+        self.assertEqual(
+            result["open_gpui_scenario_rows"][0]["open_gpui_allocations_per_operation"], 2.0
+        )
+
+    def test_shared_only_cli_skips_legacy_and_imgui_and_nests_host_data(self):
+        report = shared_session_report()
+        output = StringIO()
+        with (
+            patch("sys.argv", ["benchmark_docking_drag.py", "--suite", "shared", "--json"]),
+            patch.object(benchmark, "run", return_value=json.dumps(report)) as run,
+            patch.object(benchmark, "build_imgui_benchmark") as build_imgui,
+            redirect_stdout(output),
+        ):
+            benchmark.main()
+
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["shared_session"], report)
+        self.assertNotIn("open_gpui_scenario_rows", result)
+        self.assertNotIn("scenario_comparison_rows", result)
+        build_imgui.assert_not_called()
+        run.assert_called_once_with(
+            [
+                "cargo", "bench", "--locked", "-p", "open-gpui-docking", "--bench",
+                "shared_session_cpu", "--features", "test-support",
+            ]
+        )
+
+    def test_all_suites_preserve_legacy_metrics_and_separate_shared_data(self):
+        legacy = passing_benchmark_result(
+            open_gpui_scenario_rows=[benchmark_row(open_gpui_ns_per_operation=120.0)],
+            scenario_comparison_rows=[{"open_gpui_to_imgui_ratio": 1.5}],
+        )
+        shared = shared_session_report()
+        output = StringIO()
+        with (
+            patch("sys.argv", ["benchmark_docking_drag.py", "--suite", "all", "--json"]),
+            patch.object(benchmark, "run_legacy_comparison", return_value=deepcopy(legacy)),
+            patch.object(
+                benchmark, "run_shared_session_benchmark", return_value=deepcopy(shared)
+            ),
+            redirect_stdout(output),
+        ):
+            benchmark.main()
+
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["shared_session"], shared)
+        self.assertEqual(result["open_gpui_scenario_rows"], legacy["open_gpui_scenario_rows"])
+        self.assertEqual(result["scenario_comparison_rows"], legacy["scenario_comparison_rows"])
+        self.assertNotIn("rows", result)
+
+    def test_shared_runner_rejects_failed_core_only_or_invalid_timing_reports(self):
+        for overrides in (
+            {"benchmark_passed": 0},
+            {"benchmark_passed": True},
+            {"adapter": LEGACY_ADAPTER},
+            {"measurement_level": "core_only"},
+            {"native_windows": True},
+            {"rows": []},
+            {"rows": [{"ns_per_cycle": math.nan}]},
+        ):
+            with self.subTest(overrides=overrides):
+                with patch.object(
+                    benchmark, "run_rust_benchmark",
+                    return_value=shared_session_report(**overrides),
+                ):
+                    with self.assertRaises(RuntimeError):
+                        benchmark.run_shared_session_benchmark()
 
 
 class NativeLifecycleEvidenceTests(unittest.TestCase):
