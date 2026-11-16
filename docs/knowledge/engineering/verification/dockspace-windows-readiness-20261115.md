@@ -8,6 +8,9 @@ git_commit: 479c48011efb15930025a71ad5578daf414cc2ac
 
 # Windows Shared Dockspace Readiness
 
+The [November 16 single-display physical follow-up](dockspace-windows-physical-20261116.md)
+records subsequent local execution, adapter corrections, and the remaining physical failures.
+
 The later execution-policy change removes the self-hosted physical-input workflow. The existing
 manifest gate now runs locally; hosted CI retains programmatic native, rendering and adapter
 coverage. Schema 7 removes only the manifest's runner label, preserving all fifteen scenario rows
