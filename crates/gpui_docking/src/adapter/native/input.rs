@@ -164,10 +164,8 @@ impl NativeBridge {
             let hover = native_hover(stack, Some(position), |owner| {
                 self.binding_for_window(owner)
             });
-            let work_area = matches!(hover, NativePointerHover::OutsideAll)
-                .then(|| self.desktop.work_area(session, frame))
-                .flatten();
-            NativePointerInput::new(
+            let work_area = self.desktop.work_area(session, frame);
+            let input = NativePointerInput::new(
                 request.pointer(),
                 request.event(),
                 NativeDesktopPointerLocation::new(
@@ -176,11 +174,27 @@ impl NativeBridge {
                             .ok()?,
                     ),
                     hover,
-                    work_area,
+                    (hover == NativePointerHover::OutsideAll)
+                        .then_some(work_area)
+                        .flatten(),
                 ),
                 NativePointerOwner::Native(binding),
                 NativePointerOwner::Native(binding),
-            )
+            );
+            if matches!(
+                hover,
+                NativePointerHover::OutsideAll | NativePointerHover::Foreign
+            ) && let Some(work_area) = work_area
+            {
+                let drag = self.callbacks(binding).and_then(|callbacks| {
+                    callbacks
+                        .active_capture()
+                        .and_then(|capture| callbacks.drag_tear_off(capture))
+                });
+                input.with_native_tear_off(work_area, drag)
+            } else {
+                input
+            }
         };
         Some(input.with_metadata(metadata))
     }
@@ -254,17 +268,15 @@ impl NativeBridge {
             event.global_position(),
             |window_id| self.binding_for_window(window_id),
         );
-        let work_area = matches!(hover, NativePointerHover::OutsideAll)
-            .then(|| {
-                event
-                    .physical_frame()
-                    .and_then(|frame| self.desktop.work_area(session, frame))
-            })
-            .flatten();
+        let work_area = event
+            .physical_frame()
+            .and_then(|frame| self.desktop.work_area(session, frame));
         let location = NativeDesktopPointerLocation::new(
             position.map_or(NativeDesktopPosition::Unknown, NativeDesktopPosition::Exact),
             hover,
-            work_area,
+            (hover == NativePointerHover::OutsideAll)
+                .then_some(work_area)
+                .flatten(),
         );
         let edge = match event.phase() {
             NativeCapturedDragPhase::Moved => NativePointerEvent::Moved,
@@ -291,6 +303,22 @@ impl NativeBridge {
                 NativePointerOwner::Native(binding),
                 capture,
             )
+        };
+        let input = if matches!(
+            edge,
+            NativePointerEvent::Moved
+                | NativePointerEvent::ButtonReleased(NativePointerButton::Primary)
+        ) && matches!(
+            hover,
+            NativePointerHover::OutsideAll | NativePointerHover::Foreign
+        ) && let Some(work_area) = work_area
+        {
+            let drag = self
+                .callbacks(binding)
+                .and_then(|callbacks| callbacks.drag_tear_off(NativeCapture::from_event(event)));
+            input.with_native_tear_off(work_area, drag)
+        } else {
+            input
         };
         input.with_metadata(metadata)
     }

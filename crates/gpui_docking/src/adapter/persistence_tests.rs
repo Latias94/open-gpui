@@ -122,7 +122,7 @@ fn main_split(session: &DockspaceSession) -> dockspace::model::DockspaceSplitVie
         .expect("canonical split")
 }
 
-fn assert_weights(actual: impl IntoIterator<Item = f32>, expected: &[f32]) {
+fn assert_weights(actual: impl IntoIterator<Item = f64>, expected: &[f64]) {
     let actual = actual.into_iter().collect::<Vec<_>>();
     assert_eq!(actual.len(), expected.len());
     for (actual, expected) in actual.into_iter().zip(expected) {

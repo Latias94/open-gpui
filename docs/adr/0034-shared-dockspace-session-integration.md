@@ -73,15 +73,20 @@ ADRs 0029, 0030 and 0031 continue to govern platform and renderer ownership:
 ## Native preview ownership
 
 The default managed factory may create a GPUI provisional window for the core's
-`DockspacePreviewVisual::Native`. The reserved target surface correlates that
-visual with a later create effect; it is not permission to register another core
-root or encode a target output before release. The private
+`DockspacePreviewVisual::Native`. The core-issued `NativeDragTearOff` and reserved
+target surface correlate that visual with a later create effect; they grant no
+permission to register another core root or encode a target output before release. The private
 `adapter/host_native/provisional.rs` owner retains the visual shell, exact GPUI
 provisional session and physical retirement authority.
 
 An accepted source packet freezes its original physical pointer/display route.
 The accepted native FIFO delivers release packets with their original source and
 drag generation; only the matching provisional owner retains one for adoption.
+Captured and stationary edges keep actual Foreign hover opaque while supplying
+independent, current work-area authority through `with_native_tear_off`. Release
+must carry its own fresh authorization. A create may adopt a shell only when its
+`NativeWindowRequest::drag_tear_off` and reserved surface both match. Pending input
+or presentation does not prove that the original shell may be destroyed.
 Adoption installs
 the create effect's callbacks on the existing Window and HWND, settles the final
 target-DPI placement, and shares `semantics_ticket.frame_submission()` with the
@@ -112,6 +117,14 @@ The versioned adapter envelope embeds the core's public document and durable ext
 history. Runtime entities, factories, focus handles, native handles and frame proofs are excluded.
 Restoring a document validates every key, including closed historical keys, before any factory
 runs or a live workspace changes. A factory is required only for an open occurrence.
+
+While dockspace is unreleased, the supported core document format follows the
+currently pinned revision. Dependency upgrades may discard older dockspace layouts
+and create fresh documents through the current core. Cross-revision migrations
+and binding-hash rewrites are outside this policy. Current-format integrity and
+pane-key validation still apply. The November 16
+[adoption record](../knowledge/engineering/verification/dockspace-e812-adoption-20261116.md)
+records the user-approved format break and current-reader qualification.
 
 Legacy v2/v3 layouts are accepted through a one-way migrator with an explicit
 `LegacyTopologyMigration::RelativeWeights` choice. Order, tab selection, floating bounds and

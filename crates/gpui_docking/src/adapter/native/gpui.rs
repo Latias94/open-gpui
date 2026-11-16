@@ -9,11 +9,11 @@ use dockspace::{
     runtime::{
         DockspaceSession, NativeCleanupObservation, NativeCloseDisposition,
         NativeCloseEffectAcknowledgement, NativeCloseState, NativeCreateEffectAcknowledgement,
-        NativeCreateReadiness, NativeDispatchFailure, NativeEffectAcknowledgement,
-        NativeEffectOperation, NativeEffectRequest, NativeHostCapability,
-        NativeIndeterminateReason, NativeInputEffectAcknowledgement, NativeSurfaceBinding,
-        NativeSurfaceRole, NativeUnsupportedReason, NativeWindowBinding, NativeWindowFacts,
-        NativeWindowInputState, NativeWindowPresentationState,
+        NativeCreateReadiness, NativeDispatchFailure, NativeDragTearOff,
+        NativeEffectAcknowledgement, NativeEffectOperation, NativeEffectRequest,
+        NativeHostCapability, NativeIndeterminateReason, NativeInputEffectAcknowledgement,
+        NativeSurfaceBinding, NativeSurfaceRole, NativeUnsupportedReason, NativeWindowBinding,
+        NativeWindowFacts, NativeWindowInputState, NativeWindowPresentationState,
     },
 };
 use open_gpui::{
@@ -85,6 +85,9 @@ pub struct NativeWindowRequest {
     pub outer_bounds: PhysicalRect,
     /// Core's ownership role; it does not imply native transient parenting.
     pub role: NativeSurfaceRole,
+    /// Exact pointer drag whose provisional resource this request may adopt.
+    /// Programmatic creates and replacements carry no drag identity.
+    pub drag_tear_off: Option<NativeDragTearOff>,
 }
 
 /// A factory failure retains GPUI's actual typed creation stage when available.
@@ -137,6 +140,7 @@ struct CallbackState {
     anchor: Cell<bool>,
     capture: Cell<Option<NativeCapture>>,
     capture_start: Cell<Option<NativeCapture>>,
+    drag_tear_off: Cell<Option<(NativeCapture, NativeDragTearOff)>>,
     capture_releases: RefCell<Vec<(NativeWindowBinding, NativeCapturedDragReleaseBarrier)>>,
     capture_failed: Cell<bool>,
     capture_cancellations: RefCell<VecDeque<NativeCapture>>,
@@ -182,6 +186,7 @@ impl NativeCallbacks {
             anchor: Cell::new(false),
             capture: Cell::new(None),
             capture_start: Cell::new(None),
+            drag_tear_off: Cell::new(None),
             capture_releases: RefCell::new(Vec::new()),
             capture_failed: Cell::new(false),
             capture_cancellations: RefCell::new(VecDeque::new()),
@@ -640,6 +645,25 @@ impl NativeCallbacks {
         self.0.capture.get().or(self.0.capture_start.get())
     }
 
+    pub(crate) fn retain_drag_tear_off(&self, capture: NativeCapture, drag: NativeDragTearOff) {
+        if self.window_id() == Some(capture.source_window())
+            && !self.0.sealed.get()
+            && !self.0.logical_closed.get()
+            && (self.0.capture.get() == Some(capture)
+                || self.0.capture_start.get() == Some(capture))
+        {
+            self.0.drag_tear_off.set(Some((capture, drag)));
+        }
+    }
+
+    pub(crate) fn drag_tear_off(&self, capture: NativeCapture) -> Option<NativeDragTearOff> {
+        self.0
+            .drag_tear_off
+            .get()
+            .filter(|(owner, _)| *owner == capture)
+            .map(|(_, drag)| drag)
+    }
+
     pub(crate) fn retain_capture_start(
         &self,
         source: open_gpui::WindowId,
@@ -1079,12 +1103,14 @@ impl NativeBridge {
                             cx,
                         );
                     } else {
+                        let drag_tear_off = request.drag_tear_off();
                         self.create_window(
                             request,
                             NativeWindowRequest {
                                 binding,
                                 outer_bounds: placement,
                                 role,
+                                drag_tear_off,
                             },
                             factory,
                             cx,

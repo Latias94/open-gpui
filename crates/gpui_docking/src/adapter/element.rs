@@ -14,9 +14,8 @@ use dockspace::{
         DockspacePaneFocusObservation, DockspacePaneFocusRequest, DockspaceReceiverDescriptor,
         DockspaceUpdate, DockspaceVisualId, SurfaceMeasurementAnswer as Answer,
         SurfaceMeasurementRequest as Request, SurfacePointerButton, SurfacePointerCancelReason,
-        SurfacePointerEvent, SurfaceUnavailableReason, SurfaceWork, SurfaceWorkDeferred,
-        TabListMenuMetrics, TabStripControlMetric, TabStripControlMetrics,
-        TabStripControlPlacement, TabStripMetrics,
+        SurfacePointerEvent, SurfaceWork, SurfaceWorkDeferred, TabListMenuMetrics,
+        TabStripControlMetric, TabStripControlMetrics, TabStripControlPlacement, TabStripMetrics,
     },
 };
 use open_gpui::{
@@ -2148,15 +2147,8 @@ fn build_candidate(
             f64::from(f32::from(bounds.size.width)),
             f64::from(f32::from(bounds.size.height)),
         )?;
-        let measure = match frame.surface_work(surface)? {
-            SurfaceWork::Ready(plan) => plan.measurement_refresh().is_allowed(),
-            SurfaceWork::Deferred(SurfaceWorkDeferred::Unmeasured) => true,
-            SurfaceWork::Deferred(SurfaceWorkDeferred::OutputCapacity) => {
-                return Err(anyhow!("renderer output capacity is exhausted"));
-            }
-        };
-        if measure {
-            frame.measure_surface_with(surface, |request| match request {
+        let work = frame.prepare_surface_with(surface, |request| -> Result<Answer> {
+            Ok(match request {
                 Request::DockBounds { .. } | Request::PopupPlaneBounds { .. } => {
                     Answer::Bounds(bounds)
                 }
@@ -2184,29 +2176,34 @@ fn build_candidate(
                     Answer::TabIntrinsic(width)
                 }
                 Request::TabStrip { .. } => Answer::TabStrip(tab_strip),
-            })?;
-        }
-        let Some(plan) = frame.paint_plan(surface)? else {
-            anyhow::ensure!(managed, "measured surface has no ready paint plan");
-            // Native creation can render its real initial GPUI frame before
-            // the core receives Created/Prepared. This is a deferred region,
-            // with no painted output or content-presentation acknowledgement.
-            packets.insert(
-                surface,
-                Rc::new(Packet {
-                    draws: Vec::new(),
-                    deferred: true,
-                    native_preview: None,
-                }),
-            );
-            continue;
+            })
+        })?;
+        let plan = match work {
+            SurfaceWork::Ready(plan) => plan,
+            SurfaceWork::Deferred(SurfaceWorkDeferred::OutputCapacity) => {
+                return Err(anyhow!("renderer output capacity is exhausted"));
+            }
+            SurfaceWork::Deferred(SurfaceWorkDeferred::Unmeasured) => {
+                anyhow::ensure!(managed, "measured surface has no ready paint plan");
+                // Native creation can render its real initial GPUI frame before
+                // the core receives Created/Prepared. This staging packet grants
+                // no painted output or content-presentation acknowledgement.
+                packets.insert(
+                    surface,
+                    Rc::new(Packet {
+                        draws: Vec::new(),
+                        deferred: true,
+                        native_preview: None,
+                    }),
+                );
+                continue;
+            }
         };
         let (packet, receipt) =
             record(plan, panels, pointers[&surface], &config.colors, open_menu)?;
         frame.confirm_surface_painted(receipt)?;
         packets.insert(surface, Rc::new(packet));
     }
-    frame.complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)?;
     Ok((packets, frame.suspend()))
 }
 

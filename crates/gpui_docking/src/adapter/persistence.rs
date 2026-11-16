@@ -1479,7 +1479,7 @@ fn compile_legacy_node(
         Finish {
             id: u32,
             axis: LegacyAxis,
-            weights: Vec<f32>,
+            weights: Vec<f64>,
             base: usize,
         },
     }
@@ -1521,7 +1521,8 @@ fn compile_legacy_node(
                         children,
                         weights,
                     } => {
-                        let mut weights = weights.clone();
+                        let mut weights =
+                            weights.iter().copied().map(f64::from).collect::<Vec<_>>();
                         if version == 3
                             && !validation.central_path.contains(&id)
                             && let (Some(first), Some(second)) = (
@@ -1533,7 +1534,7 @@ fn compile_legacy_node(
                             let second = f64::from(second.axis_size(*axis));
                             let total = first + second;
                             if total > 0.0 {
-                                weights = vec![(first / total) as f32, (second / total) as f32];
+                                weights = vec![first / total, second / total];
                             }
                         }
                         if version == 2
@@ -1546,12 +1547,12 @@ fn compile_legacy_node(
                                 .iter()
                                 .enumerate()
                                 .filter(|(index, _)| *index != central)
-                                .map(|(_, weight)| f64::from(*weight))
+                                .map(|(_, weight)| *weight)
                                 .sum::<f64>();
                             if other_sum >= 1.0 {
                                 return Err(DockPersistenceError::ZeroShare { node: id });
                             }
-                            weights[central] = (1.0 - other_sum) as f32;
+                            weights[central] = 1.0 - other_sum;
                         }
                         if children.len() > 1 && weights.iter().any(|weight| *weight <= 0.0) {
                             return Err(DockPersistenceError::ZeroShare { node: id });

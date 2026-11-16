@@ -193,6 +193,191 @@ fn desktop_publication_commits_before_its_suffix_and_rejects_stale_pointer_topol
 }
 
 #[open_gpui::test]
+fn captured_foreign_intent_uses_each_original_frame_and_preserves_unknown_hover(
+    cx: &mut TestAppContext,
+) {
+    use dockspace::{
+        geometry::PhysicalPoint,
+        runtime::{
+            HostWorkAreaToken, NativeDesktopPointerLocation, NativeDesktopPosition,
+            NativeLocalToDesktopHandoff, NativePointerEvent, NativePointerHover,
+            NativePointerInput, NativePointerLocation,
+        },
+    };
+    use open_gpui::{
+        Bounds, DevicePixels, MouseMoveEvent, MouseUpEvent, PlatformInput,
+        PlatformNativePointerCaptureOwner, PlatformNativePointerPhysicalFrame,
+        PlatformPhysicalDisplayObservation, PlatformWindowHit, PlatformWindowHitStack,
+        PlatformWindowPhysicalCoverage, PlatformWindowPhysicalGeometry, size,
+    };
+
+    let display = cx.update(|cx| {
+        let snapshot = cx.display_snapshot();
+        let display = &snapshot.displays()[0];
+        PlatformPhysicalDisplayObservation::try_new(
+            snapshot.generation().unwrap(),
+            display.id(),
+            display.bounds().to_device_pixels(1.0),
+            display.visible_bounds().to_device_pixels(1.0),
+            1.0,
+        )
+        .unwrap()
+    });
+    cx.simulate_physical_display_roster(Some(vec![display]));
+    let mut fixture = natural_capture(cx);
+    let source = fixture.windows[1];
+    let bounds = Bounds::new(
+        point(DevicePixels(0), DevicePixels(0)),
+        size(DevicePixels(640), DevicePixels(480)),
+    );
+    cx.set_platform_window_physical_client_geometry(source, Some(bounds), 1.0);
+    cx.update_window(source, |_, window, cx| window.bounds_changed(cx))
+        .unwrap();
+    cx.update(|cx| {
+        fixture
+            .bridge
+            .transport()
+            .desktop(&cx.display_snapshot(), cx)
+    });
+    for _ in 0..4 {
+        commit_capture_transport(&mut fixture.session, &mut fixture.bridge);
+        if fixture.bridge.transport().is_empty() {
+            break;
+        }
+    }
+    assert!(
+        fixture.bridge.transport().is_empty(),
+        "the complete desktop publication must commit before sampling its work area"
+    );
+    let area = fixture
+        .session
+        .native_work_area(HostWorkAreaToken::new(u64::from(display.display_id())))
+        .unwrap();
+    let metadata = PointerEventMetadata::new(PointerDeviceKind::Mouse, Duration::from_millis(50));
+    let mut visual = VisualTestContext::from_window(source, cx);
+    visual.simulate_mouse_down(
+        point(px(20.0), px(20.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    visual.simulate_mouse_move(
+        point(px(60.0), px(20.0)),
+        Some(MouseButton::Left),
+        Modifiers::none(),
+    );
+    let binding = fixture.bindings[1].window();
+    for (index, release, unknown) in [(0, false, false), (1, false, true), (2, true, false)] {
+        let position = point(DevicePixels(80 + index * 20), DevicePixels(20));
+        let frame = PlatformNativePointerPhysicalFrame::new(
+            position,
+            PlatformWindowPhysicalGeometry::try_new(bounds, 1.0).unwrap(),
+        )
+        .with_target_display(display)
+        .unwrap()
+        .with_capture_owner(if release {
+            PlatformNativePointerCaptureOwner::None
+        } else {
+            PlatformNativePointerCaptureOwner::Window(source.window_id())
+        });
+        cx.set_platform_window_hit_stack(if unknown {
+            PlatformWindowHitStack::Unavailable
+        } else {
+            PlatformWindowHitStack::try_available(
+                position,
+                vec![PlatformWindowHit::OpaqueBarrier {
+                    coverage: PlatformWindowPhysicalCoverage::try_new(bounds).unwrap(),
+                }],
+            )
+            .unwrap()
+        });
+        let local = point(px(position.x.0 as f32), px(position.y.0 as f32));
+        cx.simulate_platform_input_with_native_pointer_physical_frame(
+            source,
+            if release {
+                PlatformInput::MouseUp(MouseUpEvent {
+                    button: MouseButton::Left,
+                    position: local,
+                    modifiers: Modifiers::none(),
+                    click_count: 1,
+                })
+            } else {
+                PlatformInput::MouseMove(MouseMoveEvent {
+                    position: local,
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Modifiers::none(),
+                })
+            },
+            Some(frame),
+        );
+        cx.run_until_parked();
+        let event = fixture
+            .events
+            .borrow()
+            .last()
+            .cloned()
+            .expect("the original captured edge");
+        assert_eq!(event.physical_frame(), Some(frame));
+        let capture = if release {
+            NativePointerOwner::None
+        } else {
+            NativePointerOwner::Native(binding)
+        };
+        let input = fixture.bridge.captured_pointer_input(
+            &fixture.session,
+            binding,
+            capture,
+            &event,
+            NativePointerId::new(1),
+            metadata,
+        );
+        let event_kind = if release {
+            NativePointerEvent::ButtonReleased(dockspace::runtime::NativePointerButton::Primary)
+        } else {
+            NativePointerEvent::Moved
+        };
+        let location = NativeDesktopPointerLocation::new(
+            NativeDesktopPosition::Exact(
+                PhysicalPoint::new(f64::from(position.x.0), f64::from(position.y.0)).unwrap(),
+            ),
+            if unknown {
+                NativePointerHover::Unknown
+            } else {
+                NativePointerHover::Foreign
+            },
+            None,
+        );
+        let expected = match input.location() {
+            NativePointerLocation::LocalToDesktop(packet) => NativePointerInput::new_handoff(
+                NativePointerId::new(1),
+                event_kind,
+                NativeLocalToDesktopHandoff::new(packet.local(), location),
+                NativePointerOwner::Native(binding),
+                capture,
+            ),
+            NativePointerLocation::Desktop(_) => NativePointerInput::new(
+                NativePointerId::new(1),
+                event_kind,
+                location,
+                NativePointerOwner::Native(binding),
+                capture,
+            ),
+            NativePointerLocation::NativeLocal(_) => {
+                panic!("an original desktop frame must retain its desktop facts")
+            }
+        }
+        .with_metadata(metadata);
+        assert_eq!(
+            input,
+            if unknown {
+                expected
+            } else {
+                expected.with_native_tear_off(area, None)
+            }
+        );
+    }
+}
+
+#[open_gpui::test]
 fn a_later_activated_start_does_not_overtake_a_queued_native_terminal(cx: &mut TestAppContext) {
     let (mut session, mut bridge, bindings, windows) =
         cx.update(crate::adapter::native::tests::fixture);

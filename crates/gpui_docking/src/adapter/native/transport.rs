@@ -341,13 +341,6 @@ impl NativeBridge {
                 collected += 1;
                 continue;
             }
-            let pointer_input = matches!(
-                &record,
-                Inbound::Pointer(_)
-                    | Inbound::CapturedDrag { .. }
-                    | Inbound::PointerRoster(_)
-                    | Inbound::DeviceRemoved
-            );
             match record {
                 Inbound::Effect(result) => {
                     let result =
@@ -370,7 +363,6 @@ impl NativeBridge {
                     }
                 }
             }
-            self.pointer_repaint_pending |= pointer_input;
             collected += 1;
             // A following pointer can use only the work-area binding minted by
             // this publication's commit, never the preceding roster's binding.
@@ -379,10 +371,6 @@ impl NativeBridge {
             }
         }
         Ok(collected)
-    }
-
-    pub(crate) fn take_pointer_repaint_request(&mut self) -> bool {
-        std::mem::take(&mut self.pointer_repaint_pending)
     }
 
     fn collect_record(

@@ -4,6 +4,8 @@
 mod recovery;
 #[path = "release_tests.rs"]
 mod release;
+#[path = "repaint_tests.rs"]
+mod repaint;
 
 use std::{
     cell::{Cell, RefCell},

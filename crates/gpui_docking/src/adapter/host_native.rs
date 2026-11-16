@@ -1242,16 +1242,6 @@ fn collect_host(
         let report = frame.commit()?;
         let progressed = advanced || !report.inputs().is_empty();
         host.invalidate_report(&report);
-        if bridge.take_pointer_repaint_request() && report.published_state_changed() {
-            // Native pointer input can change drag previews and guides without
-            // changing a scene stamp. Re-encode the retained packets after that
-            // input commits, including windows which must clear an old guide.
-            for mount in host.mounts.values_mut() {
-                for region in mount.regions.values_mut() {
-                    region.dirty = true;
-                }
-            }
-        }
         bridge.accept_report(report);
         recover_root_registrations(host, bridge, current, cx)?;
         process_reports(host, bridge, cx)?;

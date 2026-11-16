@@ -235,7 +235,7 @@ fn an_exposed_empty_background_keeps_both_delivery_lanes_without_receivers(
 }
 
 #[open_gpui::test]
-fn an_exposed_background_clears_hover_without_asserting_semantic_emptiness(
+fn an_exposed_rootless_background_clears_hover_without_inventing_a_drop_target(
     cx: &mut TestAppContext,
 ) {
     let (dock, mut visual) = fixture(cx);
@@ -291,13 +291,12 @@ fn an_exposed_background_clears_hover_without_asserting_semantic_emptiness(
         let semantic = host
             .session
             .host_pointer_hit_for_device(SURFACE, query.point().unwrap(), PointerDeviceKind::Mouse)
-            .unwrap();
+            .expect("the presented surface exposes its background hit facts");
         assert!(semantic.delivery().is_none());
         assert!(semantic.drag_delivery().is_none());
-        assert_eq!(
-            semantic.hover().unwrap().descriptor().role(),
-            DockspaceReceiverRole::DropTarget,
-            "an exposed background can have a semantic hover winner"
+        assert!(
+            semantic.hover().is_none(),
+            "framework clearance must not invent a rootless background target"
         );
         assert_eq!(
             resolve_in_window((*query).into(), mount, |hitbox, _| {

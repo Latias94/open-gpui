@@ -3,21 +3,28 @@
 use super::*;
 use crate::adapter::{DockPane, GpuiDockspaceConfig};
 use dockspace::{
+    geometry::PhysicalPoint,
     model::{
         DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, ItemId,
         NativeWindowPlacement, RootId,
     },
     policy::DockPolicy,
-    runtime::DockspaceSession,
+    runtime::{
+        DockspaceSession, HostWorkAreaToken, NativeDesktopPointerLocation, NativeDesktopPosition,
+        NativePointerButton, NativePointerEvent, NativePointerHover, NativePointerId,
+        NativePointerInput, NativePointerOwner, PointerDeviceKind, PointerEventMetadata,
+        SurfaceUnavailableReason,
+    },
 };
 use open_gpui::{
-    Bounds, DevicePixels, Empty, PlatformPhysicalDisplayObservation,
-    PlatformWindowPhysicalGeometry, PlatformWindowPresentOutcome, RequestFrameOptions,
-    TestAppContext, VisualTestContext, WindowMutationDomain, point, size,
+    Bounds, DevicePixels, Empty, MouseButton, PlatformPhysicalDisplayObservation,
+    PlatformWindowHitStack, PlatformWindowPhysicalGeometry, PlatformWindowPresentOutcome,
+    RequestFrameOptions, TestAppContext, VisualTestContext, WindowMutationDomain, point, size,
 };
 
 const SOURCE: SurfaceId = SurfaceId::new(41);
 const TARGET: SurfaceId = SurfaceId::new(42);
+const REMAINING: ItemId = ItemId::new(43);
 
 struct Fixture {
     dock: DockSurface,
@@ -26,10 +33,19 @@ struct Fixture {
     state: Rc<RefCell<ProvisionalWindow>>,
     bridge: NativeBridge,
     pointer: PlatformNativePointerPhysicalFrame,
+    drag: NativeDragTearOff,
 }
 
 impl Fixture {
     fn new(cx: &mut TestAppContext) -> Self {
+        cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
+        cx.set_platform_window_hit_stack(
+            PlatformWindowHitStack::try_available_open_desktop(
+                point(DevicePixels(0), DevicePixels(0)),
+                vec![],
+            )
+            .unwrap(),
+        );
         let display = cx.update(|cx| {
             let snapshot = cx.display_snapshot();
             let logical = snapshot.displays()[0].clone();
@@ -50,7 +66,11 @@ impl Fixture {
                     surface,
                     DockspaceRootLayout::new(
                         RootId::new(surface.get()),
-                        DockspaceNode::tabs([ItemId::new(surface.get())]),
+                        DockspaceNode::tabs(if surface == SOURCE {
+                            vec![ItemId::new(surface.get()), REMAINING]
+                        } else {
+                            vec![ItemId::new(surface.get())]
+                        }),
                     ),
                 )
             }))
@@ -58,24 +78,37 @@ impl Fixture {
             let mut policy = DockPolicy::default();
             policy.set_allow_native_surfaces(true);
             let session = DockspaceSession::from_layout(layout, policy).unwrap();
-            let panes = [SOURCE, TARGET].map(|surface| {
+            let mut panes = Vec::from([SOURCE, TARGET].map(|surface| {
                 DockPane::new(
                     ItemId::new(surface.get()),
                     "Original View",
                     cx.new(|_| Empty),
                 )
-            });
+            }));
+            panes.push(DockPane::new(
+                REMAINING,
+                "Remaining View",
+                cx.new(|_| Empty),
+            ));
             DockSurface::new_managed(session, panes, GpuiDockspaceConfig::default(), cx).unwrap()
         });
         cx.defer_next_window_frame_requests();
         let anchor = cx
             .update(|cx| dock.open_native_root(SOURCE, true, WindowOptions::default(), cx))
             .unwrap();
+        let bounds = Bounds::new(
+            point(DevicePixels(100), DevicePixels(100)),
+            size(DevicePixels(600), DevicePixels(450)),
+        );
+        cx.set_platform_window_physical_client_geometry(anchor, Some(bounds), 2.0);
+        cx.simulate_window_scale_factor_change(anchor, 2.0);
+        cx.update_window(anchor, |_, window, cx| window.bounds_changed(cx))
+            .unwrap();
         let mut source = VisualTestContext::from_window(anchor, cx);
         for _ in 0..4 {
             frame(&mut source, &dock);
         }
-        let bridge = dock
+        let mut bridge = dock
             .host
             .borrow_mut()
             .native
@@ -84,26 +117,114 @@ impl Fixture {
             .bridge
             .take()
             .unwrap();
-        let bounds = Bounds::new(
-            point(DevicePixels(100), DevicePixels(100)),
-            size(DevicePixels(600), DevicePixels(450)),
-        );
+        let geometry = PlatformWindowPhysicalGeometry::try_new(bounds, 2.0).unwrap();
         let pointer = PlatformNativePointerPhysicalFrame::new(
-            point(DevicePixels(180), DevicePixels(180)),
-            PlatformWindowPhysicalGeometry::try_new(bounds, 2.0).unwrap(),
+            point(DevicePixels(900), DevicePixels(180)),
+            geometry,
         )
         .with_target_display(display)
         .unwrap();
-        let preview = Preview {
-            host_surface: SOURCE,
-            target_surface: TARGET,
-            placement: PhysicalRect::new(100.0, 100.0, 600.0, 450.0).unwrap(),
+        let pressed = source.debug_bounds("dockspace:tab:41").unwrap().center();
+        let pressed = geometry.local_to_global(pressed).unwrap();
+        let binding = bridge.binding_for_window(anchor.window_id()).unwrap();
+        let work_area = dock
+            .host
+            .borrow()
+            .session
+            .native_work_area(HostWorkAreaToken::new(u64::from(display.display_id())))
+            .unwrap();
+        let input = |event, point: open_gpui::Point<DevicePixels>, hover, at| {
+            NativePointerInput::new(
+                NativePointerId::new(1),
+                event,
+                NativeDesktopPointerLocation::new(
+                    NativeDesktopPosition::Exact(
+                        PhysicalPoint::new(f64::from(point.x.0), f64::from(point.y.0)).unwrap(),
+                    ),
+                    hover,
+                    (hover == NativePointerHover::OutsideAll).then_some(work_area),
+                ),
+                NativePointerOwner::Native(binding),
+                NativePointerOwner::Native(binding),
+            )
+            .with_metadata(PointerEventMetadata::new(
+                PointerDeviceKind::Mouse,
+                std::time::Duration::from_millis(at),
+            ))
         };
+        cx.update(|cx| {
+            dock.host
+                .borrow_mut()
+                .session
+                .record_native_pointer_batch([
+                    input(
+                        NativePointerEvent::ButtonPressed(NativePointerButton::Primary),
+                        pressed,
+                        NativePointerHover::Dock(binding),
+                        10,
+                    ),
+                    input(
+                        NativePointerEvent::Moved,
+                        pointer.global_position(),
+                        NativePointerHover::OutsideAll,
+                        20,
+                    ),
+                ])
+                .unwrap();
+            commit_input(&dock, cx);
+        });
+        for _ in 0..4 {
+            frame(&mut source, &dock);
+            collect(&dock, &mut bridge, cx);
+        }
+        cx.update(|cx| {
+            dock.host
+                .borrow_mut()
+                .session
+                .record_native_pointer(input(
+                    NativePointerEvent::Moved,
+                    pointer.global_position(),
+                    NativePointerHover::OutsideAll,
+                    25,
+                ))
+                .unwrap();
+            commit_input(&dock, cx);
+        });
+        for _ in 0..4 {
+            frame(&mut source, &dock);
+            collect(&dock, &mut bridge, cx);
+        }
+        let (drag, preview) = {
+            let host = dock.host.borrow();
+            (
+                host.session
+                    .native_drag_tear_off()
+                    .expect("the original committed desktop drag"),
+                host.mounts[&anchor.window_id()].regions[&SOURCE]
+                    .packet
+                    .as_ref()
+                    .unwrap()
+                    .native_preview
+                    .expect("the original core preview reserves a surface"),
+            )
+        };
+        while let Some(report) = dock
+            .host
+            .borrow_mut()
+            .native
+            .as_mut()
+            .unwrap()
+            .pending_reports
+            .pop_front()
+        {
+            bridge.accept_report(report);
+        }
         cx.defer_next_window_frame_requests();
         let state = cx
             .update(|cx| {
                 open_preview(
                     &dock.host,
+                    drag,
                     preview,
                     pointer,
                     None,
@@ -151,42 +272,97 @@ impl Fixture {
             state,
             bridge,
             pointer,
+            drag,
+        }
+    }
+
+    fn release(&mut self, cx: &mut TestAppContext) {
+        self.state.borrow_mut().release_frame = Some(self.pointer);
+        cx.update(|cx| {
+            let binding = self
+                .bridge
+                .binding_for_window(self.anchor.window_id())
+                .unwrap();
+            let work_area = self
+                .dock
+                .host
+                .borrow()
+                .session
+                .native_work_area(HostWorkAreaToken::new(u64::from(
+                    self.pointer.target_display().unwrap().display_id(),
+                )))
+                .unwrap();
+            self.dock
+                .host
+                .borrow_mut()
+                .session
+                .record_native_pointer(
+                    NativePointerInput::new(
+                        NativePointerId::new(1),
+                        NativePointerEvent::ButtonReleased(NativePointerButton::Primary),
+                        NativeDesktopPointerLocation::new(
+                            NativeDesktopPosition::Exact(
+                                PhysicalPoint::new(
+                                    f64::from(self.pointer.global_position().x.0),
+                                    f64::from(self.pointer.global_position().y.0),
+                                )
+                                .unwrap(),
+                            ),
+                            NativePointerHover::Foreign,
+                            None,
+                        ),
+                        NativePointerOwner::Native(binding),
+                        NativePointerOwner::None,
+                    )
+                    .with_native_tear_off(work_area, Some(self.drag))
+                    .with_metadata(PointerEventMetadata::new(
+                        PointerDeviceKind::Mouse,
+                        std::time::Duration::from_millis(30),
+                    )),
+                )
+                .unwrap();
+            commit_input(&self.dock, cx);
+        });
+    }
+
+    fn enqueue_create(&mut self, cx: &mut TestAppContext) {
+        self.release(cx);
+        let mut source = VisualTestContext::from_window(self.anchor, cx);
+        for _ in 0..4 {
+            frame(&mut source, &self.dock);
+            collect(&self.dock, &mut self.bridge, cx);
+        }
+        while let Some(report) = self
+            .dock
+            .host
+            .borrow_mut()
+            .native
+            .as_mut()
+            .unwrap()
+            .pending_reports
+            .pop_front()
+        {
+            self.bridge.accept_report(report);
         }
     }
 
     fn request_create(&mut self, cx: &mut TestAppContext, inside_shell: bool) {
-        self.state.borrow_mut().release_frame = Some(self.pointer);
+        self.enqueue_create(cx);
         cx.update(|cx| {
-            self.dock
-                .update(
-                    |frame| {
-                        frame.create_native_surface_current(
-                            TARGET,
-                            SOURCE,
-                            NativeWindowPlacement::new(PhysicalRect::new(
-                                130.0, 140.0, 600.0, 450.0,
-                            )?),
-                        )?;
-                        Ok(())
-                    },
-                    cx,
-                )
-                .unwrap();
-            while let Some(report) = self
-                .dock
-                .host
-                .borrow_mut()
-                .native
-                .as_mut()
-                .unwrap()
-                .pending_reports
-                .pop_front()
-            {
-                self.bridge.accept_report(report);
-            }
             self.bridge
                 .dispatch_effects(
                     &mut |request, callbacks, cx| {
+                        assert_eq!(request.drag_tear_off, Some(self.drag));
+                        assert!(adopt(
+                            &self.dock,
+                            NativeWindowRequest { drag_tear_off: None, ..request },
+                            callbacks,
+                            cx,
+                        ).is_none(), "a create without the original key cannot adopt even the same reserved surface");
+                        assert!(Rc::ptr_eq(
+                            self.dock.host.borrow().native.as_ref().unwrap().provisional.opening.as_ref().unwrap(),
+                            &self.state,
+                        ));
                         if inside_shell {
                             self.shell
                                 .update(cx, |_, _, cx| {
@@ -221,6 +397,29 @@ impl Fixture {
     }
 }
 
+fn commit_input(dock: &DockSurface, cx: &mut App) {
+    let mut host = dock.host.borrow_mut();
+    let HostState {
+        session,
+        mounts,
+        native,
+        ..
+    } = &mut *host;
+    let mut candidate =
+        super::super::begin_frame(session, mounts, native.as_ref(), None, cx).unwrap();
+    candidate
+        .complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)
+        .unwrap();
+    let report = candidate.commit().unwrap();
+    host.apply_report(report);
+}
+
+fn collect(dock: &DockSurface, bridge: &mut NativeBridge, cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        super::super::collect_host(&mut dock.host.borrow_mut(), bridge, None, cx).unwrap();
+    });
+}
+
 fn frame(visual: &mut VisualTestContext, dock: &DockSurface) {
     assert!(visual.simulate_frame(RequestFrameOptions {
         force_render: true,
@@ -228,6 +427,271 @@ fn frame(visual: &mut VisualTestContext, dock: &DockSurface) {
         ..Default::default()
     }));
     assert!(dock.error().is_none(), "{:?}", dock.error());
+}
+
+#[open_gpui::test]
+fn release_waiting_for_preview_keeps_the_original_provisional_window(cx: &mut TestAppContext) {
+    let mut fixture = Fixture::new(cx);
+    fixture.pointer = PlatformNativePointerPhysicalFrame::new(
+        point(DevicePixels(980), DevicePixels(220)),
+        fixture.pointer.source_geometry(),
+    )
+    .with_target_display(fixture.pointer.target_display().unwrap())
+    .unwrap();
+    fixture.release(cx);
+    {
+        let host = fixture.dock.host.borrow();
+        assert!(!host.session.has_active_gesture());
+        assert!(host.session.has_pending_presentation());
+        assert!(!host.session.has_pending_native_create());
+        assert!(host.session.native_drag_tear_off().is_none());
+    }
+    cx.update(|cx| {
+        drive(&fixture.dock.host, &fixture.bridge, cx);
+        assert!(cx.windows().contains(&fixture.shell));
+    });
+    assert!(Rc::ptr_eq(
+        fixture
+            .dock
+            .host
+            .borrow()
+            .native
+            .as_ref()
+            .unwrap()
+            .provisional
+            .opening
+            .as_ref()
+            .unwrap(),
+        &fixture.state,
+    ));
+    fixture
+        .dock
+        .host
+        .borrow_mut()
+        .native
+        .as_mut()
+        .unwrap()
+        .bridge = Some(fixture.bridge);
+    cx.update(|cx| fixture.dock.begin_native_shutdown(cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| fixture.dock.pump_native(cx));
+    cx.run_until_parked();
+    assert!(
+        fixture.dock.native_is_quiescent(),
+        "{:?}",
+        fixture.dock.inspection()
+    );
+}
+
+#[open_gpui::test]
+fn another_drag_key_cannot_adopt_the_same_reserved_surface(cx: &mut TestAppContext) {
+    let mut other_context = cx.new_app();
+    let other = Fixture::new(&mut other_context);
+    let other_drag = other.drag;
+    other_context.quit();
+    let mut fixture = Fixture::new(cx);
+    assert_ne!(fixture.drag, other_drag);
+    fixture.enqueue_create(cx);
+    cx.update(|cx| {
+        fixture
+            .bridge
+            .dispatch_effects(
+                &mut |request, callbacks, cx| {
+                    assert_eq!(request.drag_tear_off, Some(fixture.drag));
+                    assert!(
+                        adopt(
+                            &fixture.dock,
+                            NativeWindowRequest {
+                                drag_tear_off: Some(other_drag),
+                                ..request
+                            },
+                            callbacks,
+                            cx,
+                        )
+                        .is_none()
+                    );
+                    assert!(Rc::ptr_eq(
+                        fixture
+                            .dock
+                            .host
+                            .borrow()
+                            .native
+                            .as_ref()
+                            .unwrap()
+                            .provisional
+                            .opening
+                            .as_ref()
+                            .unwrap(),
+                        &fixture.state,
+                    ));
+                    super::super::default_factory(&fixture.dock, request, callbacks, cx)
+                },
+                cx,
+            )
+            .unwrap();
+    });
+    assert_eq!(
+        fixture.state.borrow().binding.unwrap().surface(),
+        fixture.state.borrow().preview.target_surface
+    );
+    assert_eq!(fixture.state.borrow().window, Some(fixture.shell));
+    fixture
+        .dock
+        .host
+        .borrow_mut()
+        .native
+        .as_mut()
+        .unwrap()
+        .bridge = Some(fixture.bridge);
+    cx.update(|cx| fixture.dock.begin_native_shutdown(cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| fixture.dock.pump_native(cx));
+    cx.run_until_parked();
+    assert!(
+        fixture.dock.native_is_quiescent(),
+        "{:?}",
+        fixture.dock.inspection()
+    );
+}
+
+#[open_gpui::test]
+fn stationary_desktop_intent_preserves_foreign_hover_and_requires_fresh_work_area(
+    cx: &mut TestAppContext,
+) {
+    use open_gpui::{
+        PlatformNativePointerCaptureOwner, PlatformWindowHit, PlatformWindowHitStack,
+        PlatformWindowPhysicalCoverage,
+    };
+
+    let mut fixture = Fixture::new(cx);
+    let mut source = VisualTestContext::from_window(fixture.anchor, cx);
+    let target = source.debug_bounds("dockspace:tab:43").unwrap().center();
+    let position = fixture
+        .pointer
+        .source_geometry()
+        .local_to_global(target)
+        .unwrap();
+    let binding = fixture
+        .bridge
+        .binding_for_window(fixture.anchor.window_id())
+        .unwrap();
+    fixture
+        .dock
+        .host
+        .borrow_mut()
+        .session
+        .record_native_pointer(
+            NativePointerInput::new(
+                NativePointerId::new(1),
+                NativePointerEvent::Moved,
+                NativeDesktopPointerLocation::new(
+                    NativeDesktopPosition::Exact(
+                        PhysicalPoint::new(f64::from(position.x.0), f64::from(position.y.0))
+                            .unwrap(),
+                    ),
+                    NativePointerHover::Dock(binding),
+                    None,
+                ),
+                NativePointerOwner::Native(binding),
+                NativePointerOwner::Native(binding),
+            )
+            .with_metadata(PointerEventMetadata::new(
+                PointerDeviceKind::Mouse,
+                std::time::Duration::from_millis(40),
+            )),
+        )
+        .unwrap();
+    cx.update(|cx| commit_input(&fixture.dock, cx));
+    for _ in 0..4 {
+        frame(&mut source, &fixture.dock);
+        collect(&fixture.dock, &mut fixture.bridge, cx);
+    }
+    let host = fixture.dock.host.borrow();
+    let request = host
+        .session
+        .native_pointer_continuation()
+        .expect("the original desktop drag waits over the inactive tab");
+    assert!(request.local_coordinates().is_none());
+    let metadata = PointerEventMetadata::new(PointerDeviceKind::Mouse, request.deadline());
+    let frame = fixture
+        .pointer
+        .with_capture_owner(PlatformNativePointerCaptureOwner::Window(
+            fixture.anchor.window_id(),
+        ));
+    let stack = PlatformWindowHitStack::try_available(
+        frame.global_position(),
+        vec![PlatformWindowHit::OpaqueBarrier {
+            coverage: PlatformWindowPhysicalCoverage::try_new(Bounds::new(
+                point(DevicePixels(850), DevicePixels(100)),
+                size(DevicePixels(300), DevicePixels(300)),
+            ))
+            .unwrap(),
+        }],
+    )
+    .unwrap();
+    let expected = NativePointerInput::new(
+        request.pointer(),
+        request.event(),
+        NativeDesktopPointerLocation::new(
+            NativeDesktopPosition::Exact(
+                PhysicalPoint::new(
+                    f64::from(frame.global_position().x.0),
+                    f64::from(frame.global_position().y.0),
+                )
+                .unwrap(),
+            ),
+            NativePointerHover::Foreign,
+            None,
+        ),
+        NativePointerOwner::Native(binding),
+        NativePointerOwner::Native(binding),
+    )
+    .with_metadata(metadata);
+    let area = host
+        .session
+        .native_work_area(HostWorkAreaToken::new(u64::from(
+            frame.target_display().unwrap().display_id(),
+        )))
+        .unwrap();
+    assert_eq!(
+        fixture
+            .bridge
+            .continuation_input(&host.session, request, frame, &stack, metadata),
+        Some(expected.with_native_tear_off(area, None))
+    );
+    assert!(
+        fixture
+            .bridge
+            .continuation_input(
+                &host.session,
+                request,
+                frame.with_capture_owner(PlatformNativePointerCaptureOwner::UnregisteredWindow),
+                &stack,
+                metadata
+            )
+            .is_none()
+    );
+    let stale_display = PlatformPhysicalDisplayObservation::try_new(
+        frame.target_display().unwrap().topology_generation() + 1,
+        frame.target_display().unwrap().display_id(),
+        frame.target_display().unwrap().bounds(),
+        frame.target_display().unwrap().visible_bounds(),
+        frame.target_display().unwrap().scale_factor(),
+    )
+    .unwrap();
+    let stale_frame =
+        PlatformNativePointerPhysicalFrame::new(frame.global_position(), frame.source_geometry())
+            .with_target_display(stale_display)
+            .unwrap()
+            .with_capture_owner(frame.capture_owner());
+    assert_eq!(
+        fixture
+            .bridge
+            .continuation_input(&host.session, request, stale_frame, &stack, metadata),
+        Some(expected)
+    );
 }
 
 #[open_gpui::test]
@@ -249,10 +713,7 @@ fn adoption_shares_the_original_semantics_submission_and_waits_for_first_live(
         .unwrap();
     let original_create = callbacks.create_request().unwrap();
     assert_eq!(original_create.binding.window(), callbacks.binding());
-    assert_eq!(
-        original_create.outer_bounds,
-        PhysicalRect::new(130.0, 140.0, 600.0, 450.0).unwrap()
-    );
+    assert_eq!(original_create.drag_tear_off, Some(fixture.drag));
     assert!(
         fixture
             .dock
@@ -274,12 +735,22 @@ fn adoption_shares_the_original_semantics_submission_and_waits_for_first_live(
         Some(original_placement.target_display()),
         fixture.pointer.target_display()
     );
+    let client = original_placement.client_bounds();
     assert_eq!(
-        original_placement.client_bounds(),
-        Bounds::new(
-            point(DevicePixels(130), DevicePixels(140)),
-            size(DevicePixels(600), DevicePixels(450)),
-        )
+        [
+            client.origin.x.0,
+            client.origin.y.0,
+            client.size.width.0,
+            client.size.height.0
+        ]
+        .map(f64::from),
+        [
+            original_create.outer_bounds.x(),
+            original_create.outer_bounds.y(),
+            original_create.outer_bounds.width(),
+            original_create.outer_bounds.height()
+        ]
+        .map(f64::round),
     );
     let Fixture {
         dock,

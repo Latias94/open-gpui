@@ -13,8 +13,10 @@ use super::native::NativeBridgeError;
 ///
 /// This observation does not acknowledge queued input, settle outputs or authorize
 /// replay. Capacity and operation conflicts require their original owner's retry
-/// path. Protocol failures can prevent semantic drain even after native windows
-/// close; reconstruct only after the old host actually becomes quiescent.
+/// path. A permanently rejected prefix can prevent semantic drain even after
+/// native windows close. Retain that complete failed generation until every old
+/// backend, callback, output and asynchronous owner terminates; an empty window
+/// inventory alone permits neither disposal nor reuse of the old session.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DockHostFailure {
     /// Original diagnostic, including error context supplied by the adapter.

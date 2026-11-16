@@ -1,21 +1,21 @@
 ---
 type: Verification Evidence
-title: Dockspace e812 Candidate Verification and Persistence Blocker
-status: blocked
-timestamp: 2026-11-16T16:39:00+08:00
-git_commit: 55f4a3cb1db74b425342f2d8478239516d49fc30
+title: Dockspace e812 Adoption and Windows Qualification
+status: verified
+timestamp: 2026-11-16T17:21:00+08:00
+git_commit: 03f9603b4e362ae5e0d79efb2be37518e8fa6804
 ---
 
-# Dockspace e812 Candidate Verification and Persistence Blocker
+# Dockspace e812 Adoption and Windows Qualification
 
 ## Fixed sources
 
-This follow-up starts at Open-GPUI `55f4a3cb1db74b425342f2d8478239516d49fc30`
-and prepares an upgrade from dockspace `dcd65e983220e17662b1f02929fcf84348cd8eb3`
-to `e8120864e06de445e1b588b07d6b322bb7125e41`. The candidate workspace and both
-independent consumer lockfiles retain that exact Git source. No other dependency
-is upgraded. The migration remains unpublished because of the persistence
-regression below; the committed production pin stays at `dcd65e983220`.
+This adoption is based on Open-GPUI `03f9603b4e362ae5e0d79efb2be37518e8fa6804`
+and upgrades dockspace from `dcd65e983220e17662b1f02929fcf84348cd8eb3`
+to `e8120864e06de445e1b588b07d6b322bb7125e41`. The workspace and both independent
+consumer lockfiles retain that exact Git source. No other dependency is upgraded.
+The user approved supporting only the latest dockspace document format because
+the dependency is unreleased; older persisted layouts do not block this adoption.
 The preceding [integration repair record](dockspace-gpui-followups-20261116.md)
 retains its original source pin and failed opaque physical receipt.
 
@@ -23,12 +23,20 @@ The tested integration staging tree is
 `f0d8236292496674cb55ed344a2d1da020fb88c3`. Its independent patch is retained as
 `%TEMP%/open-gpui-dockspace-e812-candidate-20261116.patch`. It includes the native
 adoption, measurement, repaint and precision changes below, with their regression
-tests. It is a candidate tree, not a published commit.
+tests. Those production changes are committed with this record; subsequent edits
+only document the accepted persistence policy and qualification results.
 
-## P1 adoption blocker: valid v1 documents no longer restore
+## Accepted persistence policy
 
-The independent public consumer generates a document using the previous pinned
-revision, without GPUI, native windows or renderer state. Its controls produce:
+Only documents written by the currently pinned dockspace revision are supported.
+Older dockspace layouts may be discarded and replaced with a fresh document from
+the current core. This upgrade adds no cross-revision migration or hash rewrite.
+Current document integrity validation remains required before restoring a live
+workspace. The explicit GPUI legacy v2/v3 topology importer described below is a
+separate adapter feature.
+
+An independent public consumer, without GPUI, native windows or renderer state,
+confirmed the format boundary:
 
 ```text
 old_writer_self_restore=passed
@@ -36,67 +44,19 @@ new_reader_old_document=Err("DockspacePersistenceError { source: Restore(Binding
 current_writer_self_restore=passed
 ```
 
-The locked reproduction deliberately exits with code 101 when the new reader
-rejects the old valid document. Both aliases use exactly pinned serializer
-dependencies: serde `1.0.228`, serde_json `1.0.150` and thiserror `2.0.18`, matching
-the Open-GPUI workspace. The old and current core revisions are fixed above.
+Both aliases use pinned serializer dependencies: serde `1.0.228`, serde_json
+`1.0.150` and thiserror `2.0.18`, matching the Open-GPUI workspace. Both writer
+revisions emit document version `1`, but the current workspace serialization
+includes `hidden_items` in its binding hash. That difference makes an old
+document unsupported even when its numeric document version matches.
 
-The [original v1 fixture](fixtures/dockspace-dcd65e9-v1.json) is the old writer's
-unchanged 638-byte output. SHA-256:
-`bc5eaee46c544b7ef4526ff94a516c000958d3ee850f640082b497be2474c682`.
-It has one tab, no split weights and no hidden items, isolating the new empty
-`hidden_items` field from floating-point representation changes.
-The [current v1 control](fixtures/dockspace-e812086-v1.json) is also retained
-unchanged: 664 bytes, SHA-256
-`ee6e70023ebd10fd162fbc410c43003b160b1bd872ba81fa18c0c969923e3073`.
-It restores at `e8120864`; a migration must account for both already-emitted
-v1 payload shapes rather than fixing one by invalidating the other.
-
-Both writer revisions emit document version `1`, with hash domain
-`dockspace-document/v1\0`. The current `WorkspaceSnapshot` deserializer defaults
-missing `hidden_items`, but serializing that value appends `"hidden_items":[]`.
-`binding_hash` serializes the typed workspace again before checking integrity,
-so the original hash no longer matches. Ordinary current-version roundtrips do
-not detect this regression.
-
-Copyable upstream issue:
-
-```text
-P1: Preserve restoration of previously valid v1 documents across schema evolution.
-
-Writer: dcd65e983220e17662b1f02929fcf84348cd8eb3
-Reader: e8120864e06de445e1b588b07d6b322bb7125e41
-Observed: the old writer restores its own bytes; the new reader rejects the same
-one-tab document with Restore(BindingHashMismatch). The current writer restores
-its own bytes. Both payloads still declare document version 1.
-
-WorkspaceSnapshot now serializes hidden_items, including an empty default, while
-the binding hash still serializes the whole typed workspace under the v1 domain.
-Missing-field serde defaults therefore do not preserve old document integrity.
-
-Add version-aware decoding/migration or compatible canonical hashing. Verify the
-old document's original hash before conversion, retain identity/key associations,
-and keep tampered or mixed-generation payloads rejected. Include both already-
-emitted v1 payload shapes, old-writer/new-reader fixtures, current roundtrips and
-corruption checks. Adapters must not
-recompute an old document's binding hash merely to make restoration succeed.
-```
-
-The complete public-consumer source, manifest, lockfile and generated old/current
-documents are under `%TEMP%/open-gpui-dockspace-compat-e812-20261116-1626/`.
-The final log is `%TEMP%/open-gpui-dockspace-e812-document-compat-locked-20261116.log`.
-Reading the original fixture through the new public API is sufficient to repeat
-the failing side:
-
-```rust
-use dockspace::{policy::DockPolicy, runtime::DockspaceSession};
-
-let bytes = include_bytes!("dockspace-dcd65e9-v1.json");
-match DockspaceSession::from_document_json(bytes, DockPolicy::default(), |_, _| true) {
-    Ok(_) => {}
-    Err(error) => panic!("a previously valid v1 document must restore: {error:?}"),
-}
-```
+The original diagnostic exits with code 101 because it asserted backward
+compatibility. Its historical result is preserved in
+`%TEMP%/open-gpui-dockspace-e812-document-compat-locked-20261116.log`; it is not a
+required passing gate under the user-approved policy. The current writer/current
+reader control passes. The one-off compatibility fixtures and proposed migration
+issue have been removed from the adoption; no backward-compatibility obligation
+remains for this unreleased dependency.
 
 ## Disposition of the core follow-ups
 
@@ -170,7 +130,8 @@ protocol.
 | Example, editor, multiviewport and DevTools consumers | All-target check passed with the legacy compatibility feature | `%TEMP%/open-gpui-dockspace-e812-consumers-20261116.log` |
 | Formatting, all-feature/all-target docking check, public API and documentation links | Passed | `%TEMP%/open-gpui-dockspace-e812-final-checks-20261116.log` |
 | Original opaque physical selector | Passed with verified behavior receipt | `ba281fb9-c910-46c9-a8cc-01f00f1263e8` |
-| Previous-writer/current-reader document compatibility | Failed: `Restore(BindingHashMismatch)`; both same-version controls passed | `%TEMP%/open-gpui-dockspace-e812-document-compat-locked-20261116.log` |
+| Current-writer/current-reader document roundtrip | Passed | `%TEMP%/open-gpui-dockspace-e812-document-compat-locked-20261116.log` |
+| Previous-writer/current-reader document | Unsupported under the accepted policy; original diagnostic records `Restore(BindingHashMismatch)` | Same original diagnostic log; excluded from adoption gates |
 
 The original default run found fixture capability/publication setup errors and
 the changed rootless hover expectation. Those failures were repaired without
@@ -182,17 +143,18 @@ The first complete selected physical cohort is retained under
 It passes thirteen rows, including opaque, and fails source-capture before its
 docking journey: the pointer canary observes a different cursor position from
 the requested point. Its original failure receipt and successful cleanup census
-remain recorded. This cohort is not relabeled as fourteen passes. A subsequent
-independent run must retain its own receipts.
+remain recorded. This cohort is not relabeled as fourteen passes. The subsequent
+independent cohort below retains its own receipts.
 
 ## Final independent single-display physical cohort
 
-The final cohort executes the same candidate independently under
+The final cohort executes the same qualified integration independently under
 `%TEMP%/open-gpui-physical-acceptance-20261116-101601/focused-163512/`.
 All fourteen original behavior receipts match, and all fourteen rows pass.
 No receipt from the earlier canary failure or standalone opaque run is substituted.
 Mixed-DPI remains excluded, so this is not the complete fifteen-row manifest gate.
-The persistence blocker remains independent of this successful physical cohort.
+These results qualify the selected Windows cases under the accepted persistence
+policy.
 
 | Manifest row | Result | Original nextest run ID |
 | --- | --- | --- |

@@ -11,7 +11,11 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, anyhow, ensure};
-use dockspace::{geometry::PhysicalRect, model::SurfaceId, runtime::NativeSurfaceBinding};
+use dockspace::{
+    geometry::PhysicalRect,
+    model::SurfaceId,
+    runtime::{NativeDragTearOff, NativeSurfaceBinding},
+};
 use open_gpui::{
     AnyElement, AnyWindowHandle, App, AppContext as _, IntoElement,
     PlatformNativePointerPhysicalFrame, Subscription, Window, WindowFrameSubmissionOutcome,
@@ -45,6 +49,7 @@ pub(crate) struct Preview {
 #[derive(Clone, Copy)]
 struct AcceptedPreview {
     owner: WindowId,
+    drag: NativeDragTearOff,
     visual: Preview,
     route: Option<PlatformNativePointerPhysicalFrame>,
     capture: Option<NativeCapture>,
@@ -64,6 +69,7 @@ pub(super) struct Provisional {
 
 pub(super) struct ProvisionalWindow {
     window: Option<AnyWindowHandle>,
+    drag: NativeDragTearOff,
     preview: Preview,
     session: WindowProvisionalSession,
     reveal: Option<WindowProvisionalRevealTicket>,
@@ -117,13 +123,15 @@ pub(crate) fn accept_preview(
     owner: WindowId,
     packets: &BTreeMap<SurfaceId, Rc<Packet>>,
 ) {
+    let drag = host.session.native_drag_tear_off();
     let Some(native) = &mut host.native else {
         return;
     };
     let preview = packets.values().find_map(|packet| packet.native_preview);
-    if let Some(preview) = preview {
+    if let Some((preview, drag)) = preview.zip(drag) {
         native.provisional.preview = Some(AcceptedPreview {
             owner,
+            drag,
             visual: preview,
             route: native.bridge.as_ref().and_then(NativeBridge::pointer_frame),
             capture: native
@@ -340,6 +348,7 @@ fn retire(shared: &SharedHost, state: Rc<RefCell<ProvisionalWindow>>, cx: &mut A
 
 fn open_preview(
     shared: &SharedHost,
+    drag: NativeDragTearOff,
     preview: Preview,
     pointer: PlatformNativePointerPhysicalFrame,
     capture: Option<NativeCapture>,
@@ -351,6 +360,7 @@ fn open_preview(
         WindowProvisionalSession::new(generation).expect("nonzero provisional generation");
     let state = Rc::new(RefCell::new(ProvisionalWindow {
         window: None,
+        drag,
         preview,
         session: session.clone(),
         reveal: None,
@@ -408,6 +418,15 @@ fn open_preview(
         })
     })?;
     state.borrow_mut().window = Some(window.into());
+    if let Some(capture) = capture
+        && let Some(callbacks) = shared
+            .borrow()
+            .native
+            .as_ref()
+            .and_then(|native| native.callbacks.get(&capture.source_window()))
+    {
+        callbacks.retain_drag_tear_off(capture, drag);
+    }
     Ok(state)
 }
 
@@ -429,7 +448,8 @@ pub(super) fn drive(shared: &SharedHost, bridge: &NativeBridge, cx: &mut App) ->
     let (retire_opening, desired, promotions) = {
         let mut host = shared.borrow_mut();
         let active = host.session.has_active_gesture();
-        let pending = host.session.has_pending_native_create();
+        let pending =
+            host.session.has_pending_native_create() || host.session.has_pending_presentation();
         let blocked = host.has_unaccepted_update() || host.session.has_pending_native_input();
         let native = host.native.as_mut().unwrap();
         let enabled = native.factory.is_none() && !native.transport.is_frozen();
@@ -447,12 +467,13 @@ pub(super) fn drive(shared: &SharedHost, bridge: &NativeBridge, cx: &mut App) ->
         let desired = (enabled && active && !blocked)
             .then_some(provisional.preview)
             .flatten();
-        let keep = enabled && (active || pending);
+        let keep = enabled && (active || pending || blocked);
         let retire = provisional.opening.as_ref().is_some_and(|state| {
             let state = state.borrow();
             !keep
                 || desired.is_some_and(|preview| {
-                    preview.visual.target_surface != state.preview.target_surface
+                    preview.drag != state.drag
+                        || preview.visual.target_surface != state.preview.target_surface
                 })
                 || (!blocked && active && !pending && provisional.preview.is_none())
                 || state.session.snapshot().phase() == WindowProvisionalSessionPhase::Terminal
@@ -634,6 +655,7 @@ pub(super) fn drive(shared: &SharedHost, bridge: &NativeBridge, cx: &mut App) ->
             if let Some((generation, peers)) = open {
                 let opened = open_preview(
                     shared,
+                    accepted.drag,
                     preview,
                     pointer,
                     accepted.capture,
@@ -698,25 +720,26 @@ pub(super) fn drive(shared: &SharedHost, bridge: &NativeBridge, cx: &mut App) ->
     ready
 }
 
-/// Adopts only the surface reserved by this preview; no new root registration is minted.
+/// Adopts only the original drag's reserved preview; no root registration is minted.
 pub(super) fn adopt(
     dock: &DockSurface,
     request: NativeWindowRequest,
     callbacks: &NativeCallbacks,
     cx: &mut App,
 ) -> Option<std::result::Result<AnyWindowHandle, NativeOpenFailure>> {
-    let state =
-        {
-            let mut host = dock.host.borrow_mut();
-            let provisional = &mut host.native.as_mut()?.provisional;
-            if !provisional.opening.as_ref().is_some_and(|state| {
-                state.borrow().preview.target_surface == request.binding.surface()
-            }) {
-                return None;
-            }
-            provisional.preview = None;
-            provisional.opening.take()?
-        };
+    let state = {
+        let mut host = dock.host.borrow_mut();
+        let provisional = &mut host.native.as_mut()?.provisional;
+        if !provisional.opening.as_ref().is_some_and(|state| {
+            let state = state.borrow();
+            request.drag_tear_off == Some(state.drag)
+                && state.preview.target_surface == request.binding.surface()
+        }) {
+            return None;
+        }
+        provisional.preview = None;
+        provisional.opening.take()?
+    };
     let handle = state.borrow().window?;
     let result = handle
         .update(cx, |_, window, cx| -> Result<()> {
