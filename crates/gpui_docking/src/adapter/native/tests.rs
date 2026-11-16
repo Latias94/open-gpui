@@ -622,6 +622,18 @@ fn two_window_shutdown_waits_for_true_terminal_and_preserves_a_sibling_group(
     bridge.collect(&mut session).unwrap();
     commit(&mut session);
     bridge.take_reports();
+    let pending_callback = cx.update(|cx| bridge.transport().wake_after_callback(cx));
+    for binding in bindings {
+        bridge.callbacks(binding.window()).unwrap().seal().unwrap();
+        assert!(
+            matches!(
+                bridge.quiesce_binding(&mut session, binding),
+                Err(NativeBridgeError::NotQuiescent)
+            ),
+            "a native terminal does not dispose of an outstanding callback handoff"
+        );
+    }
+    drop(pending_callback);
     for binding in bindings {
         bridge.callbacks(binding.window()).unwrap().seal().unwrap();
         bridge.quiesce_binding(&mut session, binding).unwrap();

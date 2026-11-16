@@ -164,6 +164,12 @@ pub struct DockingNativeRow {
     pub bridge_available: bool,
     /// Full host quiescence predicate observed at capture time.
     pub quiescent: bool,
+    /// Whether the application chose irreversible failure termination.
+    #[serde(default)]
+    pub failed_generation: bool,
+    /// Completed native disposition, without copying the diagnostic message.
+    #[serde(default)]
+    pub termination: Option<String>,
     /// Whether the transport FIFO is empty.
     pub transport_empty: bool,
     /// Records retained by the original native callback FIFO.
@@ -358,6 +364,14 @@ impl From<&DockNativeInspection> for DockingNativeRow {
             admission_frozen: source.admission_frozen,
             bridge_available: source.bridge_available,
             quiescent: source.quiescent,
+            failed_generation: source.failed_generation,
+            termination: source
+                .termination
+                .as_ref()
+                .map(|termination| match termination {
+                    open_gpui_docking::DockNativeTermination::Drained => "drained".to_owned(),
+                    open_gpui_docking::DockNativeTermination::Failed(_) => "failed".to_owned(),
+                }),
             transport_empty: source.transport_empty,
             queued_ingress_count: source.transport.queued_record_count,
             ingress_head: source.transport.front_record.map(str::to_owned),

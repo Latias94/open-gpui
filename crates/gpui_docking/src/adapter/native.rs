@@ -470,6 +470,7 @@ impl NativeBridge {
             && self.retired_placements.is_empty()
             && self.reports.is_empty()
             && self.transport.is_empty()
+            && self.transport.callbacks_idle()
     }
 
     pub(super) fn snapshot(

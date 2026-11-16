@@ -28,6 +28,19 @@ pub struct DockHostFailure {
     pub native_kind: Option<NativeHostErrorKind>,
 }
 
+/// Terminal disposition of one native workspace generation.
+///
+/// Both variants require actual backend, renderer and callback termination.
+/// Only `Drained` also proves successful semantic cleanup. A failed session must
+/// be discarded as a whole and replaced with fresh session/provider authority.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DockNativeTermination {
+    /// The original native protocol and all of its physical owners drained.
+    Drained,
+    /// Physical owners terminated while the original failed protocol is retained.
+    Failed(DockHostFailure),
+}
+
 impl DockHostFailure {
     pub(super) fn from_error(error: &(dyn Error + 'static)) -> Self {
         let mut failure = Self {

@@ -35,6 +35,8 @@ use super::{
 #[path = "geometry_tests.rs"]
 mod geometry_tests;
 
+mod termination;
+
 type OuterBounds = dyn Fn(&WindowPlatformFacts) -> Option<PhysicalRect>;
 type ClientPlacement = dyn Fn(PhysicalRect, &Window) -> Option<WindowPhysicalPlacementRequest>;
 
@@ -267,6 +269,9 @@ impl NativeCallbacks {
                 return;
             }
             state.logical_closed.set(true);
+            if let Some(ticket) = cx.native_window_retirement_ticket(window_id) {
+                *state.open_retirement.borrow_mut() = Some(ticket);
+            }
             if state.anchor.get() {
                 state.transport.freeze(cx);
             }
@@ -506,7 +511,8 @@ impl NativeCallbacks {
             .borrow()
             .as_ref()
             .map(WindowPresentationShutdownTicket::snapshot);
-        if snapshot.is_some_and(|snapshot| snapshot.native_terminal())
+        if self.0.window.get().is_none()
+            && snapshot.is_some_and(|snapshot| snapshot.native_terminal())
             && !self.0.native_terminal.replace(true)
         {
             self.0.transport.push(
@@ -716,6 +722,7 @@ impl NativeCallbacks {
         }
         let weak = Rc::downgrade(&self.0);
         let binding = self.binding();
+        let completion = self.0.transport.retain_callback();
         if let Some(barrier) = cx.observe_native_captured_drag_release(
             event.source_window(),
             event.generation(),
@@ -726,6 +733,7 @@ impl NativeCallbacks {
                         cx,
                     );
                 }
+                drop(completion);
             },
         ) {
             self.0
@@ -812,6 +820,7 @@ impl NativeCallbacks {
     fn cancel_capture_identity(&self, capture: NativeCapture, cx: &mut App) {
         let weak = Rc::downgrade(&self.0);
         let binding = self.binding();
+        let completion = self.0.transport.retain_callback();
         let barrier = cx.cancel_native_captured_drag_with_release_barrier(
             capture.source,
             capture.generation,
@@ -823,6 +832,7 @@ impl NativeCallbacks {
                         cx,
                     );
                 }
+                drop(completion);
             },
         );
         if let Some(barrier) = barrier {
@@ -1608,11 +1618,11 @@ impl NativeBridge {
             return;
         }
         if let Some(handle) = callbacks.handle() {
-            if handle
-                .update(cx, |_, window, cx| window.remove_window(cx))
-                .is_ok()
+            if let Ok(ticket) =
+                handle.update(cx, |_, window, cx| window.remove_window_with_retirement(cx))
             {
                 callbacks.0.close_sent.set(true);
+                callbacks.retain_open_retirement(ticket, cx);
             }
         }
     }
@@ -1723,6 +1733,7 @@ impl NativeBridge {
         binding: NativeSurfaceBinding,
     ) -> Result<(), NativeBridgeError> {
         if !self.transport.is_empty()
+            || !self.transport.callbacks_idle()
             || self.opening.is_some()
             || !self.reports.is_empty()
             || session.has_pending_native_input()

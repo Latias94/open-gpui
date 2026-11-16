@@ -47,6 +47,7 @@ mod receiver_tests;
 pub(super) mod provisional;
 mod receiver;
 mod reports;
+mod termination;
 use receiver::resolve;
 #[cfg(test)]
 use receiver::resolve_in_window;
@@ -72,18 +73,24 @@ pub(super) struct ManagedHost {
     factory: Option<Rc<WindowFactory>>,
     factory_opening: Option<NativeCallbacks>,
     provisional: provisional::Provisional,
-    _quit: Subscription,
+    _quit: Option<Subscription>,
     pump_scheduled: bool,
     wake: Option<NativeWake>,
     blocked_continuation: Option<dockspace::runtime::NativePointerContinuation>,
     quiescence_callbacks: Vec<QuiescenceCallback>,
+    termination_callbacks: Vec<termination::TerminationCallback>,
+    failed_shutdown: Option<termination::FailedShutdown>,
     registrations: BTreeMap<WindowId, RootRegistration>,
     retirements: BTreeMap<WindowId, open_gpui::WindowPresentationShutdownTicket>,
-    _terminal: Subscription,
-    _displays: Subscription,
+    _terminal: Option<Subscription>,
+    _displays: Option<Subscription>,
 }
 
 impl ManagedHost {
+    pub(super) fn is_failed(&self) -> bool {
+        self.failed_shutdown.is_some()
+    }
+
     pub(super) fn can_dispatch_close(&self) -> bool {
         self.bridge.is_some() && !self.transport.is_frozen()
     }
@@ -122,6 +129,8 @@ pub(super) fn inspection(host: &HostState) -> Option<super::DockNativeInspection
         admission_frozen: native.transport.is_frozen(),
         bridge_available: native.bridge.is_some(),
         quiescent: is_quiescent(host, native),
+        failed_generation: native.is_failed(),
+        termination: termination::disposition(host, native),
         transport_empty: native.transport.is_empty(),
         transport: native.transport.inspection(),
         retained_report_count: native.reports.len(),
@@ -147,10 +156,11 @@ pub(super) fn inspection(host: &HostState) -> Option<super::DockNativeInspection
 }
 
 fn is_quiescent(host: &HostState, native: &ManagedHost) -> bool {
-    native
-        .bridge
-        .as_ref()
-        .is_some_and(NativeBridge::is_quiescent)
+    native.failed_shutdown.is_none()
+        && native
+            .bridge
+            .as_ref()
+            .is_some_and(NativeBridge::is_quiescent)
         && native.pending_reports.is_empty()
         && native.retired.is_empty()
         && native.registrations.is_empty()
@@ -309,15 +319,17 @@ pub(super) fn enroll(shared: &SharedHost, cx: &mut App) -> Result<()> {
         factory: None,
         factory_opening: None,
         provisional: provisional::Provisional::default(),
-        _quit: quit,
+        _quit: Some(quit),
         pump_scheduled: false,
         wake: None,
         blocked_continuation: None,
         quiescence_callbacks: Vec::new(),
+        termination_callbacks: Vec::new(),
+        failed_shutdown: None,
         registrations: BTreeMap::new(),
         retirements: BTreeMap::new(),
-        _terminal: terminal,
-        _displays: displays,
+        _terminal: Some(terminal),
+        _displays: Some(displays),
     });
     desktop.desktop(&cx.display_snapshot(), cx);
     Ok(())
@@ -916,6 +928,10 @@ pub(super) fn begin_frame<'session>(
     current: Option<&Window>,
     cx: &mut App,
 ) -> Result<DockspaceHostFrame<'session>> {
+    anyhow::ensure!(
+        native.is_none_or(|native| native.failed_shutdown.is_none()),
+        "a failed generation cannot begin another semantic frame"
+    );
     Ok(if let Some(native) = native {
         session.begin_native_host_frame(|query| resolve(query, mounts, native, current, cx))?
     } else {
@@ -1196,6 +1212,13 @@ fn collect_host(
     current: Option<&Window>,
     cx: &mut App,
 ) -> Result<bool> {
+    if host
+        .native
+        .as_ref()
+        .is_some_and(|native| native.failed_shutdown.is_some())
+    {
+        return Ok(false);
+    }
     // A prepared GPUI candidate still owns its rollbackable semantic update.
     // Preserve ingress ordering until that exact candidate is accepted or
     // withdrawn; collecting a native prefix here would require another update.
@@ -1389,6 +1412,14 @@ fn process_reports(host: &mut HostState, bridge: &mut NativeBridge, cx: &mut App
 }
 
 pub(super) fn pump(shared: &SharedHost, cx: &mut App) {
+    if shared.try_borrow().is_ok_and(|host| {
+        host.native
+            .as_ref()
+            .is_some_and(|native| native.failed_shutdown.is_some())
+    }) {
+        termination::pump_failed(shared, cx);
+        return;
+    }
     super::close::dispatch(shared, cx);
     let Ok(mut host) = shared.try_borrow_mut() else {
         return;
@@ -1514,15 +1545,22 @@ pub(super) fn pump(shared: &SharedHost, cx: &mut App) {
         // An emitted output waiting on its renderer is a continuation, not a
         // new paint request. Its actual terminal callback wakes retained dirt.
         .filter(|mount| {
-            mount.pending.is_none() && mount.regions.values().any(|region| region.dirty)
+            !mount.capacity_blocked
+                && mount.pending.is_none()
+                && mount.regions.values().any(|region| region.dirty)
         })
         .map(|mount| mount.window)
         .collect();
-    let quiescence_callbacks = if is_quiescent(&host, host.native.as_ref().unwrap()) {
-        std::mem::take(&mut host.native.as_mut().unwrap().quiescence_callbacks)
-    } else {
-        Vec::new()
-    };
+    let (quiescence_callbacks, termination_callbacks) =
+        if is_quiescent(&host, host.native.as_ref().unwrap()) {
+            let native = host.native.as_mut().unwrap();
+            (
+                std::mem::take(&mut native.quiescence_callbacks),
+                std::mem::take(&mut native.termination_callbacks),
+            )
+        } else {
+            (Vec::new(), Vec::new())
+        };
     drop(host);
     for window in windows {
         let _ = window.update(cx, |_, window, _| window.refresh());
@@ -1532,6 +1570,9 @@ pub(super) fn pump(shared: &SharedHost, cx: &mut App) {
     }
     for callback in quiescence_callbacks {
         callback(cx);
+    }
+    for callback in termination_callbacks {
+        callback(super::DockNativeTermination::Drained, cx);
     }
 }
 

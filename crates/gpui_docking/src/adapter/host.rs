@@ -508,6 +508,9 @@ impl DockSurface {
     /// This is diagnostic only. A protocol failure can retain a rejected FIFO
     /// head and prevent quiescence; neither inspecting the failure nor closing
     /// its windows authorizes clearing that input or reusing the old session.
+    /// For an irreparable managed generation, explicitly choose
+    /// [`Self::begin_failed_native_shutdown`] and wait for
+    /// [`Self::native_termination`] before disposing of the complete old host.
     pub fn failure(&self) -> Option<DockHostFailure> {
         self.host.borrow().failure.clone()
     }
@@ -561,6 +564,8 @@ pub(super) struct WindowMount {
     pub(super) wake: Option<continuation::Wake>,
     pub(super) attached: bool,
     pub(super) waiting_for_update: bool,
+    // Retain dirt while an output budget waits for a committed terminal prefix.
+    pub(super) capacity_blocked: bool,
 }
 
 pub(super) struct RegionState {
@@ -741,6 +746,7 @@ impl HostState {
                 wake: None,
                 attached: true,
                 waiting_for_update: false,
+                capacity_blocked: false,
             },
         );
         Ok(true)
@@ -757,6 +763,11 @@ impl HostState {
 
     pub(super) fn invalidate_report(&mut self, report: &HostFrameReport) {
         super::close::observe(self, report);
+        if !report.surface_presentation_commits().is_empty() {
+            for mount in self.mounts.values_mut() {
+                mount.capacity_blocked = false;
+            }
+        }
         // Affected surfaces also include provenance-only presentation updates.
         // Only the repaint roster requests new encoding for those observations.
         for surface in report.repaint_surfaces() {

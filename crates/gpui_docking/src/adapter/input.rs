@@ -123,7 +123,11 @@ pub(super) fn queue(
         .or(surface);
     let source_point = source.and_then(|source| {
         let mount = host.mounts.get(&owner)?;
-        let bounds = mount.regions.get(&source.surface())?.bounds?;
+        let bounds = mount
+            .input_frames
+            .iter()
+            .find(|frame| frame.surface == source.surface())?
+            .bounds;
         logical_point(position, bounds)
     });
     if let Some(mount) = host.mounts.get_mut(&owner) {
@@ -181,6 +185,13 @@ pub(super) fn is_presented(
     surface: SurfaceId,
     serial: u64,
 ) -> bool {
+    if host
+        .native
+        .as_ref()
+        .is_some_and(|native| native.is_failed())
+    {
+        return false;
+    }
     host.mounts
         .get(&owner)
         .and_then(|mount| mount.regions.get(&surface))

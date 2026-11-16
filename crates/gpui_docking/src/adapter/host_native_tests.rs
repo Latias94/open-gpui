@@ -171,7 +171,14 @@ fn quiescence_notification_waits_for_original_native_terminal_and_runs_outside_t
     let calls = std::rc::Rc::new(std::cell::Cell::new(0));
     let observed = calls.clone();
     let weak = std::rc::Rc::downgrade(&dock.host);
+    let terminations = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let observed_terminations = terminations.clone();
     cx.update(|cx| {
+        dock.when_native_terminated(
+            move |disposition, _| observed_terminations.borrow_mut().push(disposition),
+            cx,
+        )
+        .unwrap();
         dock.when_native_quiescent(
             move |_| {
                 let dock = DockSurface {
@@ -188,12 +195,297 @@ fn quiescence_notification_waits_for_original_native_terminal_and_runs_outside_t
     });
     cx.run_until_parked();
     assert_eq!(calls.get(), 0);
+    assert!(terminations.borrow().is_empty());
     assert!(!dock.native_is_quiescent());
     assert!(held.release());
     finish(cx, &dock);
     assert_eq!(calls.get(), 1);
+    assert_eq!(
+        *terminations.borrow(),
+        [crate::DockNativeTermination::Drained]
+    );
     cx.update(|cx| dock.pump_native(cx));
     assert_eq!(calls.get(), 1);
+}
+
+#[open_gpui::test]
+fn failure_termination_requires_an_original_failure_and_does_not_freeze_a_healthy_host(
+    cx: &mut TestAppContext,
+) {
+    let dock = cx.update(workspace);
+    let window = cx
+        .update(|cx| dock.open_native_root(FIRST, true, WindowOptions::default(), cx))
+        .unwrap();
+    finish(cx, &dock);
+    let before = dock.inspection().unwrap();
+    cx.update(|cx| dock.begin_failed_native_shutdown(cx))
+        .unwrap_err();
+    assert_eq!(dock.inspection().unwrap(), before);
+    cx.update_window(window, |_, _, _| ()).unwrap();
+    cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();
+    finish(cx, &dock);
+}
+
+#[open_gpui::test]
+fn failed_anchor_rollback_cannot_block_retirement_of_its_existing_root_dependency(
+    cx: &mut TestAppContext,
+) {
+    let dock = cx.update(workspace);
+    let root = cx
+        .update(|cx| dock.open_native_root(FIRST, false, WindowOptions::default(), cx))
+        .unwrap();
+    finish(cx, &dock);
+    cx.set_next_window_present_outcome(open_gpui::PlatformWindowPresentOutcome::Rejected);
+    let ticket = cx.update(|cx| {
+        let error = dock
+            .open_native_root(SECOND, true, WindowOptions::default(), cx)
+            .unwrap_err();
+        let ticket = original_ticket(&error);
+        assert!(!ticket.snapshot().native_terminal());
+        dock.host.borrow_mut().failure = Some(crate::DockHostFailure {
+            message: "original failed anchor generation".into(),
+            runtime_kind: Some(DockspaceRuntimeErrorKind::HostProtocol),
+            native_kind: None,
+        });
+        dock.begin_failed_native_shutdown(cx).unwrap();
+        ticket
+    });
+    cx.run_until_parked();
+    cx.update(|cx| dock.pump_native(cx));
+    cx.run_until_parked();
+    assert!(ticket.snapshot().quiesced() && ticket.snapshot().native_terminal());
+    assert!(cx.update_window(root, |_, _, _| ()).is_err());
+    assert!(matches!(
+        dock.native_termination(),
+        Some(crate::DockNativeTermination::Failed(_))
+    ));
+    assert!(!dock.native_is_quiescent());
+}
+
+#[open_gpui::test]
+fn failed_shutdown_retries_the_original_window_borrow_without_another_external_wake(
+    cx: &mut TestAppContext,
+) {
+    let dock = cx.update(workspace);
+    let window = cx
+        .update(|cx| dock.open_native_root(FIRST, true, WindowOptions::default(), cx))
+        .unwrap();
+    finish(cx, &dock);
+    dock.host.borrow_mut().failure = Some(crate::DockHostFailure {
+        message: "original failed generation".into(),
+        runtime_kind: Some(DockspaceRuntimeErrorKind::HostProtocol),
+        native_kind: None,
+    });
+    cx.update_window(window, |_, _, cx| dock.begin_failed_native_shutdown(cx))
+        .unwrap()
+        .unwrap();
+    cx.run_until_parked();
+    assert!(matches!(
+        dock.native_termination(),
+        Some(crate::DockNativeTermination::Failed(_))
+    ));
+    assert!(!dock.native_is_quiescent());
+}
+
+#[open_gpui::test]
+fn failed_generation_retires_children_and_anchor_without_claiming_semantic_drain(
+    cx: &mut TestAppContext,
+) {
+    use dockspace::{
+        geometry::PhysicalRect,
+        model::NativeWindowPlacement,
+        runtime::{
+            NativeDesktopPointerLocation, NativeDesktopPosition, NativePointerButton,
+            NativePointerEvent, NativePointerHover, NativePointerId, NativePointerInput,
+            NativePointerOwner,
+        },
+    };
+
+    let dock = cx.update(|cx| {
+        let mut policy = DockPolicy::default();
+        policy.set_allow_native_surfaces(true);
+        let session = DockspaceSession::from_layout(layout(), policy).unwrap();
+        DockSurface::new_managed(
+            session,
+            [FIRST, SECOND].map(|surface| {
+                DockPane::new(
+                    ItemId::new(surface.get()),
+                    "Original View",
+                    cx.new(|_| Empty),
+                )
+            }),
+            GpuiDockspaceConfig::default(),
+            cx,
+        )
+        .unwrap()
+    });
+    let sibling = cx.update(workspace);
+    let sibling_window = cx
+        .update(|cx| sibling.open_native_root(FIRST, true, WindowOptions::default(), cx))
+        .unwrap();
+    finish(cx, &sibling);
+    let anchor = cx
+        .update(|cx| dock.open_native_root(FIRST, true, WindowOptions::default(), cx))
+        .unwrap();
+    cx.update(|cx| {
+        dock.update(
+            |frame| {
+                frame.create_native_surface_current(
+                    SECOND,
+                    FIRST,
+                    NativeWindowPlacement::new(PhysicalRect::new(100.0, 100.0, 600.0, 400.0)?),
+                )?;
+                Ok(())
+            },
+            cx,
+        )
+        .unwrap();
+    });
+    finish(cx, &dock);
+    let child = cx.update(|cx| {
+        cx.windows()
+            .into_iter()
+            .find(|window| *window != anchor && *window != sibling_window)
+            .unwrap()
+    });
+    let binding = dock
+        .native_callbacks_for_window(child.window_id())
+        .unwrap()
+        .binding();
+    let renderer = cx.hold_window_presentation_shutdown(child);
+    let native_terminal = cx.hold_window_native_terminal(child);
+    let terminated = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let observed = terminated.clone();
+    let weak = std::rc::Rc::downgrade(&dock.host);
+    cx.update(|cx| {
+        dock.when_native_terminated(
+            move |disposition, _| {
+                assert!(
+                    weak.upgrade().unwrap().try_borrow_mut().is_ok(),
+                    "termination runs outside host borrows"
+                );
+                observed.borrow_mut().push(disposition);
+            },
+            cx,
+        )
+        .unwrap();
+    });
+    {
+        let mut host = dock.host.borrow_mut();
+        for event in [
+            NativePointerEvent::ButtonPressed(NativePointerButton::Primary),
+            NativePointerEvent::ButtonPressed(NativePointerButton::Primary),
+        ] {
+            host.session
+                .record_native_pointer(NativePointerInput::new(
+                    NativePointerId::new(1),
+                    event,
+                    NativeDesktopPointerLocation::new(
+                        NativeDesktopPosition::Unknown,
+                        NativePointerHover::Unknown,
+                        None,
+                    ),
+                    NativePointerOwner::Native(binding),
+                    NativePointerOwner::None,
+                ))
+                .unwrap();
+        }
+    }
+    cx.update(|cx| dock.pump_native(cx));
+    assert!(dock.host.borrow().session.has_pending_native_input());
+    assert!(dock.failure().unwrap().is_primary_protocol_failure());
+    cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| assert!(cx.windows().contains(&anchor)));
+    assert!(dock.native_termination().is_none());
+    let original_failure = dock.failure().unwrap();
+    let recorded = dock.host.borrow().session.native_input_recorded_count();
+    cx.update(|cx| dock.begin_failed_native_shutdown(cx))
+        .unwrap();
+    cx.run_until_parked();
+    assert!(terminated.borrow().is_empty());
+    assert!(dock.native_termination().is_none());
+    renderer.release();
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_millis(512));
+    cx.run_until_parked();
+    assert!(terminated.borrow().is_empty());
+    assert!(
+        dock.native_termination().is_none(),
+        "renderer quiescence cannot replace native terminal"
+    );
+    assert!(native_terminal.release());
+    cx.run_until_parked();
+    cx.update(|cx| {
+        dock.pump_native(cx);
+        assert!(
+            !cx.windows().contains(&child),
+            "the child physically retires"
+        );
+        assert!(
+            !cx.windows().contains(&anchor),
+            "the anchor must not wait for an irreparable semantic prefix"
+        );
+    });
+    assert!(!dock.native_is_quiescent());
+    assert!(dock.host.borrow().session.has_pending_native_input());
+    assert_eq!(
+        dock.host.borrow().session.native_input_recorded_count(),
+        recorded
+    );
+    let disposition = crate::DockNativeTermination::Failed(original_failure);
+    assert_eq!(dock.native_termination(), Some(disposition.clone()));
+    assert_eq!(*terminated.borrow(), [disposition]);
+    cx.update(|cx| dock.pump_native(cx));
+    cx.run_until_parked();
+    assert_eq!(terminated.borrow().len(), 1, "termination is reported once");
+
+    // Application-owned panes and committed topology acquire entirely new
+    // session/provider authority. No queued native records enter the new host.
+    let fresh = cx.update(|cx| {
+        let old = dock.host.borrow();
+        let session = DockspaceSession::from_layout(
+            old.session.view().to_layout(),
+            old.session.policy().clone(),
+        )
+        .unwrap();
+        DockSurface::new_managed(
+            session,
+            old.panels.values().cloned(),
+            old.config.clone(),
+            cx,
+        )
+        .unwrap()
+    });
+    let fresh_anchor = cx
+        .update(|cx| fresh.open_native_root(FIRST, true, WindowOptions::default(), cx))
+        .unwrap();
+    finish(cx, &fresh);
+    assert_ne!(
+        fresh
+            .native_callbacks_for_window(fresh_anchor.window_id())
+            .unwrap()
+            .binding(),
+        binding
+    );
+    assert!(!fresh.host.borrow().session.has_pending_native_input());
+    {
+        let old = dock.host.borrow();
+        let new = fresh.host.borrow();
+        for (item, pane) in &old.panels {
+            assert_eq!(pane.view.entity_id(), new.panels[item].view.entity_id());
+        }
+    }
+    cx.update(|cx| fresh.begin_native_shutdown(cx)).unwrap();
+    finish(cx, &fresh);
+    assert_eq!(
+        fresh.native_termination(),
+        Some(crate::DockNativeTermination::Drained)
+    );
+    assert!(cx.update_window(sibling_window, |_, _, _| ()).is_ok());
+    assert!(!sibling.native_is_quiescent());
+    cx.update(|cx| sibling.begin_native_shutdown(cx)).unwrap();
+    finish(cx, &sibling);
 }
 
 fn commit_native(session: &mut DockspaceSession) -> HostFrameReport {

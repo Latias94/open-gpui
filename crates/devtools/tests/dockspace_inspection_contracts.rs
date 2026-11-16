@@ -64,6 +64,8 @@ fn inspection() -> DockSurfaceInspection {
             admission_frozen: true,
             bridge_available: false,
             quiescent: false,
+            failed_generation: false,
+            termination: None,
             transport_empty: false,
             transport: open_gpui_docking::native::NativeTransportInspection {
                 queued_record_count: 1,
@@ -136,6 +138,33 @@ fn default_docking_projects_owned_facts_without_consuming_or_inventing_authority
     assert!(!serialized.contains("capabilities"));
     assert!(!serialized.contains("NativeWindowBinding"));
     assert!(!serialized.contains("NativeSurfaceBinding"));
+}
+
+#[test]
+fn failed_native_termination_exports_disposition_without_claiming_drain_or_copying_the_error() {
+    let mut source = inspection();
+    let native = source.native.as_mut().unwrap();
+    native.failed_generation = true;
+    native.termination = Some(open_gpui_docking::DockNativeTermination::Failed(
+        open_gpui_docking::DockHostFailure {
+            message: "password=termination-secret".to_owned(),
+            runtime_kind: None,
+            native_kind: None,
+        },
+    ));
+    let before = source.clone();
+    let projected = docking::docking_surface_inspection(&source);
+    let native = projected.native.as_ref().unwrap();
+    assert!(native.failed_generation);
+    assert_eq!(native.termination.as_deref(), Some("failed"));
+    assert!(!native.quiescent);
+    let capture = docking::docking_surface_capture(&source);
+    assert!(
+        !serde_json::to_string(&capture)
+            .unwrap()
+            .contains("termination-secret")
+    );
+    assert_eq!(source, before);
 }
 
 #[test]

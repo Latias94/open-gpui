@@ -957,6 +957,122 @@ fn continued_capture(cx: &mut TestAppContext) -> ContinuedCapture {
 }
 
 #[open_gpui::test]
+fn failed_shutdown_observes_original_capture_terminal_without_consuming_the_fifo(
+    cx: &mut TestAppContext,
+) {
+    let mut capture = continued_capture(cx);
+    let transport = capture.bridge.transport();
+    let recorded = capture.session.native_input_recorded_count();
+    transport.freeze_admission();
+    cx.update(|cx| transport.device_removed(cx));
+    let prefix = transport.inspection();
+    assert_eq!(prefix.front_record, Some("device-removed"));
+    cx.update(|cx| capture.bridge.drive_failed_shutdown(true, cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| assert!(cx.windows().contains(&capture.source)));
+    assert!(!capture.bridge.failed_shutdown_complete());
+
+    capture.release_allowed.set(true);
+    cx.background_executor
+        .advance_clock(Duration::from_millis(8));
+    cx.run_until_parked();
+    assert!(transport.0.queue.borrow().iter().any(|record| matches!(record,
+        Inbound::CaptureTerminal(binding, barrier, NativeCapturedDragReleaseTerminal::Released, _)
+            if *binding == capture.before.window()
+                && barrier.drag_generation() == capture.generation
+    )), "the original physical release proof must arrive before close");
+    for _ in 0..4 {
+        cx.update(|cx| capture.bridge.drive_failed_shutdown(true, cx))
+            .unwrap();
+        cx.run_until_parked();
+    }
+    assert!(capture.bridge.failed_shutdown_complete());
+    assert!(
+        !capture.bridge.is_quiescent(),
+        "failed cleanup does not invent semantic drain"
+    );
+    assert_eq!(capture.session.native_input_recorded_count(), recorded);
+    assert_eq!(transport.inspection().front_record, prefix.front_record);
+    assert!(transport.inspection().queued_record_count > prefix.queued_record_count);
+    assert!(
+        transport
+            .0
+            .queue
+            .borrow()
+            .iter()
+            .any(|record| matches!(record,
+                Inbound::CaptureTerminal(_, barrier, NativeCapturedDragReleaseTerminal::Released, _)
+                    if barrier.drag_generation() == capture.generation
+            )),
+        "the exact terminal stays owned by the old FIFO"
+    );
+}
+
+#[open_gpui::test]
+fn native_destruction_does_not_end_an_undelivered_capture_completion(cx: &mut TestAppContext) {
+    let mut capture = continued_capture(cx);
+    let transport = capture.bridge.transport();
+    assert!(
+        !transport.callbacks_idle(),
+        "the original capture continuation is pending"
+    );
+    let observed = Rc::new(RefCell::new(Vec::new()));
+    let _observer = cx.update({
+        let transport = transport.clone();
+        let observed = observed.clone();
+        let source = capture.source.window_id();
+        move |cx| {
+            cx.on_window_native_terminal(move |_, owner| {
+                if owner == source {
+                    observed.borrow_mut().push(transport.callbacks_idle());
+                }
+            })
+        }
+    });
+    cx.update_window(capture.source, |_, window, cx| window.remove_window(cx))
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        *observed.borrow(),
+        [false],
+        "native destruction precedes the original capture handoff"
+    );
+    assert!(transport.callbacks_idle());
+    assert!(transport.0.queue.borrow().iter().any(|record| matches!(record,
+        Inbound::CaptureTerminal(_, barrier, NativeCapturedDragReleaseTerminal::NativeWindowTerminal, _)
+            if barrier.drag_generation() == capture.generation
+    )));
+    for _ in 0..3 {
+        cx.update(|cx| capture.bridge.drive_failed_shutdown(true, cx))
+            .unwrap();
+        cx.run_until_parked();
+    }
+    assert!(capture.bridge.failed_shutdown_complete());
+}
+
+#[open_gpui::test]
+fn callback_wakes_remain_owned_until_the_original_handoff_finishes(cx: &mut TestAppContext) {
+    let transport = super::NativeTransport::new(|_| {});
+    let pending = cx.update(|cx| transport.wake_after_callback(cx));
+    assert!(!transport.callbacks_idle());
+    drop(pending);
+    assert!(
+        transport.callbacks_idle(),
+        "an undispatched subscription releases its owner"
+    );
+    let pending = cx.update(|cx| transport.wake_after_callback(cx));
+    pending();
+    assert!(
+        !transport.callbacks_idle(),
+        "a detached foreground handoff still owns the generation"
+    );
+    cx.run_until_parked();
+    assert!(transport.callbacks_idle());
+    assert_eq!(transport.inspection().front_record, Some("wake"));
+}
+
+#[open_gpui::test]
 fn a_failed_capture_release_keeps_shutdown_blocked_without_repeated_cancellation(
     cx: &mut TestAppContext,
 ) {

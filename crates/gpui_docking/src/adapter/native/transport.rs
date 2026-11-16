@@ -29,6 +29,7 @@ struct TransportState {
     wake: Rc<Wake>,
     scheduled: Cell<bool>,
     frozen: Cell<bool>,
+    pending_callbacks: Cell<usize>,
 }
 
 /// UI-thread FIFO shared by native callbacks and the application's one host owner.
@@ -61,6 +62,7 @@ impl NativeTransport {
             wake: Rc::new(wake),
             scheduled: Cell::new(false),
             frozen: Cell::new(false),
+            pending_callbacks: Cell::new(0),
         }))
     }
 
@@ -192,17 +194,32 @@ impl NativeTransport {
         }
     }
 
-    pub(super) fn wake_after_callback(&self, cx: &App) -> impl FnOnce() + 'static {
+    pub(super) fn wake_after_callback(&self, cx: &App) -> impl FnOnce() + use<> {
         let queue = self.clone();
+        let pending = queue.retain_callback();
         let foreground = cx.foreground_executor().clone();
         let async_cx = cx.to_async();
         move || {
             foreground
                 .spawn(async move {
-                    async_cx.update(|cx| queue.push(Inbound::Wake, cx));
+                    async_cx.update(|cx| {
+                        drop(pending);
+                        queue.push(Inbound::Wake, cx);
+                    });
                 })
                 .detach();
         }
+    }
+
+    pub(super) fn retain_callback(&self) -> PendingCallback {
+        self.0
+            .pending_callbacks
+            .set(self.0.pending_callbacks.get() + 1);
+        PendingCallback(self.clone())
+    }
+
+    pub(in crate::adapter) fn callbacks_idle(&self) -> bool {
+        self.0.pending_callbacks.get() == 0 && !self.0.scheduled.get()
     }
 
     fn pop(&self) -> Option<Inbound> {
@@ -216,6 +233,17 @@ impl NativeTransport {
     fn reject(&self, record: Inbound, error: &NativeBridgeError) {
         self.retry(record);
         *self.0.rejection.borrow_mut() = Some(crate::adapter::DockHostFailure::from_error(error));
+    }
+}
+
+pub(super) struct PendingCallback(NativeTransport);
+
+impl Drop for PendingCallback {
+    fn drop(&mut self) {
+        self.0
+            .0
+            .pending_callbacks
+            .set(self.0.0.pending_callbacks.get() - 1);
     }
 }
 
@@ -300,6 +328,22 @@ impl Inbound {
 }
 
 impl NativeBridge {
+    pub(in crate::adapter) fn service_failed_capture_terminals(&self) {
+        // Read actual backend release proofs without removing or reordering any
+        // semantic records. The failed generation can never resume collection.
+        for record in self.transport.0.queue.borrow().iter() {
+            if let Inbound::CaptureTerminal(binding, barrier, terminal, custody) = record
+                && let Some(callbacks) = self
+                    .windows
+                    .binding(barrier.source_window())
+                    .and_then(|current| self.windows.get(current))
+                && callbacks.has_callback_custody(custody)
+            {
+                callbacks.finish_capture(*binding, *barrier, *terminal);
+            }
+        }
+    }
+
     /// Records the successful callback prefix, retaining the exact rejected front.
     ///
     /// This does not begin or commit a host frame. InputCapacity and pending-roster

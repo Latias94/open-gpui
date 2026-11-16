@@ -122,6 +122,10 @@ pub struct DockNativeInspection {
     pub bridge_available: bool,
     /// The same full convergence predicate as `DockSurface::native_is_quiescent`.
     pub quiescent: bool,
+    /// Whether the application chose irreversible failure termination.
+    pub failed_generation: bool,
+    /// Actual completed disposition, independent of an unconsumable FIFO.
+    pub termination: Option<super::DockNativeTermination>,
     /// Whether the native transport FIFO is empty.
     pub transport_empty: bool,
     /// Original native FIFO head, queued count and rejection; never a replay authority.

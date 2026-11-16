@@ -1,5 +1,7 @@
 //! Public content integration through GPUI's deterministic test renderer.
 
+#[path = "capacity_tests.rs"]
+mod capacity;
 #[path = "recovery_tests.rs"]
 mod recovery;
 #[path = "release_tests.rs"]

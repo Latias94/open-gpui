@@ -154,10 +154,17 @@ pub(super) fn accept(
     mut input_frames: Vec<InputFrame>,
     fence: AcceptedFrameFence,
     window: &mut Window,
-    cx: &App,
+    cx: &mut App,
 ) {
     let owner = window.window_handle().window_id();
     let mut host = shared.borrow_mut();
+    if host
+        .native
+        .as_ref()
+        .is_some_and(|native| native.is_failed())
+    {
+        return;
+    }
     let Some(mount) = host.mounts.get_mut(&owner) else {
         return;
     };
@@ -199,6 +206,10 @@ pub(super) fn accept(
         {
             Ok(mut report) => {
                 pending.outputs = report.take_painted_outputs();
+                let released_capacity = !report.surface_presentation_commits().is_empty();
+                if released_capacity {
+                    wake_capacity_blocked(&mut host, cx);
+                }
                 host.apply_report(report);
                 host_native::provisional::accept_preview(&mut host, owner, &pending.packets);
                 pending.inputs.clear();
@@ -448,10 +459,31 @@ pub(super) fn settle_pending(
         }
     }
     let report = frame.commit()?;
+    let released_capacity = !report.surface_presentation_commits().is_empty();
+    if released_capacity {
+        wake_capacity_blocked(host, cx);
+    }
     host.apply_report(report);
     host.presentation_pending = false;
     host.unavailable_surfaces.clear();
     Ok(())
+}
+
+pub(super) fn wake_capacity_blocked(host: &mut HostState, cx: &mut App) {
+    // Only a committed presentation prefix releases output capacity. Waking on
+    // renderer acceptance or arbitrary native work would turn dirt into polling.
+    for mount in host.mounts.values_mut() {
+        if std::mem::take(&mut mount.capacity_blocked)
+            && mount.attached
+            && mount.pending.is_none()
+            && mount.regions.values().any(|region| region.dirty)
+        {
+            let window = mount.window;
+            cx.defer(move |cx| {
+                let _ = window.update(cx, |_, window, _| window.refresh());
+            });
+        }
+    }
 }
 
 fn wake_waiting(host: &mut HostState, cx: &mut App) {

@@ -6,13 +6,13 @@ use std::{
     rc::Rc,
 };
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use dockspace::{
     geometry::{LogicalRect, LogicalSize},
     model::{ItemId, SurfaceId},
     runtime::{
         DockspacePaneFocusObservation, DockspacePaneFocusRequest, DockspaceReceiverDescriptor,
-        DockspaceUpdate, DockspaceVisualId, SurfaceMeasurementAnswer as Answer,
+        DockspaceUpdate, DockspaceVisualId, HostFrameReport, SurfaceMeasurementAnswer as Answer,
         SurfaceMeasurementRequest as Request, SurfacePointerButton, SurfacePointerCancelReason,
         SurfacePointerEvent, SurfaceWork, SurfaceWorkDeferred, TabListMenuMetrics,
         TabStripControlMetric, TabStripControlMetrics, TabStripControlPlacement, TabStripMetrics,
@@ -47,6 +47,14 @@ pub(super) struct Packet {
     draws: Vec<Draw>,
     deferred: bool,
     pub(super) native_preview: Option<host_native::provisional::Preview>,
+}
+
+enum Candidate {
+    Painted {
+        packets: BTreeMap<SurfaceId, Rc<Packet>>,
+        update: DockspaceUpdate,
+    },
+    CapacityDeferred(HostFrameReport),
 }
 
 impl Packet {
@@ -396,6 +404,7 @@ impl DockspaceElement {
             }
             region_bounds.insert(region.surface, rect);
         }
+        let mut schedule_host_work = false;
         let (packets, serial, publication, waiting_for_update) = {
             let mut host = self.host.borrow_mut();
             let mount = &host.mounts[&owner];
@@ -434,9 +443,8 @@ impl DockspaceElement {
                 )
             } else if host.inputs.is_empty()
                 && mount.regions.iter().all(|(surface, region)| {
-                    !region.dirty
-                        && region.bounds == region_bounds.get(surface).copied()
-                        && region.packet.is_some()
+                    region.bounds == region_bounds.get(surface).copied()
+                        && (mount.capacity_blocked || (!region.dirty && region.packet.is_some()))
                 })
             {
                 (
@@ -444,7 +452,16 @@ impl DockspaceElement {
                         .regions
                         .iter()
                         .map(|(surface, region)| {
-                            (*surface, region.packet.clone().expect("retained region"))
+                            (
+                                *surface,
+                                region.packet.clone().unwrap_or_else(|| {
+                                    Rc::new(Packet {
+                                        draws: Vec::new(),
+                                        deferred: true,
+                                        native_preview: None,
+                                    })
+                                }),
+                            )
                         })
                         .collect(),
                     mount.serial,
@@ -461,7 +478,7 @@ impl DockspaceElement {
                     window,
                     cx,
                 );
-                let (packets, update) = match candidate {
+                let candidate = match candidate {
                     Ok(candidate) => candidate,
                     Err(error) => {
                         let mut inputs = inputs;
@@ -470,46 +487,97 @@ impl DockspaceElement {
                         return Err(error);
                     }
                 };
-                let ticket = match host_native::provisional::begin_submission(&host, window, cx) {
-                    Ok(ticket) => ticket,
-                    Err(error) => {
-                        drop(update);
-                        let mut inputs = inputs;
-                        inputs.append(&mut host.inputs);
-                        host.inputs = inputs;
-                        return Err(error);
+                match candidate {
+                    Candidate::CapacityDeferred(report) => {
+                        // This input-only publication installs no new artifact or
+                        // submission identity. Keep the displayed cohort dirty
+                        // until its renderer budget is released by a real terminal.
+                        schedule_host_work = !report.inputs().is_empty()
+                            || report.native_input_pending()
+                            || !report.surface_presentation_commits().is_empty()
+                            || !report.native_admissions().is_empty()
+                            || !report.native_placement_detachments().is_empty()
+                            || !report.native_root_continuations().is_empty();
+                        let released_capacity = !report.surface_presentation_commits().is_empty();
+                        if released_capacity {
+                            presentation::wake_capacity_blocked(&mut host, cx);
+                        }
+                        host.apply_report(report);
+                        let mount = host.mounts.get_mut(&owner).expect("physical mount");
+                        mount.capacity_blocked = true;
+                        for region in mount.regions.values_mut() {
+                            region.dirty = true;
+                        }
+                        (
+                            mount
+                                .regions
+                                .iter()
+                                .map(|(surface, region)| {
+                                    (
+                                        *surface,
+                                        region.packet.clone().unwrap_or_else(|| {
+                                            Rc::new(Packet {
+                                                draws: Vec::new(),
+                                                deferred: true,
+                                                native_preview: None,
+                                            })
+                                        }),
+                                    )
+                                })
+                                .collect(),
+                            mount.serial,
+                            publication,
+                            false,
+                        )
                     }
-                };
-                if let Err(error) = host_native::watch_submission(&host, &ticket, window) {
-                    window.retire_exact_frame_submission(&ticket);
-                    drop(update);
-                    let mut inputs = inputs;
-                    inputs.append(&mut host.inputs);
-                    host.inputs = inputs;
-                    return Err(error);
+                    Candidate::Painted { packets, update } => {
+                        let ticket =
+                            match host_native::provisional::begin_submission(&host, window, cx) {
+                                Ok(ticket) => ticket,
+                                Err(error) => {
+                                    drop(update);
+                                    let mut inputs = inputs;
+                                    inputs.append(&mut host.inputs);
+                                    host.inputs = inputs;
+                                    return Err(error);
+                                }
+                            };
+                        if let Err(error) = host_native::watch_submission(&host, &ticket, window) {
+                            window.retire_exact_frame_submission(&ticket);
+                            drop(update);
+                            let mut inputs = inputs;
+                            inputs.append(&mut host.inputs);
+                            host.inputs = inputs;
+                            return Err(error);
+                        }
+                        let mount = host.mounts.get_mut(&owner).expect("physical mount");
+                        mount.capacity_blocked = false;
+                        mount.serial = mount
+                            .serial
+                            .checked_add(1)
+                            .context("frame serial exhausted")?;
+                        let serial = mount.serial;
+                        for (surface, bounds) in &region_bounds {
+                            let region = mount.regions.get_mut(surface).expect("mounted region");
+                            region.bounds = Some(*bounds);
+                            region.dirty = false;
+                        }
+                        mount.pending = Some(presentation::PendingSubmission::new(
+                            serial,
+                            ticket.clone(),
+                            packets.clone(),
+                            update,
+                            inputs,
+                        ));
+                        presentation::observe(&self.host, &ticket, serial, window);
+                        (packets, serial, publication, false)
+                    }
                 }
-                let mount = host.mounts.get_mut(&owner).expect("physical mount");
-                mount.serial = mount
-                    .serial
-                    .checked_add(1)
-                    .context("frame serial exhausted")?;
-                let serial = mount.serial;
-                for (surface, bounds) in &region_bounds {
-                    let region = mount.regions.get_mut(surface).expect("mounted region");
-                    region.bounds = Some(*bounds);
-                    region.dirty = false;
-                }
-                mount.pending = Some(presentation::PendingSubmission::new(
-                    serial,
-                    ticket.clone(),
-                    packets.clone(),
-                    update,
-                    inputs,
-                ));
-                presentation::observe(&self.host, &ticket, serial, window);
-                (packets, serial, publication, false)
             }
         };
+        if schedule_host_work {
+            host_native::schedule(&self.host, cx);
+        }
         let mut regions = Vec::new();
         for (surface, packet) in &packets {
             let bounds = region_bounds[surface];
@@ -2058,7 +2126,7 @@ fn build_candidate(
     open_menu: Option<DockspaceVisualId>,
     window: &Window,
     cx: &mut App,
-) -> Result<(BTreeMap<SurfaceId, Rc<Packet>>, DockspaceUpdate)> {
+) -> Result<Candidate> {
     let panels = &host.panels;
     let config = &host.config;
     let managed = host.native.is_some();
@@ -2181,7 +2249,11 @@ fn build_candidate(
         let plan = match work {
             SurfaceWork::Ready(plan) => plan,
             SurfaceWork::Deferred(SurfaceWorkDeferred::OutputCapacity) => {
-                return Err(anyhow!("renderer output capacity is exhausted"));
+                // A later region may be blocked after earlier regions confirmed
+                // their paint. Discard that whole private pass while preserving
+                // its accepted input, then publish without consuming output room.
+                frame.restart_encoding_pass()?;
+                return Ok(Candidate::CapacityDeferred(frame.commit()?));
             }
             SurfaceWork::Deferred(SurfaceWorkDeferred::Unmeasured) => {
                 anyhow::ensure!(managed, "measured surface has no ready paint plan");
@@ -2204,7 +2276,10 @@ fn build_candidate(
         frame.confirm_surface_painted(receipt)?;
         packets.insert(surface, Rc::new(packet));
     }
-    Ok((packets, frame.suspend()))
+    Ok(Candidate::Painted {
+        packets,
+        update: frame.suspend(),
+    })
 }
 
 fn to_gpui(rect: LogicalRect, surface: Bounds<Pixels>) -> Bounds<Pixels> {

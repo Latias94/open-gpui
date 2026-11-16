@@ -22,7 +22,7 @@ mod tests;
 
 pub use config::{DockspaceColors, DockspaceInputBindings, GpuiDockspaceConfig};
 pub use dockspace;
-pub use failure::DockHostFailure;
+pub use failure::{DockHostFailure, DockNativeTermination};
 pub use host::{DockHostAdmissionError, DockPane, DockPaneError, DockRegion, DockSurface};
 pub use inspection::{
     DockInspectionError, DockModelSurfaceInspection, DockMountInspection, DockNativeInspection,
