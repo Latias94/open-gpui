@@ -245,6 +245,359 @@ fn tab_fixture(
     })
 }
 
+fn core_tab_list_fixture(
+    cx: &mut TestAppContext,
+) -> (
+    DockSurface,
+    Vec<FocusHandle>,
+    PaneKeys,
+    VisualTestContext,
+    Rc<RefCell<Option<Rc<InteractionState>>>>,
+) {
+    cx.defer_next_window_frame_requests();
+    let (dock, handles, keys) = tab_fixture(cx, &[FIRST, SECOND, ItemId::new(63)]);
+    let interaction = Rc::new(RefCell::new(None));
+    let window = cx.open_window(size(px(160.0), px(600.0)), |_, _| FocusStateRoot {
+        dock: dock.clone(),
+        interaction: interaction.clone(),
+    });
+    let mut visual = active_visual(window.into(), cx);
+    assert!(visual.activate_accessibility());
+    frames(&mut visual, &dock);
+    let button = tab_list_button_bounds(&dock, window.window_id());
+    visual.simulate_click(button.center(), Modifiers::none());
+    frames(&mut visual, &dock);
+    assert_accessibility_focus(&visual, Role::MenuItem, "Pane 61");
+    (dock, handles, keys, visual, interaction)
+}
+
+#[open_gpui::test]
+fn core_tab_list_down_down_enter_preserves_the_same_update_prefix(cx: &mut TestAppContext) {
+    let (dock, handles, keys, mut visual, _) = core_tab_list_fixture(cx);
+    visual.update(|window, cx| {
+        for key in ["down", "down", "enter"] {
+            assert!(
+                window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx),
+                "the original menu must own {key}"
+            );
+        }
+        assert!(
+            !window.dispatch_keystroke(Keystroke::parse("up").unwrap(), cx),
+            "confirmation ends the menu prefix before a replacement is painted"
+        );
+    });
+    frames(&mut visual, &dock);
+    assert!(dock.with_view(|view| view.item(ItemId::new(63)).unwrap().is_selected()));
+    assert!(visual.update(|window, cx| handles[2].contains_focused(window, cx)));
+    visual.update(|window, cx| {
+        assert!(!window.dispatch_keystroke(Keystroke::parse("up").unwrap(), cx));
+    });
+    assert_eq!(
+        keys.borrow().last(),
+        Some(&(ItemId::new(63), "up".to_owned()))
+    );
+}
+
+#[open_gpui::test]
+fn core_tab_list_up_boundary_clamps_before_reversing(cx: &mut TestAppContext) {
+    let (dock, handles, _, mut visual, _) = core_tab_list_fixture(cx);
+    visual.update(|window, cx| {
+        for key in ["up", "down", "enter"] {
+            assert!(window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx));
+        }
+    });
+    frames(&mut visual, &dock);
+    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_selected()));
+    assert!(visual.update(|window, cx| handles[1].contains_focused(window, cx)));
+}
+
+#[open_gpui::test]
+fn core_tab_list_end_boundary_clamps_before_reversing(cx: &mut TestAppContext) {
+    let (dock, handles, _, mut visual, _) = core_tab_list_fixture(cx);
+    visual.update(|window, cx| {
+        for key in ["end", "down", "up", "enter"] {
+            assert!(window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx));
+        }
+    });
+    frames(&mut visual, &dock);
+    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_selected()));
+    assert!(visual.update(|window, cx| handles[1].contains_focused(window, cx)));
+}
+
+#[open_gpui::test]
+fn core_tab_list_home_uses_the_destination_of_the_preceding_key(cx: &mut TestAppContext) {
+    let (dock, handles, _, mut visual, _) = core_tab_list_fixture(cx);
+    visual.update(|window, cx| {
+        for key in ["end", "home", "down", "enter"] {
+            assert!(window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx));
+        }
+    });
+    frames(&mut visual, &dock);
+    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_selected()));
+    assert!(visual.update(|window, cx| handles[1].contains_focused(window, cx)));
+}
+
+#[open_gpui::test]
+fn core_tab_list_prefix_continues_through_an_unpresented_frame(cx: &mut TestAppContext) {
+    let (dock, handles, _, mut visual, interaction) = core_tab_list_fixture(cx);
+    let interaction = interaction.borrow().as_ref().unwrap().clone();
+    let window = visual.update(|window, _| window.window_handle());
+    visual.set_window_present_outcome(window, PlatformWindowPresentOutcome::Deferred);
+    visual.update(|window, cx| {
+        assert!(window.dispatch_keystroke(Keystroke::parse("down").unwrap(), cx));
+    });
+    assert!(visual.simulate_frame(RequestFrameOptions {
+        require_presentation: true,
+        force_render: true,
+        ..Default::default()
+    }));
+    visual.update(|window, cx| {
+        {
+            let host = dock.host.borrow();
+            let owner = window.window_handle().window_id();
+            let serial = host.mounts[&owner].serial;
+            assert!(
+                !input::is_presented(&host, owner, SURFACE, serial),
+                "an encoded replacement must not supply keyboard authority"
+            );
+        }
+        for key in ["down", "enter"] {
+            assert!(
+                window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx),
+                "the original menu prefix must retain {key} through an inert frame"
+            );
+        }
+        assert!(!window.dispatch_keystroke(Keystroke::parse("up").unwrap(), cx));
+    });
+    visual.set_window_present_outcome(window, PlatformWindowPresentOutcome::Submitted);
+    let mut trace = Vec::new();
+    for frame in 0..5 {
+        if frame < 4 {
+            assert!(visual.simulate_frame(RequestFrameOptions {
+                require_presentation: true,
+                force_render: true,
+                ..Default::default()
+            }));
+        } else {
+            // The selected pane first becomes interactive in the fourth replay.
+            // Normal accepted-publication focus runs after authority is sealed,
+            // so its claim commits in the next generation. That frame must be
+            // scheduled by GPUI itself, rather than forced by this test.
+            assert!(
+                visual.simulate_scheduled_frame(),
+                "pane focus must schedule its next-generation commit:\n{}",
+                trace.join("\n")
+            );
+        }
+        assert!(dock.error().is_none(), "{:?}", dock.error());
+        trace.push(visual.update(|window, cx| {
+            let host = dock.host.borrow();
+            let mount = &host.mounts[&window.window_handle().window_id()];
+            let region = &mount.regions[&SURFACE];
+            let attempts = interaction.pane_focus.borrow();
+            let attempt = attempts
+                .get(&SURFACE)
+                .map(|attempt| (attempt.request, attempt.applied, attempt.observation));
+            format!(
+                "frame={frame} serial={} presented={:?} version={:?} selection63={} \
+                 focused={:?} committed={:?} claim={} rendered63={} focused63={} \
+                 request={:?} attempt={attempt:?} retained={}",
+                mount.serial,
+                region.presented,
+                host.session.version(),
+                host.session
+                    .view()
+                    .item(ItemId::new(63))
+                    .unwrap()
+                    .is_selected(),
+                window.focused(cx),
+                window.committed_focus(cx),
+                window.focus_claim_revision(),
+                window.is_focus_handle_rendered(&handles[2]),
+                handles[2].contains_focused(window, cx),
+                host.session.pane_focus_request(SURFACE),
+                interaction.keyboard.borrow().is_some(),
+            )
+        }));
+        if visual.update(|window, cx| handles[2].contains_focused(window, cx)) {
+            break;
+        }
+    }
+    assert!(dock.with_view(|view| view.item(ItemId::new(63)).unwrap().is_selected()));
+    assert!(
+        visual.update(|window, cx| handles[2].contains_focused(window, cx)),
+        "deferred menu confirmation must focus the selected pane:\n{}",
+        trace.join("\n")
+    );
+}
+
+#[open_gpui::test]
+fn core_tab_list_cancel_ends_the_same_update_prefix(cx: &mut TestAppContext) {
+    let (dock, _, _, mut visual, interaction) = core_tab_list_fixture(cx);
+    let interaction = interaction.borrow().as_ref().unwrap().clone();
+    visual.update(|window, cx| {
+        let opener = interaction
+            .tab_list_focus
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .opener
+            .clone();
+        for key in ["down", "escape"] {
+            assert!(window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx));
+        }
+        assert!(
+            opener.is_focused(window),
+            "cancellation hands the suffix back to the original opener immediately"
+        );
+        let version = dock.host.borrow().session.version();
+        assert!(
+            !window.dispatch_keystroke(Keystroke::parse("right").unwrap(), cx),
+            "the opener owns the suffix after menu cancellation"
+        );
+        assert_eq!(dock.host.borrow().session.version(), version);
+    });
+    frames(&mut visual, &dock);
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_selected()));
+    assert_accessibility_focus(&visual, Role::Button, "Show all tabs");
+}
+
+#[open_gpui::test]
+fn core_tab_list_cancel_then_opener_down_preserves_the_reopen_order(cx: &mut TestAppContext) {
+    let (dock, _, _, mut visual, interaction) = core_tab_list_fixture(cx);
+    let interaction = interaction.borrow().as_ref().unwrap().clone();
+    let original_row = interaction.tab_list_focus.borrow().as_ref().unwrap().row;
+    visual.update(|window, cx| {
+        assert!(window.dispatch_keystroke(Keystroke::parse("down").unwrap(), cx));
+    });
+    // The first update committed its focus move, but its replacement menu has
+    // not been presented. Dismissal must precede the opener's later command.
+    visual.update(|window, cx| {
+        assert!(window.dispatch_keystroke(Keystroke::parse("escape").unwrap(), cx));
+        assert!(
+            window.dispatch_keystroke(Keystroke::parse("down").unwrap(), cx),
+            "the opener's Down must follow dismissal"
+        );
+        assert!(
+            !window.dispatch_keystroke(Keystroke::parse("right").unwrap(), cx),
+            "the terminal barrier only retains this opener's semantic input"
+        );
+    });
+    for _ in 0..3 {
+        frames(&mut visual, &dock);
+    }
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_selected()));
+    assert_accessibility_focus(&visual, Role::MenuItem, "Pane 61");
+    let reopened_row = interaction.tab_list_focus.borrow().as_ref().unwrap().row;
+    assert_ne!(
+        reopened_row, original_row,
+        "the opener must start a new core menu session after dismissal"
+    );
+}
+
+#[open_gpui::test]
+fn core_tab_list_pending_prefix_cannot_override_an_application_focus_claim(
+    cx: &mut TestAppContext,
+) {
+    cx.defer_next_window_frame_requests();
+    let (dock, _, _) = tab_fixture(cx, &[FIRST, SECOND, ItemId::new(63)]);
+    let focus = cx.update(|cx| cx.focus_handle());
+    let keys = Rc::new(RefCell::new(Vec::new()));
+    let window = cx.open_window(size(px(160.0), px(600.0)), |_, _| ExternalFocusRoot {
+        dock: dock.clone(),
+        focus: focus.clone(),
+        keys: keys.clone(),
+    });
+    let mut visual = active_visual(window.into(), cx);
+    assert!(visual.activate_accessibility());
+    frames(&mut visual, &dock);
+    let button = tab_list_button_bounds(&dock, window.window_id());
+    visual.simulate_click(button.center(), Modifiers::none());
+    frames(&mut visual, &dock);
+    assert_accessibility_focus(&visual, Role::MenuItem, "Pane 61");
+    let claim = visual.update(|window, cx| {
+        assert!(window.dispatch_keystroke(Keystroke::parse("down").unwrap(), cx));
+        assert!(window.is_focus_handle_rendered(&focus));
+        window.focus(&focus, cx);
+        let claim = window.focus_claim_revision();
+        assert!(!window.dispatch_keystroke(Keystroke::parse("enter").unwrap(), cx));
+        claim
+    });
+    frames(&mut visual, &dock);
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_selected()));
+    visual.update(|window, cx| {
+        assert!(focus.contains_focused(window, cx));
+        assert_eq!(window.focus_claim_revision(), claim);
+        assert!(!window.dispatch_keystroke(Keystroke::parse("up").unwrap(), cx));
+    });
+    assert_eq!(keys.borrow().last().map(String::as_str), Some("up"));
+}
+
+#[open_gpui::test]
+fn core_tab_list_pending_prefix_cannot_acquire_a_replacement_epoch(cx: &mut TestAppContext) {
+    let (dock, _, _, mut visual, _) = core_tab_list_fixture(cx);
+    let layout = dock.with_view(|view| view.to_layout());
+    visual.update(|window, cx| {
+        assert!(window.dispatch_keystroke(Keystroke::parse("down").unwrap(), cx));
+    });
+    let previous = dock.host.borrow().session.version();
+    let reset = dock
+        .host
+        .borrow()
+        .session
+        .prepare_layout_reset(layout)
+        .unwrap();
+    let replacement = visual.update(|window, cx| {
+        dock.update(
+            |frame| {
+                frame.submit_layout_reset(&reset)?;
+                Ok(())
+            },
+            cx,
+        )
+        .unwrap();
+        let replacement = dock.host.borrow().session.version();
+        assert!(!previous.is_same_epoch(replacement));
+        assert!(!window.dispatch_keystroke(Keystroke::parse("enter").unwrap(), cx));
+        replacement
+    });
+    frames(&mut visual, &dock);
+    assert_eq!(dock.host.borrow().session.version(), replacement);
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_selected()));
+    let tree = visual.latest_accessibility_tree_update().unwrap();
+    assert!(
+        !tree
+            .nodes
+            .iter()
+            .any(|(id, node)| *id == tree.focus && node.role() == Role::MenuItem),
+        "a replacement epoch cannot restore focus from the old menu prefix"
+    );
+}
+
+struct ExternalFocusRoot {
+    dock: DockSurface,
+    focus: FocusHandle,
+    keys: Rc<RefCell<Vec<String>>>,
+}
+
+impl Render for ExternalFocusRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let keys = self.keys.clone();
+        div().size_full().child(self.dock.element(SURFACE)).child(
+            div()
+                .id("application-keyboard-target")
+                .absolute()
+                .bottom_0()
+                .right_0()
+                .size(px(1.0))
+                .track_focus(&self.focus)
+                .on_key_down(move |event, _, _| {
+                    keys.borrow_mut().push(event.keystroke.key.clone());
+                }),
+        )
+    }
+}
+
 struct FocusStateRoot {
     dock: DockSurface,
     interaction: Rc<RefCell<Option<Rc<InteractionState>>>>,

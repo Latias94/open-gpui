@@ -11,7 +11,7 @@ use dockspace::{
         DockspacePreviewVisual, DockspaceReceiverDescriptor, SurfaceContainedResizeAdjustment,
         SurfacePaintPlan, SurfacePaintProgramOperation as Operation,
         SurfacePaintProgramStep as Step, SurfaceSplitterAdjustment, SurfaceTabInput,
-        SurfaceTabListNavigation, SurfaceTabNavigation, TabStripControlKind,
+        SurfaceTabNavigation, TabStripControlKind,
     },
 };
 
@@ -33,6 +33,7 @@ pub(super) fn record(
     let mut native_preview = None;
     let mut menu_backdrop = None;
     let mut tab_keys = BTreeMap::new();
+    let mut menu_openers = BTreeMap::new();
     let label = |item: Option<ItemId>| {
         item.and_then(|item| panels.get(&item))
             .map_or_else(|| "Workspace".to_owned(), |pane| pane.title.to_string())
@@ -365,7 +366,11 @@ pub(super) fn record(
                                 ControlAction::Activate,
                                 plan.prepare_tab_strip_control_activation(control),
                             );
-                            draws.push(Draw::Control(Rc::new(semantic)));
+                            let semantic = Rc::new(semantic);
+                            if let Some(bar) = semantic.opens_menu {
+                                menu_openers.insert(bar, semantic.clone());
+                            }
+                            draws.push(Draw::Control(semantic));
                         }
                     }
                     Operation::PresentationMenuAnchor(anchor) => {
@@ -492,6 +497,12 @@ pub(super) fn record(
                     );
                 }
                 Step::PopupMenu { menu, .. } => {
+                    let menu_keys = super::keyboard::MenuKeys::record(
+                        plan,
+                        menu,
+                        menu_openers.get(&menu.tab_bar_visual_id()).cloned(),
+                    )
+                    .map(Rc::new);
                     draws.push(Draw::Fill(menu.bounds(), colors.selected_tab));
                     if let Some(receiver) = plan.receiver_for_tab_list_menu_scroll(menu) {
                         draws.push(Draw::Scroll(super::wheel::ScrollTarget::Menu(receiver)));
@@ -515,21 +526,11 @@ pub(super) fn record(
                             control.selected = Some(row.selected());
                             control.focused = row.focused();
                             control.menu_owner = Some(menu.tab_bar_visual_id());
+                            control.menu_keys = menu_keys.clone();
                             control.action(
                                 ControlAction::Activate,
                                 plan.prepare_tab_list_menu_row_activation(row),
                             );
-                            for (key, navigation) in [
-                                (ControlAction::Previous, SurfaceTabListNavigation::Previous),
-                                (ControlAction::Next, SurfaceTabListNavigation::Next),
-                                (ControlAction::First, SurfaceTabListNavigation::First),
-                                (ControlAction::Last, SurfaceTabListNavigation::Last),
-                            ] {
-                                control.action(
-                                    key,
-                                    plan.prepare_tab_list_menu_navigation(menu, navigation),
-                                );
-                            }
                             if let Some(backdrop) = menu_backdrop {
                                 control.action(
                                     ControlAction::Dismiss,

@@ -93,6 +93,7 @@ pub(super) struct Control {
     pub(super) receiver: Option<DockspaceReceiverDescriptor>,
     pub(super) actions: Vec<(ControlAction, ActionSlot)>,
     pub(super) tab_keys: Option<Rc<super::keyboard::TabKeys>>,
+    pub(super) menu_keys: Option<Rc<super::keyboard::MenuKeys>>,
 }
 
 impl Control {
@@ -117,6 +118,7 @@ impl Control {
             receiver,
             actions: Vec::new(),
             tab_keys: None,
+            menu_keys: None,
         }
     }
 
