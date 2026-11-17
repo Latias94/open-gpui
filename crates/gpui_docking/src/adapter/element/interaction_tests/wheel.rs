@@ -58,7 +58,7 @@ impl Render for OverlayRoot {
                         .top_0()
                         .left_0()
                         .size_full()
-                        .bg(open_gpui::rgb(0x303030))
+                        .bg(GpuiDockspaceConfig::default().colors.background)
                         .occlude()
                         .on_scroll(move |_, _, _| {
                             scrolls.set(scrolls.get() + 1);
