@@ -39,6 +39,15 @@ redistribution and does not impose fixed side-pane widths. Only current-revision
 dockspace documents are supported by this unreleased integration; retain the
 existing document integrity checks rather than rewriting old hashes.
 
+`DockspaceInputBindings` adds `splitter_double_click`, defaulting to
+`Some(SplitterDoubleClick::Preferred)`. Applications constructing the bindings
+with a struct literal add this field or use `..Default::default()`. Use
+`Some(SplitterDoubleClick::Equalize)` for constrained equalization regardless
+of preferences, or `None` to disable pointer resets. Enter/Space and assistive
+activation retain their preferred-size behavior independently of this setting.
+Tab-list keyboard prefixes now preserve ordered navigation and terminal
+confirmation/cancellation across retained submission frames.
+
 Use `update_action(update, map, cx)` to resolve a submitted action's exact result.
 An `Ok` frame alone does not prove product acceptance. Install a
 `set_commit_handler` observer for application-owned autosave notifications and

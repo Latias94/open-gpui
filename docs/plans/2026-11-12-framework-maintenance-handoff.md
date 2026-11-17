@@ -220,7 +220,11 @@ The [November 17 adapter parity record](../knowledge/engineering/verification/do
 tracks the complete `e8120864..362aa4c9` dockspace range and the retained host's
 pane sizing, command feedback, keyboard continuation, menu focus, wheel
 occlusion and public capture-release repairs. It also inventories the remaining
-group-control, splitter double-click, styling and owning-platform qualifications.
+group-control, styling and owning-platform qualifications. Its ordered-chrome
+follow-up records tab-list key prefixes and splitter double-click restoration,
+including the core repair required for one-pixel pointer jitter. The adapter
+pins the published `073b569b` backport on `362aa4c9`; the newer `62ea08cc` group
+menu/atomic-close APIs still require a separate complete adapter adoption.
 Use its fixed sources and receipts before treating older Windows results as
 coverage for the current adapter.
 

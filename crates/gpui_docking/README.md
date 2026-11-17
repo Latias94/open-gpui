@@ -76,7 +76,10 @@ Arrow/Home/End navigation follows the focused tab; Ctrl+Tab and Ctrl+Shift+Tab
 cycle documents. Independent key events retain their original core witness
 through the temporary inert packet used for submission, and a later application
 focus or blur claim ends that continuation. Enter hands ownership to pane
-content. Overflowing strips and tab lists accept real scroll events; phased
+content. Tab-list Up/Down and Home/End likewise compose before the next
+presentation. Enter/Space confirms the reached row and Escape returns to the
+opener; either terminal ends the menu's key prefix. Overflowing strips and tab
+lists accept real scroll events; phased
 precise scrolling keeps its original chrome/content owner through tail events.
 Layout actions operate on the complete Root, including its split tree. Group
 grips drag one tabs group. Neither control implicitly changes its scope to a
@@ -91,7 +94,13 @@ extent can leave background inside a larger window. Preferences do not override
 user weights during ordinary layout; focus a splitter and press Enter/Space, or
 use its accessibility Click action, to restore preferred sizes explicitly.
 Without preferences, that action equalizes the adjacent panes within their
-constraints. `LogicalSize` and `with_minimum_size` remain minimum-only shortcuts.
+constraints. A primary-button double click requests the same restoration after
+its original release. Set `config.input.splitter_double_click` to
+`Some(SplitterDoubleClick::Equalize)` to equalize despite declared preferences,
+or `None` to disable pointer resets. Dragging, cancelled capture and covered
+release targets do not trigger a reset. Keyboard and accessibility restoration
+remain available independently. `LogicalSize` and `with_minimum_size` remain
+minimum-only shortcuts.
 
 Updating a title or sizing invalidates core measurements and the GPUI packet
 without replacing the View. `take_closed_pane` transfers a closed View registration only after

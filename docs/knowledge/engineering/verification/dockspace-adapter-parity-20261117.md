@@ -146,13 +146,138 @@ python3 scripts/run_macos_native_probe.py target/debug/open-gpui-dockspace-edito
 Neither native smoke is newly qualified in this locked session. The earlier
 Windows smoke results retain their original source and are not counted here.
 
+## Ordered chrome follow-up
+
+The follow-up starts at `c6582996632cc1b7e83473608706e850cd176165`. Its final
+dependency is the published backport `073b569b43371685964fecde407698412e3c3f0f`,
+whose parent is exactly `362aa4c9`. The same core repair is committed on the
+sibling's newer main as `4c982919238f9b70490eaa0826f81322d442f363`; that main
+has concurrent owner changes and is not pushed by this follow-up. The backport
+branch publishes only the reviewed repair. All three consumer lockfiles retain
+its exact revision, without an unrelated dependency update.
+
+A tab-list prefix retains the exact
+menu session, row roster and prepared focus/activation capabilities. The small
+adapter cursor follows the reference egui adapter; core still owns menu focus,
+scrolling, permission checks and the final action. The selected core has
+`prepare_tab_list_menu_focus`, rather than a dedicated menu keyboard sequence
+helper. Terminal confirmation or cancellation yields input immediately. A
+replacement must actually present before its witnesses can continue a preceding
+committed menu move; an external workspace change or application focus claim
+revokes that continuation. `d70eb5b8` owns this adapter change. A pending Escape
+also orders a subsequent opener command after its original dismissal; a later
+Down cannot toggle the still-open old menu first. The exact mount fallback may
+retain this opener input while its control is Inert, but ordinary application
+focus and unrelated keys keep their own ownership.
+
+Splitter double clicks use `DockspaceInputBindings::splitter_double_click`:
+Preferred by default, Equalize explicitly, or `None` to disable pointer resets.
+The semantic action follows the original press/release prefix. Local input and
+candidate rollback retain both records together; managed native input retains
+the semantic action at its original FIFO position until its own frame commits.
+A replacement's Inert controls still expose raw receiver geometry. The press
+stores that receiver's identity: a control/splitter visual and a receiver visual
+are different identities even when they occupy the same rectangle. Covered
+targets and cancelled or dragged presses cannot authorize a reset. Native
+release/cancel cleanup remains deliverable through an unpresented replacement,
+without granting that replacement pointer authority.
+
+The jitter regression exposes a core limitation beyond adapter event routing:
+the original reset was converted to a numeric displacement before a one-pixel
+resize changed its weights, making the reset stale. `073b569b` preserves absolute
+Preferred/Equalize intent only for `into_deferred()` and validates the original
+witness before recomputing current constrained geometry. Direct prepared
+actions, relative steps and multi-step sequences retain their strict geometry
+contract. The surface separately retains the latest accepted measurement values;
+discarding an unpainted scene or falling back to older painted geometry cannot
+authorize a reset from superseded measurements. This is a core mechanism repair,
+not a new GPUI layout or state owner.
+
+The initial real-event regressions reproduce nine failures in run
+`155be5c3-bcdb-403d-a860-96500ff982f7`. Review identifies the receiver/control
+identity mismatch before qualification; a later targeted run
+`251b4a5b-d48e-4de4-9696-059ec3c21198` passes 14/17 and exposes the remaining
+deferred-menu content-focus case. These are diagnostic receipts, not final
+qualification.
+
+Independent review also reproduces the pending-dismiss/reopen ordering failure
+in `71257399-2c7d-4e89-85d8-eaa465907117`. The corrected complete menu cohort
+passes **11/11**, run `bce1f6bc-28f2-449e-8362-27042056a6ce`. Deferred content
+focus consumes the next frame scheduled by GPUI itself after the pane becomes
+interactive; the test does not force a terminal focus result.
+
+The core backport passes **40/40** consumer cases without motion
+(`d1bc3800-9cce-4b79-aa29-6a5dfa6c1d2d`) and **40/40** with motion
+(`c0c112b2-e1e1-47e0-b03e-c0b69a82d278`). All core features pass **2434/2434**
+(`b8c22b5b-da09-427f-b6a9-d97b26978120`), with three tests skipped by the existing
+test configuration. These receipts belong to the backport, not the sibling's concurrently
+modified main. The final published core pin passes the GPUI default docking
+cohort **220/220**, no skips, run `6356bb3e-f5b5-4b66-b601-76f2334a8f14`,
+including both same-stream and separately presented one-pixel jitter.
+All docking features and the editor pass **1689/1689**, no skips, run
+`5257ed01-e1d4-475a-a9ff-79b1b729a18e`, with leak detection enabled. Logs are
+`/tmp/open-gpui-chrome-default-qualified.log` and
+`/tmp/open-gpui-chrome-all-qualified.log`.
+
+The final pin also passes Rust **1.95.0** library checking and Windows MSVC
+all-feature/all-target checking for docking, its native example and the editor.
+Logs are `/tmp/open-gpui-chrome-final-msrv.log` and
+`/tmp/open-gpui-chrome-final-msvc.log`. The Windows native fixture repair's
+all-feature/all-target cross-compile is separately retained at
+`/tmp/open-gpui-chrome-windows-native-check.log`. Cross-compilation does not
+establish the native tests' actual submission/pixel result.
+
+| Source or implementation | Disposition |
+| --- | --- |
+| Dockspace `073b569b43371685964fecde407698412e3c3f0f` | Adopted fixed backport: absolute deferred restoration, original authority checks, latest measurement observation and shared restoration calculation. |
+| Dockspace `4c982919238f9b70490eaa0826f81322d442f363` | Equivalent repair on newer local main; independent concurrent edits remain unstaged and main is not published by this task. |
+| Open-GPUI `d70eb5b8` | Ordered tab-list navigation, activation, dismissal and opener continuation. |
+| Open-GPUI `e322a673` | Pins `073b569b` in the workspace and both independently locked consumers. |
+| Open-GPUI `d9add984` | Configurable pointer restoration, original release ordering and retained receiver identity. Adds `DockspaceInputBindings::splitter_double_click`; struct-literal consumers add the field or use `Default`. |
+| Open-GPUI `4603c823` | Windows deterministic native fixtures disable inactive pacing without weakening submission/pixel assertions. |
+| Open-GPUI `aef2fa73` | Wheel occlusion fixture uses the shared palette and passes the UI contract gate. |
+| Dockspace `62ea08cccd5f911a4c97ace034e97a9d3d19bc75` | Reviewed successor; group menu/atomic close and allocation changes remain an explicit integration task, not included by the backport. |
+| Dockspace `b70983e5` / `a7223734` / `290046f2` | Observed Web demo loading, upstream CI action tags and native density-fixture follow-ups; excluded from this narrowly pinned core repair. They do not qualify GPUI interaction. |
+
+Final local logs are `/tmp/open-gpui-chrome-default-qualified.log` and
+`/tmp/open-gpui-chrome-all-qualified.log`. The final source pin passes Rust
+1.95.0 library compilation (`/tmp/open-gpui-chrome-final-msrv.log`), Windows
+MSVC docking/native/editor all-feature/all-target cross-compilation
+(`/tmp/open-gpui-chrome-final-msvc.log`), and the independently locked wasm
+smoke consumer (`/tmp/open-gpui-chrome-final-web.log`). These are compiler
+receipts, not physical Windows, macOS or browser interaction receipts.
+The independently locked dependency consumer also passes all-target/all-feature
+compilation (`/tmp/open-gpui-chrome-final-independent.log`). Formatting,
+whitespace, public API tiers and documentation links pass. The UI contract gate
+and all of its registered scenario executions pass after the palette repair.
+
+### CI follow-up
+
+The prior head's Verify run `43925362005` has three distinct failures. The
+docking wheel occlusion fixture used a new raw RGB literal, violating the shared
+palette gate. `aef2fa73` uses the configured palette; the full UI contract scan,
+including its registered native scenarios, passes locally. Two Windows native
+fixtures combine a frozen virtual clock with real message pumping and default
+inactive frame pacing. `4603c823` disables inactive pacing only in those test
+windows, following the existing native view-component fixture. Exact accepted
+generation, Submitted and pixel checks remain. Windows all-feature/all-target
+MSVC cross-compilation passes; actual native execution remains owned by Windows.
+
+The Linux system dependency installation reports no Ubuntu package catalog,
+after `apt-get update` lists only the Microsoft feed. A job rerun is requested
+without adding fallback repositories or weakening checks. Dependency Health
+`43925362157` and Publish Check `43925362047` pass at the prior head. These
+statuses do not qualify a subsequent commit.
+The palette/Windows fixture head `aef2fa73` subsequently passes Dependency Health
+`43992377254` and Publish Check `43992377359`; Verify `43992377289` remains in
+progress when the ordered-chrome changes are finalized. Final-head CI is
+separate from these local qualification receipts and prior-head statuses.
+
 ## Remaining interaction work
 
 | Area | Current boundary | Next implementation or owning verification |
 | --- | --- | --- |
-| Group actions | Group drag exists. Published egui design still describes group-menu allocation and atomic captured-group close as future work. | Adopt the eventual committed core group anchor/close-plan contracts; do not loop item closes or silently retarget a root action. |
-| Splitter double click | Preferred reset is available through focused Enter/Space and accessibility Click. A double-click reset is not connected. | Order the semantic reset after the original press/release/capture prefix and expose Preferred/Equalize/Disabled configuration. |
-| Tab-list key packets | Existing frame-separated navigation is covered. The new header continuation intentionally excludes menu rows, whose focus is core-owned. | Compare coalesced menu navigation/activation/cancellation using the core sequence APIs before promising parity with egui's packet handling. |
+| Group actions | Group drag exists at the selected dependency. Published successor `62ea08cccd5f911a4c97ace034e97a9d3d19bc75` now supplies core group-menu bounds/commands and one captured-group close plan. | Adopt that exact successor with the actual group controls and menu workspace-stamp invalidation together. A pin-only update would reserve an unrendered group slot. Preserve scope, the original close roster and atomic veto; do not loop item closes or retarget a root action. |
 | Chrome customization | Current palette/font configuration and core-owned geometry remain; shared vector grip and resize cursors improve the default. | Add density, control feedback, focus decoration and bounded appearance hooks against the selected chrome baseline, without inventing new hit rectangles. |
 | Native physical journeys | Prior Windows receipts are bound to their recorded source; macOS native smokes are programmatic lifecycle checks. | Rerun the manifest-owned Windows cohort on the new revision. Mixed-DPI still needs independent real displays; physical macOS capture/stationary sampling retains its explicit backend limit. |
 

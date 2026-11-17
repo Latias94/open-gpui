@@ -187,6 +187,11 @@ work. It records complete content sizing, exact command outcomes, commit
 notifications, keyboard/focus continuation, overflow input and original native
 release custody. Use its final run IDs and backend boundaries for the current
 adapter; earlier physical Windows cohorts retain their original source pins.
+The ordered-chrome follow-up pins the published `073b569b` core backport and
+adds tab-list event-prefix continuation plus configurable splitter double-click
+restoration. Its receipts separately cover the core's original-target and
+measurement checks, real GPUI event routing, and deferred presentation; no
+physical OS qualification is inferred from those contract tests.
 
 On this Mac, the active display query succeeds but the console is locked.
 AppKit reports both probe windows Hidden with detached CAMetalDisplayLink
