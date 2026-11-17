@@ -451,6 +451,9 @@ fn native_owning_asset_consumers_share_notify_submit_evict_and_retire() {
                             },
                             accepts_pointer_input: false,
                             show: true,
+                            // This fixture pumps native messages without advancing
+                            // the deterministic scheduler's clock.
+                            inactive_frame_interval: None,
                             ..WindowOptions::default()
                         },
                         |_, cx| {

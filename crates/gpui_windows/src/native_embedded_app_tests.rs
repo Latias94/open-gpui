@@ -289,6 +289,9 @@ fn native_embedded_visual_host_updates_awaits_submits_and_releases_exact_owners(
                         window_bounds: Some(WindowBounds::centered(size(px(640.), px(200.)), cx)),
                         focus_on_appearing: false,
                         show: true,
+                        // Keep frame delivery independent of the virtual clock;
+                        // this test advances timers explicitly below.
+                        inactive_frame_interval: None,
                         ..WindowOptions::default()
                     },
                     |_, cx| {
