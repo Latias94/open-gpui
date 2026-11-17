@@ -193,6 +193,12 @@ restoration. Its receipts separately cover the core's original-target and
 measurement checks, real GPUI event routing, and deferred presentation; no
 physical OS qualification is inferred from those contract tests.
 
+The group-menu follow-up adopts published `537dff0f`, including `62ea08cc` group
+actions/atomic close and mainline splitter repair `4c982919`. It adds actual
+scoped controls, workspace/session/run invalidation, ordered keyboard
+confirmation and managed native group first-live/close regressions. Its fresh
+receipts and per-commit disposition are in the same adapter parity record.
+
 On this Mac, the active display query succeeds but the console is locked.
 AppKit reports both probe windows Hidden with detached CAMetalDisplayLink
 sources; native smoke cannot advance its original second-frame receipt. The

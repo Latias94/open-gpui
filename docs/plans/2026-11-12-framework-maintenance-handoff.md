@@ -223,8 +223,16 @@ occlusion and public capture-release repairs. It also inventories the remaining
 group-control, styling and owning-platform qualifications. Its ordered-chrome
 follow-up records tab-list key prefixes and splitter double-click restoration,
 including the core repair required for one-pixel pointer jitter. The adapter
-pins the published `073b569b` backport on `362aa4c9`; the newer `62ea08cc` group
-menu/atomic-close APIs still require a separate complete adapter adoption.
+subsequently adopts published `537dff0f`, including `62ea08cc` group menus and
+atomic close, plus the mainline `4c982919` equivalent of the `073b569b` splitter
+backport. Group controls, session-bound menu invalidation and exact native
+first-live regression coverage land with that pin; they do not qualify physical
+OS input. The same record retains the upstream/local commit mapping and fresh
+verification receipts.
+Implementation `5fc41973` passes 244 default docking cases and 1,713 all-feature
+docking/editor cases, with Rust 1.95, MSVC, wasm, independent consumers and the
+public API/documentation/UI gates also passing. Physical OS qualification remains
+separate; no GUI probe is launched in this follow-up.
 Use its fixed sources and receipts before treating older Windows results as
 coverage for the current adapter.
 

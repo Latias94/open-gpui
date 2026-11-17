@@ -2,9 +2,9 @@
 type: Verification Evidence
 title: Dockspace Adapter Parity and Interaction Repairs
 status: partial
-timestamp: 2026-11-17T02:04:09+08:00
+timestamp: 2026-11-17T10:50:39+08:00
 base_commit: e210c52a70dd069baccfe2b29984f77d8cb83bf8
-git_commit: 82e38c4d7ff0e866b43ee2549d5070be9d9e5b50
+git_commit: 5fc4197370a0b1aab11b9f9936235ea145554482
 ---
 
 # Dockspace Adapter Parity and Interaction Repairs
@@ -273,11 +273,104 @@ The palette/Windows fixture head `aef2fa73` subsequently passes Dependency Healt
 progress when the ordered-chrome changes are finalized. Final-head CI is
 separate from these local qualification receipts and prior-head statuses.
 
+## Group menus and atomic close adoption
+
+The next implementation starts at Open-GPUI `606b1fe5` and selects published
+dockspace `537dff0ffdc3e7f24309be9f2243f786e822980a`. Remote `main` is checked
+before changing the pin. This includes both `62ea08cc`'s new group contracts and
+`4c982919`, the mainline counterpart of the previous `073b569b` splitter fix.
+The workspace and both independent consumer lockfiles share the new source.
+Untracked sibling research, regression artifacts and native logs are untouched.
+
+| Dockspace commit | Change | GPUI disposition |
+| --- | --- | --- |
+| `62ea08cccd5f911a4c97ace034e97a9d3d19bc75` | Scoped tab-group actions, atomic group-close plans, separate group/root chrome allocations and compact geometry. | Render both scopes from their original records. Tabs Float/New Window never become whole-root actions. Group close submits one captured roster with exact decision tokens. Core owns compact allocation and hit geometry. |
+| `b70983e5` | Web demo staged Wasm loading and retry. | Reference demo only; no retained-host runtime transplant. |
+| `a7223734` | Version tags for upstream GitHub Actions. | Upstream CI only. |
+| `290046f2` | Native publication smoke independent of default density. | Upstream test only; GPUI native group tests provide their own framework observations. |
+| `4c982919238f9b70490eaa0826f81322d442f363` | Deferred splitter resets survive weight-only changes and preserve the latest measured preferences. | Included in the selected core; the adapter's original release ordering and jitter regressions remain. |
+| `8e3a52b4` | Model atomic closes and deferred approval interleavings. | Included upstream evidence; GPUI additionally exercises its facade, retained Views, handlers and exact notifications. |
+| `537dff0ffdc3e7f24309be9f2243f786e822980a` | Egui tiles workflow comparison and close-model coverage. | Integration review reference and fixed published source. |
+
+The adapter uses a layout icon for complete-root actions and an ellipsis for
+tab-group actions, with explicit accessible scope descriptions. It preserves
+core menu records and hides unsupported native commands. The existing update,
+close-handler and committed-notification paths carry `TabsClosed`; no new
+semantic writer, close loop, View reconstruction or native coordinator is added.
+`DockSurface::capture_tabs_group` is a read-only forwarding entry point.
+
+Every opened product menu retains its original surface and session-bound
+workspace stamp. Only an installed replacement packet can invalidate that state;
+a failed prepaint leaves the installed packet and menu intact. Each opening also
+has an independent run identity and popup element IDs, so Escape/reopen cannot
+revive an older pointer press or accessibility callback. Keyboard navigation
+skips unavailable rows. Opening and confirming in one event batch retains its
+ordered semantic prefix until the exact menu is interactively presented; a later
+workspace or application focus claim revokes that waiting prefix. A new explicit
+key on a refocused opener starts a fresh prefix and discards the old keys. Once
+the shown menu supplies its exact command, the existing local/native input FIFO
+retains it behind earlier events. No separate UI-gate retry or polling loop is
+introduced. Real KeyUp's synthetic button click cannot toggle a menu already
+handled by KeyDown. Popup hitboxes block underlying
+mouse and wheel handlers, including when the menu itself cannot scroll.
+
+The reference Zed GPUI checkout at
+`27bbbc1cc480a7500cec122f120e796d1fb8500c` also synthesizes button clicks on
+Enter/Space KeyUp in `crates/gpui/src/elements/div.rs`. The adapter's custom
+KeyDown menu handling must account for that inherited mechanism. The correction
+stays in docking; the framework's button activation and focus contracts remain
+the reference.
+
+New regressions cover `[A,B] / [C,D]` group Float through pointer, keyboard and
+AccessKit; whole-root Float retaining the complete split; atomic allow/veto,
+deferred tokens, local reorder and sibling changes, membership/epoch/session
+invalidation and replay; failed prepaint and stale accessible targets; narrow
+strip allocations and real controls; ordered keyboard confirmation, disabled
+menus, cancelled presses, real KeyDown/KeyUp, focus reacquisition, no-repaint
+native wakes and popup wheel occlusion. The managed native journey
+uses the actual group menu and original retained Views. Placement readiness and
+Deferred outputs retain AB at the source; exact first-live moves only AB. Native
+close plus per-member content approval closes that child while CD and the
+original physical host remain usable. TestPlatform physical-display facts are
+explicit fixture observations, not evidence of real OS display or pointer input.
+
+### Owning commit and final qualification
+
+| Open-GPUI commit | Upstream source | Adapter ownership |
+| --- | --- | --- |
+| `5fc4197370a0b1aab11b9f9936235ea145554482` | Published `537dff0f`, including `62ea08cc`, `4c982919` and the complete seven-commit follow-up range above. | Pins all three lockfiles, renders scoped menus, exposes captured groups, reuses atomic-close/native/input owners and adds 24 behavioral regressions. Migration notes name the new exhaustive close variants. |
+
+Independent review identifies three final menu seams: refocusing an opener left
+its old keyboard claim permanently invalid; real KeyUp could toggle a menu
+already handled on KeyDown; and a Confirm left waiting on a native gate could
+lose its only wake. All three are corrected and independently rechecked against
+the final paths. Five additional real-event regressions pass in run
+`4f5dfbb0-b051-49e2-bbcc-5fb5dba93b7e` and are included in both complete final
+cohorts below. No reviewer blocker remains.
+
+All Cargo work uses `CARGO_BUILD_JOBS=1`, one shared workspace target, and serial
+nextest execution. Leak detection is enabled for both complete cohorts.
+
+| Check at `5fc41973` | Result | Exact receipt |
+| --- | --- | --- |
+| Default docking | **244/244 passed** | Run `d551af6f-4fd3-44b6-bfe0-a566c91451a6`; `/tmp/open-gpui-group-default-qualified.log` |
+| All docking features and dockspace editor | **1713/1713 passed** | Run `9ecb4d86-1486-4607-bc6f-6fe46e48aa1d`; `/tmp/open-gpui-group-all-qualified.log` |
+| Docking compiler floor, all library features | Rust 1.95.0 passed | `/tmp/open-gpui-group-msrv-qualified.log` |
+| Windows docking/native example/editor, all targets and features | MSVC cross-compilation passed | `/tmp/open-gpui-group-msvc-qualified.log` |
+| Independently locked browser smoke consumer | wasm32 check passed | `/tmp/open-gpui-group-web-qualified.log` |
+| Independently locked dependency consumer | All-target/all-feature check passed | `/tmp/open-gpui-group-independent-qualified.log` |
+| Formatting and whitespace | Passed | `/tmp/open-gpui-group-fmt.log`; `git diff --check` |
+| Public API, documentation links and federated UI contract | Passed, including the UI gate's registered scenario executions | `/tmp/open-gpui-group-public-api.log`, `/tmp/open-gpui-group-doc-links.log`, `/tmp/open-gpui-group-ui-contract.log` |
+
+These are contract and compiler receipts. No GUI probe is launched in this
+follow-up. Real Windows/macOS group menus, native physical interaction and
+mixed-monitor DPI retain their owning-platform qualification requirements.
+
 ## Remaining interaction work
 
 | Area | Current boundary | Next implementation or owning verification |
 | --- | --- | --- |
-| Group actions | Group drag exists at the selected dependency. Published successor `62ea08cccd5f911a4c97ace034e97a9d3d19bc75` now supplies core group-menu bounds/commands and one captured-group close plan. | Adopt that exact successor with the actual group controls and menu workspace-stamp invalidation together. A pin-only update would reserve an unrendered group slot. Preserve scope, the original close roster and atomic veto; do not loop item closes or retarget a root action. |
+| Group actions | The selected `537dff0f` core and adapter include group menus, atomic close, session-bound menu invalidation and native first-live contract coverage. | Qualify the physical group-menu/native-window journey on the owning platforms; preserve the scope/roster and exact callback guards when customizing appearance. |
 | Chrome customization | Current palette/font configuration and core-owned geometry remain; shared vector grip and resize cursors improve the default. | Add density, control feedback, focus decoration and bounded appearance hooks against the selected chrome baseline, without inventing new hit rectangles. |
 | Native physical journeys | Prior Windows receipts are bound to their recorded source; macOS native smokes are programmatic lifecycle checks. | Rerun the manifest-owned Windows cohort on the new revision. Mixed-DPI still needs independent real displays; physical macOS capture/stationary sampling retains its explicit backend limit. |
 
