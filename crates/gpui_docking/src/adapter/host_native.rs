@@ -1097,7 +1097,14 @@ pub(super) fn queue_pointer(
         PointerDeviceKind, PointerEventMetadata, SurfacePointerEvent,
     };
     let owner = window.window_handle().window_id();
-    if !super::input::is_presented(host, owner, surface, serial) {
+    let terminal = matches!(
+        event,
+        SurfacePointerEvent::ButtonReleased(_) | SurfacePointerEvent::StreamCancelled(_)
+    );
+    // A replacement can be inert between the original press and release.
+    // Cleanup still enters the same producer; it grants no new target or
+    // presentation authority and core resolves the original held gesture.
+    if !terminal && !super::input::is_presented(host, owner, surface, serial) {
         return false;
     }
     let Some(native) = &host.native else {
@@ -1132,7 +1139,7 @@ pub(super) fn queue_pointer(
     let clear = hitboxes
         .iter()
         .any(|hitbox| hitbox.window_point_target_rank(position, window) == Some(0));
-    if !captured && !clear {
+    if !captured && !clear && !terminal {
         return false;
     }
     let location = local_sample(&host.session, binding, position, window).map_or(
@@ -1239,6 +1246,25 @@ fn collect_host(
         }
         process_reports(host, bridge, cx)?;
         let pending_input = host.session.has_pending_native_input();
+        if !pending_input && let Some(action) = bridge.transport().pending_surface_action() {
+            // This semantic consequence follows its original release in the
+            // same FIFO. Retain the head until its own frame commits; neither
+            // native suffixes nor renderer retries may replay or overtake it.
+            let mut frame = begin_frame(
+                &mut host.session,
+                &host.mounts,
+                host.native.as_ref(),
+                current,
+                cx,
+            )?;
+            frame.submit_deferred_surface_action(action)?;
+            let report = frame.commit()?;
+            bridge.transport().commit_surface_action();
+            host.invalidate_report(&report);
+            bridge.accept_report(report);
+            process_reports(host, bridge, cx)?;
+            continue;
+        }
         if !pending_input && let Some(terminal) = bridge.transport().take_presentation() {
             presentation::settle_native(host, terminal, current, cx)?;
             while let Some(report) = host.native.as_mut().unwrap().pending_reports.pop_front() {

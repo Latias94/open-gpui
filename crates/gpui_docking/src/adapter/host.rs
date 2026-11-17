@@ -608,7 +608,7 @@ pub(super) struct HostState {
     pub(super) config: GpuiDockspaceConfig,
     pub(super) mounts: BTreeMap<WindowId, WindowMount>,
     pub(super) owners: BTreeMap<SurfaceId, WindowId>,
-    pub(super) inputs: Vec<input::QueuedPointer>,
+    pub(super) inputs: Vec<input::QueuedInput>,
     pub(super) native_effects: VecDeque<NativeEffectRequest>,
     pub(super) presentation_pending: bool,
     // Real mount removal awaiting a committed unavailable contribution.

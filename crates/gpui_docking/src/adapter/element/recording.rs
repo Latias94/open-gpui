@@ -189,6 +189,7 @@ pub(super) fn record(
                                     ControlAction::Activate,
                                     SurfaceSplitterAdjustment::Preferred,
                                 ),
+                                (ControlAction::Equalize, SurfaceSplitterAdjustment::Equalize),
                                 (
                                     ControlAction::Decrement,
                                     SurfaceSplitterAdjustment::Decrement,

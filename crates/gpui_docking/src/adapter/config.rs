@@ -16,7 +16,7 @@ pub struct GpuiDockspaceConfig {
     pub text_size: Pixels,
     /// Chrome colors and elevation layers; pane content keeps its own styling.
     pub colors: DockspaceColors,
-    /// Keyboard bindings observed during pointer gestures.
+    /// Input bindings observed by docking chrome and pointer gestures.
     pub input: DockspaceInputBindings,
 }
 
@@ -120,7 +120,16 @@ impl DockspaceColors {
     }
 }
 
-/// Bindings applied to event-time modifiers, before input is queued.
+/// Action requested by a primary-button double click on an internal splitter.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SplitterDoubleClick {
+    /// Restores declared preferred extents, equalizing when no preference exists.
+    Preferred,
+    /// Equalizes adjacent pane extents within their current size constraints.
+    Equalize,
+}
+
+/// Bindings applied to event-time input, before it is queued.
 #[derive(Clone, Debug)]
 pub struct DockspaceInputBindings {
     /// Holding these modifiers suspends docking. Extra modifiers are allowed.
@@ -130,6 +139,12 @@ pub struct DockspaceInputBindings {
     /// modifiers are held. Extra modifiers are allowed, so cancellation remains
     /// available while docking is suspended. `None` disables this binding.
     pub cancel: Option<Keystroke>,
+    /// Splitter double-click action; `None` disables pointer resets.
+    ///
+    /// Defaults to [`SplitterDoubleClick::Preferred`]. Core applies the current
+    /// pane constraints. Keyboard and accessibility activation retain their
+    /// explicit preferred-size behavior independently of this pointer binding.
+    pub splitter_double_click: Option<SplitterDoubleClick>,
 }
 
 impl DockspaceInputBindings {
@@ -158,6 +173,7 @@ impl Default for DockspaceInputBindings {
                 key: "escape".into(),
                 key_char: None,
             }),
+            splitter_double_click: Some(SplitterDoubleClick::Preferred),
         }
     }
 }

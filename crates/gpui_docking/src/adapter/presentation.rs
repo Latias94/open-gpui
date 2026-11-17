@@ -17,7 +17,7 @@ use super::{
     HostState, SharedHost, continuation,
     element::Packet,
     host_native,
-    input::{InputFrame, QueuedPointer},
+    input::{InputFrame, QueuedInput},
 };
 
 pub(super) struct PendingSubmission {
@@ -25,7 +25,7 @@ pub(super) struct PendingSubmission {
     pub(super) ticket: WindowFrameSubmissionTicket,
     pub(super) packets: BTreeMap<SurfaceId, Rc<Packet>>,
     pub(super) update: Option<DockspaceUpdate>,
-    pub(super) inputs: Vec<QueuedPointer>,
+    pub(super) inputs: Vec<QueuedInput>,
     outputs: Vec<PaintedSurfaceOutput>,
     accepted_generation: Option<u64>,
     input_frames: Vec<InputFrame>,
@@ -64,7 +64,7 @@ impl PendingSubmission {
         ticket: WindowFrameSubmissionTicket,
         packets: BTreeMap<SurfaceId, Rc<Packet>>,
         update: DockspaceUpdate,
-        inputs: Vec<QueuedPointer>,
+        inputs: Vec<QueuedInput>,
     ) -> Self {
         Self {
             serial,

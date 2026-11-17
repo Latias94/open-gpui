@@ -44,6 +44,7 @@ pub(super) enum ControlKind {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum ControlAction {
     Activate,
+    Equalize,
     Close,
     Previous,
     Next,

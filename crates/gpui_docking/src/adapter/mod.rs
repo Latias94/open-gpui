@@ -21,7 +21,9 @@ mod presentation;
 #[cfg(test)]
 mod tests;
 
-pub use config::{DockspaceColors, DockspaceInputBindings, GpuiDockspaceConfig};
+pub use config::{
+    DockspaceColors, DockspaceInputBindings, GpuiDockspaceConfig, SplitterDoubleClick,
+};
 pub use dockspace;
 pub use failure::{DockHostFailure, DockNativeTermination};
 pub use host::{DockHostAdmissionError, DockPane, DockPaneError, DockRegion, DockSurface};

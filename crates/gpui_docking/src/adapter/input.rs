@@ -4,8 +4,8 @@ use dockspace::{
     geometry::LogicalPoint,
     model::SurfaceId,
     runtime::{
-        DockspaceHostFrame, HostPointerInput, HostPointerRoute, PointerDeviceKind,
-        PointerEventMetadata, PresentedDockReceiver, PresentedDockspaceSurface,
+        DeferredSurfaceAction, DockspaceHostFrame, HostPointerInput, HostPointerRoute,
+        PointerDeviceKind, PointerEventMetadata, PresentedDockReceiver, PresentedDockspaceSurface,
         SurfacePointerCapture, SurfacePointerEvent, SurfacePointerId, SurfacePointerReceiverFacts,
     },
 };
@@ -25,6 +25,37 @@ pub(super) struct InputFrame {
     pub(super) receivers: Vec<(dockspace::runtime::DockspaceReceiverDescriptor, HitboxId)>,
     pub(super) scale: f64,
     pub(super) native_binding: Option<dockspace::runtime::NativeSurfaceBinding>,
+}
+
+/// Semantic pointer consequences share the original input's rollback custody.
+#[derive(Clone)]
+pub(super) enum QueuedInput {
+    Pointer(QueuedPointer),
+    Action(DeferredSurfaceAction),
+}
+
+impl QueuedInput {
+    pub(super) fn submit(&self, frame: &mut DockspaceHostFrame<'_>) -> anyhow::Result<()> {
+        match self {
+            Self::Pointer(pointer) => pointer.submit(frame),
+            Self::Action(action) => {
+                frame.submit_deferred_surface_action(action.clone())?;
+                Ok(())
+            }
+        }
+    }
+}
+
+pub(super) fn queue_action(
+    host: &mut HostState,
+    action: DeferredSurfaceAction,
+    cx: &mut open_gpui::App,
+) {
+    if let Some(native) = &host.native {
+        native.transport.surface_action(action, cx);
+    } else {
+        host.inputs.push(QueuedInput::Action(action));
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -133,7 +164,7 @@ pub(super) fn queue(
     if let Some(mount) = host.mounts.get_mut(&owner) {
         mount.wake = None;
     }
-    host.inputs.push(QueuedPointer {
+    host.inputs.push(QueuedInput::Pointer(QueuedPointer {
         event,
         manipulation: source
             .zip(source_point)
@@ -156,7 +187,7 @@ pub(super) fn queue(
         },
         metadata: PointerEventMetadata::new(PointerDeviceKind::Mouse, host.observed_at())
             .with_docking_enabled(host.config.input.docking_enabled(modifiers)),
-    });
+    }));
     if let Some(region) = host
         .mounts
         .get_mut(&owner)

@@ -6,7 +6,7 @@
 
 pub use crate::{
     DockCommitNotification, DockPane, DockRegion, DockSurface, DockVisualPalette, DockVisualStyle,
-    DockspaceColors, DockspaceInputBindings, GpuiDockspaceConfig,
+    DockspaceColors, DockspaceInputBindings, GpuiDockspaceConfig, SplitterDoubleClick,
 };
 pub use dockspace::{
     model::{

@@ -5,8 +5,8 @@ use std::{
 };
 
 use dockspace::runtime::{
-    DockspaceSession, NativeCloseEffectAcknowledgement, NativeCloseState, NativeEffectResult,
-    NativeGlobalFocus, NativePointerId, NativePointerInput, NativePointerOwner,
+    DeferredSurfaceAction, DockspaceSession, NativeCloseEffectAcknowledgement, NativeCloseState,
+    NativeEffectResult, NativeGlobalFocus, NativePointerId, NativePointerInput, NativePointerOwner,
     NativePointerRoster, NativeWindowBinding, NativeWindowFacts, NativeWorkAreaRoster,
     PointerEventMetadata,
 };
@@ -73,6 +73,25 @@ impl NativeTransport {
 
     pub(crate) fn pointer_in_window(&self, input: NativePointerInput) {
         self.0.queue.borrow_mut().push_back(Inbound::Pointer(input));
+    }
+
+    pub(in crate::adapter) fn surface_action(&self, action: DeferredSurfaceAction, cx: &mut App) {
+        self.push(Inbound::SurfaceAction(action), cx);
+    }
+
+    pub(in crate::adapter) fn pending_surface_action(&self) -> Option<DeferredSurfaceAction> {
+        match self.0.queue.borrow().front() {
+            Some(Inbound::SurfaceAction(action)) => Some(action.clone()),
+            _ => None,
+        }
+    }
+
+    pub(in crate::adapter) fn commit_surface_action(&self) {
+        let mut queue = self.0.queue.borrow_mut();
+        debug_assert!(matches!(queue.front(), Some(Inbound::SurfaceAction(_))));
+        if matches!(queue.front(), Some(Inbound::SurfaceAction(_))) {
+            queue.pop_front();
+        }
     }
 
     pub(in crate::adapter) fn presentation(
@@ -249,6 +268,7 @@ impl Drop for PendingCallback {
 
 pub(super) enum Inbound {
     Presentation(crate::adapter::presentation::PendingPresentation),
+    SurfaceAction(DeferredSurfaceAction),
     Observed(NativeWindowBinding, NativeWindowFacts),
     Close(
         NativeWindowBinding,
@@ -292,6 +312,7 @@ impl Inbound {
     fn diagnostic_name(&self) -> &'static str {
         match self {
             Self::Presentation(_) => "presentation",
+            Self::SurfaceAction(_) => "surface-action",
             Self::Observed(..) => "window-observation",
             Self::Close(..) => "close",
             Self::LogicalClosed(_) => "logical-close",
@@ -364,7 +385,7 @@ impl NativeBridge {
                 && self
                     .capabilities
                     .supports(dockspace::runtime::NativeHostCapability::GlobalFocusObservation);
-            if matches!(record, Inbound::Presentation(_))
+            if matches!(record, Inbound::Presentation(_) | Inbound::SurfaceAction(_))
                 || ((desktop || platform_focus) && session.has_pending_native_input())
             {
                 // Platform focus is mapped against the committed core roster.
@@ -597,7 +618,7 @@ impl NativeBridge {
             Inbound::Effect(_) => return Err(NativeBridgeError::UnknownBinding),
             // The managed host consumes this barrier only after committing the
             // prefix collected above; the bridge never consumes its outputs.
-            Inbound::Presentation(_) | Inbound::Wake => {}
+            Inbound::Presentation(_) | Inbound::SurfaceAction(_) | Inbound::Wake => {}
         }
         Ok(())
     }

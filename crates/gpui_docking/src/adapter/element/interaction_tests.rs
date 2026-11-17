@@ -21,6 +21,7 @@ const FIRST: ItemId = ItemId::new(61);
 const SECOND: ItemId = ItemId::new(62);
 
 mod keyboard;
+mod splitter;
 mod wheel;
 
 struct Pane {

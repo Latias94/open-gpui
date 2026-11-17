@@ -37,6 +37,7 @@ use crate::adapter::{
 mod chrome;
 mod keyboard;
 mod recording;
+mod splitter;
 mod wheel;
 
 use chrome::{Control, ControlAction, ControlKind, GuideState, Icon, PresentationMenu};
@@ -120,6 +121,7 @@ struct InteractionState {
     wheel_gesture: Cell<Option<wheel::WheelGesture>>,
     keyboard: RefCell<Option<keyboard::Continuation>>,
     keyboard_subscription: RefCell<Option<open_gpui::Subscription>>,
+    splitter_press: RefCell<Option<splitter::Press>>,
 }
 
 struct PaneFocusAttempt {
@@ -1601,7 +1603,11 @@ impl DockspaceElement {
         let serial = prepared.serial;
         let bounds = prepared.bounds;
         let controls = prepared.controls.clone();
+        let interaction = self.interaction.clone();
         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+            if phase.capture() && event.button == MouseButton::Left {
+                interaction.splitter_press.borrow_mut().take();
+            }
             if !phase.bubble() || event.button != MouseButton::Left {
                 return;
             }
@@ -1627,6 +1633,14 @@ impl DockspaceElement {
                 event.modifiers,
                 window,
             ) {
+                splitter::pressed(
+                    &shared.borrow(),
+                    &interaction,
+                    surface,
+                    &controls,
+                    event,
+                    window,
+                );
                 let focus = controls
                     .iter()
                     .rev()
@@ -1646,7 +1660,11 @@ impl DockspaceElement {
         });
         let shared = self.host.clone();
         let hitboxes = prepared.hitboxes.clone();
+        let interaction = self.interaction.clone();
         window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, _| {
+            if phase.capture() {
+                splitter::moved(&interaction, event.position);
+            }
             if !phase.bubble()
                 || !capture.is_captured(window)
                 || !routes_to(&shared.borrow(), surface, event.position, window)
@@ -1670,6 +1688,8 @@ impl DockspaceElement {
         });
         let shared = self.host.clone();
         let hitboxes = prepared.hitboxes.clone();
+        let receivers = prepared.receivers.clone();
+        let interaction = self.interaction.clone();
         window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
             if !phase.bubble()
                 || event.button != MouseButton::Left
@@ -1693,6 +1713,15 @@ impl DockspaceElement {
                 event.modifiers,
                 window,
             ) {
+                splitter::released(
+                    &mut shared.borrow_mut(),
+                    &interaction,
+                    surface,
+                    &receivers,
+                    event,
+                    window,
+                    cx,
+                );
                 let _ = window.release_pointer(&capture);
                 window.refresh();
                 cx.stop_propagation();
@@ -1771,6 +1800,7 @@ impl DockspaceElement {
         });
         let shared = self.host.clone();
         let hitboxes = prepared.hitboxes.clone();
+        let interaction = self.interaction.clone();
         window.on_key_event(move |event: &KeyDownEvent, phase, window, cx| {
             if !phase.bubble()
                 || !capture.is_captured(window)
@@ -1783,6 +1813,7 @@ impl DockspaceElement {
             {
                 return;
             }
+            interaction.splitter_press.borrow_mut().take();
             input::queue(
                 &mut shared.borrow_mut(),
                 surface,
@@ -1803,7 +1834,11 @@ impl DockspaceElement {
         });
         let shared = self.host.clone();
         let hitboxes = prepared.hitboxes.clone();
+        let interaction = self.interaction.clone();
         window.on_pointer_cancel(move |_, phase, window, _| {
+            if phase.capture() {
+                interaction.splitter_press.borrow_mut().take();
+            }
             if !phase.bubble() {
                 return;
             }
@@ -2299,7 +2334,7 @@ fn hovered_tab_at(
 
 fn build_candidate(
     host: &mut HostState,
-    inputs: &[input::QueuedPointer],
+    inputs: &[input::QueuedInput],
     regions: &BTreeMap<SurfaceId, Bounds<Pixels>>,
     open_menu: Option<DockspaceVisualId>,
     window: &Window,
