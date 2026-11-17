@@ -21,6 +21,9 @@ const FIRST: ItemId = ItemId::new(61);
 const SECOND: ItemId = ItemId::new(62);
 
 mod keyboard;
+mod presentation_menu;
+mod product_menu_keys;
+mod product_menu_lifecycle;
 mod splitter;
 mod wheel;
 
@@ -437,7 +440,11 @@ fn presentation_menu_activates_the_frozen_core_float_command(cx: &mut TestAppCon
             .draws
             .iter()
             .find_map(|draw| match draw {
-                Draw::PresentationMenu(menu) if menu.enabled => Some(menu),
+                Draw::PresentationMenu(menu)
+                    if menu.enabled && menu.scope == super::presentation_menu::Scope::Root =>
+                {
+                    Some(menu)
+                }
                 _ => None,
             })
             .unwrap();
@@ -597,7 +604,11 @@ fn presentation_menu_with_content_focus(
             .draws
             .iter()
             .find_map(|draw| match draw {
-                Draw::PresentationMenu(menu) if menu.enabled => Some(menu),
+                Draw::PresentationMenu(menu)
+                    if menu.enabled && menu.scope == super::presentation_menu::Scope::Root =>
+                {
+                    Some(menu)
+                }
                 _ => None,
             })
             .unwrap();

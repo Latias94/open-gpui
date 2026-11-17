@@ -5,13 +5,14 @@ use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 use anyhow::{Result, anyhow};
 use dockspace::{
     geometry::LogicalRect,
-    model::{DockspaceAxis, ItemId},
+    model::{DockspaceActionRejection, DockspaceAxis, ItemId},
     runtime::{
         ContainedResizeDirection, DockspaceDropEligibility, DockspacePresentationCommandKind,
-        DockspacePreviewVisual, DockspaceReceiverDescriptor, SurfaceContainedResizeAdjustment,
-        SurfacePaintPlan, SurfacePaintProgramOperation as Operation,
-        SurfacePaintProgramStep as Step, SurfaceSplitterAdjustment, SurfaceTabInput,
-        SurfaceTabNavigation, TabStripControlKind,
+        DockspacePresentationCommandUnavailable, DockspacePreviewVisual,
+        DockspaceReceiverDescriptor, DockspaceTabsGroupCommandKind,
+        SurfaceContainedResizeAdjustment, SurfacePaintPlan,
+        SurfacePaintProgramOperation as Operation, SurfacePaintProgramStep as Step,
+        SurfaceSplitterAdjustment, SurfaceTabInput, SurfaceTabNavigation, TabStripControlKind,
     },
 };
 
@@ -20,6 +21,7 @@ use crate::adapter::{DockPane, DockspaceColors};
 use super::{
     Draw, Packet,
     chrome::{Control, ControlAction, ControlKind, GuideState, Icon, PresentationMenu},
+    presentation_menu::{OpenMenu, Scope},
 };
 
 pub(super) fn record(
@@ -27,7 +29,7 @@ pub(super) fn record(
     panels: &BTreeMap<ItemId, DockPane>,
     pointer: Option<dockspace::geometry::LogicalPoint>,
     colors: &DockspaceColors,
-    open_menu: Option<dockspace::runtime::DockspaceVisualId>,
+    open_menu: Option<OpenMenu>,
 ) -> Result<(Packet, dockspace::runtime::SurfaceProgramExecutionReceipt)> {
     let mut draws = Vec::new();
     let mut native_preview = None;
@@ -82,6 +84,49 @@ pub(super) fn record(
                             draws.push(Draw::TabList(bar.bounds(), bar.visual_id()));
                             if let Some(bounds) = bar.group_grip_bounds() {
                                 draws.push(Draw::Icon(bounds, Icon::Grip, true));
+                            }
+                            if let Some(bounds) = bar.group_menu_bounds() {
+                                let mut choices = Vec::new();
+                                if open_menu.is_some_and(|open| open.matches(bar.visual_id(), plan))
+                                {
+                                    for (kind, label) in [
+                                        (DockspaceTabsGroupCommandKind::Float, "Float Tab Group"),
+                                        (
+                                            DockspaceTabsGroupCommandKind::MoveToNewWindow,
+                                            "Move Tab Group to New Window",
+                                        ),
+                                    ] {
+                                        if let Some(command) = plan.tabs_group_command(bar, kind)? {
+                                            if native_unavailable(&command) {
+                                                continue;
+                                            }
+                                            choices.push((
+                                                label,
+                                                plan.prepare_presentation_command(command).map(
+                                                    |action| {
+                                                        Rc::new(RefCell::new(Some(action.into())))
+                                                    },
+                                                ),
+                                            ));
+                                        }
+                                    }
+                                    choices.push((
+                                        "Close Tab Group",
+                                        plan.prepare_tabs_close(bar).map(|action| {
+                                            Rc::new(RefCell::new(Some(action.into())))
+                                        }),
+                                    ));
+                                }
+                                draws.push(Draw::PresentationMenu(Rc::new(PresentationMenu {
+                                    id: bar.visual_id(),
+                                    workspace: plan.workspace_stamp(),
+                                    open: open_menu
+                                        .filter(|open| open.matches(bar.visual_id(), plan)),
+                                    scope: Scope::Tabs,
+                                    bounds,
+                                    enabled: plan.tabs_group_menu_operable(bar),
+                                    choices,
+                                })));
                             }
                         }
                         for region in bar.group_drag_regions() {
@@ -377,7 +422,8 @@ pub(super) fn record(
                     Operation::PresentationMenuAnchor(anchor) => {
                         if !paint.is_source_gap() {
                             let mut choices = Vec::new();
-                            if open_menu == Some(anchor.visual_id()) {
+                            if open_menu.is_some_and(|open| open.matches(anchor.visual_id(), plan))
+                            {
                                 for (kind, label) in [
                                     (DockspacePresentationCommandKind::Float, "Float Layout"),
                                     (
@@ -394,6 +440,9 @@ pub(super) fn record(
                                     if let Some(command) =
                                         plan.presentation_command(anchor.root(), kind)?
                                     {
+                                        if native_unavailable(&command) {
+                                            continue;
+                                        }
                                         let action =
                                             plan.prepare_presentation_command(command).map(
                                                 |action| Rc::new(RefCell::new(Some(action.into()))),
@@ -409,6 +458,10 @@ pub(super) fn record(
                             }
                             draws.push(Draw::PresentationMenu(Rc::new(PresentationMenu {
                                 id: anchor.visual_id(),
+                                workspace: plan.workspace_stamp(),
+                                open: open_menu
+                                    .filter(|open| open.matches(anchor.visual_id(), plan)),
+                                scope: Scope::Root,
                                 bounds: anchor.bounds(),
                                 enabled: anchor.operable(),
                                 choices,
@@ -561,4 +614,11 @@ pub(super) fn record(
         },
         receipt,
     ))
+}
+
+fn native_unavailable(command: &dockspace::runtime::PresentationCommandPaintRecord) -> bool {
+    command.unavailable_reason()
+        == Some(DockspacePresentationCommandUnavailable::Action(
+            DockspaceActionRejection::NativeUnavailable,
+        ))
 }

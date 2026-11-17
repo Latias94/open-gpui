@@ -89,6 +89,22 @@ inside the explicit `legacy` namespace.
 
 ## Shared Docking Receiver And Recovery APIs
 
+The published dockspace pin `537dff0f` adds group-scoped presentation and close
+operations. The adapter renders both **Tab group actions** and **Layout actions**:
+group commands preserve sibling split groups; layout commands retain the complete
+root scope. Match these new variants when exhaustively handling reexported core
+types: `ClosePlanTarget::Tabs { root, anchor }`, `ClosePlanTargetKind::Tabs`, and
+`DockspaceCloseOutcome::TabsClosed { root, items }`. The anchor identifies the
+original captured roster; it is not a request to look up a replacement group.
+
+Use `DockSurface::capture_tabs_group(DockAnchor)` to obtain an exact group for an
+application command, then submit `frame.request_close_tabs_current(group)` through
+the existing update facade. Group close uses the same `set_close_handler` and
+exact decision tokens as other content requests. Partial approval and veto never
+remove a subset of the group. Existing item and root close callers keep their
+original scopes. Menus invalidate on workspace/session replacement and wait for
+the matching presented artifact before executing queued keyboard confirmation.
+
 The fixed dockspace dependency at `dcd65e98` renames the reexported
 `SurfacePointerReceiverFacts::with_no_delivery` and `with_no_drag_delivery` to
 `with_empty_delivery_lane` and `with_empty_drag_delivery_lane`, respectively.

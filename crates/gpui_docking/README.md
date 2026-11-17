@@ -81,9 +81,21 @@ presentation. Enter/Space confirms the reached row and Escape returns to the
 opener; either terminal ends the menu's key prefix. Overflowing strips and tab
 lists accept real scroll events; phased
 precise scrolling keeps its original chrome/content owner through tail events.
-Layout actions operate on the complete Root, including its split tree. Group
-grips drag one tabs group. Neither control implicitly changes its scope to a
-single item or physical window.
+Layout actions operate on the complete Root, including its split tree. Tab group
+actions float, move to a native window, or request one atomic close of the
+captured group, retaining sibling groups. Group grips drag that same scope.
+The layout icon and group ellipsis use core-owned, separate allocations. Menus
+dismiss when their original session or workspace revision changes, and each
+opening has its own callback lifetime. Up/Down, Home/End and Enter/Space navigate
+enabled actions; Escape dismisses. Ordered keys that open and confirm a menu
+wait for its exact interactive presentation before submitting the command.
+
+Application commands can use `capture_tabs_group(DockAnchor)` and pass the
+original capture to `frame.request_close_tabs_current` through `update` or
+`update_action`. `set_close_handler` receives a single plan with each member's
+decision token. Approve all members to close the group; any veto retains every
+member. Keep deferred plans and their exact tokens for asynchronous saving.
+Do not recapture the anchor or loop over independent item-close requests.
 
 Use `DockPane::with_sizing` and `update_pane_metadata` to retain a validated
 `dockspace::geometry::PaneSizing` with each View. Minimum, maximum, fixed and

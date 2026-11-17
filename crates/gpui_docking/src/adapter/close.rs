@@ -3,7 +3,10 @@
 use std::rc::Rc;
 
 use anyhow::{Result, anyhow};
-use dockspace::runtime::{DockspaceClosePlan, HostFrameReport, HostInputOutcome};
+use dockspace::{
+    model::{DockAnchor, PreparedTabsGroup},
+    runtime::{DockspaceClosePlan, HostFrameReport, HostInputOutcome},
+};
 use open_gpui::App;
 
 use super::{DockSurface, HostState, SharedHost, host_native};
@@ -11,6 +14,25 @@ use super::{DockSurface, HostState, SharedHost, host_native};
 pub(super) type CloseHandler = dyn Fn(&DockSurface, DockspaceClosePlan, &mut App);
 
 impl DockSurface {
+    /// Captures the exact tabs group from the session's published model.
+    ///
+    /// Pass the capture to `frame.request_close_tabs_current` in [`Self::update`]
+    /// or [`Self::update_action`]. It retains its original session, version,
+    /// membership, order and selection; submission never looks up its anchor
+    /// again to select a different group.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the host is borrowed mutably, or the core rejects
+    /// an absent anchor or empty group.
+    pub fn capture_tabs_group(&self, anchor: DockAnchor) -> Result<PreparedTabsGroup> {
+        let host = self
+            .host
+            .try_borrow()
+            .map_err(|_| anyhow!("docking host is busy"))?;
+        Ok(host.session.capture_tabs_group(anchor)?)
+    }
+
     /// Installs the application's content decisions for committed close plans.
     ///
     /// This receives both tab/root requests and native surface plans. Native
@@ -144,6 +166,10 @@ impl Drop for DispatchGuard {
         self.0.borrow_mut().close_dispatching = false;
     }
 }
+
+#[cfg(test)]
+#[path = "close_tests.rs"]
+mod tabs_close_tests;
 
 #[cfg(test)]
 mod tests {

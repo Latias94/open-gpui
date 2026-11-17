@@ -1,5 +1,8 @@
 //! Custom native roots retain staging, first-live and group-lifetime authority.
 
+#[path = "host_native_factory_tests/group_menu.rs"]
+mod group_menu;
+
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,

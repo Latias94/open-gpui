@@ -10,7 +10,7 @@ use dockspace::{
     model::{DockspaceAxis, ItemId},
     runtime::{
         DeferredSurfaceAction, DockspaceDropDirection, DockspaceReceiverDescriptor,
-        DockspaceVisualId, PreparedSurfaceAction,
+        DockspaceVisualId, DockspaceWorkspaceStamp, PreparedSurfaceAction,
     },
 };
 use open_gpui::{
@@ -29,6 +29,7 @@ pub(super) enum Icon {
     List,
     Reveal,
     Menu,
+    Layout,
     Grip,
 }
 
@@ -174,6 +175,9 @@ impl Control {
 
 pub(super) struct PresentationMenu {
     pub(super) id: DockspaceVisualId,
+    pub(super) workspace: DockspaceWorkspaceStamp,
+    pub(super) open: Option<super::presentation_menu::OpenMenu>,
+    pub(super) scope: super::presentation_menu::Scope,
     pub(super) bounds: LogicalRect,
     pub(super) enabled: bool,
     pub(super) choices: Vec<(&'static str, Option<ActionSlot>)>,
@@ -338,6 +342,17 @@ pub(super) fn paint_icon(
                 center + point(px(0.0), -radius / 2.0),
                 center + point(radius, radius / 2.0),
             );
+        }
+        Icon::Layout => {
+            let left = center.x - radius;
+            let right = center.x + radius;
+            let top = center.y - radius;
+            let bottom = center.y + radius;
+            line(point(left, top), point(right, top));
+            line(point(right, top), point(right, bottom));
+            line(point(right, bottom), point(left, bottom));
+            line(point(left, bottom), point(left, top));
+            line(point(center.x, top), point(center.x, bottom));
         }
         Icon::Menu | Icon::Grip => {}
     }

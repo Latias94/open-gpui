@@ -36,6 +36,7 @@ use crate::adapter::{
 
 mod chrome;
 mod keyboard;
+mod presentation_menu;
 mod recording;
 mod splitter;
 mod wheel;
@@ -113,7 +114,9 @@ enum PreparedDraw {
 struct InteractionState {
     hovered_tab: Rc<Cell<Option<ItemId>>>,
     focus: RefCell<BTreeMap<DockspaceVisualId, FocusHandle>>,
-    menu: Cell<Option<DockspaceVisualId>>,
+    menu: Cell<Option<presentation_menu::OpenMenu>>,
+    menu_sequence: Cell<u64>,
+    menu_input: RefCell<Option<presentation_menu::MenuInput>>,
     menu_row: Cell<usize>,
     pane_focus: RefCell<BTreeMap<SurfaceId, PaneFocusAttempt>>,
     pending_tab_focus: RefCell<Option<PendingTabFocus>>,
@@ -659,6 +662,7 @@ impl DockspaceElement {
             publication,
             move |fence, window, cx| {
                 presentation::accept(&shared, serial, input_frames.clone(), fence, window, cx);
+                presentation_menu::accept(&shared, &interaction, window);
                 apply_chrome_focus(
                     &shared,
                     &interaction,
@@ -1229,355 +1233,6 @@ impl DockspaceElement {
             })
             .map(|()| (element, clip));
         (prepared, hitbox.get())
-    }
-
-    fn prepare_presentation_menu(
-        &self,
-        menu: &Rc<PresentationMenu>,
-        surface: SurfaceId,
-        serial: u64,
-        bounds: Bounds<Pixels>,
-        allow_input: bool,
-        draws: &mut Vec<PreparedDraw>,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        let rect = to_gpui(menu.bounds, bounds);
-        let focus = self.control_focus(menu.id, cx);
-        let admitted = allow_input
-            && input::is_presented(
-                &self.host.borrow(),
-                window.window_handle().window_id(),
-                surface,
-                serial,
-            );
-        let enabled = admitted && menu.enabled;
-        let open = enabled && self.interaction.menu.get() == Some(menu.id);
-        draws.push(PreparedDraw::Icon(rect, Icon::Menu, menu.enabled));
-        let id = menu.id;
-        let focus_claim = window.with_global_id(
-            ElementId::NamedChild(std::sync::Arc::new((&focus).into()), "menu-focus".into()),
-            |id, window| {
-                window.with_element_state::<Rc<Cell<Option<u64>>>, _>(id, |state, _| {
-                    let state = state.unwrap_or_default();
-                    (state.clone(), state)
-                })
-            },
-        );
-        let close_menu = {
-            let interaction = self.interaction.clone();
-            let focus = focus.clone();
-            let focus_claim = focus_claim.clone();
-            move |window: &mut Window, cx: &mut App| {
-                if interaction.menu.get() != Some(id) {
-                    return;
-                }
-                interaction.menu.set(None);
-                if focus_claim.get() == Some(window.focus_claim_revision())
-                    && window.is_focus_handle_rendered(&focus)
-                {
-                    window.focus(&focus, cx);
-                    focus_claim.set(Some(window.focus_claim_revision()));
-                } else {
-                    focus_claim.set(None);
-                }
-                window.refresh();
-            }
-        };
-        let toggle_menu = {
-            let shared = self.host.clone();
-            let interaction = self.interaction.clone();
-            let focus = focus.clone();
-            let focus_claim = focus_claim.clone();
-            let close_menu = close_menu.clone();
-            move |window: &mut Window, cx: &mut App| {
-                if !enabled
-                    || !input::is_presented(
-                        &shared.borrow(),
-                        window.window_handle().window_id(),
-                        surface,
-                        serial,
-                    )
-                {
-                    return;
-                }
-                if interaction.menu.get() == Some(id) {
-                    close_menu(window, cx);
-                } else {
-                    interaction.menu.set(Some(id));
-                    interaction.menu_row.set(0);
-                    window.focus(&focus, cx);
-                    focus_claim.set(Some(window.focus_claim_revision()));
-                    refresh_menu(&shared, surface, window);
-                }
-            }
-        };
-        let pointer_toggle = toggle_menu.clone();
-        let selector = format!("dockspace:presentation-menu:{focus:?}");
-        let mut button = div()
-            .id(&focus)
-            .debug_selector(move || selector.clone())
-            .w(rect.size.width)
-            .h(rect.size.height)
-            .role(Role::Button)
-            .aria_label("Layout actions")
-            .aria_expanded(open)
-            .aria_disabled(!menu.enabled)
-            .aria_actions(if enabled {
-                vec![AccessibleAction::Click, AccessibleAction::Focus]
-            } else {
-                vec![]
-            })
-            .when(enabled, |button| button.track_focus(&focus).tab_stop(true))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(move |_, window, cx| {
-                pointer_toggle(window, cx);
-                cx.stop_propagation();
-            });
-        let interaction = self.interaction.clone();
-        let shared = self.host.clone();
-        let keyboard_menu = menu.clone();
-        let keyboard_toggle = toggle_menu.clone();
-        let keyboard_close = close_menu.clone();
-        button = button.on_key_down(move |event, window, cx| {
-            if enabled
-                && event.keystroke.modifiers == open_gpui::Modifiers::none()
-                && input::is_presented(
-                    &shared.borrow(),
-                    window.window_handle().window_id(),
-                    surface,
-                    serial,
-                )
-            {
-                let open = interaction.menu.get() == Some(id);
-                let row = interaction.menu_row.get();
-                match event.keystroke.key.as_str() {
-                    "enter" | "space" if open => {
-                        if let Some((_, Some(action))) = keyboard_menu.choices.get(row)
-                            && activate_action(
-                                &shared,
-                                &interaction,
-                                surface,
-                                serial,
-                                action,
-                                window,
-                                cx,
-                            )
-                        {
-                            keyboard_close(window, cx);
-                        }
-                    }
-                    "enter" | "space" => {
-                        keyboard_toggle(window, cx);
-                    }
-                    "down" => {
-                        if !open {
-                            keyboard_toggle(window, cx);
-                        }
-                        interaction.menu_row.set(if open {
-                            (row + 1) % keyboard_menu.choices.len().max(1)
-                        } else {
-                            0
-                        });
-                    }
-                    "up" => {
-                        if !open {
-                            keyboard_toggle(window, cx);
-                        }
-                        interaction.menu_row.set(if row == 0 {
-                            keyboard_menu.choices.len().saturating_sub(1)
-                        } else {
-                            row - 1
-                        });
-                    }
-                    "home" if open => interaction.menu_row.set(0),
-                    "end" if open => interaction
-                        .menu_row
-                        .set(keyboard_menu.choices.len().saturating_sub(1)),
-                    "escape" => keyboard_close(window, cx),
-                    _ => return,
-                }
-                window.refresh();
-                cx.stop_propagation();
-            }
-        });
-        button = button.on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
-            toggle_menu(window, cx);
-        });
-        let mut button = button
-            .with_subtree_presentation(if admitted {
-                SubtreePresentation::Visible
-            } else {
-                SubtreePresentation::Inert
-            })
-            .into_any_element();
-        button.prepaint_as_root(rect.origin, definite(rect), window, cx);
-        draws.push(PreparedDraw::ClippedElement(
-            button,
-            window.prepare_subtree_clip(&SubtreeClip::own_border_box(), rect),
-        ));
-        if enabled {
-            let shared = self.host.clone();
-            let interaction = self.interaction.clone();
-            let focus = focus.clone();
-            window.record_prepaint_window_commit(move |_, window, cx| {
-                let Some(revision) = focus_claim.get() else {
-                    return;
-                };
-                if revision != window.focus_claim_revision() {
-                    focus_claim.set(None);
-                    return;
-                }
-                if input::is_presented(
-                    &shared.borrow(),
-                    window.window_handle().window_id(),
-                    surface,
-                    serial,
-                ) && window.is_focus_handle_rendered(&focus)
-                {
-                    if !focus.is_focused(window) {
-                        window.focus(&focus, cx);
-                        focus_claim.set(Some(window.focus_claim_revision()));
-                    }
-                    if interaction.menu.get() != Some(id) {
-                        focus_claim.set(None);
-                    }
-                }
-            });
-        }
-        if !open {
-            return;
-        }
-
-        let colors = self.host.borrow().config.colors.clone();
-        let width = px(210.0).min(bounds.size.width);
-        let height = px(28.0) * menu.choices.len() as f32;
-        let popup_bounds = Bounds::new(
-            point(
-                rect.right().min(bounds.right() - width).max(bounds.left()),
-                rect.bottom()
-                    .min((bounds.bottom() - height).max(bounds.top())),
-            ),
-            size(width, height.min(bounds.size.height)),
-        );
-        let shared = self.host.clone();
-        let outside_close = close_menu.clone();
-        let popup_id = ElementId::NamedChild(std::sync::Arc::new((&focus).into()), "popup".into());
-        let mut popup = div()
-            .id(popup_id)
-            .w(width)
-            .h(popup_bounds.size.height)
-            .flex()
-            .flex_col()
-            .overflow_hidden()
-            .overflow_y_scroll()
-            .bg(colors.selected_tab)
-            .border_1()
-            .border_color(colors.border)
-            .role(Role::Menu)
-            .aria_label("Layout actions")
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_mouse_down_out(move |event, window, cx| {
-                if !rect.contains(&event.window_event().position)
-                    && input::is_presented(
-                        &shared.borrow(),
-                        window.window_handle().window_id(),
-                        surface,
-                        serial,
-                    )
-                {
-                    outside_close(window, cx);
-                }
-            });
-        for (index, (label, action)) in menu.choices.iter().enumerate() {
-            let action = action.clone();
-            let shared = self.host.clone();
-            let interaction = self.interaction.clone();
-            let mut row = div()
-                .id(index)
-                .w_full()
-                .h(px(28.0))
-                .flex_shrink_0()
-                .px(px(8.0))
-                .flex()
-                .items_center()
-                .role(Role::MenuItem)
-                .aria_label(*label)
-                .aria_disabled(action.is_none())
-                .aria_selected(self.interaction.menu_row.get() == index)
-                .aria_actions(if action.is_some() {
-                    vec![AccessibleAction::Click]
-                } else {
-                    vec![]
-                })
-                .text_color(if action.is_some() {
-                    colors.text
-                } else {
-                    colors.muted_text
-                })
-                .child(*label);
-            if self.interaction.menu_row.get() == index {
-                row = row.bg(colors.hovered_tab);
-            }
-            if let Some(action) = action {
-                let accessible_action = action.clone();
-                let accessible_shared = shared.clone();
-                let accessible_interaction = interaction.clone();
-                let pointer_close = close_menu.clone();
-                let accessible_close = close_menu.clone();
-                row = row
-                    .on_click(move |_, window, cx| {
-                        if interaction.menu.get() == Some(id)
-                            && input::is_presented(
-                                &shared.borrow(),
-                                window.window_handle().window_id(),
-                                surface,
-                                serial,
-                            )
-                            && activate_action(
-                                &shared,
-                                &interaction,
-                                surface,
-                                serial,
-                                &action,
-                                window,
-                                cx,
-                            )
-                        {
-                            pointer_close(window, cx);
-                        }
-                        cx.stop_propagation();
-                    })
-                    .on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
-                        if accessible_interaction.menu.get() == Some(id)
-                            && input::is_presented(
-                                &accessible_shared.borrow(),
-                                window.window_handle().window_id(),
-                                surface,
-                                serial,
-                            )
-                            && activate_action(
-                                &accessible_shared,
-                                &accessible_interaction,
-                                surface,
-                                serial,
-                                &accessible_action,
-                                window,
-                                cx,
-                            )
-                        {
-                            accessible_close(window, cx);
-                        }
-                    });
-            }
-            popup = popup.child(row);
-        }
-        let mut popup = popup.into_any_element();
-        let clip = window.prepare_subtree_clip(&SubtreeClip::own_border_box(), popup_bounds);
-        let _ = window.with_prepared_subtree_clip(&clip, |window| {
-            popup.prepaint_as_root(popup_bounds.origin, definite(popup_bounds), window, cx);
-        });
-        draws.push(PreparedDraw::ClippedElement(popup, clip));
     }
 
     fn listen(&self, prepared: &PreparedRegion, window: &mut Window) {
@@ -2336,7 +1991,7 @@ fn build_candidate(
     host: &mut HostState,
     inputs: &[input::QueuedInput],
     regions: &BTreeMap<SurfaceId, Bounds<Pixels>>,
-    open_menu: Option<DockspaceVisualId>,
+    open_menu: Option<presentation_menu::OpenMenu>,
     window: &Window,
     cx: &mut App,
 ) -> Result<Candidate> {

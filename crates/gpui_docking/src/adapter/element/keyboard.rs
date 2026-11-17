@@ -867,6 +867,11 @@ pub(super) fn install(
         else {
             return;
         };
+        if super::presentation_menu::intercept(&shared, &interaction, &event.keystroke, window, cx)
+        {
+            cx.stop_propagation();
+            return;
+        }
         let current = interaction.keyboard.borrow().clone();
         let Some(current) = current else {
             return;
