@@ -207,6 +207,15 @@ pointer exit. It distinguishes currently blocked interactive pane-body receivers
 from the unobstructed preview tests, and retains separate native observation,
 product extension and physical-platform follow-ups.
 
+The subsequent pane-content receiver follow-up replaces that interactive-body
+limitation with explicit retained `HitboxTag` registrations. Its local and
+managed-native TestPlatform cases preserve widget editing, focus, scrolling and
+entity identity through a core-guided drop, with unknown-child and deferred-popup
+blocking negatives. Framework cases separately check tag noninheritance, cached
+prepaint, rollback, transformed exact clipping and rejected-candidate authority.
+See the same parity record for execution receipts; these cases do not qualify
+physical OS capture, cross-window dragging or GPU presentation.
+
 On this Mac, the active display query succeeds but the console is locked.
 AppKit reports both probe windows Hidden with detached CAMetalDisplayLink
 sources; native smoke cannot advance its original second-frame receipt. The

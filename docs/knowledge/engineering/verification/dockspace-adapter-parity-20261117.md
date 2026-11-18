@@ -2,9 +2,9 @@
 type: Verification Evidence
 title: Dockspace Adapter Parity and Interaction Repairs
 status: partial
-timestamp: 2026-11-17T10:50:39+08:00
+timestamp: 2026-11-18T17:22:56+08:00
 base_commit: e210c52a70dd069baccfe2b29984f77d8cb83bf8
-git_commit: 5fc4197370a0b1aab11b9f9936235ea145554482
+git_commit: dd44848b7f1c2755ec746f05e5357c1164d746d1
 ---
 
 # Dockspace Adapter Parity and Interaction Repairs
@@ -427,7 +427,7 @@ exact frame tickets and native bindings.
 | Area | Current GPUI capability | Remaining difference from the selected egui adapter |
 | --- | --- | --- |
 | Content ownership | One session, distinct retained Views, content sizing and explicit focus handles. | Keep business documents, saving and history in the application. No second state store is needed. |
-| Pane content receivers | Unknown framework hitboxes stay blocking. A full-pane focusable child can therefore block docking hover over its body. | Add explicit retained-subtree content receiver ownership, equivalent in purpose to egui's `PaneResponse`. Do not make arbitrary descendants or overlays transparent by geometry alone. |
+| Pane content receivers | Explicit `HitboxTag` declarations bind actual pane-prepaint targets to the core pane receiver; local/native paths retain widget input and reject unknown children or deferred popups. | Add declarations to application-owned composite controls as they opt in; do not make arbitrary descendants or overlays transparent by geometry alone. See the receiver follow-up below for fresh receipts. |
 | Composable topology | Core-generated bare Pane, nested layout-tab, Split and Grid records; direct header identity and all-descendant ownership. | Qualify the complete physical/native nested journey on each owning platform. |
 | Group/root actions | Separate group/root menus, atomic close and native first-live transport already exist. | Add per-tab context menus, Active Panes and group-target pages; underlying core commands are not absent. |
 | Group insertion mode | Group grips use core's default direct-tab merge. | Route the configurable preserve-layout modifier and mode-change metadata; egui can insert the complete group as one layout tab. |
@@ -439,12 +439,10 @@ exact frame tickets and native bindings.
 
 The largest remaining product gap is extension depth: an editor can retain and
 move its actual content, but cannot yet replace chrome and compose application
-menu rows as deeply as the egui adapter. The focused-content fixture also
-exposes a concrete input integration limit: a registered View's inner focus
-hitbox is still unknown to docking. The unobstructed drop-preview regressions
-use explicitly noninteractive content; they do not qualify docking hover across
-an editor's full interactive body. Address that receiver contract and the Mac
-shown/occluded observation first. Then add menu models and scope-specific entry
+menu rows as deeply as the egui adapter. The receiver follow-up below closes
+the focused-content integration gap and replaces the noninteractive preview
+fixture with declared editable content. The Mac shown/occluded observation
+still needs its targeted readiness-loss regression. Then add menu models and scope-specific entry
 points, shared label/width metadata, paint-only menu-button and splitter hooks,
 and runtime appearance/density publication. Each should retain the current core
 hit geometry, input FIFO and renderer terminal boundary. Similar-looking
@@ -532,3 +530,110 @@ seam need their own owning-platform qualification. During final verification,
 the sibling acquires unrelated tracked edits as well as its pre-existing
 untracked files; all comparisons and the dependency remain on the published
 revision, and those edits are untouched.
+
+## November 18 Pane Content Receivers
+
+This follow-up starts at Open-GPUI `82b3efe5` and retains the published
+`b1a00ee2` dependency. The behavioral references are dockspace
+`8e9d95cc3dc2cbccd127055e283735f1f0e59b0f` (ordinary editor registrations and
+content enablement) and `563952b9c728eef8967e752432134cbe0a1d27ec` (the direct
+`PaneResponse`/scroll registration contract), as they exist at the selected pin.
+The sibling's unrelated working edits remain untouched.
+
+`DockPane::with_content_receiver(HitboxTag)` declares individual ordinary content
+targets. `InteractiveElement::hitbox_tag` labels only that element's existing
+hitbox; custom elements use `Window::insert_hitbox_with_tag`. The adapter
+collects actual pane prepaint registrations, including cached journals, and
+binds matching labels to that pane's frozen core receiver. It excludes deferred
+draws and rolled-back registrations. Labels do not change framework input or
+grant authority; local and native paths still require committed rank-zero hit
+evidence and the original presented artifact. Unknown interactive children,
+foreign controls and deferred popups continue to block hover.
+
+The same retained View keeps ordinary clicks, focus, keyboard editing and
+scrolling. Core can observe the pane-body activation without the adapter
+capturing or consuming widget input. A pane with unchanged layout, transform
+and exact clip remains interactive through chrome-only output replacement,
+provided its previous artifact is still core's current presentation. New or
+relocated content waits for its own exact presentation. Empty presented slots
+clear the old pane geometry baseline; surface-ID reuse cannot inherit it.
+
+Content press cleanup is registered once per physical element. Mouse-up and
+cancellation follow the original surface, even after moving into a sibling
+region or outside the element. All region listeners share the terminal marker,
+preventing a managed host from submitting the same release twice. The original
+FIFO retains ordering while a press is still pending.
+
+The new local/native journeys edit and scroll real focusable content, drag a tab
+onto the core's eligible center guide, then assert a shared destination Tabs
+container and unchanged entity identities/data. Unknown content, unlabeled
+children and explicitly labeled deferred popups are blocking negatives. Shared
+window cases cover committed and queued presses followed by cross-region
+release or cancellation, then a fresh click. The earlier stationary occlusion
+and exit preview fixture now uses declared editable content instead of `Empty`.
+Framework cases separately exercise noninheritance, cached prepaint, rollback,
+transformed rounded clipping, Inert presentation and real atlas rejection.
+
+Independent review identifies and closes cross-region duplicate release,
+off-region cancellation and stale retired-surface geometry continuity. These
+are adapter-owned boundaries; core still owns targets, topology and gestures.
+The generic framework additions expose exact registrations without adding a
+second frame publication journal or an application state model.
+
+The preceding head's Dependency Health failure is
+`RUSTSEC-2026-0544` / `CVE-2026-85091` in `libz-sys 1.1.31`.
+`2003f856` updates the workspace and independent consumer locks to `1.1.33`;
+the browser lock already selects that version. All three locks pass `cargo
+audit`; the complete `xtask dependency-health` gate also passes. Advisory source:
+[RustSec](https://github.com/RustSec/advisory-db/blob/main/crates/libz-sys/RUSTSEC-2026-0544.md).
+
+Two preceding Windows Verify jobs fail because the multiview demo still calls
+`DockspaceItemView::is_selected`. The demo now uses `is_active`, matching the
+composable core API. The preceding Linux browser job compiles wasm/Trunk, then
+times out on a blank preflight page; Chrome reports a network-service restart.
+That log does not establish the crash's underlying cause or a rendering defect.
+No browser gate is weakened on that evidence; the next hosted run remains the
+qualification owner.
+
+No GUI probe is launched in this follow-up. TestPlatform native physical facts
+are supplied explicitly and remain deterministic fixtures. These receipts do
+not qualify physical cross-window dragging, real GPU scanout or monitor DPI.
+The Mac shown/occluded readiness case, physical platform trajectories, product
+menu composition, group preserve-layout modifiers and appearance extensions
+remain distinct follow-ups.
+
+### Receiver Follow-up Commits and Fresh Receipts
+
+| Open-GPUI commit | Reference or defect | Scope |
+| --- | --- | --- |
+| `5031797de63ae794bb75202fce3d74fe78210216` | Generic retained-host seam required by explicit content ownership; no Zed-specific algorithm imported. | Individual `HitboxTag`, exact prepaint capture and four framework regressions. |
+| `dd44848b7f1c2755ec746f05e5357c1164d746d1` | Adapts the selected egui content contract from `8e9d95cc` and `563952b9`. | Pane declarations, local/native receiver facts, original widget input, geometry continuity, physical terminal ownership, seven adapter regressions and editor example. |
+| `aee1ffdb9396095dd5e07269999081db34233c6e` | Verify jobs `134664784976` and `134664785108` at `82b3efe5`. | Migrate the multiview demo's real-item query to `is_active`. |
+| `2003f856e747095d6efb91b8e4e73204e09233dd` | Dependency Health run `44264265574`, RustSec advisory above. | Upgrade only `libz-sys` version/checksum in the two affected locks. |
+
+Final code checks use Rust 1.100 and nextest 0.9.151, with
+`CARGO_BUILD_JOBS=1`, `--test-threads=1` and one shared target. Both complete
+docking cohorts and the framework regression cohort enable leak detection.
+The MSRV checks explicitly select their older toolchains. No source change
+after these checks alters the implementation; the remaining commit records
+this evidence and the handoff.
+
+| Check | Result | Receipt |
+| --- | --- | --- |
+| Default docking, including all seven new cases | **270/270 passed** | `45a04c69-9f8e-4f84-b819-3715e594a542`; `/tmp/open-gpui-content-default.log` |
+| All docking features and editor | **1739/1739 passed** | `56bd9e97-b384-4a9a-a663-e1ee7382747d`; `/tmp/open-gpui-content-all.log` |
+| Framework exact registration regressions | **4/4 passed** | `734d43e0-015d-44c7-b1f7-14519e62af5a`; `/tmp/open-gpui-content-hitboxes.log` |
+| Core compiler floor | Rust **1.93.0** library passed | `/tmp/open-gpui-content-core-msrv.log` |
+| Docking compiler floor | Rust **1.95.0**, all library features passed | `/tmp/open-gpui-content-docking-msrv.log` |
+| Corrected multiview demo | Rust **1.95.0**, all features/targets passed | `/tmp/open-gpui-content-multiview-msrv.log` |
+| Windows docking, native example, editor and multiview demo | MSVC all-feature/all-target cross-check passed | `/tmp/open-gpui-content-msvc.log` |
+| Independently locked browser consumer | wasm32 check passed | `/tmp/open-gpui-content-web.log` |
+| Independently locked dependency consumer | All-feature/all-target check passed | `/tmp/open-gpui-content-independent.log` |
+| Public API, documentation and UI contracts | Passed, including registered UI executions | `/tmp/open-gpui-content-public-api.log`, `/tmp/open-gpui-content-doc-links.log`, `/tmp/open-gpui-content-ui-contract.log` |
+| Dependency health | Complete gate passed; three lock audits report zero vulnerabilities | `/tmp/open-gpui-content-dependency-health.log`; `/tmp/open-gpui-content-{audit,consumer-audit,web-audit}.json` |
+| Formatting and whitespace | Passed | `/tmp/open-gpui-content-fmt.log`; `git diff --check` |
+
+The preceding hosted browser failure remains attached to run `44264265547`,
+job `134664785129`; the blank preflight diagnostic is preserved in
+`/tmp/open-gpui-verify-44264265547-job-134664785129.log`. Local wasm compilation
+does not replace its next hosted browser execution.

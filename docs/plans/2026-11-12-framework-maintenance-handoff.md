@@ -248,6 +248,17 @@ egui's immediate-pass machinery is not a new GPUI state model. See that record
 for fresh execution receipts, remaining native observation risks and the
 separate owning-platform qualifications.
 
+The pane-content receiver follow-up closes the previously recorded editor-body
+hover gap using explicit `HitboxTag` declarations and
+`DockPane::with_content_receiver`. Registrations come from the actual retained
+pane prepaint and the original accepted input frame, including cached replay;
+unknown children and deferred popups remain blockers. Local and managed native
+regressions exercise editing, focus, scrolling and a real core-guided drop while
+retaining entity identity. Unchanged already-presented pane geometry stays
+interactive through chrome-only submissions; new geometry still waits for its
+exact presentation. The same parity record retains this follow-up's upstream
+reference, commits, fresh receipts and physical-platform limits.
+
 Continue with the actual remaining integration boundaries:
 
 1. Run Nara's canonical Dialogue Session/file and complete native trajectory on
