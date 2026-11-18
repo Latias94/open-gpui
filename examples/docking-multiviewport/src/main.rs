@@ -457,7 +457,7 @@ impl Workspace {
         )?;
         ensure!(
             self.dock
-                .with_view(|view| view.item(editor).is_some_and(|item| item.is_selected())),
+                .with_view(|view| view.item(editor).is_some_and(|item| item.is_active())),
             "the committed model did not select Editor"
         );
         log::info!("Editor selected; native activation and focus require host observations");
