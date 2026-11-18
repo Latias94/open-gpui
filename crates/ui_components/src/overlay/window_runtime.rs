@@ -1457,14 +1457,7 @@ impl MouseRouteOutcome {
             Self::Allow => true,
             Self::Reevaluate => false,
             Self::Block => {
-                if window.has_active_pointer_session(cx) {
-                    let window_handle = window.window_handle();
-                    cx.defer(move |cx| {
-                        let _ = window_handle.update(cx, |_, window, cx| {
-                            window.cancel_pointer_session(PointerCancelReason::CaptureRevoked, cx);
-                        });
-                    });
-                }
+                window.quiesce_pointer_session(PointerCancelReason::CaptureRevoked, cx);
                 cx.stop_propagation();
                 window.prevent_default();
                 true

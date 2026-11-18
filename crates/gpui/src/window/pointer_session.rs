@@ -9,6 +9,10 @@ use crate::{
 
 use super::{Frame, PendingPointerCancellation};
 
+#[cfg(test)]
+#[path = "pointer_session_tests.rs"]
+mod tests;
+
 /// A stable identifier for a pointer capture owner within one window.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct PointerCaptureId(pub(super) u64);
@@ -361,7 +365,9 @@ impl Window {
 
     /// Dispatches one terminal cancellation and clears the current pointer session.
     ///
-    /// Callers inside an input handler must defer this operation until the current dispatch ends.
+    /// This dispatches synchronously and must not be called from an input handler. Use
+    /// [`Window::quiesce_pointer_session`] there to retain the current session before mouse-up
+    /// cleanup or a replacement session can change it.
     pub fn cancel_pointer_session(&mut self, reason: PointerCancelReason, cx: &mut App) {
         self.flush_pending_pointer_cancellations(cx);
         if !self.has_active_pointer_session(cx) {
@@ -380,7 +386,17 @@ impl Window {
         }
     }
 
-    pub(super) fn quiesce_pointer_session(&mut self, reason: PointerCancelReason, cx: &mut App) {
+    /// Immediately clears the current pointer session and arranges its terminal cancellation.
+    ///
+    /// This may be called from an input handler or window input interceptor. The capture owner,
+    /// cancellation listeners, and native capture release are retained at the time of the call.
+    /// During input dispatch, cancellation is queued for delivery after the current dispatch;
+    /// otherwise it is delivered synchronously.
+    ///
+    /// Queued cancellation uses the saved owner and listeners without clearing a replacement
+    /// pointer session. Calling this again without an active session queues no further
+    /// cancellation. Later pointer sessions remain allowed in this window.
+    pub fn quiesce_pointer_session(&mut self, reason: PointerCancelReason, cx: &mut App) {
         if !self.input_dispatch_active.get() {
             self.flush_pending_pointer_cancellations(cx);
         }

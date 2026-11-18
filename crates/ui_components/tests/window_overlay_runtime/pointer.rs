@@ -665,6 +665,95 @@ fn superseding_modal_cancels_the_previous_capture_owner_exactly_once(
 }
 
 #[open_gpui::test]
+fn superseding_modal_consumes_mouse_up_and_cancels_the_original_capture_once(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (view, cx) = cx.add_window_view(RuntimeProbe::new);
+    let _ = cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    draw(cx);
+    register_layer(
+        cx,
+        &view,
+        uncontrolled_registration(
+            "consumed-up-capture-owner",
+            OverlayLayerPolicy::new(OverlayLayerKind::Modal, OverlayPresence::open()),
+        ),
+    );
+    cx.update_window_entity(&view, |probe, _, cx| {
+        probe.set_pointer_capture("consumed-up-capture-owner", true);
+        cx.notify();
+    });
+    settle_focus_claims(cx);
+    let surface = cx
+        .debug_bounds("window-overlay-runtime:consumed-up-capture-owner:surface")
+        .expect("the original capture surface should render");
+    cx.simulate_mouse_down(surface.center(), MouseButton::Left, Default::default());
+    assert!(cx.update(|window, _| window.captured_pointer().is_some()));
+
+    register_layer(
+        cx,
+        &view,
+        uncontrolled_registration(
+            "consumed-up-superseding-modal",
+            OverlayLayerPolicy::new(OverlayLayerKind::Modal, OverlayPresence::open()),
+        ),
+    );
+    let blocked_up = cx.simulate_event_with_dispatch_snapshot(MouseUpEvent {
+        position: point(px(100.0), px(100.0)),
+        modifiers: Default::default(),
+        button: MouseButton::Left,
+        click_count: 1,
+    });
+    assert!(blocked_up.default_prevented());
+    assert!(blocked_up.propagation_stopped());
+    cx.run_until_parked();
+    assert!(!cx.update(|window, cx| window.has_active_pointer_session(cx)));
+    assert_eq!(
+        cx.update_window_entity(&view, |probe, _, _| {
+            probe.surface_pointer_events.borrow().clone()
+        }),
+        vec![
+            ("consumed-up-capture-owner".to_owned(), "down"),
+            ("consumed-up-capture-owner".to_owned(), "cancel"),
+        ]
+    );
+
+    unregister_layer(cx, &view, "consumed-up-superseding-modal");
+    cx.simulate_mouse_down(surface.center(), MouseButton::Left, Default::default());
+    let replacement = cx.update(|window, _| window.captured_pointer());
+    assert!(replacement.is_some());
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|window, _| window.captured_pointer()),
+        replacement
+    );
+    let fresh_up = cx.simulate_event_with_dispatch_snapshot(MouseUpEvent {
+        position: point(px(100.0), px(100.0)),
+        modifiers: Default::default(),
+        button: MouseButton::Left,
+        click_count: 1,
+    });
+    assert!(!fresh_up.default_prevented());
+    assert!(!fresh_up.propagation_stopped());
+    assert!(!cx.update(|window, cx| window.has_active_pointer_session(cx)));
+    assert_eq!(
+        cx.update_window_entity(&view, |probe, _, _| {
+            probe.surface_pointer_events.borrow().clone()
+        }),
+        vec![
+            ("consumed-up-capture-owner".to_owned(), "down"),
+            ("consumed-up-capture-owner".to_owned(), "cancel"),
+            ("consumed-up-capture-owner".to_owned(), "down"),
+            ("consumed-up-capture-owner".to_owned(), "up"),
+        ]
+    );
+    assert!(cx.update_window_entity(&view, |probe, _, _| {
+        probe.underlay_pointer_events.borrow().is_empty()
+    }));
+}
+
+#[open_gpui::test]
 fn superseding_modal_cancels_an_uncaptured_press_before_its_mouse_up(
     cx: &mut open_gpui::TestAppContext,
 ) {
@@ -672,6 +761,15 @@ fn superseding_modal_cancels_an_uncaptured_press_before_its_mouse_up(
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     draw(cx);
+    let cancellations = Rc::new(RefCell::new(Vec::new()));
+    let _subscription = cx.update(|window, _| {
+        let cancellations = cancellations.clone();
+        window.intercept_window_mouse_events(move |event, _, _| {
+            if let open_gpui::WindowMouseEvent::Cancel(event) = event {
+                cancellations.borrow_mut().push(event.reason);
+            }
+        })
+    });
 
     cx.simulate_mouse_down(
         point(px(10.0), px(10.0)),
@@ -703,6 +801,11 @@ fn superseding_modal_cancels_an_uncaptured_press_before_its_mouse_up(
         cx.update_window_entity(&view, |probe, _, _| probe.underlay_clicks.get()),
         0
     );
+    assert_eq!(
+        cancellations.borrow().as_slice(),
+        &[open_gpui::PointerCancelReason::CaptureRevoked],
+        "consuming mouse-up must still deliver the original press's terminal cancellation"
+    );
 
     cx.update_window_entity(&view, |probe, window, cx| {
         probe
@@ -719,6 +822,7 @@ fn superseding_modal_cancels_an_uncaptured_press_before_its_mouse_up(
         1,
         "a fresh gesture must activate normally after the canceled press"
     );
+    assert_eq!(cancellations.borrow().len(), 1);
 }
 
 #[open_gpui::test]
