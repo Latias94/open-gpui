@@ -35,6 +35,10 @@ use super::{
 #[path = "geometry_tests.rs"]
 mod geometry_tests;
 
+#[cfg(test)]
+#[path = "external_root_retirement_tests.rs"]
+mod external_root_retirement_tests;
+
 mod termination;
 
 type OuterBounds = dyn Fn(&WindowPlatformFacts) -> Option<PhysicalRect>;
@@ -140,6 +144,7 @@ struct CallbackState {
     native_terminal: Cell<bool>,
     sealed: Cell<bool>,
     anchor: Cell<bool>,
+    root_detached: Cell<bool>,
     capture: Cell<Option<NativeCapture>>,
     capture_start: Cell<Option<NativeCapture>>,
     drag_tear_off: Cell<Option<(NativeCapture, NativeDragTearOff)>>,
@@ -186,6 +191,7 @@ impl NativeCallbacks {
             native_terminal: Cell::new(false),
             sealed: Cell::new(false),
             anchor: Cell::new(false),
+            root_detached: Cell::new(false),
             capture: Cell::new(None),
             capture_start: Cell::new(None),
             drag_tear_off: Cell::new(None),
@@ -243,10 +249,10 @@ impl NativeCallbacks {
         let weak = Rc::downgrade(&self.0);
         window.on_window_should_close(cx, move |_, cx| {
             let Some(state) = weak.upgrade() else {
-                return false;
+                return true;
             };
-            if state.sealed.get() {
-                return false;
+            if state.sealed.get() || state.root_detached.get() {
+                return true;
             }
             if state.anchor.get() {
                 state.transport.freeze(cx);
@@ -951,6 +957,19 @@ enum PendingTicket {
 }
 
 impl NativeBridge {
+    /// Applies the committed placement roster after physical Root continuations.
+    pub(super) fn update_root_close_authority(&self, placements: &[NativeSurfaceBinding]) {
+        for (binding, _, callbacks) in self.windows.iter() {
+            callbacks.0.root_detached.set(
+                !callbacks.0.anchor.get()
+                    && !callbacks.is_child_window()
+                    && !placements
+                        .iter()
+                        .any(|placement| placement.window() == binding),
+            );
+        }
+    }
+
     pub(crate) fn pointer_frame(&self) -> Option<open_gpui::PlatformNativePointerPhysicalFrame> {
         self.pointer_frame
     }
@@ -1735,6 +1754,8 @@ impl NativeBridge {
     ///
     /// The caller first retires output tickets, artifacts, routes and renderer
     /// sidecars. For a destroyed window, seal its callbacks after true terminal.
+    /// A detached placement can skip native terminal only while another current
+    /// placement retains the same physical window.
     /// Core ingress must commit before this permanent boundary can be recorded.
     pub fn quiesce_binding(
         &mut self,
@@ -1764,11 +1785,15 @@ impl NativeBridge {
         {
             return Err(NativeBridgeError::NotQuiescent);
         }
-        if let Some(callbacks) = self.windows.get(binding.window())
-            && (!callbacks.0.sealed.get() || !callbacks.0.native_terminal.get())
-            && !self.retired_placements.contains(&binding)
-        {
-            return Err(NativeBridgeError::NotQuiescent);
+        if let Some(callbacks) = self.windows.get(binding.window()) {
+            let has_successor = self.retired_placements.contains(&binding)
+                && session
+                    .native_surface_bindings_for_window(binding.window())
+                    .next()
+                    .is_some();
+            if !has_successor && (!callbacks.0.sealed.get() || !callbacks.0.native_terminal.get()) {
+                return Err(NativeBridgeError::NotQuiescent);
+            }
         }
         session.report_native_binding_quiescence(binding)?;
         if let Some(callbacks) = self.windows.get(binding.window()) {

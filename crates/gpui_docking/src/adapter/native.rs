@@ -399,6 +399,7 @@ impl NativeBridge {
                     .push_back(NativeReport::RetirePlacement(*binding));
             }
         }
+        self.update_root_close_authority(report.native_bindings());
         for binding in report.native_admissions() {
             self.reports.push_back(NativeReport::Admitted(*binding));
         }
