@@ -236,6 +236,18 @@ separate; no GUI probe is launched in this follow-up.
 Use its fixed sources and receipts before treating older Windows results as
 coverage for the current adapter.
 
+The November 18 follow-up in the same parity record selects published
+`b1a00ee2`, inventories all 25 commits after `537dff0f`, and migrates retained
+rendering, keyboard identity and complete ownership to composable Pane/Tabs/
+Split/Grid layouts. It also reviews consumed-release recovery, stationary
+occlusion and pointer visibility against the matching egui adapter. Current
+product differences are menu composition, scope-specific entry points,
+application layout metadata and bounded appearance hooks. Preserve the
+core-owned geometry and exact input/presentation owners when adding them;
+egui's immediate-pass machinery is not a new GPUI state model. See that record
+for fresh execution receipts, remaining native observation risks and the
+separate owning-platform qualifications.
+
 Continue with the actual remaining integration boundaries:
 
 1. Run Nara's canonical Dialogue Session/file and complete native trajectory on

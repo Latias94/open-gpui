@@ -366,7 +366,7 @@ These are contract and compiler receipts. No GUI probe is launched in this
 follow-up. Real Windows/macOS group menus, native physical interaction and
 mixed-monitor DPI retain their owning-platform qualification requirements.
 
-## Remaining interaction work
+## Remaining work at the group-menu baseline
 
 | Area | Current boundary | Next implementation or owning verification |
 | --- | --- | --- |
@@ -377,3 +377,158 @@ mixed-monitor DPI retain their owning-platform qualification requirements.
 Deferred application notifications are observations, not a persistent event bus.
 Applications own debouncing, I/O, retained documents and recovery policy. No old
 native bindings, prepared actions or output handles cross a reconstructed host.
+
+## November 18 composable-layout adoption and egui comparison
+
+The comparison starts at Open-GPUI `7d4c68df` and selects published dockspace
+`b1a00ee2b59d0f4aefdaa1da7686820f678302d7`, confirmed against remote `main`
+before changing the dependency. The complete range after `537dff0f` contains
+25 commits. The workspace, independently locked web smoke and dependency
+consumer use the same source. Sibling untracked reviews, regression artifacts
+and native logs are not inputs to this qualification and remain untouched.
+
+The matching `dockspace-integration` skill, custom-host and multiview references,
+`docs/ADAPTER_TESTING.md`, egui `PaneView`, menu/input implementations, shared-grid
+example and native host are the comparison sources. Egui pass recovery, widget
+registration and viewport lifetime storage are framework mechanisms; GPUI must
+provide equivalent ownership and invalidation through its retained hit graph,
+exact frame tickets and native bindings.
+
+| Dockspace commit | Change | GPUI disposition |
+| --- | --- | --- |
+| `03f9464f` | Recover web graphics startup and isolate runtime versions. | Upstream demo/runtime only; independently check the GPUI web consumer. |
+| `0c5b04d3` | Separate direct `TabKey` identity from real `ItemId` content. | Migrate headers, keyboard continuations, close controls and overflow rows to direct keys; retain application Views by item. |
+| `c2673152` | Compose bare Pane, Tabs, nested layout tabs, Split and shared-track Grid. | Execute independent Tabs/Pane operations and frozen labels. Use core-owned geometry and complete owned-item traversal. |
+| `ab5e3b20` | Godot workflow/core responsibility comparison. | Design reference; no additional semantic owner. |
+| `e353e7fe` | Align platform regressions with composable motion contracts. | Included core evidence; GPUI renderer/platform coverage is independent. |
+| `88be1c5a` | Resolve mixed-layout drop projection from actual ownership. | Adopt selected core targeting and its complete ordered paint program. |
+| `02d88e35` | Preserve placement and selection through nested edits. | Adopt selected core; adapter retains the original View registry. |
+| `ac40295e` | Preserve active paths and close successors. | Use `is_active()` for real content; query direct membership for header focus. |
+| `fc9cdc04` | Preserve mixed previews and resize contacts. | Adopt selected core geometry; do not solve tracks in the adapter. |
+| `622d4ffe` | Preserve resize intent through floating-point roundoff. | Included core repair; retain ordered splitter release/reset behavior. |
+| `45bf25cb` | Scaled grid gestures and timed tab-scroll regressions. | Reference cases; GPUI runs its own actual controls and TestPlatform submissions. |
+| `e5099313` | Gate exhausted nested native sources on presentation. | Adopt core lifecycle decision; preserve exact first-live and terminal owners. Nested native qualification remains explicit below. |
+| `46097041` | Share canonical native-creation preflight. | Adopt core preflight rather than duplicate future-layout eligibility. |
+| `d4094b4a` | Revoke resize when measured Auto grid maps change. | Adopt core measurement/resize contract. |
+| `dd9d2a6a` | Hidden-pane and live-layout egui tests. | Reference behavior; GPUI tests complete registration, visibility and retained content independently. |
+| `05857a91` | Retain native windows across tab visibility changes. | Included host contract evidence; OS qualification is separate. |
+| `0f9a2e18` | Isolate embedded egui accessibility trees. | Egui-specific namespace; retain GPUI window/element/accessibility identities. |
+| `57f8cee2` | Recover docking gestures after missed input. | Review consumed terminal events; use exact framework cancellation for overlay interception. |
+| `75ce5b9f` | Recover consumed input and retire viewport state. | Preserve original cancellation listeners; retain GPUI output and WindowId lifetime checks. |
+| `4448e493` | Detect retirement across interrupted egui output hooks. | Egui-specific hook recovery; GPUI retains exact acceptance/discard/submission callbacks. |
+| `a1be26e2` | Preserve pointer visibility across frame boundaries. | Explicit GPUI exit handling and visibility-aware hover facts. |
+| `b5d8c752` | Recover input and revoke stale stationary hover. | Recheck newly installed GPUI hit graphs; submit matching blocked evidence without fabricating a release/drop. |
+| `b9bcf9e4` | Interrupted-host gesture conformance tests. | Reference cases for GPUI consumed-release, exit and stationary-blocker regressions. |
+| `5a759e4a` | Menu customization, layout titles and splitter painting hooks. | Layout-label semantics adopted; public menu/appearance hooks remain a documented adapter gap. |
+| `b1a00ee2` | Menu trigger painting hooks. | Fixed selected source; equivalent paint-only GPUI extension remains a follow-up. |
+
+### Capability assessment
+
+| Area | Current GPUI capability | Remaining difference from the selected egui adapter |
+| --- | --- | --- |
+| Content ownership | One session, distinct retained Views, content sizing and explicit focus handles. | Keep business documents, saving and history in the application. No second state store is needed. |
+| Pane content receivers | Unknown framework hitboxes stay blocking. A full-pane focusable child can therefore block docking hover over its body. | Add explicit retained-subtree content receiver ownership, equivalent in purpose to egui's `PaneResponse`. Do not make arbitrary descendants or overlays transparent by geometry alone. |
+| Composable topology | Core-generated bare Pane, nested layout-tab, Split and Grid records; direct header identity and all-descendant ownership. | Qualify the complete physical/native nested journey on each owning platform. |
+| Group/root actions | Separate group/root menus, atomic close and native first-live transport already exist. | Add per-tab context menus, Active Panes and group-target pages; underlying core commands are not absent. |
+| Group insertion mode | Group grips use core's default direct-tab merge. | Route the configurable preserve-layout modifier and mode-change metadata; egui can insert the complete group as one layout tab. |
+| Keyboard/overflow/resize | Ordered tab/menu input, wheel ownership, accessibility, shared splitters and preferred/equalized reset. | Preserve concrete controls and exact action witnesses through appearance extensions. |
+| Metadata | Pane titles and core-frozen structural titles propagate to measurement, headers, overflow, ghosts and accessibility. | Application layout-title overrides, icon/badge content widths and a direct-tab command facade. |
+| Appearance | Initial font, colors, elevation and core geometry configuration. | Bounded tab/bar, preview, splitter/junction and menu-button painting hooks; hover/pressed/focus styling and runtime theme/density publication. |
+| Product menus | Root/group built-in rows retain exact prepared commands and popup run identity. | Stable editable menu rows and application actions; no callback may grant availability denied by core. |
+| Native observation | Exact binding incarnations, presentation tickets and existing shutdown/recovery owners. | Mac occlusion versus shown/hidden notification needs a targeted readiness-loss regression. Existing physical receipts remain bound to their recorded revisions. |
+
+The largest remaining product gap is extension depth: an editor can retain and
+move its actual content, but cannot yet replace chrome and compose application
+menu rows as deeply as the egui adapter. The focused-content fixture also
+exposes a concrete input integration limit: a registered View's inner focus
+hitbox is still unknown to docking. The unobstructed drop-preview regressions
+use explicitly noninteractive content; they do not qualify docking hover across
+an editor's full interactive body. Address that receiver contract and the Mac
+shown/occluded observation first. Then add menu models and scope-specific entry
+points, shared label/width metadata, paint-only menu-button and splitter hooks,
+and runtime appearance/density publication. Each should retain the current core
+hit geometry, input FIFO and renderer terminal boundary. Similar-looking
+default colors and icons are not a conformance requirement.
+
+### Retained-host repairs and review
+
+The adapter preserves separate Pane/Tabs records and the pane's supplied clip.
+It resolves each frozen `TabLabel` for measurement, visible headers, overflow,
+contained titles and drag ghosts. Direct tab actions carry `TabKey`; content
+activation and committed application events carry `ItemId`. The pane's nearest
+containing bar is retained in its packet, so hidden inner headers cannot lend
+their content focus to an outer layout. All registration, inspection and durable
+bindings include hidden and inactive descendants through core `root.items()`.
+
+Overlay interception calls the framework's existing exact quiescence path at
+the event boundary. This retains the original owner, listeners and native
+release before mouse-up cleanup; a queued old cancellation cannot clear a new
+capture. Pointer exit revokes hover while preserving capture. A newly accepted
+hit graph can veto stationary work even while the corresponding pixels remain
+Deferred: the blocked observation enters the original FIFO with no new target
+authority. Removing an overlay alone does not create motion or renew a deadline.
+
+Complete native detachment does not always emit a placement-detachment event.
+The bridge therefore updates close authority from every report's complete
+binding roster. An empty, non-anchor external Root returns to ordinary GPUI
+close handling. Shared-window retirement bypasses physical terminal only while
+a current successor still exists; otherwise the original callback terminal and
+sealed state remain required. Physical termination and callback delivery are
+separate test observations.
+
+Independent review finds and closes the hidden-inner focus and accepted-pending
+occlusion seams above. A subsequent review of those corrections and native
+retirement finds no remaining implementation blocker. Remaining capability and
+owning-platform limits are listed separately rather than inferred from passing
+contract tests.
+
+Prior-head Verify `44005981870` fails on Windows because one menu test shuts
+down its final managed window and then tries to open another in the same stopped
+App. Enter and Space now use independent test App lifetimes, retaining the
+original KeyDown/KeyUp, FIFO and menu-action assertions. Local success and MSVC
+compilation do not establish the new head's Windows execution result.
+
+### Owning commits and qualification
+
+| Open-GPUI commit | Upstream relationship | Scope |
+| --- | --- | --- |
+| `4e9a0c07a529d05fa0d551ac8f2a580353da8a55` | Consumed-input requirements reviewed against `57f8cee2`, `75ce5b9f` and `b5d8c752`. | Reuse exact framework pointer quiescence during overlay interception; original-listener, native-release and replacement-capture regressions. |
+| `ea422b32e5ca4da121498e9ff03694bb88af3141` | Pins published `b1a00ee2` and includes the complete 25-commit core range above. | Composable retained records, direct-tab identity and focus, complete ownership, pending-output occlusion and explicit exit recovery; three consistent locks and breaking migration notes. |
+| `5c2f457c80451b23814e6d3a0463a79e12d05c72` | Fork-owned native hosting boundary, audited against the selected core's complete-roster/KeepExternal contract. | Return external close authority after full detachment; require a live successor for shared-placement retirement. |
+| `67ad213ae4433635ece730ea7431ae15015654c0` | Corrects the prior-head Windows Verify failure. | Independent Enter/Space application lifetimes preserve the existing native FIFO assertions. |
+
+The final code state represented by these commits is qualified below. Tests
+execute on Rust 1.100 using nextest 0.9.151, `CARGO_BUILD_JOBS=1`, one shared
+target and `--test-threads=1`. Complete and targeted suites enable leak detection.
+Subsequent edits in this follow-up only record evidence and documentation.
+
+| Check | Result | Exact receipt |
+| --- | --- | --- |
+| Default docking | **263/263 passed** | `a9ea6e73-0dcc-477d-bc72-8b7e10fadc7d`; `/tmp/open-gpui-b1-default-tests.log` |
+| All docking features and editor | **1732/1732 passed** | `76875db2-749c-4c43-8072-b6425b46066f`; `/tmp/open-gpui-b1-all-tests.log` |
+| Exact pointer-session quiescence | **2/2 passed** | `0b8badb0-3386-4bb0-a2c6-1daa57f4d493`; `/tmp/open-gpui-b1-pointer-session-tests.log` |
+| Overlay pointer runtime | **17/17 passed** | `08640aa9-2455-4305-b1c4-a14ffab22578`; `/tmp/open-gpui-b1-overlay-tests.log` |
+| Core compiler floor | Rust **1.93.0**, library passed | `/tmp/open-gpui-b1-core-msrv.log` |
+| Docking compiler floor | Rust **1.95.0**, all library features passed | `/tmp/open-gpui-b1-msrv-check.log` |
+| Windows docking/native example/editor | MSVC all-feature/all-target cross-compilation passed | `/tmp/open-gpui-b1-msvc-check.log` |
+| Mac docking/editor | All-feature/all-target check passed | `/tmp/open-gpui-b1-mac-targets-check.log` |
+| Independently locked browser smoke | wasm32 check passed | `/tmp/open-gpui-b1-web-check.log` |
+| Independently locked dependency consumer | All-feature/all-target check passed | `/tmp/open-gpui-b1-independent-check.log` |
+| Public API/documentation/UI gates | Passed, including UI gate registered executions | `/tmp/open-gpui-b1-public-api.log`, `/tmp/open-gpui-b1-doc-links.log`, `/tmp/open-gpui-b1-ui-contract.log` |
+| Formatting/whitespace | Passed | `/tmp/open-gpui-b1-fmt-check.log`; `git diff --check` |
+
+The 19 added default cases cover five composable control journeys, three complete
+ownership/persistence cases, seven input-recovery boundaries, three native
+retirement paths and the independent Space-key lifetime. The two framework and
+one overlay cancellation cases are separate packages. Existing notification
+tests now assert `ItemActivated` for `select_item_current`, preserving exact
+outcome and event-order checks rather than treating it as direct-tab selection.
+
+No GUI probe is launched. These are contract and compiler receipts, not proof
+of physical cross-window dragging, real GPU presentation or mixed-monitor DPI.
+Rerun the manifest-owned Windows/macOS physical journeys on these sources.
+Nested last-source first-live/retirement and the Mac shown/occluded notification
+seam need their own owning-platform qualification. During final verification,
+the sibling acquires unrelated tracked edits as well as its pre-existing
+untracked files; all comparisons and the dependency remain on the published
+revision, and those edits are untouched.

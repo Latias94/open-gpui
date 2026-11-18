@@ -199,6 +199,14 @@ scoped controls, workspace/session/run invalidation, ordered keyboard
 confirmation and managed native group first-live/close regressions. Its fresh
 receipts and per-commit disposition are in the same adapter parity record.
 
+The November 18 follow-up in that record selects published `b1a00ee2` and
+inventories all 25 commits after `537dff0f`. It covers composable Pane/Tabs/
+Split/Grid rendering and ownership, direct layout-tab keyboard/close identity,
+consumed-release cancellation, stationary hit-graph invalidation and explicit
+pointer exit. It distinguishes currently blocked interactive pane-body receivers
+from the unobstructed preview tests, and retains separate native observation,
+product extension and physical-platform follow-ups.
+
 On this Mac, the active display query succeeds but the console is locked.
 AppKit reports both probe windows Hidden with detached CAMetalDisplayLink
 sources; native smoke cannot advance its original second-frame receipt. The
