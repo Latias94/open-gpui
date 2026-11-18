@@ -816,6 +816,7 @@ fn queued_pointer_input_retains_registration_until_its_original_frame_commits(
             tab.center(),
             frame.bounds,
             &frame.hitboxes,
+            &frame.content_hitboxes,
             false,
             Modifiers::none(),
             window,

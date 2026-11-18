@@ -1087,6 +1087,7 @@ pub(super) fn queue_pointer(
     position: open_gpui::Point<Pixels>,
     bounds: Bounds<Pixels>,
     hitboxes: &[open_gpui::HitboxId],
+    content_hitboxes: &[open_gpui::HitboxId],
     captured: bool,
     modifiers: open_gpui::Modifiers,
     window: &Window,
@@ -1138,6 +1139,7 @@ pub(super) fn queue_pointer(
     };
     let clear = hitboxes
         .iter()
+        .chain(content_hitboxes)
         .any(|hitbox| hitbox.window_point_target_rank(position, window) == Some(0));
     if !captured && !clear && !terminal {
         return false;

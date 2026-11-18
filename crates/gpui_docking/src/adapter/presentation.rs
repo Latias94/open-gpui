@@ -308,6 +308,7 @@ pub(super) fn discard(shared: &SharedHost, window: &mut Window, cx: &mut App) {
     for region in mount.regions.values_mut() {
         region.dirty = true;
         region.presented = None;
+        region.presented_panes.clear();
     }
     if let Err(error) = settle_pending(&mut host, Some(window), cx) {
         host.fail(error.as_ref());
@@ -383,12 +384,23 @@ fn apply_presentation(host: &mut HostState, terminal: PendingPresentation) {
             result,
         } => (owner, serial, outputs, input_frames, result),
     };
+    let mut panes: BTreeMap<_, _> = input_frames
+        .iter()
+        .map(|frame| (frame.surface, frame.panes.clone()))
+        .collect();
     if result == SurfacePresentationResult::Presented
         && let Some(mount) = host
             .mounts
             .get_mut(&owner)
             .filter(|mount| mount.serial == serial)
     {
+        for frame in &input_frames {
+            if frame.panes.is_empty()
+                && let Some(region) = mount.regions.get_mut(&frame.surface)
+            {
+                region.presented_panes.clear();
+            }
+        }
         mount.input_frames = input_frames;
     }
     host.presentation_pending |= !outputs.is_empty();
@@ -405,6 +417,11 @@ fn apply_presentation(host: &mut HostState, terminal: PendingPresentation) {
                 {
                     if result == SurfacePresentationResult::Presented {
                         region.presented = Some((serial, artifact));
+                        region.presented_panes = panes
+                            .remove(&surface)
+                            .unwrap_or_default()
+                            .into_iter()
+                            .collect();
                     } else {
                         region.dirty = true;
                     }

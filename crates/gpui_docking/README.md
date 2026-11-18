@@ -85,6 +85,34 @@ and accessibility actions through the shared core's revision-bound commands.
 Content activation waits for the original output to become interactive; merely
 painting hidden or deferred content does not grant focus.
 
+Declare ordinary interactive content explicitly with
+`DockPane::with_content_receiver(tag)`. Allocate one `open_gpui::HitboxTag` with
+the retained View, label each participating editor, canvas or scroll target
+with `.hitbox_tag(tag)`, and give the same tag to its `DockPane`. Custom elements
+can use `Window::insert_hitbox_with_tag`. Repeat the pane builder for additional
+tags; one tag can label several ordinary targets in that pane.
+
+```rust,ignore
+// Keep this tag with the View across renders and native moves.
+let content = open_gpui::HitboxTag::new();
+let pane = DockPane::new(item, "Editor", view).with_content_receiver(content);
+// In the View's existing render implementation:
+div().id("editor").track_focus(&focus).hitbox_tag(content).child(editor_body)
+```
+
+The label applies only to the element's own existing hitbox. Declare a scroll
+container and its interactive children individually; a parent label does not
+enroll descendants. Unlabeled frontmost controls, popups, modal overlays and
+deferred draws continue to block docking hover. Do not label overlays as
+ordinary content. The adapter collects only actual registrations prepainted in
+the pane's exact clipped subtree, including cached replay, and queries their
+IDs against the committed hit graph. Labels and geometric containment alone
+cannot authorize a target. Both local and native paths preserve original widget
+clicks, selection, scrolling and focus while core observes pane activation and
+resolves docking targets. Unchanged, already-presented content remains
+interactive during a chrome-only output replacement; moved or newly selected
+content waits for its original presentation.
+
 Arrow/Home/End navigation follows the focused tab; Ctrl+Tab and Ctrl+Shift+Tab
 cycle documents. Independent key events retain their original core witness
 through the temporary inert packet used for submission, and a later application

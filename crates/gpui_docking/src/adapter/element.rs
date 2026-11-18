@@ -50,6 +50,7 @@ mod interaction_tests;
 pub(super) struct Packet {
     draws: Vec<Draw>,
     pane_bars: BTreeMap<ItemId, Option<DockspaceVisualId>>,
+    pane_receivers: BTreeMap<ItemId, DockspaceReceiverDescriptor>,
     deferred: bool,
     pub(super) native_preview: Option<host_native::provisional::Preview>,
 }
@@ -126,6 +127,8 @@ struct InteractionState {
     keyboard: RefCell<Option<keyboard::Continuation>>,
     keyboard_subscription: RefCell<Option<open_gpui::Subscription>>,
     splitter_press: RefCell<Option<splitter::Press>>,
+    content_press: Cell<Option<SurfaceId>>,
+    content_terminal: Cell<bool>,
 }
 
 struct PaneFocusAttempt {
@@ -164,6 +167,8 @@ pub(crate) struct PreparedRegion {
     surface: SurfaceId,
     draws: Vec<PreparedDraw>,
     hitboxes: Vec<HitboxId>,
+    content_hitboxes: Vec<HitboxId>,
+    panes: Vec<(ItemId, open_gpui::HitTestSnapshot)>,
     tabs: Vec<(TabKey, HitboxId)>,
     capture: PointerCaptureHandle,
     serial: u64,
@@ -319,6 +324,7 @@ impl Element for DockspaceElement {
                 return;
             }
         };
+        self.listen_content_terminals(window);
         if !prepared.waiting_for_update {
             for region in &prepared.regions {
                 self.listen(region, window);
@@ -447,6 +453,7 @@ impl DockspaceElement {
                                     Rc::new(Packet {
                                         draws: Vec::new(),
                                         pane_bars: BTreeMap::new(),
+                                        pane_receivers: BTreeMap::new(),
                                         deferred: true,
                                         native_preview: None,
                                     })
@@ -475,6 +482,7 @@ impl DockspaceElement {
                                     Rc::new(Packet {
                                         draws: Vec::new(),
                                         pane_bars: BTreeMap::new(),
+                                        pane_receivers: BTreeMap::new(),
                                         deferred: true,
                                         native_preview: None,
                                     })
@@ -537,6 +545,7 @@ impl DockspaceElement {
                                             Rc::new(Packet {
                                                 draws: Vec::new(),
                                                 pane_bars: BTreeMap::new(),
+                                                pane_receivers: BTreeMap::new(),
                                                 deferred: true,
                                                 native_preview: None,
                                             })
@@ -628,6 +637,8 @@ impl DockspaceElement {
                 serial,
                 bounds: region.bounds,
                 hitboxes: region.hitboxes.clone(),
+                content_hitboxes: region.content_hitboxes.clone(),
+                panes: region.panes.clone(),
                 capture,
                 receivers: region.receivers.clone(),
                 scale: f64::from(window.scale_factor()),
@@ -729,6 +740,8 @@ impl DockspaceElement {
         cx: &mut App,
     ) -> PreparedRegion {
         let mut hitboxes = vec![background];
+        let mut content_hitboxes = Vec::new();
+        let mut panes = Vec::new();
         let mut draws = Vec::new();
         let mut tabs = Vec::new();
         let mut receivers = Vec::new();
@@ -971,19 +984,38 @@ impl DockspaceElement {
                 }
                 Draw::Pane(rect, item, clip) => {
                     let rect = to_gpui(*rect, bounds);
-                    let view = self
-                        .host
-                        .borrow()
-                        .panels
-                        .get(item)
-                        .map(|panel| panel.view.clone());
+                    let clip = window.prepare_subtree_clip(
+                        &SubtreeClip::own_border_box(),
+                        to_gpui(*clip, bounds),
+                    );
+                    let geometry = window
+                        .with_prepared_subtree_clip(&clip, |window| window.hit_test_snapshot(rect));
+                    let unchanged = geometry.as_ref().is_some_and(|geometry| {
+                        let host = self.host.borrow();
+                        let owner = window.window_handle().window_id();
+                        host.mounts[&owner]
+                            .regions
+                            .get(&surface)
+                            .filter(|region| {
+                                region.presented.is_some_and(|(serial, _)| {
+                                    input::is_presented(&host, owner, surface, serial)
+                                })
+                            })
+                            .and_then(|region| region.presented_panes.get(item))
+                            == Some(geometry)
+                    });
+                    if let Some(geometry) = geometry {
+                        panes.push((*item, geometry));
+                    }
+                    let pane = self.host.borrow().panels.get(item).cloned();
                     let presentation = if allow_input
-                        && input::is_presented(
-                            &self.host.borrow(),
-                            window.window_handle().window_id(),
-                            surface,
-                            serial,
-                        ) {
+                        && (unchanged
+                            || input::is_presented(
+                                &self.host.borrow(),
+                                window.window_handle().window_id(),
+                                surface,
+                                serial,
+                            )) {
                         SubtreePresentation::Visible
                     } else {
                         SubtreePresentation::Inert
@@ -997,8 +1029,8 @@ impl DockspaceElement {
                         .panels
                         .get(item)
                         .map(|pane| pane.title.clone());
-                    let mut element = match view {
-                        Some(view) => div()
+                    let mut element = match pane.as_ref() {
+                        Some(pane) => div()
                             .id(format!("pane-{}", item.get()))
                             .w(rect.size.width)
                             .h(rect.size.height)
@@ -1006,7 +1038,7 @@ impl DockspaceElement {
                             .role(Role::TabPanel)
                             .aria_label(label.unwrap_or_else(|| "Pane".into()))
                             .aria_actions([])
-                            .child(view)
+                            .child(pane.view.clone())
                             .with_subtree_presentation(presentation)
                             .into_any_element(),
                         None => div()
@@ -1015,13 +1047,32 @@ impl DockspaceElement {
                             .child("Pane unavailable")
                             .into_any_element(),
                     };
-                    let clip = window.prepare_subtree_clip(
-                        &SubtreeClip::own_border_box(),
-                        to_gpui(*clip, bounds),
-                    );
                     if window
                         .with_prepared_subtree_clip(&clip, |window| {
-                            element.prepaint_as_root(rect.origin, definite(rect), window, cx);
+                            if let Some(pane) = &pane
+                                && !pane.content_receivers.is_empty()
+                                && let Some(receiver) = packet.pane_receivers.get(item)
+                            {
+                                let ((), targets) = window.capture_prepaint_hitboxes(|window| {
+                                    element.prepaint_as_root(
+                                        rect.origin,
+                                        definite(rect),
+                                        window,
+                                        cx,
+                                    );
+                                });
+                                for hitbox in targets {
+                                    if hitbox
+                                        .tag()
+                                        .is_some_and(|tag| pane.content_receivers.contains(&tag))
+                                    {
+                                        content_hitboxes.push(hitbox.id);
+                                        receivers.push((*receiver, hitbox.id));
+                                    }
+                                }
+                            } else {
+                                element.prepaint_as_root(rect.origin, definite(rect), window, cx);
+                            }
                         })
                         .is_some()
                     {
@@ -1048,6 +1099,8 @@ impl DockspaceElement {
             surface,
             draws,
             hitboxes,
+            content_hitboxes,
+            panes,
             tabs,
             capture,
             serial,
@@ -1245,6 +1298,42 @@ impl DockspaceElement {
         (prepared, hitbox.get())
     }
 
+    fn listen_content_terminals(&self, window: &mut Window) {
+        let shared = self.host.clone();
+        let interaction = self.interaction.clone();
+        window.on_mouse_event(move |event: &MouseUpEvent, phase, window, _| {
+            if phase.capture() {
+                interaction.content_terminal.set(false);
+                if event.button == MouseButton::Left {
+                    interaction.content_terminal.set(finish_content_press(
+                        &shared,
+                        &interaction,
+                        SurfacePointerEvent::ButtonReleased(SurfacePointerButton::Primary),
+                        event.position,
+                        event.modifiers,
+                        window,
+                    ));
+                }
+            }
+        });
+        let shared = self.host.clone();
+        let interaction = self.interaction.clone();
+        window.on_pointer_cancel(move |_, phase, window, _| {
+            if phase.capture() {
+                interaction.content_terminal.set(finish_content_press(
+                    &shared,
+                    &interaction,
+                    SurfacePointerEvent::StreamCancelled(
+                        SurfacePointerCancelReason::ExplicitPlatformCancellation,
+                    ),
+                    window.mouse_position(),
+                    window.modifiers(),
+                    window,
+                ));
+            }
+        });
+    }
+
     fn listen(&self, prepared: &PreparedRegion, window: &mut Window) {
         wheel::listen(&self.host, &self.interaction, prepared, window);
         let surface = prepared.surface;
@@ -1267,6 +1356,7 @@ impl DockspaceElement {
         });
         let shared = self.host.clone();
         let hitboxes = prepared.hitboxes.clone();
+        let content_hitboxes = prepared.content_hitboxes.clone();
         let interaction = self.interaction.clone();
         window.on_mouse_event(move |event: &MouseExitEvent, phase, window, _| {
             if !phase.capture() {
@@ -1287,6 +1377,7 @@ impl DockspaceElement {
                     event.position,
                     bounds,
                     &hitboxes,
+                    &content_hitboxes,
                     true,
                     window.modifiers(),
                     window,
@@ -1297,11 +1388,35 @@ impl DockspaceElement {
         });
         let shared = self.host.clone();
         let hitboxes = prepared.hitboxes.clone();
+        let content_hitboxes = prepared.content_hitboxes.clone();
         let controls = prepared.controls.clone();
         let interaction = self.interaction.clone();
         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
             if phase.capture() && event.button == MouseButton::Left {
                 interaction.splitter_press.borrow_mut().take();
+                if !capture.is_captured(window)
+                    && input::is_presented(&shared.borrow(), owner, surface, serial)
+                    && content_hitboxes
+                        .iter()
+                        .any(|id| id.window_point_target_rank(event.position, window) == Some(0))
+                    && input::queue(
+                        &mut shared.borrow_mut(),
+                        surface,
+                        serial,
+                        SurfacePointerEvent::ButtonPressed(SurfacePointerButton::Primary),
+                        event.position,
+                        bounds,
+                        &hitboxes,
+                        &content_hitboxes,
+                        false,
+                        event.modifiers,
+                        window,
+                    )
+                {
+                    // Observe pane activation without capturing or consuming the widget's input.
+                    interaction.content_press.set(Some(surface));
+                    window.refresh();
+                }
             }
             if !phase.bubble() || event.button != MouseButton::Left {
                 return;
@@ -1309,7 +1424,10 @@ impl DockspaceElement {
             let clear = hitboxes
                 .iter()
                 .any(|id| id.window_point_target_rank(event.position, window) == Some(0));
-            if !clear || !input::is_presented(&shared.borrow(), owner, surface, serial) {
+            if !input::is_presented(&shared.borrow(), owner, surface, serial) {
+                return;
+            }
+            if !clear {
                 return;
             }
             let managed = shared.borrow().native.is_some();
@@ -1324,6 +1442,7 @@ impl DockspaceElement {
                 event.position,
                 bounds,
                 &hitboxes,
+                &content_hitboxes,
                 !managed,
                 event.modifiers,
                 window,
@@ -1355,6 +1474,7 @@ impl DockspaceElement {
         });
         let shared = self.host.clone();
         let hitboxes = prepared.hitboxes.clone();
+        let content_hitboxes = prepared.content_hitboxes.clone();
         let interaction = self.interaction.clone();
         window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, _| {
             if phase.capture() {
@@ -1374,6 +1494,7 @@ impl DockspaceElement {
                 event.position,
                 bounds,
                 &hitboxes,
+                &content_hitboxes,
                 true,
                 event.modifiers,
                 window,
@@ -1383,10 +1504,12 @@ impl DockspaceElement {
         });
         let shared = self.host.clone();
         let hitboxes = prepared.hitboxes.clone();
+        let content_hitboxes = prepared.content_hitboxes.clone();
         let receivers = prepared.receivers.clone();
         let interaction = self.interaction.clone();
         window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
             if !phase.bubble()
+                || interaction.content_terminal.get()
                 || event.button != MouseButton::Left
                 || (!capture.is_captured(window) && shared.borrow().native.is_none())
                 || !routes_to(&shared.borrow(), surface, event.position, window)
@@ -1404,6 +1527,7 @@ impl DockspaceElement {
                 event.position,
                 bounds,
                 &hitboxes,
+                &content_hitboxes,
                 capture.is_captured(window),
                 event.modifiers,
                 window,
@@ -1424,6 +1548,7 @@ impl DockspaceElement {
         });
         let shared = self.host.clone();
         let hitboxes = prepared.hitboxes.clone();
+        let content_hitboxes = prepared.content_hitboxes.clone();
         window.on_modifiers_changed(move |event, window, _| {
             if !capture.is_captured(window)
                 || !routes_to(&shared.borrow(), surface, window.mouse_position(), window)
@@ -1444,6 +1569,7 @@ impl DockspaceElement {
                 position,
                 bounds,
                 &hitboxes,
+                &content_hitboxes,
                 true,
                 event.modifiers,
                 window,
@@ -1503,6 +1629,7 @@ impl DockspaceElement {
         });
         let shared = self.host.clone();
         let hitboxes = prepared.hitboxes.clone();
+        let content_hitboxes = prepared.content_hitboxes.clone();
         let interaction = self.interaction.clone();
         window.on_key_event(move |event: &KeyDownEvent, phase, window, cx| {
             if !phase.bubble()
@@ -1527,6 +1654,7 @@ impl DockspaceElement {
                 window.mouse_position(),
                 bounds,
                 &hitboxes,
+                &content_hitboxes,
                 true,
                 event.keystroke.modifiers,
                 window,
@@ -1537,12 +1665,13 @@ impl DockspaceElement {
         });
         let shared = self.host.clone();
         let hitboxes = prepared.hitboxes.clone();
+        let content_hitboxes = prepared.content_hitboxes.clone();
         let interaction = self.interaction.clone();
         window.on_pointer_cancel(move |_, phase, window, _| {
             if phase.capture() {
                 interaction.splitter_press.borrow_mut().take();
             }
-            if !phase.bubble() {
+            if !phase.bubble() || interaction.content_terminal.get() {
                 return;
             }
             let mut host = shared.borrow_mut();
@@ -1568,6 +1697,7 @@ impl DockspaceElement {
                 position,
                 bounds,
                 &hitboxes,
+                &content_hitboxes,
                 false,
                 window.modifiers(),
                 window,
@@ -1575,6 +1705,51 @@ impl DockspaceElement {
             window.refresh();
         });
     }
+}
+
+/// One physical terminal belongs to the original content press, even across logical regions.
+fn finish_content_press(
+    shared: &SharedHost,
+    interaction: &InteractionState,
+    event: SurfacePointerEvent,
+    position: open_gpui::Point<Pixels>,
+    modifiers: open_gpui::Modifiers,
+    window: &mut Window,
+) -> bool {
+    let Some(surface) = interaction.content_press.get() else {
+        return false;
+    };
+    let owner = window.window_handle().window_id();
+    let mut host = shared.borrow_mut();
+    if let Some(frame) = host
+        .mounts
+        .get(&owner)
+        .and_then(|mount| {
+            mount
+                .input_frames
+                .iter()
+                .find(|frame| frame.surface == surface)
+        })
+        .cloned()
+    {
+        if input::queue(
+            &mut host,
+            surface,
+            frame.serial,
+            event,
+            position,
+            frame.bounds,
+            &frame.hitboxes,
+            &frame.content_hitboxes,
+            false,
+            modifiers,
+            window,
+        ) {
+            interaction.content_press.set(None);
+            window.refresh();
+        }
+    }
+    true
 }
 
 fn activate_action(
@@ -2103,6 +2278,7 @@ fn build_candidate(
                 Rc::new(Packet {
                     draws: Vec::new(),
                     pane_bars: BTreeMap::new(),
+                    pane_receivers: BTreeMap::new(),
                     deferred,
                     native_preview: None,
                 }),
@@ -2119,6 +2295,7 @@ fn build_candidate(
                 Rc::new(Packet {
                     draws: Vec::new(),
                     pane_bars: BTreeMap::new(),
+                    pane_receivers: BTreeMap::new(),
                     deferred: true,
                     native_preview: None,
                 }),
@@ -2186,6 +2363,7 @@ fn build_candidate(
                     Rc::new(Packet {
                         draws: Vec::new(),
                         pane_bars: BTreeMap::new(),
+                        pane_receivers: BTreeMap::new(),
                         deferred: true,
                         native_preview: None,
                     }),

@@ -33,7 +33,11 @@ impl Render for OverlayRoot {
     }
 }
 
-fn begin_drag(dock: &DockSurface, visual: &mut VisualTestContext, item: ItemId) -> PointerCapture {
+pub(super) fn begin_drag(
+    dock: &DockSurface,
+    visual: &mut VisualTestContext,
+    item: ItemId,
+) -> PointerCapture {
     let pressed = visual
         .debug_bounds(&format!("dockspace:tab:{}", item.get()))
         .unwrap()
@@ -51,15 +55,21 @@ fn begin_drag(dock: &DockSurface, visual: &mut VisualTestContext, item: ItemId) 
     visual.update(|window, _| {
         let capture = window.captured_pointer().expect("the original tab drag");
         assert_eq!(capture.button(), MouseButton::Left);
-        assert_eq!(
-            capture.handle(),
-            dock.host.borrow().mounts[&window.window_handle().window_id()].capture
-        );
+        if dock.host.borrow().native.is_none() {
+            assert_eq!(
+                capture.handle(),
+                dock.host.borrow().mounts[&window.window_handle().window_id()].capture
+            );
+        }
         capture
     })
 }
 
-fn pane_center(dock: &DockSurface, visual: &mut VisualTestContext, item: ItemId) -> Point<Pixels> {
+pub(super) fn pane_center(
+    dock: &DockSurface,
+    visual: &mut VisualTestContext,
+    item: ItemId,
+) -> Point<Pixels> {
     visual.update(|window, _| {
         let host = dock.host.borrow();
         let region = &host.mounts[&window.window_handle().window_id()].regions[&SURFACE];
@@ -79,32 +89,7 @@ fn pane_center(dock: &DockSurface, visual: &mut VisualTestContext, item: ItemId)
 }
 
 fn preview_fixture(cx: &mut TestAppContext) -> DockSurface {
-    cx.update(|cx| {
-        let panes = [FIRST, SECOND].map(|item| {
-            DockPane::new(
-                item,
-                format!("Pane {}", item.get()),
-                cx.new(|_| open_gpui::Empty),
-            )
-        });
-        let content = DockspaceNode::equal_split(
-            DockspaceAxis::Horizontal,
-            [DockspaceNode::tabs([FIRST]), DockspaceNode::tabs([SECOND])],
-        )
-        .unwrap();
-        let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
-            SURFACE,
-            DockspaceRootLayout::new(RootId::new(71), content),
-        )])
-        .unwrap();
-        DockSurface::new(
-            DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap(),
-            panes,
-            GpuiDockspaceConfig::default(),
-            cx,
-        )
-        .unwrap()
-    })
+    super::content_receivers::content_fixture(cx, false).0
 }
 
 fn assert_tab_ink(
@@ -137,7 +122,7 @@ fn assert_tab_ink(
     });
 }
 
-fn drag_feedback(dock: &DockSurface) -> (bool, bool, bool) {
+pub(super) fn drag_feedback(dock: &DockSurface) -> (bool, bool, bool) {
     let mut host = dock.host.borrow_mut();
     let mut frame = host.session.begin_host_frame().unwrap();
     let retained_hover = frame.host_pointer_hover_position(SURFACE).is_some();
@@ -209,6 +194,7 @@ fn assert_pointer_route(
             frame
                 .hitboxes
                 .iter()
+                .chain(&frame.content_hitboxes)
                 .any(|hitbox| hitbox.window_point_target_rank(position, window) == Some(0)),
             clear,
             "the accepted hit graph must observe the actual overlay"

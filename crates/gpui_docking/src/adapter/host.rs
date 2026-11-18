@@ -17,8 +17,8 @@ use dockspace::{
     },
 };
 use open_gpui::{
-    AnyView, AnyWindowHandle, App, Bounds, FocusHandle, GlobalElementId, IntoElement, Pixels,
-    SharedString, Subscription, Window, WindowId,
+    AnyView, AnyWindowHandle, App, Bounds, FocusHandle, GlobalElementId, HitboxTag, IntoElement,
+    Pixels, SharedString, Subscription, Window, WindowId,
 };
 use web_time::Instant;
 
@@ -64,6 +64,7 @@ pub struct DockPane {
     pub(super) view: AnyView,
     pub(super) sizing: PaneSizing,
     pub(super) content_focus: Option<FocusHandle>,
+    pub(super) content_receivers: Vec<HitboxTag>,
 }
 
 impl DockPane {
@@ -77,6 +78,7 @@ impl DockPane {
                 .expect("valid default pane size")
                 .into(),
             content_focus: None,
+            content_receivers: Vec::new(),
         }
     }
 
@@ -104,6 +106,23 @@ impl DockPane {
     /// Binds the content's existing focus target without replacing its View.
     pub fn with_focus_handle(mut self, focus: FocusHandle) -> Self {
         self.content_focus = Some(focus);
+        self
+    }
+
+    /// Allows docking hover over ordinary content targets carrying this explicit label.
+    ///
+    /// Label each editor, canvas or scroll target with `InteractiveElement::hitbox_tag`, or use
+    /// `Window::insert_hitbox_with_tag` in a custom element. Labels apply to individual targets;
+    /// descendants and overlapping unknown controls remain blockers. Repeat for additional tags.
+    /// Only registrations actually prepainted inside this pane's clipped content are accepted.
+    /// Popup, modal and foreign-overlay targets must not be labeled as ordinary content.
+    ///
+    /// This declaration preserves the original View and its input handling. Docking can observe
+    /// pane activation and hover without capturing content clicks, drags or focus.
+    pub fn with_content_receiver(mut self, tag: HitboxTag) -> Self {
+        if !self.content_receivers.contains(&tag) {
+            self.content_receivers.push(tag);
+        }
         self
     }
 
@@ -642,6 +661,7 @@ pub(super) struct RegionState {
     pub(super) pointer: Option<LogicalPoint>,
     pub(super) packet: Option<Rc<element::Packet>>,
     pub(super) presented: Option<(u64, SurfacePresentationArtifact)>,
+    pub(super) presented_panes: BTreeMap<ItemId, open_gpui::HitTestSnapshot>,
     pub(super) dirty: bool,
 }
 
@@ -794,6 +814,7 @@ impl HostState {
                         pointer: None,
                         packet: None,
                         presented: None,
+                        presented_panes: BTreeMap::new(),
                         dirty: true,
                     },
                 )

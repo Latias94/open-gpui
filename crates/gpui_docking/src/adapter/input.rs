@@ -21,6 +21,8 @@ pub(super) struct InputFrame {
     pub(super) serial: u64,
     pub(super) bounds: Bounds<Pixels>,
     pub(super) hitboxes: Vec<HitboxId>,
+    pub(super) content_hitboxes: Vec<HitboxId>,
+    pub(super) panes: Vec<(dockspace::model::ItemId, open_gpui::HitTestSnapshot)>,
     pub(super) capture: PointerCaptureHandle,
     pub(super) receivers: Vec<(dockspace::runtime::DockspaceReceiverDescriptor, HitboxId)>,
     pub(super) scale: f64,
@@ -67,6 +69,7 @@ pub(super) struct QueuedPointer {
     delivery: Option<PresentedDockReceiver>,
     drag: Option<PresentedDockReceiver>,
     clear: bool,
+    delivery_clear: bool,
     capture: SurfacePointerCapture,
     metadata: PointerEventMetadata,
 }
@@ -75,7 +78,7 @@ impl QueuedPointer {
     pub(super) fn submit(&self, frame: &mut DockspaceHostFrame<'_>) -> anyhow::Result<()> {
         let mut facts = SurfacePointerReceiverFacts::unknown();
         if let Some(surface) = &self.surface {
-            if self.clear {
+            if self.delivery_clear {
                 facts = match &self.delivery {
                     Some(receiver) => facts.with_delivery(receiver),
                     None => facts.with_empty_delivery_lane(surface),
@@ -114,13 +117,23 @@ pub(super) fn queue(
     position: Point<Pixels>,
     bounds: Bounds<Pixels>,
     hitboxes: &[HitboxId],
+    content_hitboxes: &[HitboxId],
     captured: bool,
     modifiers: Modifiers,
     window: &Window,
 ) -> bool {
     if host.native.is_some() {
         return super::host_native::queue_pointer(
-            host, surface_id, serial, event, position, bounds, hitboxes, captured, modifiers,
+            host,
+            surface_id,
+            serial,
+            event,
+            position,
+            bounds,
+            hitboxes,
+            content_hitboxes,
+            captured,
+            modifiers,
             window,
         );
     }
@@ -128,12 +141,20 @@ pub(super) fn queue(
         return false;
     };
     let owner = window.window_handle().window_id();
-    let clear = window.is_mouse_in_window()
+    let chrome_clear = window.is_mouse_in_window()
         && hitboxes
             .iter()
             .any(|hitbox| hitbox.window_point_target_rank(position, window) == Some(0));
-    let cancellation = matches!(event, SurfacePointerEvent::StreamCancelled(_));
-    if !captured && !clear && !cancellation {
+    let clear = chrome_clear
+        || (window.is_mouse_in_window()
+            && content_hitboxes
+                .iter()
+                .any(|hitbox| hitbox.window_point_target_rank(position, window) == Some(0)));
+    let terminal = matches!(
+        event,
+        SurfacePointerEvent::StreamCancelled(_) | SurfacePointerEvent::ButtonReleased(_)
+    );
+    if !captured && !clear && !terminal {
         return false;
     }
     let hit = is_presented(host, owner, surface_id, serial)
@@ -142,7 +163,28 @@ pub(super) fn queue(
                 .host_pointer_hit_for_device(surface_id, point, PointerDeviceKind::Mouse)
         })
         .flatten();
-    if hit.is_none() && !captured && !cancellation {
+    let content_receiver = host
+        .mounts
+        .get(&owner)
+        .and_then(|mount| {
+            mount
+                .input_frames
+                .iter()
+                .find(|frame| frame.surface == surface_id && frame.serial == serial)
+        })
+        .and_then(|frame| {
+            frame.receivers.iter().find(|(_, id)| {
+                content_hitboxes.contains(id)
+                    && id.window_point_target_rank(position, window) == Some(0)
+            })
+        })
+        .map(|(receiver, _)| *receiver);
+    let delivery_clear = chrome_clear
+        || content_receiver.is_some_and(|receiver| {
+            hit.and_then(|hit| hit.delivery())
+                .is_some_and(|delivery| delivery.descriptor() == receiver)
+        });
+    if hit.is_none() && !captured && !terminal {
         return false;
     }
     let surface = hit.map(|hit| hit.surface());
@@ -152,7 +194,12 @@ pub(super) fn queue(
                 .host_pointer_manipulation_surface(SurfacePointerId::new(1))
         })
         .flatten()
-        .or(surface);
+        .or(surface)
+        .or_else(|| {
+            terminal
+                .then(|| host.session.presented_surface(surface_id))
+                .flatten()
+        });
     let source_point = source.and_then(|source| {
         let mount = host.mounts.get(&owner)?;
         let bounds = mount
@@ -181,6 +228,7 @@ pub(super) fn queue(
             .then(|| hit.and_then(|hit| hit.drag_delivery()))
             .flatten(),
         clear,
+        delivery_clear,
         capture: if captured {
             SurfacePointerCapture::ProviderEndpoint
         } else {
@@ -233,6 +281,7 @@ pub(super) fn revoke_blocked_hover(shared: &super::SharedHost, window: &mut Wind
                     || !frame
                         .hitboxes
                         .iter()
+                        .chain(&frame.content_hitboxes)
                         .any(|hitbox| hitbox.window_point_target_rank(position, window) == Some(0)))
         })
         .collect::<Vec<_>>();
@@ -264,6 +313,7 @@ pub(super) fn revoke_blocked_hover(shared: &super::SharedHost, window: &mut Wind
         position,
         frame.bounds,
         &frame.hitboxes,
+        &frame.content_hitboxes,
         true,
         window.modifiers(),
         window,

@@ -112,6 +112,7 @@ fn wake(
         || !frame
             .hitboxes
             .iter()
+            .chain(&frame.content_hitboxes)
             .any(|hitbox| hitbox.window_point_target_rank(position, window) == Some(0))
     {
         return;
@@ -124,6 +125,7 @@ fn wake(
         position,
         frame.bounds,
         &frame.hitboxes,
+        &frame.content_hitboxes,
         true,
         window.modifiers(),
         window,

@@ -76,6 +76,7 @@ pub(super) fn resolve_in_window(
                 let exposed = frame
                     .hitboxes
                     .iter()
+                    .chain(&frame.content_hitboxes)
                     .any(|hitbox| target_rank(*hitbox, point) == Some(0));
                 return NativeReceiverAnswer::WindowHit(if exposed {
                     NativeWindowHit::Surface(artifact)
@@ -134,6 +135,13 @@ pub(super) fn resolve_in_window(
                 } else {
                     NativeReceiverAnswer::EmptyLane(query.presented_surface())
                 }
+            } else if matches!(query.purpose(), NativeReceiverPurpose::HoverHit)
+                && frame
+                    .content_hitboxes
+                    .iter()
+                    .any(|hitbox| target_rank(*hitbox, point) == Some(0))
+            {
+                NativeReceiverAnswer::ClearHoverLane(query.presented_surface())
             } else {
                 NativeReceiverAnswer::Blocked(query.presented_surface())
             }

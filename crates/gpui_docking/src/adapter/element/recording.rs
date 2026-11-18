@@ -33,6 +33,7 @@ pub(super) fn record(
 ) -> Result<(Packet, dockspace::runtime::SurfaceProgramExecutionReceipt)> {
     let mut draws = Vec::new();
     let mut pane_bars = BTreeMap::new();
+    let mut pane_receivers = BTreeMap::new();
     let mut native_preview = None;
     let mut menu_backdrop = None;
     let mut tab_keys = BTreeMap::new();
@@ -61,6 +62,9 @@ pub(super) fn record(
                     Operation::Pane(pane) => {
                         receiver(&mut draws, plan.receiver_for_pane(pane));
                         if !paint.is_source_gap() {
+                            if let Some(receiver) = plan.receiver_for_pane(pane) {
+                                pane_receivers.insert(pane.item(), receiver);
+                            }
                             pane_bars.insert(pane.item(), pane.tab_bar_visual_id());
                             draws.push(Draw::Fill(pane.content_bounds(), colors.pane));
                             draws.push(Draw::Pane(pane.content_bounds(), pane.item(), pane.clip()));
@@ -614,6 +618,7 @@ pub(super) fn record(
         Packet {
             draws,
             pane_bars,
+            pane_receivers,
             deferred: false,
             native_preview,
         },

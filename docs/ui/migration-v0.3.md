@@ -97,6 +97,16 @@ and shared-track Grid in addition to flat Tabs/Split declarations. Use
 supplies its layout-tab title; it does not replace any descendant pane's title.
 Register all owned real panes, including hidden and inactive descendants.
 
+Interactive pane contents can now opt into docking receiver ownership with
+`DockPane::with_content_receiver(HitboxTag)`. Retain the tag with the View and
+apply `.hitbox_tag(tag)` to each ordinary editor, canvas or scrolling target.
+Custom elements use `Window::insert_hitbox_with_tag`. This is additive: undeclared
+targets remain blockers. Parent tags do not propagate to children, and deferred
+popups or modal overlays must not be declared. Local and managed native hosts
+share the accepted registration facts and preserve the widget's original input
+and focus. See the [crate guide](../../crates/gpui_docking/README.md) for the
+registration and presentation contract.
+
 | Previous core query or match | Current core contract |
 | --- | --- |
 | Tab identity as `ItemId` | `TabKey`; `.item()` is `None` for a layout tab. Retain `ItemId` for real application content. |

@@ -21,6 +21,7 @@ const FIRST: ItemId = ItemId::new(61);
 const SECOND: ItemId = ItemId::new(62);
 
 mod composable;
+mod content_receivers;
 mod input_recovery;
 mod keyboard;
 mod presentation_menu;

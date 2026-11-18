@@ -2,8 +2,8 @@ use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 use anyhow::{Context as _, Result};
 use open_gpui::{
-    App, AppContext as _, Context, Entity, EntityId, IntoElement, PrepaintPublicationId, Render,
-    Window, WindowId, WindowOptions, div, prelude::*, rgb,
+    App, AppContext as _, Context, Entity, EntityId, HitboxTag, IntoElement, PrepaintPublicationId,
+    Render, Window, WindowId, WindowOptions, div, prelude::*, rgb,
 };
 
 mod recovery;
@@ -33,6 +33,7 @@ struct EditorView {
     draft: usize,
     name: &'static str,
     publication: PrepaintPublicationId,
+    content_receiver: HitboxTag,
     frames: Rc<RefCell<BTreeMap<WindowId, ViewFrame>>>,
 }
 
@@ -74,6 +75,7 @@ impl Render for EditorView {
             .child(
                 div()
                     .id("edit-document")
+                    .hitbox_tag(self.content_receiver)
                     .px_3()
                     .py_2()
                     .bg(rgb(0xe2edfc))
@@ -112,6 +114,7 @@ fn workspace(cx: &mut App) -> Result<Workspace> {
         draft: 0,
         name: "Document / Editing View",
         publication: PrepaintPublicationId::new(),
+        content_receiver: HitboxTag::new(),
         frames: Rc::default(),
     });
     let second = cx.new(|_| EditorView {
@@ -119,6 +122,7 @@ fn workspace(cx: &mut App) -> Result<Workspace> {
         draft: 0,
         name: "Document / Inspector View",
         publication: PrepaintPublicationId::new(),
+        content_receiver: HitboxTag::new(),
         frames: Rc::default(),
     });
     let layout = DockspaceLayout::new([(EDITOR, FIRST), (INSPECTOR, SECOND)].map(
@@ -151,8 +155,10 @@ fn create_dock(
     let dock = DockSurface::new_managed(
         DockspaceSession::from_layout(layout, policy)?,
         [
-            DockPane::new(FIRST, "Editing View", views[0].clone()),
-            DockPane::new(SECOND, "Inspector View", views[1].clone()),
+            DockPane::new(FIRST, "Editing View", views[0].clone())
+                .with_content_receiver(views[0].read(cx).content_receiver),
+            DockPane::new(SECOND, "Inspector View", views[1].clone())
+                .with_content_receiver(views[1].read(cx).content_receiver),
         ],
         GpuiDockspaceConfig::default(),
         cx,
