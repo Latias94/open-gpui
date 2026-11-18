@@ -6,7 +6,7 @@ use dockspace::{
     close::{CloseDecision, ClosePlanTarget, DeferredCloseDecision, DeferredCloseToken},
     model::{
         DockAnchor, DockPlacement, DockspaceAxis, DockspaceLayout, DockspaceNode,
-        DockspaceRootLayout, DockspaceSurfaceLayout, ItemId, RootId, SurfaceId,
+        DockspaceRootLayout, DockspaceSurfaceLayout, ItemId, RootId, SurfaceId, TabKey,
     },
     policy::{CloseCapability, DockPolicy},
     runtime::{
@@ -135,7 +135,7 @@ fn assert_open(dock: &DockSurface, expected: [bool; 4]) {
 #[derive(Debug, PartialEq, Eq)]
 struct PaneState {
     tabs: Vec<ItemId>,
-    selected: Option<ItemId>,
+    selected: Option<TabKey>,
 }
 
 fn pane_state(dock: &DockSurface) -> [Option<PaneState>; 4] {
@@ -147,8 +147,8 @@ fn pane_state(dock: &DockSurface) -> [Option<PaneState>; 4] {
                 assert!(location.contained().is_none());
                 assert!(location.is_visible());
                 PaneState {
-                    tabs: location.tabs().items().to_vec(),
-                    selected: location.tabs().selected(),
+                    tabs: location.tabs().unwrap().items().collect(),
+                    selected: location.tabs().unwrap().selected(),
                 }
             })
         })
@@ -159,14 +159,14 @@ fn sibling_locations(dock: &DockSurface) -> [(SurfaceId, RootId, usize, bool); 2
     dock.with_view(|view| {
         [ITEMS[2], ITEMS[3]].map(|item| {
             let location = view.item(item).unwrap();
-            assert_eq!(location.tabs().items().len(), 2);
+            assert_eq!(location.tabs().unwrap().items().count(), 2);
             assert!(location.contained().is_none());
             assert!(location.is_visible());
             (
                 location.surface(),
                 location.root(),
-                location.tab_index(),
-                location.is_selected(),
+                location.tab_index().unwrap(),
+                location.is_active(),
             )
         })
     })
@@ -198,7 +198,12 @@ fn request_group(fixture: &Fixture, cx: &mut TestAppContext) -> DockspaceClosePl
         plan.target(),
         ClosePlanTarget::Tabs {
             root: ROOT,
-            anchor: ITEMS[0],
+            group: fixture.dock.with_view(|view| view
+                .item(ITEMS[0])
+                .unwrap()
+                .tabs()
+                .unwrap()
+                .key()),
         }
     );
     assert_eq!(
@@ -514,14 +519,24 @@ fn deferred_tabs_close_preserves_original_roster_after_local_reorder_and_sibling
     .unwrap();
     fixture.dock.with_view(|view| {
         assert_eq!(
-            view.item(ITEMS[0]).unwrap().tabs().items(),
+            view.item(ITEMS[0])
+                .unwrap()
+                .tabs()
+                .unwrap()
+                .items()
+                .collect::<Vec<_>>(),
             [ITEMS[1], ITEMS[0]]
         );
         assert_eq!(
-            view.item(ITEMS[2]).unwrap().tabs().items(),
+            view.item(ITEMS[2])
+                .unwrap()
+                .tabs()
+                .unwrap()
+                .items()
+                .collect::<Vec<_>>(),
             [ITEMS[3], ITEMS[2]]
         );
-        assert!(view.item(ITEMS[3]).unwrap().is_selected());
+        assert!(view.item(ITEMS[3]).unwrap().is_active());
     });
     let pending = fixture.dock.pending_content_close_plans().unwrap();
     assert_eq!(pending.len(), 1);
@@ -610,8 +625,24 @@ fn deferred_tabs_close_membership_changes_permanently_revoke_tokens(cx: &mut Tes
             fixture.assert_views(cx);
         }
         fixture.dock.with_view(|view| {
-            assert_eq!(view.item(ITEMS[0]).unwrap().tabs().items(), &ITEMS[..2]);
-            assert_eq!(view.item(ITEMS[2]).unwrap().tabs().items(), &ITEMS[2..]);
+            assert_eq!(
+                view.item(ITEMS[0])
+                    .unwrap()
+                    .tabs()
+                    .unwrap()
+                    .items()
+                    .collect::<Vec<_>>(),
+                &ITEMS[..2]
+            );
+            assert_eq!(
+                view.item(ITEMS[2])
+                    .unwrap()
+                    .tabs()
+                    .unwrap()
+                    .items()
+                    .collect::<Vec<_>>(),
+                &ITEMS[2..]
+            );
         });
     }
 }

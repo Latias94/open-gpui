@@ -89,13 +89,31 @@ inside the explicit `legacy` namespace.
 
 ## Shared Docking Receiver And Recovery APIs
 
-The published dockspace pin `537dff0f` adds group-scoped presentation and close
-operations. The adapter renders both **Tab group actions** and **Layout actions**:
+The published dockspace pin `b1a00ee2` supports bare Pane, nested layout tabs
+and shared-track Grid in addition to flat Tabs/Split declarations. Use
+`DockspaceNode::pane(item)` for content without a header,
+`composed_tabs(children)` for direct content or complete child layouts, and
+`grid(shape, children)` for shared row/column tracks. A structural `.named(title)`
+supplies its layout-tab title; it does not replace any descendant pane's title.
+Register all owned real panes, including hidden and inactive descendants.
+
+| Previous core query or match | Current core contract |
+| --- | --- |
+| Tab identity as `ItemId` | `TabKey`; `.item()` is `None` for a layout tab. Retain `ItemId` for real application content. |
+| `item.is_selected()` | `item.is_active()` checks every ancestor's selection and visibility. A header's direct selection is `tabs.selected()` or `visible_selected()`. |
+| `item.tabs()` / `tab_index()` always present | Both are optional for bare Pane content. A containing layout tab is not the pane's immediate inline owner. |
+| `tabs.items()` as a slice | An iterator of directly owned real items. Use `root.items()` / `node.items()` for all descendants, including inactive and hidden content. |
+| `tabs.selected()` as `Option<ItemId>` | `Option<TabKey>`; do not choose a representative descendant for structural tabs. |
+| `SurfaceMeasurementRequest::TabIntrinsic { item, .. }` | `{ key, label, .. }`; measure the frozen `TabLabel::Item` or `Layout` title. |
+| `ClosePlanTarget::Tabs { root, anchor }` | `{ root, group }`, where the session-local `NodeKey` identifies the captured container. Handle `ClosePlanTarget::Tab { root, tab }` and `DockspaceCloseOutcome::TabClosed` for a complete layout tab. |
+| `DockspaceActionOutcome::Selected { item, .. }` | `Selected { tab, .. }`; activating a real item through all ancestors reports `ItemActivated`. |
+
+The adapter renders both **Tab group actions** and **Layout actions**:
 group commands preserve sibling split groups; layout commands retain the complete
 root scope. Match these new variants when exhaustively handling reexported core
-types: `ClosePlanTarget::Tabs { root, anchor }`, `ClosePlanTargetKind::Tabs`, and
-`DockspaceCloseOutcome::TabsClosed { root, items }`. The anchor identifies the
-original captured roster; it is not a request to look up a replacement group.
+types: `ClosePlanTargetKind::Tabs` and
+`DockspaceCloseOutcome::TabsClosed { root, items }`. The original capture retains
+its roster; submission never looks up a replacement group from an old member.
 
 Use `DockSurface::capture_tabs_group(DockAnchor)` to obtain an exact group for an
 application command, then submit `frame.request_close_tabs_current(group)` through

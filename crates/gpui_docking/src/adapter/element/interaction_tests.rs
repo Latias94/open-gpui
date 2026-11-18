@@ -20,6 +20,8 @@ const SURFACE: SurfaceId = SurfaceId::new(51);
 const FIRST: ItemId = ItemId::new(61);
 const SECOND: ItemId = ItemId::new(62);
 
+mod composable;
+mod input_recovery;
 mod keyboard;
 mod presentation_menu;
 mod product_menu_keys;
@@ -118,7 +120,9 @@ fn prepared_chrome_action_waits_for_earlier_original_native_ingress(cx: &mut Tes
                 .draws
                 .iter()
                 .find_map(|draw| match draw {
-                    Draw::Control(control) if matches!(control.kind, ControlKind::Tab(FIRST)) => {
+                    Draw::Control(control)
+                        if matches!(control.kind, ControlKind::Tab(key) if key == FIRST.into()) =>
+                    {
                         control.slot(ControlAction::Next)
                     }
                     _ => None,
@@ -265,14 +269,14 @@ fn tab_keys_wrap_and_preserve_tab_focus_until_explicit_content_activation(cx: &m
     // A tab body click may hand focus to content; Ctrl+Tab navigates from either scope.
     visual.simulate_keystrokes("ctrl-tab");
     frames(&mut visual, &dock);
-    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_active()));
     assert!(!visual.update(|window, cx| handles[1].contains_focused(window, cx)));
     visual.simulate_keystrokes("right");
     frames(&mut visual, &dock);
-    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
     visual.simulate_keystrokes("end");
     frames(&mut visual, &dock);
-    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_active()));
     visual.simulate_keystrokes("enter");
     frames(&mut visual, &dock);
     assert!(visual.update(|window, cx| handles[1].contains_focused(window, cx)));
@@ -358,7 +362,7 @@ fn an_unbound_content_focus_request_is_reported_unavailable(cx: &mut TestAppCont
     let tab = visual.debug_bounds("dockspace:tab:62").unwrap();
     visual.simulate_click(tab.center(), Modifiers::none());
     frames(&mut visual, &dock);
-    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_active()));
     assert!(!visual.update(|window, cx| handles[1].contains_focused(window, cx)));
     assert!(
         dock.host
@@ -386,7 +390,9 @@ fn a_control_from_a_superseded_output_cannot_consume_its_action(cx: &mut TestApp
             .draws
             .iter()
             .find_map(|draw| match draw {
-                Draw::Control(control) if matches!(control.kind, ControlKind::Tab(FIRST)) => {
+                Draw::Control(control)
+                    if matches!(control.kind, ControlKind::Tab(key) if key == FIRST.into()) =>
+                {
                     control.slot(ControlAction::Next)
                 }
                 _ => None,
@@ -525,7 +531,7 @@ fn tab_list_arrows_move_framework_focus_before_enter_activates_the_current_row(
     assert_accessibility_focus(&visual, Role::MenuItem, "Pane 62");
     visual.simulate_keystrokes("enter");
     frames(&mut visual, &dock);
-    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_active()));
     assert!(visual.update(|window, cx| handles[1].contains_focused(window, cx)));
 }
 

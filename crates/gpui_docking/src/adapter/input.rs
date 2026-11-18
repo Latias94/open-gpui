@@ -128,9 +128,10 @@ pub(super) fn queue(
         return false;
     };
     let owner = window.window_handle().window_id();
-    let clear = hitboxes
-        .iter()
-        .any(|hitbox| hitbox.window_point_target_rank(position, window) == Some(0));
+    let clear = window.is_mouse_in_window()
+        && hitboxes
+            .iter()
+            .any(|hitbox| hitbox.window_point_target_rank(position, window) == Some(0));
     let cancellation = matches!(event, SurfacePointerEvent::StreamCancelled(_));
     if !captured && !clear && !cancellation {
         return false;
@@ -197,6 +198,78 @@ pub(super) fn queue(
         region.dirty = true;
     }
     true
+}
+
+/// A newly installed hit graph can revoke stationary feedback without moving
+/// the pointer. Only matching blocked evidence is submitted; removing an overlay
+/// cannot revive the old hover deadline or manufacture a fresh pointer move.
+pub(super) fn revoke_blocked_hover(shared: &super::SharedHost, window: &mut Window) {
+    let owner = window.window_handle().window_id();
+    let mut host = shared.borrow_mut();
+    if host.native.is_some()
+        || host.has_unaccepted_update()
+        || !host.inputs.is_empty()
+        || !host.session.has_active_gesture()
+    {
+        return;
+    }
+    let Some(mount) = host.mounts.get(&owner) else {
+        return;
+    };
+    let pending = mount
+        .pending
+        .as_ref()
+        .filter(|pending| pending.serial == mount.serial)
+        .and_then(|pending| pending.accepted_input_frames());
+    let frames = pending.map_or_else(|| mount.input_frames.clone(), |frames| frames.to_vec());
+    let accepted_pending = pending.is_some();
+    let position = window.mouse_position();
+    let blocked = frames
+        .into_iter()
+        .filter(|frame| {
+            frame.capture.is_captured(window)
+                && (accepted_pending || is_presented(&host, owner, frame.surface, frame.serial))
+                && (!window.is_mouse_in_window()
+                    || !frame
+                        .hitboxes
+                        .iter()
+                        .any(|hitbox| hitbox.window_point_target_rank(position, window) == Some(0)))
+        })
+        .collect::<Vec<_>>();
+    if blocked.is_empty() {
+        return;
+    }
+    let frame = {
+        let Ok(probe) = host.session.begin_host_frame() else {
+            return;
+        };
+        blocked.into_iter().find(|frame| {
+            probe
+                .host_pointer_hover_position(frame.surface)
+                .is_some_and(|(_, point)| logical_point(position, frame.bounds) == Some(point))
+        })
+    };
+    let Some(frame) = frame else {
+        return;
+    };
+    // Accepted hit geometry can veto an old hover even while its new pixels are
+    // deferred. queue() supplies Unknown target authority until presentation;
+    // the retained source route preserves capture. Keep this edge in the same
+    // FIFO so a later clear frame cannot erase the observed blocking evidence.
+    if queue(
+        &mut host,
+        frame.surface,
+        frame.serial,
+        SurfacePointerEvent::Moved,
+        position,
+        frame.bounds,
+        &frame.hitboxes,
+        true,
+        window.modifiers(),
+        window,
+    ) {
+        window.refresh();
+    }
 }
 
 pub(super) fn logical_point(

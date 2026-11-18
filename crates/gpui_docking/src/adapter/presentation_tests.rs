@@ -303,7 +303,7 @@ fn logical_window_removal_revokes_presented_authority_before_native_terminal(
             assert_eq!(retained.contained().count(), 0);
             let item = view.item(ItemId::new(surface.get())).unwrap();
             assert_eq!(
-                (item.surface(), item.root(), item.is_selected()),
+                (item.surface(), item.root(), item.is_active()),
                 (surface, root, true)
             );
         }

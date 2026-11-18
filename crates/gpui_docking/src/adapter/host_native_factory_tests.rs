@@ -357,7 +357,7 @@ fn a_custom_factory_renders_a_new_staging_surface_and_admits_the_original_pane(
         assert_eq!(host.panels[&MOVED].view.entity_id(), identity);
         let item = host.session.view().item(MOVED).unwrap();
         assert_eq!(item.surface(), surface);
-        assert!(item.is_selected());
+        assert!(item.is_active());
         let region = &host.mounts[&child.window_id()].regions[&surface];
         let packet = region.packet.as_ref().unwrap();
         assert!(!packet.is_deferred());

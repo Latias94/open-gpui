@@ -167,7 +167,7 @@ fn assert_painted_pane(
     let host = dock.host.borrow();
     let current = host.session.view().item(item).expect("open pane item");
     assert_eq!(current.surface(), surface);
-    assert!(current.is_selected(), "the core selects the content item");
+    assert!(current.is_active(), "the core selects the content item");
     let region = &host.mounts[&window.window_id()].regions[&surface];
     let packet = region.packet.as_ref().expect("accepted region packet");
     assert!(
@@ -563,7 +563,7 @@ fn moving_a_view_to_another_surface_keeps_its_entity_and_local_state(cx: &mut Te
                 frame.select_item_current(A)?;
                 let moved = frame.view().item(A).expect("the move preserves the item");
                 assert_eq!(moved.surface(), SECOND);
-                assert!(moved.is_selected());
+                assert!(moved.is_active());
                 Ok(())
             },
             cx,
@@ -576,7 +576,7 @@ fn moving_a_view_to_another_surface_keeps_its_entity_and_local_state(cx: &mut Te
             "moving the final ordinary root prunes its logical surface"
         );
         assert_eq!(view.item(A).unwrap().surface(), SECOND);
-        assert!(view.item(A).unwrap().is_selected());
+        assert!(view.item(A).unwrap().is_active());
     });
     frames(&mut visual, &dock);
     assert_painted_pane(&dock, window.into(), SECOND, A);
@@ -678,7 +678,7 @@ fn managed_two_windows_move_the_original_view_and_receive_real_content_clicks(
                 frame.select_item_current(A)?;
                 let moved = frame.view().item(A).expect("the move preserves the item");
                 assert_eq!(moved.surface(), SECOND);
-                assert!(moved.is_selected());
+                assert!(moved.is_active());
                 Ok(())
             },
             cx,
@@ -1336,8 +1336,8 @@ fn managed_stationary_drag_fixture(
     }
     assert!(dock.has_active_gesture());
     dock.with_view(|view| {
-        assert!(view.item(B).unwrap().is_selected());
-        assert!(!view.item(A).unwrap().is_selected());
+        assert!(view.item(B).unwrap().is_active());
+        assert!(!view.item(A).unwrap().is_active());
     });
     (dock, windows[0], frame)
 }
@@ -1374,7 +1374,7 @@ fn managed_stationary_drag_selects_hovered_tab_without_another_native_move(
     cx.background_executor
         .advance_clock(remaining - Duration::from_millis(1));
     cx.run_until_parked();
-    dock.with_view(|view| assert!(!view.item(A).unwrap().is_selected()));
+    dock.with_view(|view| assert!(!view.item(A).unwrap().is_active()));
     assert_eq!(dock.native_pointer_continuation(), Some(request));
     assert_eq!(
         dock.host.borrow().session.native_input_recorded_count(),
@@ -1387,7 +1387,7 @@ fn managed_stationary_drag_selects_hovered_tab_without_another_native_move(
     let mut visual = VisualTestContext::from_window(window, cx);
     frames(&mut visual, &dock);
     assert_painted_pane(&dock, window, FIRST, A);
-    dock.with_view(|view| assert!(!view.item(B).unwrap().is_selected()));
+    dock.with_view(|view| assert!(!view.item(B).unwrap().is_active()));
     assert!(dock.host.borrow().session.native_input_recorded_count() > recorded);
     assert!(
         events.borrow().is_empty(),
@@ -1473,7 +1473,7 @@ fn managed_stationary_drag_without_fresh_samples_keeps_the_original_gesture(
     cx.run_until_parked();
     frames(&mut visual, &dock);
     assert_painted_pane(&dock, window, FIRST, B);
-    dock.with_view(|view| assert!(!view.item(A).unwrap().is_selected()));
+    dock.with_view(|view| assert!(!view.item(A).unwrap().is_active()));
     assert_eq!(dock.native_pointer_continuation(), Some(request));
     assert_eq!(
         dock.host.borrow().session.native_input_recorded_count(),

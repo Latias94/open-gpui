@@ -148,7 +148,7 @@ fn moving_a_capacity_blocked_region_uses_its_accepted_input_coordinates(cx: &mut
     {
         let host = dock.host.borrow();
         let mount = &host.mounts[&target_window.window_id()];
-        assert!(host.session.view().item(C).unwrap().is_selected());
+        assert!(host.session.view().item(C).unwrap().is_active());
         assert!(host.inputs.is_empty());
         assert_eq!(mount.serial, serial);
         assert!(Rc::ptr_eq(
@@ -273,7 +273,7 @@ fn full_capacity_commits_pointer_selection_and_preserves_the_displayed_input_ide
         drain_scheduled(&mut target, &dock, "pointer input at full capacity");
         let host = dock.host.borrow();
         assert!(
-            host.session.view().item(item).unwrap().is_selected(),
+            host.session.view().item(item).unwrap().is_active(),
             "the queued click must select {item:?} while output remains blocked"
         );
         assert!(
@@ -356,7 +356,7 @@ fn later_region_capacity_restarts_the_whole_physical_cohort(cx: &mut TestAppCont
     drain_scheduled(&mut target, &dock, "partial cohort at full capacity");
     {
         let host = dock.host.borrow();
-        assert!(host.session.view().item(C).unwrap().is_selected());
+        assert!(host.session.view().item(C).unwrap().is_active());
         assert!(host.inputs.is_empty());
         assert!(!host.has_unaccepted_update());
         let mount = &host.mounts[&target_window.window_id()];

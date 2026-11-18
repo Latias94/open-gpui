@@ -46,6 +46,19 @@ Each `DockPane` is one View occurrence. Register a distinct GPUI entity and pane
 identity for each View, including Views that share a document. Moving a pane
 retains that entity. Duplicating a View creates another entity sharing the
 application document. One entity cannot be registered under two pane identities.
+
+`DockspaceNode::pane(item)` has no implicit header. `composed_tabs(children)`
+can select one real pane or a complete named Split/Grid layout, while
+`grid(shape, children)` shares row and column tracks across its cells. The
+adapter renders the core's exact geometry; it does not solve or animate tracks
+independently. Layout headers use `TabKey` and their structural title. Real
+content, sizing, focus and Views remain keyed by `ItemId`.
+
+Register every owned pane, including hidden and inactive descendants. Query
+`root.items()` or `node.items()` for complete ownership; `active_items()` describes
+current presentation. A bare pane's immediate `tabs()` and `tab_index()` are
+optional. Switching an outer layout tab removes the inactive body's rendering
+and input while retaining its original View and edited data.
 Use `with_view` to inspect the published session model and `update` to submit
 programmatic changes through the sole semantic frame.
 

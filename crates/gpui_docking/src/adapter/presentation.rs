@@ -46,6 +46,11 @@ pub(in crate::adapter) enum PendingPresentation {
 }
 
 impl PendingSubmission {
+    pub(super) fn accepted_input_frames(&self) -> Option<&[InputFrame]> {
+        self.accepted_generation
+            .map(|_| self.input_frames.as_slice())
+    }
+
     pub(super) fn outputs_for_binding(
         &self,
         binding: dockspace::runtime::NativeSurfaceBinding,

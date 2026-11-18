@@ -187,9 +187,12 @@ fn assert_sibling_group(dock: &DockSurface) {
             assert_eq!(item.surface(), SURFACE);
             assert_eq!(item.root(), LAYOUT);
             assert!(item.contained().is_none());
-            assert_eq!(item.tabs().items(), &[THIRD, FOURTH]);
+            assert_eq!(
+                item.tabs().unwrap().items().collect::<Vec<_>>(),
+                [THIRD, FOURTH]
+            );
         }
-        assert!(view.item(THIRD).unwrap().is_selected());
+        assert!(view.item(THIRD).unwrap().is_active());
     });
 }
 
@@ -242,8 +245,11 @@ fn pointer_accessibility_and_keyboard_float_only_the_captured_tab_group(cx: &mut
             assert_ne!(first.root(), LAYOUT);
             assert_eq!(first.surface(), SURFACE);
             assert_eq!(second.surface(), SURFACE);
-            assert_eq!(first.tabs().items(), &[FIRST, SECOND]);
-            assert!(first.is_selected());
+            assert_eq!(
+                first.tabs().unwrap().items().collect::<Vec<_>>(),
+                [FIRST, SECOND]
+            );
+            assert!(first.is_active());
             assert_eq!(view.surface(SURFACE).unwrap().contained_count(), 1);
             assert_eq!(
                 view.root(LAYOUT)
@@ -252,8 +258,9 @@ fn pointer_accessibility_and_keyboard_float_only_the_captured_tab_group(cx: &mut
                     .unwrap()
                     .tabs()
                     .unwrap()
-                    .items(),
-                &[THIRD, FOURTH]
+                    .items()
+                    .collect::<Vec<_>>(),
+                [THIRD, FOURTH]
             );
         });
         assert_sibling_group(&dock);
@@ -308,7 +315,7 @@ fn root_float_preserves_both_tab_groups_and_the_complete_split(cx: &mut TestAppC
         assert_eq!(
             split
                 .children()
-                .map(|child| child.tabs().unwrap().items().to_vec())
+                .map(|child| child.tabs().unwrap().items().collect::<Vec<_>>())
                 .collect::<Vec<_>>(),
             [vec![FIRST, SECOND], vec![THIRD, FOURTH]]
         );
@@ -348,7 +355,7 @@ fn keyboard_and_accessibility_group_close_use_exact_atomic_decision_tokens(
             plan.target(),
             ClosePlanTarget::Tabs {
                 root: LAYOUT,
-                anchor: FIRST,
+                group: dock.with_view(|view| view.item(FIRST).unwrap().tabs().unwrap().key()),
             }
         );
         assert_eq!(
@@ -374,7 +381,15 @@ fn keyboard_and_accessibility_group_close_use_exact_atomic_decision_tokens(
         });
         frames(&mut visual, &dock);
         dock.with_view(|view| {
-            assert_eq!(view.item(FIRST).unwrap().tabs().items(), &[FIRST, SECOND]);
+            assert_eq!(
+                view.item(FIRST)
+                    .unwrap()
+                    .tabs()
+                    .unwrap()
+                    .items()
+                    .collect::<Vec<_>>(),
+                [FIRST, SECOND]
+            );
             assert!(view.item(SECOND).is_some());
         });
         assert_sibling_group(&dock);
@@ -495,7 +510,15 @@ fn selection_and_topology_changes_invalidate_old_menu_targets_before_another_gro
             } else {
                 vec![THIRD, FOURTH]
             };
-            assert_eq!(view.item(THIRD).unwrap().tabs().items(), expected);
+            assert_eq!(
+                view.item(THIRD)
+                    .unwrap()
+                    .tabs()
+                    .unwrap()
+                    .items()
+                    .collect::<Vec<_>>(),
+                expected
+            );
         });
     }
 }
@@ -570,7 +593,7 @@ fn discarded_prepaint_keeps_the_installed_menu_until_a_replacement_is_accepted(
     assert!(interaction.menu.get().is_none());
     assert!(!menu_is_open(&visual, "Tab group actions"));
     dock.with_view(|view| {
-        assert!(view.item(SECOND).unwrap().is_selected());
+        assert!(view.item(SECOND).unwrap().is_active());
         for item in ITEMS {
             assert!(view.item(item).unwrap().contained().is_none());
         }
@@ -614,7 +637,8 @@ fn narrow_strips_keep_group_root_list_and_grip_hits_inside_their_visible_chrome(
                         lists.push(rect);
                     }
                     Draw::Control(control) if control.slot(ControlAction::Activate).is_some() => {
-                        if let ControlKind::Tab(item) = control.kind {
+                        if let ControlKind::Tab(key) = control.kind {
+                            let item = key.item().expect("the fixture has only item tabs");
                             tabs.push((item, to_gpui(control.bounds, bounds)));
                         }
                     }
@@ -735,13 +759,15 @@ fn narrow_strips_keep_group_root_list_and_grip_hits_inside_their_visible_chrome(
             frames(&mut visual, &dock);
         }
         for (item, _) in tabs {
-            let bounds = visual.update(|window, _| {
-                let host = dock.host.borrow();
-                let region = &host.mounts[&window.window_handle().window_id()].regions[&SURFACE];
-                region.packet.as_ref().unwrap().draws.iter().find_map(|draw| {
+            let bounds =
+                visual.update(|window, _| {
+                    let host = dock.host.borrow();
+                    let region =
+                        &host.mounts[&window.window_handle().window_id()].regions[&SURFACE];
+                    region.packet.as_ref().unwrap().draws.iter().find_map(|draw| {
                     match draw {
                         Draw::Control(control)
-                            if matches!(control.kind, ControlKind::Tab(candidate) if candidate == item)
+                            if matches!(control.kind, ControlKind::Tab(key) if key == item.into())
                                 && control.slot(ControlAction::Activate).is_some() =>
                         {
                             Some(to_gpui(control.bounds, region.bounds.unwrap()))
@@ -749,7 +775,7 @@ fn narrow_strips_keep_group_root_list_and_grip_hits_inside_their_visible_chrome(
                         _ => None,
                     }
                 })
-            });
+                });
             let Some(bounds) = bounds else {
                 continue;
             };
@@ -760,7 +786,7 @@ fn narrow_strips_keep_group_root_list_and_grip_hits_inside_their_visible_chrome(
             visual.simulate_click(position, Modifiers::none());
             frames(&mut visual, &dock);
             assert!(
-                dock.with_view(|view| view.item(item).unwrap().is_selected()),
+                dock.with_view(|view| view.item(item).unwrap().is_active()),
                 "width={width}"
             );
             assert!(

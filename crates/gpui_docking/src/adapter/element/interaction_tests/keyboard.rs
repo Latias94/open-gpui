@@ -35,11 +35,11 @@ fn tab_navigation_round_trip_and_activation_do_not_require_an_intermediate_paint
     frames(&mut visual, &dock);
     focus_tab(FIRST, &mut visual);
     visual.simulate_keystrokes("right left");
-    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
     frames(&mut visual, &dock);
     visual.simulate_keystrokes("end enter");
     frames(&mut visual, &dock);
-    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_active()));
     assert!(visual.update(|window, cx| handles[1].contains_focused(window, cx)));
     let version = dock.host.borrow().session.version();
     frames(&mut visual, &dock);
@@ -81,10 +81,10 @@ fn repeated_navigation_and_document_cycles_reach_the_third_tab_between_submissio
     frames(&mut visual, &dock);
     focus_tab(FIRST, &mut visual);
     visual.simulate_keystrokes("right right");
-    assert!(dock.with_view(|view| view.item(third).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(third).unwrap().is_active()));
     frames(&mut visual, &dock);
     visual.simulate_keystrokes("ctrl-shift-tab ctrl-shift-tab");
-    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
     frames(&mut visual, &dock);
     assert_accessibility_focus(&visual, Role::Tab, "Pane 61");
 }
@@ -101,11 +101,11 @@ fn a_new_application_blur_supersedes_keyboard_continuation(cx: &mut TestAppConte
     frames(&mut visual, &dock);
     focus_tab(FIRST, &mut visual);
     visual.simulate_keystrokes("right");
-    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_active()));
     visual.update(|window, cx| window.blur(cx));
     visual.simulate_keystrokes("left");
     frames(&mut visual, &dock);
-    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_active()));
     assert!(visual.update(|window, cx| window.focused(cx).is_none()));
 }
 
@@ -123,14 +123,14 @@ fn managed_header_navigation_keeps_its_original_window_and_content_focus(cx: &mu
     focus_tab(FIRST, &mut visual);
     visual.simulate_keystrokes("right left");
     frames(&mut visual, &dock);
-    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
     assert_eq!(
         dock.native_binding_for_window(window.window_id()),
         Some(binding)
     );
     visual.simulate_keystrokes("end enter");
     frames(&mut visual, &dock);
-    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_active()));
     assert!(visual.update(|window, cx| handles[1].contains_focused(window, cx)));
     cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();
     cx.run_until_parked();
@@ -287,7 +287,7 @@ fn core_tab_list_down_down_enter_preserves_the_same_update_prefix(cx: &mut TestA
         );
     });
     frames(&mut visual, &dock);
-    assert!(dock.with_view(|view| view.item(ItemId::new(63)).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(ItemId::new(63)).unwrap().is_active()));
     assert!(visual.update(|window, cx| handles[2].contains_focused(window, cx)));
     visual.update(|window, cx| {
         assert!(!window.dispatch_keystroke(Keystroke::parse("up").unwrap(), cx));
@@ -307,7 +307,7 @@ fn core_tab_list_up_boundary_clamps_before_reversing(cx: &mut TestAppContext) {
         }
     });
     frames(&mut visual, &dock);
-    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_active()));
     assert!(visual.update(|window, cx| handles[1].contains_focused(window, cx)));
 }
 
@@ -320,7 +320,7 @@ fn core_tab_list_end_boundary_clamps_before_reversing(cx: &mut TestAppContext) {
         }
     });
     frames(&mut visual, &dock);
-    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_active()));
     assert!(visual.update(|window, cx| handles[1].contains_focused(window, cx)));
 }
 
@@ -333,7 +333,7 @@ fn core_tab_list_home_uses_the_destination_of_the_preceding_key(cx: &mut TestApp
         }
     });
     frames(&mut visual, &dock);
-    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_active()));
     assert!(visual.update(|window, cx| handles[1].contains_focused(window, cx)));
 }
 
@@ -409,7 +409,7 @@ fn core_tab_list_prefix_continues_through_an_unpresented_frame(cx: &mut TestAppC
                     .view()
                     .item(ItemId::new(63))
                     .unwrap()
-                    .is_selected(),
+                    .is_active(),
                 window.focused(cx),
                 window.committed_focus(cx),
                 window.focus_claim_revision(),
@@ -423,7 +423,7 @@ fn core_tab_list_prefix_continues_through_an_unpresented_frame(cx: &mut TestAppC
             break;
         }
     }
-    assert!(dock.with_view(|view| view.item(ItemId::new(63)).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(ItemId::new(63)).unwrap().is_active()));
     assert!(
         visual.update(|window, cx| handles[2].contains_focused(window, cx)),
         "deferred menu confirmation must focus the selected pane:\n{}",
@@ -458,7 +458,7 @@ fn core_tab_list_cancel_ends_the_same_update_prefix(cx: &mut TestAppContext) {
         assert_eq!(dock.host.borrow().session.version(), version);
     });
     frames(&mut visual, &dock);
-    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
     assert_accessibility_focus(&visual, Role::Button, "Show all tabs");
 }
 
@@ -486,7 +486,7 @@ fn core_tab_list_cancel_then_opener_down_preserves_the_reopen_order(cx: &mut Tes
     for _ in 0..3 {
         frames(&mut visual, &dock);
     }
-    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
     assert_accessibility_focus(&visual, Role::MenuItem, "Pane 61");
     let reopened_row = interaction.tab_list_focus.borrow().as_ref().unwrap().row;
     assert_ne!(
@@ -524,7 +524,7 @@ fn core_tab_list_pending_prefix_cannot_override_an_application_focus_claim(
         claim
     });
     frames(&mut visual, &dock);
-    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
     visual.update(|window, cx| {
         assert!(focus.contains_focused(window, cx));
         assert_eq!(window.focus_claim_revision(), claim);
@@ -563,7 +563,7 @@ fn core_tab_list_pending_prefix_cannot_acquire_a_replacement_epoch(cx: &mut Test
     });
     frames(&mut visual, &dock);
     assert_eq!(dock.host.borrow().session.version(), replacement);
-    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
     let tree = visual.latest_accessibility_tree_update().unwrap();
     assert!(
         !tree
@@ -657,12 +657,12 @@ fn document_cycles_start_at_selection_while_header_arrows_start_at_focus(cx: &mu
         .unwrap();
         frames(&mut visual, &dock);
         focus_tab(SECOND, &mut visual);
-        assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_selected()));
+        assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
         visual.update(|window, cx| {
             assert!(window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx));
         });
         assert!(
-            dock.with_view(|view| view.item(expected).unwrap().is_selected()),
+            dock.with_view(|view| view.item(expected).unwrap().is_active()),
             "{key}"
         );
         frames(&mut visual, &dock);
@@ -697,7 +697,7 @@ fn activation_yields_the_same_update_key_suffix_to_rendered_content(cx: &mut Tes
             Some(request)
         );
     });
-    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
     frames(&mut visual, &dock);
     assert!(visual.update(|window, cx| handles[0].contains_focused(window, cx)));
     visual.update(|window, cx| {
@@ -724,7 +724,7 @@ fn clipped_end_target_activates_before_left_yields_to_content(cx: &mut TestAppCo
             let host = dock.host.borrow();
             let packet = host.mounts[&window.window_handle().window_id()].regions[&SURFACE].packet.as_ref().unwrap();
             assert!(!packet.draws.iter().any(|draw| matches!(draw,
-                Draw::Control(control) if matches!(control.kind, ControlKind::Tab(item) if item == last)
+                Draw::Control(control) if matches!(control.kind, ControlKind::Tab(key) if key == last.into())
             )), "the destination must have no control in the original packet");
             assert!(!window.is_focus_handle_rendered(handles.last().unwrap()));
         }
@@ -739,7 +739,7 @@ fn clipped_end_target_activates_before_left_yields_to_content(cx: &mut TestAppCo
         keys.borrow().is_empty(),
         "the clipped content has not been rendered yet"
     );
-    assert!(dock.with_view(|view| view.item(last).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(last).unwrap().is_active()));
     frames(&mut visual, &dock);
     assert!(visual.update(|window, cx| handles.last().unwrap().contains_focused(window, cx)));
 }
@@ -762,7 +762,7 @@ fn clipped_navigation_in_an_earlier_update_still_allows_content_activation(
     visual.update(|window, cx| {
         assert!(window.dispatch_keystroke(Keystroke::parse("end").unwrap(), cx));
     });
-    assert!(dock.with_view(|view| view.item(last).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(last).unwrap().is_active()));
     visual.update(|window, cx| {
         assert!(window.dispatch_keystroke(Keystroke::parse("enter").unwrap(), cx));
         assert!(
@@ -807,7 +807,7 @@ fn an_application_blur_cancels_clipped_activation_waiting_for_presentation(
     visual.simulate_keystrokes("enter");
     visual.update(|window, cx| window.blur(cx));
     frames(&mut visual, &dock);
-    assert!(dock.with_view(|view| view.item(last).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(last).unwrap().is_active()));
     assert!(visual.update(|window, cx| window.focused(cx).is_none()));
     assert!(
         dock.host
@@ -840,7 +840,7 @@ fn one_update_navigation_round_trip_and_cycles_preserve_event_order(cx: &mut Tes
                 assert!(window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx));
             }
         });
-        assert!(dock.with_view(|view| view.item(expected).unwrap().is_selected()));
+        assert!(dock.with_view(|view| view.item(expected).unwrap().is_active()));
     }
     frames(&mut visual, &dock);
     assert_accessibility_focus(&visual, Role::Tab, "Pane 61");
@@ -862,7 +862,7 @@ fn a_later_content_focus_claim_cancels_the_unsubmitted_key_prefix(cx: &mut TestA
         window.focus(&handles[0], cx);
         window.focus_claim_revision()
     });
-    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
     frames(&mut visual, &dock);
     visual.update(|window, cx| {
         assert!(handles[0].contains_focused(window, cx));
@@ -885,7 +885,7 @@ fn same_epoch_reordering_rejects_the_original_keyboard_scope(cx: &mut TestAppCon
     visual.update(|window, cx| {
         window.dispatch_keystroke(Keystroke::parse("right").unwrap(), cx);
     });
-    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_active()));
     let before = dock.host.borrow().session.version();
     cx.update(|cx| {
         dock.update(
@@ -904,7 +904,7 @@ fn same_epoch_reordering_rejects_the_original_keyboard_scope(cx: &mut TestAppCon
         window.dispatch_keystroke(Keystroke::parse("right").unwrap(), cx);
     });
     assert_eq!(dock.host.borrow().session.version(), reordered);
-    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_active()));
 }
 
 #[open_gpui::test]
@@ -922,7 +922,7 @@ fn layout_reset_rejects_a_key_continuation_before_another_frame(cx: &mut TestApp
     visual.update(|window, cx| {
         window.dispatch_keystroke(Keystroke::parse("right").unwrap(), cx);
     });
-    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_active()));
     let previous = dock.host.borrow().session.version();
     let reset = dock
         .host
@@ -945,7 +945,7 @@ fn layout_reset_rejects_a_key_continuation_before_another_frame(cx: &mut TestApp
         replacement
     });
     assert_eq!(dock.host.borrow().session.version(), replacement);
-    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
     frames(&mut visual, &dock);
     assert!(dock.error().is_none());
 }
@@ -1034,5 +1034,5 @@ fn layout_reset_cannot_restore_pending_header_focus_or_refresh_its_witness(
             "an old header focus request cannot cross the reset epoch"
         );
     });
-    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
 }

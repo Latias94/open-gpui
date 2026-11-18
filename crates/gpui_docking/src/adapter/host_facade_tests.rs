@@ -175,7 +175,7 @@ fn restored_closed_pane_opens_its_registered_view_and_receives_content_clicks(
     assert_eq!(reopened.read_with(&visual, |view, _| view.clicks), 1);
     assert_eq!(views[0].read_with(&visual, |view, _| view.clicks), 0);
     assert_eq!(views[1].read_with(&visual, |view, _| view.clicks), 0);
-    assert!(dock.with_view(|view| view.item(closed).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(closed).unwrap().is_active()));
     assert_eq!(dock.item_id_for_external_key(KEYS[2]), Some(closed));
     assert_eq!(
         dock.host.borrow().panels[&closed].view.entity_id(),
@@ -449,17 +449,12 @@ fn live_capture_roundtrips_committed_layout_and_closed_keys_while_submission_is_
             .item(items[0])
             .unwrap()
             .tabs()
-            .items(),
+            .unwrap()
+            .items()
+            .collect::<Vec<_>>(),
         items
     );
-    assert!(
-        restored
-            .session
-            .view()
-            .item(items[1])
-            .unwrap()
-            .is_selected()
-    );
+    assert!(restored.session.view().item(items[1]).unwrap().is_active());
     assert_eq!(open_pane_bindings(&restored.session).unwrap().len(), 2);
     for (key, item) in [KEYS[2], KEYS[3]].into_iter().zip(closed) {
         assert_eq!(restored.session.item_id_for_external_key(key), Some(item));

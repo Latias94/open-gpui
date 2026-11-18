@@ -41,10 +41,10 @@ fn assert_group(dock: &DockSurface, items: [ItemId; 2], surface: SurfaceId) -> R
             let location = view.item(item).unwrap();
             assert_eq!(location.surface(), surface);
             assert_eq!(location.root(), root);
-            assert_eq!(location.tabs().items(), items);
-            assert_eq!(location.tabs().selected(), Some(items[1]));
-            assert_eq!(location.tab_index(), index);
-            assert_eq!(location.is_selected(), index == 1);
+            assert_eq!(location.tabs().unwrap().items().collect::<Vec<_>>(), items);
+            assert_eq!(location.tabs().unwrap().selected(), Some(items[1].into()));
+            assert_eq!(location.tab_index(), Some(index));
+            assert_eq!(location.is_active(), index == 1);
             assert!(location.is_visible());
             assert!(location.contained().is_none());
         }
@@ -458,7 +458,12 @@ fn tabs_group_menu_waits_for_exact_first_live_and_closes_only_its_native_group(
     dock.with_view(|view| {
         let root = view.surface(SOURCE).unwrap().main_root().unwrap();
         assert_eq!(
-            root.content().unwrap().tabs().unwrap().items(),
+            root.content()
+                .unwrap()
+                .tabs()
+                .unwrap()
+                .items()
+                .collect::<Vec<_>>(),
             SIBLING_GROUP
         );
     });

@@ -560,7 +560,7 @@ fn managed_desktop_drag(cx: &mut TestAppContext, button_state_available: bool, o
                 },
                 "desktop delivery must respect the backend's button authority"
             );
-            assert!(moved.is_selected());
+            assert!(moved.is_active());
         });
     }
     assert!(!dock.has_active_gesture());

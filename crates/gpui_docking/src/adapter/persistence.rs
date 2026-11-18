@@ -36,8 +36,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use dockspace::geometry::LogicalRect;
 use dockspace::model::{
     DockspaceAxis, DockspaceContainedLayout, DockspaceLayout, DockspaceLayoutError, DockspaceNode,
-    DockspaceNodeView, DockspaceRootLayout, DockspaceSurfaceLayout, FloatingPresentationId, ItemId,
-    RootId, SurfaceId,
+    DockspaceRootLayout, DockspaceSurfaceLayout, FloatingPresentationId, ItemId, RootId, SurfaceId,
 };
 use dockspace::policy::DockPolicy;
 use dockspace::runtime::{
@@ -564,6 +563,9 @@ pub struct DockPaneBinding<'session> {
 
 /// Enumerates open occurrences once, in surface/root/child/tab order.
 ///
+/// Includes every owned pane, including hidden panes and inactive layout branches.
+/// Surfaces use stable identity order. Each main root precedes its contained roots
+/// in back-to-front presentation order, with the core's visual preorder within roots.
 /// All locations are validated before returning any bindings. A host can then
 /// prepare one View per key in a temporary registry and publish it atomically.
 /// Closed keys stay in the core history and are resolved with
@@ -580,27 +582,16 @@ pub fn open_pane_bindings(
             .into_iter()
             .chain(surface.contained().filter_map(|floating| floating.root()));
         for root in roots {
-            let mut pending = root
-                .content()
-                .into_iter()
-                .collect::<Vec<DockspaceNodeView<'_>>>();
-            while let Some(node) = pending.pop() {
-                if let Some(tabs) = node.tabs() {
-                    for &item in tabs.items() {
-                        if !seen.insert(item) {
-                            return Err(invalid(
-                                "a pane occurs in more than one core content location",
-                            ));
-                        }
-                        let pane_key = session
-                            .external_key_for_item(item)
-                            .ok_or_else(|| invalid("an open core item has no external pane key"))?;
-                        bindings.push(DockPaneBinding { pane_key, item });
-                    }
-                } else if let Some(split) = node.split() {
-                    let children = split.children().collect::<Vec<_>>();
-                    pending.extend(children.into_iter().rev());
+            for item in root.items() {
+                if !seen.insert(item) {
+                    return Err(invalid(
+                        "a pane occurs in more than one core content location",
+                    ));
                 }
+                let pane_key = session
+                    .external_key_for_item(item)
+                    .ok_or_else(|| invalid("an open core item has no external pane key"))?;
+                bindings.push(DockPaneBinding { pane_key, item });
             }
         }
     }

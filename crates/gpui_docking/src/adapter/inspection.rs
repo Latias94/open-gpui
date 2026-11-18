@@ -25,7 +25,7 @@ pub enum DockInspectionError {
 pub struct DockSurfaceInspection {
     /// Number of logical surfaces in the committed session view.
     pub model_surface_count: usize,
-    /// Number of open pane occurrences in the committed session view.
+    /// Number of owned pane occurrences, including hidden and inactive content.
     pub open_pane_count: usize,
     /// Number of retained application views, including registered closed panes.
     pub registered_pane_count: usize,
@@ -62,7 +62,7 @@ pub struct DockSurfaceInspection {
 pub struct DockModelSurfaceInspection {
     /// Stable logical surface identity.
     pub surface: SurfaceId,
-    /// Number of open panes across the main and contained roots.
+    /// Number of owned panes across all roots, including hidden and inactive content.
     pub open_pane_count: usize,
     /// Number of contained floating presentations.
     pub contained_count: usize,
@@ -262,21 +262,12 @@ impl DockSurface {
 }
 
 fn inspect_model_surface(surface: DockspaceSurfaceView<'_>) -> DockModelSurfaceInspection {
-    let mut nodes = Vec::new();
-    nodes.extend(surface.main_root().and_then(|root| root.content()));
-    nodes.extend(
-        surface
-            .contained()
-            .filter_map(|contained| contained.root().and_then(|root| root.content())),
-    );
-    let mut open_pane_count = 0;
-    while let Some(node) = nodes.pop() {
-        if let Some(tabs) = node.tabs() {
-            open_pane_count += tabs.items().len();
-        } else if let Some(split) = node.split() {
-            nodes.extend(split.children());
-        }
-    }
+    let open_pane_count = surface
+        .main_root()
+        .into_iter()
+        .chain(surface.contained().filter_map(|contained| contained.root()))
+        .map(|root| root.items().count())
+        .sum();
     DockModelSurfaceInspection {
         surface: surface.id(),
         open_pane_count,

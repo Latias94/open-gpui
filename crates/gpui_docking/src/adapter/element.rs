@@ -9,7 +9,7 @@ use std::{
 use anyhow::{Context as _, Result};
 use dockspace::{
     geometry::{LogicalRect, LogicalSize},
-    model::{ItemId, SurfaceId},
+    model::{ItemId, SurfaceId, TabKey},
     runtime::{
         DockspacePaneFocusObservation, DockspacePaneFocusRequest, DockspaceReceiverDescriptor,
         DockspaceUpdate, DockspaceVisualId, HostFrameReport, SurfaceMeasurementAnswer as Answer,
@@ -21,7 +21,7 @@ use dockspace::{
 use open_gpui::{
     AccessibleAction, AnyElement, App, AvailableSpace, Bounds, Element, ElementId, FocusHandle,
     GlobalElementId, HitboxBehavior, HitboxId, Hsla, InspectorElementId, IntoElement, KeyDownEvent,
-    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    LayoutId, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     PointerCaptureHandle, PreparedSubtreeClip, Role, Style, SubtreeClip, SubtreePresentation,
     SubtreePresentationExt, TextRun, Window, div, fill, point, prelude::*, px, relative, size,
 };
@@ -49,6 +49,7 @@ mod interaction_tests;
 
 pub(super) struct Packet {
     draws: Vec<Draw>,
+    pane_bars: BTreeMap<ItemId, Option<DockspaceVisualId>>,
     deferred: bool,
     pub(super) native_preview: Option<host_native::provisional::Preview>,
 }
@@ -71,7 +72,7 @@ impl Packet {
         self.draws
             .iter()
             .filter_map(|draw| match draw {
-                Draw::Pane(_, item) => Some(*item),
+                Draw::Pane(_, item, _) => Some(*item),
                 _ => None,
             })
             .collect()
@@ -80,14 +81,14 @@ impl Packet {
 
 enum Draw {
     Fill(LogicalRect, Hsla),
-    Tab(LogicalRect, ItemId, Hsla, bool),
+    Tab(LogicalRect, TabKey, Hsla, bool),
     ContainedFrame(LogicalRect),
     ContainedTitle(LogicalRect, Hsla),
     Guide(LogicalRect, GuideState),
     Outline(LogicalRect, Hsla),
     Text(LogicalRect, String, Hsla),
-    TabText(LogicalRect, LogicalRect, ItemId, String, Hsla),
-    Pane(LogicalRect, ItemId),
+    TabText(LogicalRect, LogicalRect, TabKey, String, Hsla),
+    Pane(LogicalRect, ItemId, LogicalRect),
     Receiver(DockspaceReceiverDescriptor),
     Preview(LogicalRect),
     NativePreview(host_native::provisional::Preview),
@@ -100,7 +101,7 @@ enum Draw {
 
 enum PreparedDraw {
     Fill(Bounds<Pixels>, Hsla),
-    Tab(Bounds<Pixels>, ItemId, Hsla, bool),
+    Tab(Bounds<Pixels>, TabKey, Hsla, bool),
     ContainedFrame(Bounds<Pixels>),
     ContainedTitle(Bounds<Pixels>, Hsla),
     Guide(Bounds<Pixels>, GuideState),
@@ -112,7 +113,7 @@ enum PreparedDraw {
 
 #[derive(Default)]
 struct InteractionState {
-    hovered_tab: Rc<Cell<Option<ItemId>>>,
+    hovered_tab: Rc<Cell<Option<TabKey>>>,
     focus: RefCell<BTreeMap<DockspaceVisualId, FocusHandle>>,
     menu: Cell<Option<presentation_menu::OpenMenu>>,
     menu_sequence: Cell<u64>,
@@ -163,13 +164,14 @@ pub(crate) struct PreparedRegion {
     surface: SurfaceId,
     draws: Vec<PreparedDraw>,
     hitboxes: Vec<HitboxId>,
-    tabs: Vec<(ItemId, HitboxId)>,
+    tabs: Vec<(TabKey, HitboxId)>,
     capture: PointerCaptureHandle,
     serial: u64,
     bounds: Bounds<Pixels>,
     receivers: Vec<(DockspaceReceiverDescriptor, HitboxId)>,
     controls: Vec<(Rc<Control>, FocusHandle, HitboxId)>,
     visible_panes: Vec<ItemId>,
+    pane_bars: BTreeMap<ItemId, Option<DockspaceVisualId>>,
     admitted: bool,
     scrolls: Vec<wheel::ScrollTarget>,
 }
@@ -444,6 +446,7 @@ impl DockspaceElement {
                                 region.packet.clone().unwrap_or_else(|| {
                                     Rc::new(Packet {
                                         draws: Vec::new(),
+                                        pane_bars: BTreeMap::new(),
                                         deferred: true,
                                         native_preview: None,
                                     })
@@ -471,6 +474,7 @@ impl DockspaceElement {
                                 region.packet.clone().unwrap_or_else(|| {
                                     Rc::new(Packet {
                                         draws: Vec::new(),
+                                        pane_bars: BTreeMap::new(),
                                         deferred: true,
                                         native_preview: None,
                                     })
@@ -532,6 +536,7 @@ impl DockspaceElement {
                                         region.packet.clone().unwrap_or_else(|| {
                                             Rc::new(Packet {
                                                 draws: Vec::new(),
+                                                pane_bars: BTreeMap::new(),
                                                 deferred: true,
                                                 native_preview: None,
                                             })
@@ -695,6 +700,7 @@ impl DockspaceElement {
                 if hovered_tab.replace(current) != current {
                     window.refresh();
                 }
+                input::revoke_blocked_hover(&shared, window);
             },
             move |_, window, cx| presentation::discard(&discard, window, cx),
         );
@@ -944,7 +950,7 @@ impl DockspaceElement {
                         .text_color(*color)
                         .when_some(
                             match draw {
-                                Draw::TabText(_, _, item, _, _) => Some(*item),
+                                Draw::TabText(_, _, key, _, _) => key.item(),
                                 _ => None,
                             },
                             |text, item| {
@@ -963,7 +969,7 @@ impl DockspaceElement {
                         draws.push(PreparedDraw::ClippedElement(element, clip));
                     }
                 }
-                Draw::Pane(rect, item) => {
+                Draw::Pane(rect, item, clip) => {
                     let rect = to_gpui(*rect, bounds);
                     let view = self
                         .host
@@ -1009,7 +1015,10 @@ impl DockspaceElement {
                             .child("Pane unavailable")
                             .into_any_element(),
                     };
-                    let clip = window.prepare_subtree_clip(&SubtreeClip::own_border_box(), rect);
+                    let clip = window.prepare_subtree_clip(
+                        &SubtreeClip::own_border_box(),
+                        to_gpui(*clip, bounds),
+                    );
                     if window
                         .with_prepared_subtree_clip(&clip, |window| {
                             element.prepaint_as_root(rect.origin, definite(rect), window, cx);
@@ -1046,6 +1055,7 @@ impl DockspaceElement {
             receivers,
             controls,
             visible_panes,
+            pane_bars: packet.pane_bars.clone(),
             admitted,
             scrolls,
         }
@@ -1238,6 +1248,9 @@ impl DockspaceElement {
     fn listen(&self, prepared: &PreparedRegion, window: &mut Window) {
         wheel::listen(&self.host, &self.interaction, prepared, window);
         let surface = prepared.surface;
+        let capture = prepared.capture;
+        let serial = prepared.serial;
+        let bounds = prepared.bounds;
         let owner = window.window_handle().window_id();
         let tabs = prepared.tabs.clone();
         let hovered = self.interaction.hovered_tab.clone();
@@ -1254,9 +1267,36 @@ impl DockspaceElement {
         });
         let shared = self.host.clone();
         let hitboxes = prepared.hitboxes.clone();
-        let capture = prepared.capture;
-        let serial = prepared.serial;
-        let bounds = prepared.bounds;
+        let interaction = self.interaction.clone();
+        window.on_mouse_event(move |event: &MouseExitEvent, phase, window, _| {
+            if !phase.capture() {
+                return;
+            }
+            if interaction.hovered_tab.take().is_some() {
+                window.refresh();
+            }
+            let mut host = shared.borrow_mut();
+            if host.native.is_none()
+                && capture.is_captured(window)
+                && routes_to(&host, surface, event.position, window)
+                && input::queue(
+                    &mut host,
+                    surface,
+                    serial,
+                    SurfacePointerEvent::Moved,
+                    event.position,
+                    bounds,
+                    &hitboxes,
+                    true,
+                    window.modifiers(),
+                    window,
+                )
+            {
+                window.refresh();
+            }
+        });
+        let shared = self.host.clone();
+        let hitboxes = prepared.hitboxes.clone();
         let controls = prepared.controls.clone();
         let interaction = self.interaction.clone();
         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
@@ -1414,6 +1454,7 @@ impl DockspaceElement {
         let shared = self.host.clone();
         let interaction = self.interaction.clone();
         let controls = prepared.controls.clone();
+        let pane_bars = prepared.pane_bars.clone();
         window.on_key_event(move |event: &KeyDownEvent, phase, window, cx| {
             if !phase.bubble() || capture.is_captured(window) {
                 return;
@@ -1424,16 +1465,23 @@ impl DockspaceElement {
             let control = {
                 let host = shared.borrow();
                 let scope = &host.mounts[&owner].focus;
-                controls.iter().find_map(|(control, focus, _)| {
-                    let ControlKind::Tab(item) = control.kind else {
+                let content_bar = pane_bars.iter().find_map(|(item, bar)| {
+                    host.panels
+                        .get(item)
+                        .and_then(|pane| pane.content_focus.as_ref())
+                        .is_some_and(|focus| focus.contains_focused(window, cx))
+                        .then_some(*bar)
+                        .flatten()
+                });
+                controls.iter().rev().find_map(|(control, focus, _)| {
+                    if !matches!(control.kind, ControlKind::Tab(_)) {
                         return None;
-                    };
+                    }
                     let owns_focus = focus.is_focused(window)
-                        || host
-                            .panels
-                            .get(&item)
-                            .and_then(|pane| pane.content_focus.as_ref())
-                            .is_some_and(|focus| focus.contains_focused(window, cx));
+                        || control
+                            .tab_keys
+                            .as_ref()
+                            .is_some_and(|keys| Some(keys.bar) == content_bar);
                     (owns_focus || (scope.is_focused(window) && control.selected == Some(true)))
                         .then(|| control.clone())
                 })
@@ -1637,12 +1685,7 @@ fn activate_action_with_continuation(
         .flatten();
     let focus = tab_focus
         .filter(|_| !yields_content)
-        .filter(|(_, item)| {
-            host.session
-                .view()
-                .item(*item)
-                .is_some_and(|item| item.surface() == surface && item.is_selected())
-        })
+        .filter(|(_, key)| keyboard::tab_is_selected(host.session.view(), surface, *key))
         .map(|(visual, _)| {
             (
                 visual,
@@ -1975,11 +2018,14 @@ fn source_preview_bounds(
 }
 
 fn hovered_tab_at(
-    tabs: &[(ItemId, HitboxId)],
+    tabs: &[(TabKey, HitboxId)],
     position: open_gpui::Point<Pixels>,
     window: &Window,
-) -> Option<ItemId> {
-    if window.last_input_was_keyboard() || window.last_input_was_touch() {
+) -> Option<TabKey> {
+    if !window.is_mouse_in_window()
+        || window.last_input_was_keyboard()
+        || window.last_input_was_touch()
+    {
         return None;
     }
     tabs.iter().find_map(|(item, hitbox)| {
@@ -2056,6 +2102,7 @@ fn build_candidate(
                 surface,
                 Rc::new(Packet {
                     draws: Vec::new(),
+                    pane_bars: BTreeMap::new(),
                     deferred,
                     native_preview: None,
                 }),
@@ -2071,6 +2118,7 @@ fn build_candidate(
                 surface,
                 Rc::new(Packet {
                     draws: Vec::new(),
+                    pane_bars: BTreeMap::new(),
                     deferred: true,
                     native_preview: None,
                 }),
@@ -2098,13 +2146,14 @@ fn build_candidate(
                         |pane| pane.sizing,
                     ))
                 }
-                Request::TabIntrinsic { item, .. } => {
-                    let width = panels.get(&item).map_or(120.0, |pane| {
+                Request::TabIntrinsic { label, .. } => {
+                    let title: open_gpui::SharedString = recording::tab_label(label, panels).into();
+                    let width = {
                         let line = window.text_system().shape_line(
-                            pane.title.clone(),
+                            title.clone(),
                             config.text_size,
                             &[TextRun {
-                                len: pane.title.len(),
+                                len: title.len(),
                                 font: config.font.clone(),
                                 color: config.colors.text,
                                 ..Default::default()
@@ -2112,7 +2161,7 @@ fn build_candidate(
                             None,
                         );
                         f64::from(f32::from(line.width))
-                    });
+                    };
                     Answer::TabIntrinsic(width)
                 }
                 Request::TabStrip { .. } => Answer::TabStrip(tab_strip),
@@ -2136,6 +2185,7 @@ fn build_candidate(
                     surface,
                     Rc::new(Packet {
                         draws: Vec::new(),
+                        pane_bars: BTreeMap::new(),
                         deferred: true,
                         native_preview: None,
                     }),

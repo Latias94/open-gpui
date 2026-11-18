@@ -941,5 +941,5 @@ pub(super) fn shared_surface_contains_item(
 pub(super) fn shared_item_selected(session: &SharedSession, item: ItemId) -> bool {
     session
         .dock
-        .with_view(|view| view.item(item).is_some_and(|item| item.is_selected()))
+        .with_view(|view| view.item(item).is_some_and(|item| item.is_active()))
 }

@@ -152,6 +152,7 @@ impl DockSurface {
     ///
     /// A single GPUI entity cannot be registered under two pane identities. To
     /// duplicate a document View, create another entity sharing that document.
+    /// Every owned pane, including hidden and inactive descendants, needs a View.
     pub fn new(
         session: DockspaceSession,
         panes: impl IntoIterator<Item = DockPane>,
@@ -198,24 +199,15 @@ impl DockSurface {
             );
         }
         for surface in session.view().surfaces() {
-            let mut nodes = Vec::new();
-            if let Some(root) = surface.main_root() {
-                nodes.extend(root.content());
-            }
-            for contained in surface.contained() {
-                nodes.extend(contained.root().and_then(|root| root.content()));
-            }
-            while let Some(node) = nodes.pop() {
-                if let Some(tabs) = node.tabs() {
-                    for item in tabs.items() {
-                        ensure!(
-                            panels.contains_key(item),
-                            "open item {item:?} has no GPUI View"
-                        );
-                    }
-                } else if let Some(split) = node.split() {
-                    nodes.extend(split.children());
-                }
+            let roots = surface
+                .main_root()
+                .into_iter()
+                .chain(surface.contained().filter_map(|contained| contained.root()));
+            for item in roots.flat_map(|root| root.items()) {
+                ensure!(
+                    panels.contains_key(&item),
+                    "open item {item:?} has no GPUI View"
+                );
             }
         }
         if !managed {
@@ -917,3 +909,7 @@ mod tests;
 #[cfg(test)]
 #[path = "host_pane_lifecycle_tests.rs"]
 mod pane_lifecycle_tests;
+
+#[cfg(test)]
+#[path = "composable_ownership_tests.rs"]
+mod composable_ownership_tests;

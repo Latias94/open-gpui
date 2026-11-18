@@ -391,7 +391,7 @@ pub(super) async fn lose_and_recover_destination(
                     && view.item(source.item).is_some_and(|item| {
                         item.surface() == source.surface
                             && item.root() == source_main
-                            && item.is_selected()
+                            && item.is_active()
                     })
             });
             Ok(docked && cx.update(|app| view_presented(app, session, source, 42))?)

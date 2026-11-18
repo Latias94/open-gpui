@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 
 use dockspace::{
-    model::WorkspaceVersion,
+    model::{DockspaceTabView, DockspaceTabsView, DockspaceView, WorkspaceVersion},
     runtime::{
         SurfacePaintPlan, SurfaceTabInput, SurfaceTabNavigation, TabBarPaintRecord,
         TabListMenuPaintRecord,
@@ -17,23 +17,21 @@ use super::*;
 /// members with no visible control. Core resolves every move and validates its
 /// frozen witness; the adapter only chooses the focused or selected starting item.
 pub(super) struct TabKeys {
+    pub(super) bar: DockspaceVisualId,
+    surface: SurfaceId,
     members: BTreeMap<DockspaceVisualId, TabMember>,
 }
 
 struct TabMember {
-    item: ItemId,
+    key: TabKey,
     actions: Vec<(ControlAction, chrome::ActionSlot)>,
 }
 
 impl TabKeys {
     pub(super) fn record(plan: SurfacePaintPlan<'_>, bar: TabBarPaintRecord<'_>) -> Option<Self> {
         let source = bar.members().find_map(|member| {
-            plan.prepare_tab_input_sequence(
-                member.item(),
-                member.item(),
-                [SurfaceTabInput::Activate],
-            )
-            .map(|_| member.item())
+            plan.prepare_tab_input_sequence(member.key(), member.key(), [SurfaceTabInput::Activate])
+                .map(|_| member.key())
         })?;
         let mut members = BTreeMap::new();
         for member in bar.members() {
@@ -57,7 +55,7 @@ impl TabKeys {
                     SurfaceTabInput::Navigate(SurfaceTabNavigation::Last),
                 ),
             ] {
-                let Some(action) = plan.prepare_tab_input_sequence(source, member.item(), [input])
+                let Some(action) = plan.prepare_tab_input_sequence(source, member.key(), [input])
                 else {
                     continue;
                 };
@@ -68,12 +66,16 @@ impl TabKeys {
             members.insert(
                 member.visual_id(),
                 TabMember {
-                    item: member.item(),
+                    key: member.key(),
                     actions,
                 },
             );
         }
-        Some(Self { members })
+        Some(Self {
+            bar: bar.visual_id(),
+            surface: plan.surface(),
+            members,
+        })
     }
 
     fn slot(
@@ -84,12 +86,12 @@ impl TabKeys {
         host: &HostState,
     ) -> Option<chrome::ActionSlot> {
         let member = if selected_start {
-            self.members.values().find(|member| {
-                host.session
-                    .view()
-                    .item(member.item)
-                    .is_some_and(|item| item.is_selected())
-            })?
+            let first = self.members.values().next()?;
+            let selected =
+                tab_group(host.session.view(), self.surface, first.key)?.visible_selected()?;
+            self.members
+                .values()
+                .find(|member| member.key == selected)?
         } else {
             self.members.get(&focused)?
         };
@@ -98,6 +100,42 @@ impl TabKeys {
             .iter()
             .find_map(|(candidate, action)| (*candidate == key).then(|| action.clone()))
     }
+}
+
+/// Query direct membership rather than choosing a representative descendant.
+/// The result supplies focus information only; original core actions retain authority.
+pub(super) fn tab_group(
+    view: DockspaceView<'_>,
+    surface: SurfaceId,
+    key: TabKey,
+) -> Option<DockspaceTabsView<'_>> {
+    let surface = view.surface(surface)?;
+    let mut nodes = surface
+        .main_root()
+        .into_iter()
+        .chain(surface.contained().filter_map(|contained| contained.root()))
+        .filter_map(|root| root.content())
+        .collect::<Vec<_>>();
+    while let Some(node) = nodes.pop() {
+        if let Some(tabs) = node.tabs() {
+            if tabs.tabs().contains(&key) {
+                return Some(tabs);
+            }
+            nodes.extend(tabs.children().filter_map(|child| match child {
+                DockspaceTabView::Layout(layout) => Some(layout),
+                DockspaceTabView::Item(_) => None,
+            }));
+        } else if let Some(split) = node.split() {
+            nodes.extend(split.children());
+        } else if let Some(grid) = node.grid() {
+            nodes.extend(grid.children());
+        }
+    }
+    None
+}
+
+pub(super) fn tab_is_selected(view: DockspaceView<'_>, surface: SurfaceId, key: TabKey) -> bool {
+    tab_group(view, surface, key).is_some_and(|tabs| tabs.visible_selected() == Some(key))
 }
 
 /// One menu snapshot retains its ordered rows and exact prepared capabilities.
@@ -125,7 +163,7 @@ impl MenuKeys {
     ) -> Option<Self> {
         let mut rows = Vec::new();
         for row in menu.rows() {
-            let focus = chrome::Action::from(plan.prepare_tab_list_menu_focus(menu, row.item())?);
+            let focus = chrome::Action::from(plan.prepare_tab_list_menu_focus(menu, row.key())?);
             let mut activate =
                 chrome::Action::from(plan.prepare_tab_list_menu_row_activation(row)?);
             activate.yields_content = true;

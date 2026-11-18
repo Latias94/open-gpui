@@ -5,7 +5,7 @@ use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 use anyhow::{Result, anyhow};
 use dockspace::{
     geometry::LogicalRect,
-    model::{DockspaceActionRejection, DockspaceAxis, ItemId},
+    model::{DockspaceActionRejection, DockspaceAxis, ItemId, TabLabel},
     runtime::{
         ContainedResizeDirection, DockspaceDropEligibility, DockspacePresentationCommandKind,
         DockspacePresentationCommandUnavailable, DockspacePreviewVisual,
@@ -32,14 +32,11 @@ pub(super) fn record(
     open_menu: Option<OpenMenu>,
 ) -> Result<(Packet, dockspace::runtime::SurfaceProgramExecutionReceipt)> {
     let mut draws = Vec::new();
+    let mut pane_bars = BTreeMap::new();
     let mut native_preview = None;
     let mut menu_backdrop = None;
     let mut tab_keys = BTreeMap::new();
     let mut menu_openers = BTreeMap::new();
-    let label = |item: Option<ItemId>| {
-        item.and_then(|item| panels.get(&item))
-            .map_or_else(|| "Workspace".to_owned(), |pane| pane.title.to_string())
-    };
     let receiver = |draws: &mut Vec<Draw>, value: Option<DockspaceReceiverDescriptor>| {
         if let Some(value) = value {
             draws.push(Draw::Receiver(value));
@@ -64,10 +61,15 @@ pub(super) fn record(
                     Operation::Pane(pane) => {
                         receiver(&mut draws, plan.receiver_for_pane(pane));
                         if !paint.is_source_gap() {
+                            pane_bars.insert(pane.item(), pane.tab_bar_visual_id());
                             draws.push(Draw::Fill(pane.content_bounds(), colors.pane));
-                            if let Some(item) = pane.selected() {
-                                draws.push(Draw::Pane(pane.content_bounds(), item));
-                            }
+                            draws.push(Draw::Pane(pane.content_bounds(), pane.item(), pane.clip()));
+                        }
+                    }
+                    Operation::Tabs(tabs) => {
+                        receiver(&mut draws, plan.receiver_for_tabs(tabs));
+                        if !paint.is_source_gap() {
+                            draws.push(Draw::Fill(tabs.bounds(), colors.pane));
                         }
                     }
                     Operation::TabBar(bar) => {
@@ -138,7 +140,7 @@ pub(super) fn record(
                         if !paint.is_source_gap() {
                             draws.push(Draw::Tab(
                                 tab.visible_bounds(),
-                                tab.item(),
+                                tab.key(),
                                 if tab.selected() {
                                     colors.selected_tab
                                 } else {
@@ -149,8 +151,8 @@ pub(super) fn record(
                             draws.push(Draw::TabText(
                                 tab.text_layout_bounds(),
                                 tab.text_bounds(),
-                                tab.item(),
-                                label(Some(tab.item())),
+                                tab.key(),
+                                tab_label(tab.label(), panels),
                                 if tab.selected() {
                                     colors.text
                                 } else {
@@ -161,18 +163,17 @@ pub(super) fn record(
                             let mut control = Control::new(
                                 tab.visual_id(),
                                 tab.visible_bounds(),
-                                ControlKind::Tab(tab.item()),
-                                label(Some(tab.item())),
+                                ControlKind::Tab(tab.key()),
+                                tab_label(tab.label(), panels),
                                 body,
                             );
                             control.selected = Some(tab.selected());
                             control.tab_keys = tab_keys.get(&tab.tab_bar_visual_id()).cloned();
                             control.action(
                                 ControlAction::Activate,
-                                plan.prepare_tab_select(tab.item()),
+                                plan.prepare_tab_select(tab.key()),
                             );
-                            control
-                                .action(ControlAction::Close, plan.prepare_tab_close(tab.item()));
+                            control.action(ControlAction::Close, plan.prepare_tab_close(tab.key()));
                             for (key, navigation) in [
                                 (ControlAction::Previous, SurfaceTabNavigation::Previous),
                                 (ControlAction::Next, SurfaceTabNavigation::Next),
@@ -182,8 +183,8 @@ pub(super) fn record(
                                 control.action(
                                     key,
                                     plan.prepare_tab_input_sequence(
-                                        tab.item(),
-                                        tab.item(),
+                                        tab.key(),
+                                        tab.key(),
                                         [SurfaceTabInput::Navigate(navigation)],
                                     ),
                                 );
@@ -199,12 +200,12 @@ pub(super) fn record(
                                     close.visual_id(),
                                     close.bounds(),
                                     ControlKind::Button,
-                                    format!("Close {}", label(Some(tab.item()))),
+                                    format!("Close {}", tab_label(tab.label(), panels)),
                                     Some(close),
                                 );
                                 control.action(
                                     ControlAction::Activate,
-                                    plan.prepare_tab_close(tab.item()),
+                                    plan.prepare_tab_close(tab.key()),
                                 );
                                 draws.push(Draw::Control(Rc::new(control)));
                             }
@@ -356,7 +357,7 @@ pub(super) fn record(
                             ));
                             draws.push(Draw::Text(
                                 contained.title_drag_bounds(),
-                                label(root.title_item()),
+                                tab_label(root.label(), panels),
                                 colors.text,
                             ));
                             let close = plan.receiver_for_contained_close(contained);
@@ -421,6 +422,9 @@ pub(super) fn record(
                     }
                     Operation::PresentationMenuAnchor(anchor) => {
                         if !paint.is_source_gap() {
+                            if let Some(bounds) = anchor.reserved_bounds() {
+                                draws.push(Draw::Fill(bounds, colors.tab_bar));
+                            }
                             let mut choices = Vec::new();
                             if open_menu.is_some_and(|open| open.matches(anchor.visual_id(), plan))
                             {
@@ -536,7 +540,7 @@ pub(super) fn record(
                                 draws.push(Draw::Outline(ghost, colors.accent));
                                 draws.push(Draw::Text(
                                     ghost,
-                                    label(decoration.ghost_item()),
+                                    tab_label(decoration.label(), panels),
                                     colors.text,
                                 ));
                             }
@@ -566,7 +570,7 @@ pub(super) fn record(
                         receiver(&mut draws, plan.receiver_for_tab_list_menu_row(row));
                         draws.push(Draw::Text(
                             row.bounds(),
-                            label(Some(row.item())),
+                            tab_label(row.label(), panels),
                             colors.text,
                         ));
                         if let Some(bounds) = row.interaction_bounds() {
@@ -574,7 +578,7 @@ pub(super) fn record(
                                 row.visual_id(),
                                 bounds,
                                 ControlKind::MenuRow,
-                                label(Some(row.item())),
+                                tab_label(row.label(), panels),
                                 plan.receiver_for_tab_list_menu_row(row),
                             );
                             control.selected = Some(row.selected());
@@ -609,6 +613,7 @@ pub(super) fn record(
     Ok((
         Packet {
             draws,
+            pane_bars,
             deferred: false,
             native_preview,
         },
@@ -621,4 +626,15 @@ fn native_unavailable(command: &dockspace::runtime::PresentationCommandPaintReco
         == Some(DockspacePresentationCommandUnavailable::Action(
             DockspaceActionRejection::NativeUnavailable,
         ))
+}
+
+/// Resolve the core's frozen scope label without substituting a descendant pane.
+pub(super) fn tab_label(label: TabLabel<'_>, panels: &BTreeMap<ItemId, DockPane>) -> String {
+    match label {
+        TabLabel::Item(item) => panels.get(&item).map_or_else(
+            || "Pane unavailable".to_owned(),
+            |pane| pane.title.to_string(),
+        ),
+        TabLabel::Layout { title } => title.to_owned(),
+    }
 }

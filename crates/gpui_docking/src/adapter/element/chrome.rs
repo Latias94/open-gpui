@@ -7,7 +7,7 @@ use std::{
 
 use dockspace::{
     geometry::LogicalRect,
-    model::{DockspaceAxis, ItemId},
+    model::{DockspaceAxis, TabKey},
     runtime::{
         DeferredSurfaceAction, DockspaceDropDirection, DockspaceReceiverDescriptor,
         DockspaceVisualId, DockspaceWorkspaceStamp, PreparedSurfaceAction,
@@ -35,7 +35,7 @@ pub(super) enum Icon {
 
 #[derive(Clone, Copy)]
 pub(super) enum ControlKind {
-    Tab(ItemId),
+    Tab(TabKey),
     Button,
     Splitter(DockspaceAxis),
     Junction,
@@ -65,7 +65,7 @@ pub(super) enum ControlAction {
 #[derive(Clone)]
 pub(super) struct Action {
     pub(super) intent: DeferredSurfaceAction,
-    pub(super) tab_focus: Option<(DockspaceVisualId, ItemId)>,
+    pub(super) tab_focus: Option<(DockspaceVisualId, TabKey)>,
     pub(super) yields_content: bool,
 }
 

@@ -183,7 +183,7 @@ fn wheel_browses_strip_and_tab_list_without_selecting_or_scrolling_content(
     });
     let mut visual = active_visual(window.into(), cx);
     frames(&mut visual, &dock);
-    let selected = dock.with_view(|view| view.item(ItemId::new(1)).unwrap().is_selected());
+    let selected = dock.with_view(|view| view.item(ItemId::new(1)).unwrap().is_active());
     assert!(selected);
     let strip = target(&dock, window.window_id(), SURFACE, false);
     assert_eq!(offsets(&dock, SURFACE).0, 0.0);
@@ -198,7 +198,7 @@ fn wheel_browses_strip_and_tab_list_without_selecting_or_scrolling_content(
         "the actual core strip must scroll"
     );
     assert_eq!(content_scrolls.get(), 0);
-    assert!(dock.with_view(|view| view.item(ItemId::new(1)).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(ItemId::new(1)).unwrap().is_active()));
 
     let button = tab_list_button_bounds(&dock, window.window_id());
     visual.simulate_click(button.center(), Modifiers::none());
@@ -213,7 +213,7 @@ fn wheel_browses_strip_and_tab_list_without_selecting_or_scrolling_content(
     frames(&mut visual, &dock);
     assert!(offsets(&dock, SURFACE).1.unwrap() > 0.0);
     assert_eq!(content_scrolls.get(), 0);
-    assert!(dock.with_view(|view| view.item(ItemId::new(1)).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(ItemId::new(1)).unwrap().is_active()));
 }
 
 #[open_gpui::test]

@@ -74,13 +74,13 @@ fn observe(dock: &DockSurface, cx: &mut App) -> Rc<RefCell<Vec<DockCommitNotific
     notifications
 }
 
-fn selected(notification: &DockCommitNotification) -> Vec<ItemId> {
+fn activated(notification: &DockCommitNotification) -> Vec<ItemId> {
     notification
         .notification()
         .events()
         .iter()
         .filter_map(|event| match event.kind() {
-            DockspaceEventKind::SelectionCommitted { item } => Some(*item),
+            DockspaceEventKind::ItemActivated { item } => Some(*item),
             _ => None,
         })
         .collect()
@@ -95,8 +95,8 @@ fn pane_locations(dock: &DockSurface) -> [(SurfaceId, RootId, usize, bool); 3] {
             (
                 item.surface(),
                 item.root(),
-                item.tab_index(),
-                item.is_selected(),
+                item.tab_index().unwrap(),
+                item.is_active(),
             )
         })
     })
@@ -123,12 +123,12 @@ fn update_action_returns_the_exact_submitted_outcome(cx: &mut TestAppContext) {
         .unwrap();
     assert_eq!(
         outcome,
-        Some(DockspaceActionOutcome::Selected {
+        Some(DockspaceActionOutcome::ItemActivated {
             item: SECOND,
             changed: true,
         })
     );
-    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
     let original_value = cx
         .update(|cx| {
             dock.update(
@@ -282,7 +282,7 @@ fn update_action_distinguishes_stale_actions_from_old_foreign_and_rolled_back_to
     ));
     cx.run_until_parked();
     assert!(notifications.borrow().is_empty());
-    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_active()));
 
     let foreign = cx.update(|cx| workspace(session(DockPolicy::default()), false, cx));
     let foreign_token = cx
@@ -299,7 +299,7 @@ fn update_action_distinguishes_stale_actions_from_old_foreign_and_rolled_back_to
         )
     })
     .unwrap_err();
-    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_active()));
 
     for token in [old_token, foreign_token, rolled_back.get().unwrap()] {
         let unmatched = cx
@@ -315,7 +315,7 @@ fn update_action_distinguishes_stale_actions_from_old_foreign_and_rolled_back_to
             })
             .unwrap();
         assert!(unmatched);
-        assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_selected()));
+        assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
     }
     assert!(dock.failure().is_none());
 }
@@ -371,7 +371,7 @@ fn commit_notifications_preserve_order_and_reentrant_handler_replacement(cx: &mu
         ["original", "replacement", "replacement"]
     );
     assert_eq!(
-        notifications.iter().map(selected).collect::<Vec<_>>(),
+        notifications.iter().map(activated).collect::<Vec<_>>(),
         [vec![SECOND], vec![FIRST], vec![SECOND]]
     );
     for pair in notifications.windows(2) {
@@ -418,7 +418,7 @@ fn commit_handler_panic_resumes_pending_notifications_without_another_dock_call(
         notifications
             .borrow()
             .iter()
-            .map(selected)
+            .map(activated)
             .collect::<Vec<_>>(),
         [vec![SECOND]]
     );
@@ -429,11 +429,11 @@ fn commit_handler_panic_resumes_pending_notifications_without_another_dock_call(
         notifications
             .borrow()
             .iter()
-            .map(selected)
+            .map(activated)
             .collect::<Vec<_>>(),
         [vec![SECOND], vec![FIRST]]
     );
-    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_selected()));
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
     assert!(dock.failure().is_none());
 }
 
@@ -462,7 +462,7 @@ fn commit_notifications_keep_every_event_in_one_commit(cx: &mut TestAppContext) 
     cx.run_until_parked();
     let notifications = notifications.borrow();
     assert_eq!(notifications.len(), 1);
-    assert_eq!(selected(&notifications[0]), expected);
+    assert_eq!(activated(&notifications[0]), expected);
     assert_eq!(notifications[0].notification().events().len(), 300);
 }
 
@@ -494,7 +494,7 @@ fn commit_handlers_do_not_replay_unobserved_or_cleared_commits(cx: &mut TestAppC
         .unwrap();
     cx.run_until_parked();
     assert_eq!(second.borrow().len(), 1);
-    assert_eq!(selected(&second.borrow()[0]), [FIRST]);
+    assert_eq!(activated(&second.borrow()[0]), [FIRST]);
 }
 
 fn frames(visual: &mut VisualTestContext, dock: &DockSurface) {

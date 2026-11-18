@@ -169,7 +169,7 @@ impl Benchmark {
         ensure!(
             self.dock.with_view(|view| view
                 .item(MOVING)
-                .is_some_and(|item| { item.surface() == surface && item.is_selected() })),
+                .is_some_and(|item| { item.surface() == surface && item.is_active() })),
             "the moving item must be selected in its destination surface"
         );
         let bounds = self.visual.debug_bounds("moving-pane");
@@ -202,8 +202,8 @@ impl Benchmark {
                                     && root.central().is_none()
                                     && root.content().and_then(|node| node.tabs()).is_some_and(
                                         |tabs| {
-                                            tabs.items() == items
-                                                && tabs.selected() == Some(selected)
+                                            tabs.items().eq(items.iter().copied())
+                                                && tabs.selected() == Some(selected.into())
                                         },
                                     )
                             })

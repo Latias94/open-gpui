@@ -802,6 +802,7 @@ fn queued_pointer_input_retains_registration_until_its_original_frame_commits(
     let tab = visual
         .debug_bounds(&format!("dockspace:tab:{}", items[0].get()))
         .unwrap();
+    visual.simulate_mouse_move(tab.center(), None, Modifiers::none());
     visual.update(|window, cx| {
         // Retain input from the original submitted frame before releasing the
         // App borrow, which can immediately dispatch the next ordinary frame.

@@ -178,7 +178,9 @@ fn actual_v2_surface_snapshot_preserves_multiview_order_selection_and_logical_hi
             .item(left)
             .expect("left tabs")
             .tabs()
-            .items(),
+            .unwrap()
+            .items()
+            .collect::<Vec<_>>(),
         [left, draft]
     );
     assert!(
@@ -187,7 +189,7 @@ fn actual_v2_surface_snapshot_preserves_multiview_order_selection_and_logical_hi
             .view()
             .item(draft)
             .expect("selected draft")
-            .is_selected()
+            .is_active()
     );
     assert!(
         restored
@@ -196,6 +198,7 @@ fn actual_v2_surface_snapshot_preserves_multiview_order_selection_and_logical_hi
             .item(left)
             .expect("central View")
             .tabs()
+            .unwrap()
             .is_central()
     );
     assert_weights(main_split(&restored.session).weights(), &[0.2, 0.5, 0.3]);
@@ -448,7 +451,8 @@ fn empty_spaces_and_rootless_floating_spaces_remain_addressable() {
             .tabs()
             .expect("central tabs")
             .items()
-            .is_empty()
+            .next()
+            .is_none()
     );
     assert!(
         restored
