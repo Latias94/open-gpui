@@ -19,14 +19,14 @@ use crate::{
     AcceptedFrameFence, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, BackGestureEvent,
     Bounds, ClickEvent, DispatchPhase, Display, Element, ElementId, Entity, EntityId,
     ExternalDragPayload, ExternalDragPayloadSource, FileDropEvent, FocusHandle, Global,
-    GlobalElementId, Hitbox, HitboxBehavior, HitboxId, InspectorElementId, IsZero, KeyContext,
-    KeyDownEvent, KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, LongPressEvent,
-    ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseExitEvent,
-    MouseMoveEvent, MousePressureEvent, MouseUpEvent, OngoingScroll, Overflow, ParentElement,
-    PinchEvent, Pixels, Point, PointerCancelEvent, PointerCaptureHandle, PrepaintPublicationId,
-    PreparedSubtreeClip, Render, ScrollEvent, ScrollSource, SharedString, Size, Style,
-    StyleRefinement, Styled, TargetedEvent, Task, TooltipId, TouchPhase, Window, WindowControlArea,
-    point, px, size,
+    GlobalElementId, Hitbox, HitboxBehavior, HitboxId, HitboxTag, InspectorElementId, IsZero,
+    KeyContext, KeyDownEvent, KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId,
+    LongPressEvent, ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent,
+    MouseExitEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, OngoingScroll, Overflow,
+    ParentElement, PinchEvent, Pixels, Point, PointerCancelEvent, PointerCaptureHandle,
+    PrepaintPublicationId, PreparedSubtreeClip, Render, ScrollEvent, ScrollSource, SharedString,
+    Size, Style, StyleRefinement, Styled, TargetedEvent, Task, TooltipId, TouchPhase, Window,
+    WindowControlArea, point, px, size,
 };
 use open_gpui_collections::HashMap;
 use open_gpui_core_util::ResultExt;
@@ -965,6 +965,15 @@ impl Interactivity {
 pub trait InteractiveElement: Sized {
     /// Retrieve the interactivity state associated with this element
     fn interactivity(&mut self) -> &mut Interactivity;
+
+    /// Labels this element's pointer target without labeling its children or changing input.
+    ///
+    /// A label does not create a target on an otherwise non-interactive element. Integrations
+    /// must still establish subtree ownership and consult the committed hit graph.
+    fn hitbox_tag(mut self, tag: HitboxTag) -> Self {
+        self.interactivity().hitbox_tag = Some(tag);
+        self
+    }
 
     /// Assign this element to a group of elements that can be styled together
     fn group(mut self, group: impl Into<SharedString>) -> Self {
@@ -3043,6 +3052,7 @@ pub struct Interactivity {
     pub(crate) tooltip_show_delay: Option<Duration>,
     pub(crate) window_control: Option<WindowControlArea>,
     pub(crate) hitbox_behavior: HitboxBehavior,
+    pub(crate) hitbox_tag: Option<HitboxTag>,
     pub(crate) tab_index: Option<isize>,
     pub(crate) tab_group: bool,
     pub(crate) tab_stop: Option<bool>,
@@ -3307,7 +3317,12 @@ impl Interactivity {
                         }
                         let hitbox = if interactive && self.should_insert_hitbox(&style, window, cx)
                         {
-                            Some(window.insert_hitbox(bounds, self.hitbox_behavior))
+                            Some(match self.hitbox_tag {
+                                Some(tag) => {
+                                    window.insert_hitbox_with_tag(bounds, self.hitbox_behavior, tag)
+                                }
+                                None => window.insert_hitbox(bounds, self.hitbox_behavior),
+                            })
                         } else {
                             None
                         };

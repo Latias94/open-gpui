@@ -117,6 +117,8 @@ mod frame_pump;
 mod frame_scheduling_tests;
 #[cfg(all(test, feature = "profiler"))]
 mod frame_signal_tests;
+#[cfg(test)]
+mod hitbox_registration_tests;
 mod imported_image;
 mod input_dispatch;
 #[cfg(test)]
@@ -473,6 +475,27 @@ pub enum WindowControlArea {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct HitboxId(u64);
 
+/// An application-owned label for an individual pointer target.
+///
+/// Tags describe registrations without changing pointer routing. They are not inherited by
+/// children, and a tag alone proves neither ownership nor presence in the committed frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub struct HitboxTag(u64);
+
+impl HitboxTag {
+    /// Allocates a distinct label that can be retained across renders and window moves.
+    pub fn new() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        Self(NEXT.fetch_add(1, SeqCst))
+    }
+}
+
+impl Default for HitboxTag {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 static NEXT_PREPAINT_PUBLICATION_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_PRESENTATION_SHUTDOWN_GENERATION: AtomicU64 = AtomicU64::new(1);
 
@@ -788,6 +811,7 @@ pub struct Hitbox {
     validity: Option<SubtreeGeometryValidity>,
     clip_stack: ClipStackSnapshot,
     behavior: HitboxBehavior,
+    tag: Option<HitboxTag>,
     active: bool,
 }
 
@@ -825,6 +849,11 @@ impl Hitbox {
     /// Returns how this hitbox participates in occlusion routing.
     pub fn behavior(&self) -> HitboxBehavior {
         self.behavior
+    }
+
+    /// Returns the label explicitly assigned to this target, excluding descendants.
+    pub fn tag(&self) -> Option<HitboxTag> {
+        self.tag
     }
 
     /// Returns whether this hitbox belongs to the current interactive presentation and a transform
@@ -12897,6 +12926,41 @@ impl Window {
     ///
     /// This method should only be called as part of the prepaint phase of element drawing.
     pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, behavior: HitboxBehavior) -> Hitbox {
+        self.insert_hitbox_inner(bounds, behavior, None)
+    }
+
+    /// Inserts a labeled pointer target during prepaint without changing its routing behavior.
+    pub fn insert_hitbox_with_tag(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        behavior: HitboxBehavior,
+        tag: HitboxTag,
+    ) -> Hitbox {
+        self.insert_hitbox_inner(bounds, behavior, Some(tag))
+    }
+
+    /// Collects targets actually prepainted by the callback, including cached journal replay.
+    ///
+    /// The returned candidates preserve their exact geometry and labels. They grant no committed
+    /// input authority: query their IDs against the accepted window hit graph before using them.
+    /// Rolled-back registrations and deferred draws outside the callback are excluded. This
+    /// method must be called during prepaint and does not publish state or install listeners.
+    pub fn capture_prepaint_hitboxes<R>(
+        &mut self,
+        prepaint: impl FnOnce(&mut Window) -> R,
+    ) -> (R, Vec<Hitbox>) {
+        self.invalidator.debug_assert_prepaint();
+        let start = self.next_frame.hitboxes.len();
+        let result = prepaint(self);
+        (result, self.next_frame.hitboxes[start..].to_vec())
+    }
+
+    fn insert_hitbox_inner(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        behavior: HitboxBehavior,
+        tag: Option<HitboxTag>,
+    ) -> Hitbox {
         let snapshot = self.hit_test_snapshot(bounds);
         let mut id = self.next_hitbox_id;
         self.next_hitbox_id = self.next_hitbox_id.next();
@@ -12906,6 +12970,7 @@ impl Window {
             validity: snapshot.validity,
             clip_stack: snapshot.clip_stack,
             behavior,
+            tag,
             active: snapshot.active,
         };
         if hitbox.active {
