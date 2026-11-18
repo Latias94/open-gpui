@@ -181,24 +181,35 @@ fn product_menu_focus_return_accepts_a_fresh_keyboard_request(cx: &mut TestAppCo
 fn product_menu_real_key_up_cannot_cancel_confirmation_waiting_for_native_fifo(
     cx: &mut TestAppContext,
 ) {
-    for key in ["enter", "space"] {
-        let (dock, _, mut visual, _) = managed_menu(cx);
-        let transport = dock.native_transport().unwrap();
-        visual.update(|window, cx| {
-            transport.wake(cx);
-            assert_eq!(transport.inspection().front_record, Some("wake"));
-            key_down(window, key, cx);
-            assert_eq!(transport.inspection().front_record, Some("surface-action"));
-            assert!(dock.with_view(|view| view.item(FIRST).unwrap().contained().is_none()));
-            key_up(window, key, cx);
-        });
-        visual.run_until_parked();
-        assert!(transport.is_empty());
-        assert_floated(&dock);
-        scheduled_frames(&mut visual);
-        assert!(!presentation_menu_is_open(&visual));
-        shutdown(&dock, cx);
-    }
+    confirm_with_real_key_up(cx, "enter");
+}
+
+#[open_gpui::test]
+fn product_menu_space_key_up_preserves_confirmation_waiting_for_native_fifo(
+    cx: &mut TestAppContext,
+) {
+    confirm_with_real_key_up(cx, "space");
+}
+
+fn confirm_with_real_key_up(cx: &mut TestAppContext, key: &'static str) {
+    // Closing the last managed window can terminate the application on Windows.
+    // Each key needs its own app lifetime rather than reopening a stopped app.
+    let (dock, _, mut visual, _) = managed_menu(cx);
+    let transport = dock.native_transport().unwrap();
+    visual.update(|window, cx| {
+        transport.wake(cx);
+        assert_eq!(transport.inspection().front_record, Some("wake"));
+        key_down(window, key, cx);
+        assert_eq!(transport.inspection().front_record, Some("surface-action"));
+        assert!(dock.with_view(|view| view.item(FIRST).unwrap().contained().is_none()));
+        key_up(window, key, cx);
+    });
+    visual.run_until_parked();
+    assert!(transport.is_empty());
+    assert_floated(&dock);
+    scheduled_frames(&mut visual);
+    assert!(!presentation_menu_is_open(&visual));
+    shutdown(&dock, cx);
 }
 
 #[open_gpui::test]
