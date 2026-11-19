@@ -62,20 +62,21 @@ impl CustomTabLabel {
         [false, true]
             .into_iter()
             .map(|selected| {
-                let color = if selected {
-                    config.colors.text
+                let (namespace, color) = if selected {
+                    ("dockspace-measure-selected-tab", config.colors.text)
                 } else {
-                    config.colors.muted_text
+                    ("dockspace-measure-unselected-tab", config.colors.muted_text)
                 };
-                let bounds = self
-                    .element(config, selected, color, height, cx)
-                    .with_subtree_presentation(SubtreePresentation::Inert)
-                    .into_any_element()
-                    .layout_as_root(
-                        size(AvailableSpace::MaxContent, AvailableSpace::Definite(height)),
-                        window,
-                        cx,
-                    );
+                let bounds = window.with_element_namespace(namespace, |window| {
+                    self.element(config, selected, color, height, cx)
+                        .with_subtree_presentation(SubtreePresentation::Inert)
+                        .into_any_element()
+                        .layout_as_root(
+                            size(AvailableSpace::MaxContent, AvailableSpace::Definite(height)),
+                            window,
+                            cx,
+                        )
+                });
                 f64::from(f32::from(bounds.width))
             })
             .reduce(f64::max)

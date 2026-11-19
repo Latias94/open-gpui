@@ -119,6 +119,48 @@ fn two_independent_tab_instances_do_not_share_local_gpui_state(cx: &mut TestAppC
     );
 }
 
+#[derive(IntoElement)]
+struct SelectionAdornment(bool);
+
+impl RenderOnce for SelectionAdornment {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let initial_selection = window.use_keyed_state("initial-selection", cx, |_, _| self.0);
+        let width = if *initial_selection.read(cx) {
+            142.0
+        } else {
+            68.0
+        };
+        div()
+            .debug_selector(|| "selection-adornment".into())
+            .flex_none()
+            .w(px(width))
+            .h(px(18.0))
+    }
+}
+
+#[open_gpui::test]
+fn hypothetical_label_measurements_do_not_initialize_the_live_label(cx: &mut TestAppContext) {
+    cx.defer_next_window_frame_requests();
+    let dock = cx.update(|app| {
+        let first = DockPane::new(CENTER, "Editor", app.new(|_| Document(CENTER)))
+            .with_tab_content(|context, _| SelectionAdornment(context.selected));
+        let second = DockPane::new(FLOATING, "Preview", app.new(|_| Document(FLOATING)));
+        DockSurface::new(
+            label_test_session(),
+            [first, second],
+            Default::default(),
+            app,
+        )
+        .unwrap()
+    });
+    let mut visual = show_labels(cx, &dock);
+    assert!(dock.with_view(|view| view.item(CENTER).unwrap().is_active()));
+    let adornment = visual.debug_bounds("selection-adornment").unwrap();
+    let label = visual.debug_bounds("dockspace:tab:201").unwrap();
+    assert_eq!(adornment.size.width, px(142.0));
+    assert!(adornment.right() <= label.right());
+}
+
 #[open_gpui::test]
 fn height_relative_icon_fits_the_measured_label_without_clipping(cx: &mut TestAppContext) {
     cx.defer_next_window_frame_requests();

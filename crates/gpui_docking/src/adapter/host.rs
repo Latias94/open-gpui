@@ -133,6 +133,7 @@ impl DockPane {
     /// style the label. Measurement reserves enough width for both selection
     /// states, and painting supplies the output's actual selection.
     /// The factory may run several times, so keep it free of side effects.
+    /// Each measurement appearance has element state separate from the live label.
     /// The tab owns input, focus and close. Its accessible name and the overflow
     /// menu still use the pane title.
     ///
