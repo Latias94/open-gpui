@@ -174,11 +174,22 @@ pub(super) struct Continuation {
     target: DockspaceVisualId,
     tab_target: Option<TabKey>,
     claim_revision: u64,
-    pending: Option<chrome::ActionSlot>,
-    submitted: bool,
-    activate_on_present: bool,
+    phase: PrefixPhase,
     menu_end: Option<ControlAction>,
     opener: Option<OpenerPrefix>,
+}
+
+#[derive(Clone)]
+enum PrefixPhase {
+    Presented,
+    Pending {
+        action: chrome::ActionSlot,
+        after_commit: bool,
+    },
+    Committed,
+    AwaitingTabPresentation {
+        destination: TabKey,
+    },
 }
 
 #[derive(Clone)]
@@ -190,8 +201,33 @@ struct OpenerPrefix {
 
 impl Continuation {
     fn is_current(&self, host: &HostState, window: &Window) -> bool {
-        self.version == host.session.version()
-            && self.claim_revision == window.focus_claim_revision()
+        self.version == host.session.version() && self.owns_focus_claim(window)
+    }
+
+    fn owns_focus_claim(&self, window: &Window) -> bool {
+        self.claim_revision == window.focus_claim_revision()
+    }
+
+    fn holds_tab_prefix(&self, window: &Window) -> bool {
+        self.tab_target.is_some() && self.owns_focus_claim(window)
+    }
+
+    fn pending(&self) -> Option<&chrome::ActionSlot> {
+        match &self.phase {
+            PrefixPhase::Pending { action, .. } => Some(action),
+            _ => None,
+        }
+    }
+
+    fn has_committed_prefix(&self) -> bool {
+        matches!(
+            self.phase,
+            PrefixPhase::Committed
+                | PrefixPhase::Pending {
+                    after_commit: true,
+                    ..
+                }
+        )
     }
 
     fn owns(&self, control: &Control) -> bool {
@@ -232,7 +268,7 @@ pub(super) fn admits_action(
             .borrow()
             .as_ref()
             .is_some_and(|current| {
-                current.submitted
+                current.has_committed_prefix()
                     && current.surface == surface
                     && current.serial == serial
                     && current.is_current(host, window)
@@ -302,20 +338,28 @@ pub(super) fn handle(
     let (previous, slot) = {
         let host = shared.borrow();
         let mut retained = interaction.keyboard.borrow_mut();
-        if retained
+        if let Some(current) = retained
             .as_ref()
-            .is_some_and(|current| !current.is_current(&host, window))
+            .filter(|current| !current.is_current(&host, window))
         {
+            if current.holds_tab_prefix(window)
+                && current.surface == surface
+                && current.owns(control)
+            {
+                return matches!(
+                    (control.kind, tab_input(key)),
+                    (ControlKind::Tab(_), Some(SurfaceTabInput::Activate))
+                );
+            }
             retained.take();
         }
         let previous = retained
             .as_ref()
             .filter(|current| current.surface == surface && current.owns(control))
             .cloned();
-        if previous
-            .as_ref()
-            .is_some_and(|current| current.activate_on_present)
-        {
+        if previous.as_ref().is_some_and(|current| {
+            matches!(current.phase, PrefixPhase::AwaitingTabPresentation { .. })
+        }) {
             return false;
         }
         let origin = previous
@@ -329,7 +373,7 @@ pub(super) fn handle(
             let selected_start = selected_start
                 && previous
                     .as_ref()
-                    .is_none_or(|current| current.pending.is_none());
+                    .is_none_or(|current| current.pending().is_none());
             let start = if selected_start {
                 tab_group(host.session.view(), surface, receiver)
                     .and_then(|group| group.visible_selected())
@@ -341,11 +385,13 @@ pub(super) fn handle(
                         .unwrap_or(receiver),
                 )
             };
-            let pending_activation = if input == SurfaceTabInput::Activate {
-                previous
+            if input == SurfaceTabInput::Activate
+                && let Some(pending) = previous.as_ref().and_then(Continuation::pending)
+            {
+                pending
+                    .borrow()
                     .as_ref()
-                    .and_then(|current| current.pending.as_ref())
-                    .and_then(|slot| slot.borrow().as_ref().cloned())
+                    .cloned()
                     .and_then(|action| action.intent.activate_navigated_tab())
                     .map(|intent| {
                         let mut action = chrome::Action::from(intent);
@@ -353,9 +399,8 @@ pub(super) fn handle(
                         Rc::new(RefCell::new(Some(action)))
                     })
             } else {
-                None
-            };
-            pending_activation.or_else(|| start.and_then(|start| resolve_tab(origin, start, input)))
+                start.and_then(|start| resolve_tab(origin, start, input))
+            }
         } else {
             (target == control.id).then(|| control.slot(key)).flatten()
         };
@@ -375,7 +420,9 @@ pub(super) fn handle(
         return false;
     }
     let source_serial = previous.as_ref().map_or(serial, |current| current.serial);
-    let continuing = previous.as_ref().is_some_and(|current| current.submitted);
+    let continuing = previous
+        .as_ref()
+        .is_some_and(Continuation::has_committed_prefix);
     let target = action
         .tab_focus
         .map(|(visual, _)| visual)
@@ -385,7 +432,8 @@ pub(super) fn handle(
                 .map_or(control.id, |current| current.target)
         });
     if action.yields_content
-        && let Some(mut current) = previous.clone().filter(|current| current.submitted)
+        && let Some(mut current) = previous.clone().filter(Continuation::has_committed_prefix)
+        && let Some((_, destination)) = action.tab_focus
         && !input::is_presented(
             &shared.borrow(),
             window.window_handle().window_id(),
@@ -401,9 +449,8 @@ pub(super) fn handle(
             .clone();
         interaction.pending_tab_focus.borrow_mut().take();
         window.focus(&scope, cx);
-        current.activate_on_present = true;
+        current.phase = PrefixPhase::AwaitingTabPresentation { destination };
         current.claim_revision = window.focus_claim_revision();
-        current.pending = None;
         *interaction.keyboard.borrow_mut() = Some(current);
         window.refresh();
         return true;
@@ -424,7 +471,7 @@ pub(super) fn handle(
         }
         let schedule = previous
             .as_ref()
-            .is_none_or(|current| current.pending.is_none());
+            .is_none_or(|current| current.pending().is_none());
         *interaction.keyboard.borrow_mut() = Some(Continuation {
             surface,
             serial: source_serial,
@@ -433,9 +480,10 @@ pub(super) fn handle(
             target,
             tab_target: action.tab_focus.map(|(_, key)| key),
             claim_revision: window.focus_claim_revision(),
-            pending: Some(slot),
-            submitted: continuing,
-            activate_on_present: false,
+            phase: PrefixPhase::Pending {
+                action: slot,
+                after_commit: continuing,
+            },
             menu_end: None,
             opener: None,
         });
@@ -476,9 +524,7 @@ pub(super) fn handle(
             target,
             tab_target: action.tab_focus.map(|(_, key)| key),
             claim_revision: window.focus_claim_revision(),
-            pending: None,
-            submitted: true,
-            activate_on_present: false,
+            phase: PrefixPhase::Committed,
             menu_end: None,
             opener: None,
         });
@@ -537,7 +583,9 @@ fn handle_menu(
         (previous, keys, target, slot)
     };
     let source_serial = previous.as_ref().map_or(serial, |current| current.serial);
-    let submitted = previous.as_ref().is_some_and(|current| current.submitted);
+    let submitted = previous
+        .as_ref()
+        .is_some_and(Continuation::has_committed_prefix);
     if !admits_action(
         &shared.borrow(),
         interaction,
@@ -567,7 +615,7 @@ fn handle_menu(
     }
     let schedule = previous
         .as_ref()
-        .is_none_or(|current| current.pending.is_none());
+        .is_none_or(|current| current.pending().is_none());
     let mut current = Continuation {
         surface,
         serial: source_serial,
@@ -576,9 +624,10 @@ fn handle_menu(
         target,
         tab_target: None,
         claim_revision: window.focus_claim_revision(),
-        pending: Some(slot),
-        submitted,
-        activate_on_present: false,
+        phase: PrefixPhase::Pending {
+            action: slot,
+            after_commit: submitted,
+        },
         menu_end: end,
         opener: None,
     };
@@ -644,7 +693,7 @@ fn retain_opener_input(
         interaction,
         surface,
         current.serial,
-        current.submitted,
+        current.has_committed_prefix(),
         window,
     ) {
         return false;
@@ -765,15 +814,17 @@ fn flush(shared: &SharedHost, interaction: &InteractionState, window: &mut Windo
         return;
     };
     if !current.is_current(&shared.borrow(), window) {
-        interaction.keyboard.borrow_mut().take();
+        if !current.holds_tab_prefix(window) {
+            interaction.keyboard.borrow_mut().take();
+        }
         return;
     }
-    if current.control.menu_keys.is_some() && current.submitted {
+    if current.control.menu_keys.is_some() && current.has_committed_prefix() {
         // Its original menu record became stale when the preceding focus move
         // committed. restore() will rebind this intent only after presentation.
         return;
     }
-    let Some(slot) = current.pending.clone() else {
+    let Some(slot) = current.pending() else {
         return;
     };
     if activate_action_with_continuation(
@@ -781,8 +832,8 @@ fn flush(shared: &SharedHost, interaction: &InteractionState, window: &mut Windo
         interaction,
         current.surface,
         current.serial,
-        &slot,
-        current.submitted,
+        slot,
+        current.has_committed_prefix(),
         window,
         cx,
     ) {
@@ -802,9 +853,8 @@ fn flush(shared: &SharedHost, interaction: &InteractionState, window: &mut Windo
                 let mut current = current.clone();
                 current.control = opener.source.clone();
                 current.target = opener.source.id;
-                current.pending = None;
                 current.menu_end = None;
-                current.submitted = true;
+                current.phase = PrefixPhase::Committed;
                 current.version = shared.borrow().session.version();
                 current.claim_revision = window.focus_claim_revision();
                 // The continuation now owns restoring this exact opener.
@@ -822,8 +872,7 @@ fn flush(shared: &SharedHost, interaction: &InteractionState, window: &mut Windo
             } else {
                 let mut current = current;
                 current.opener = Some(opener);
-                current.pending = None;
-                current.submitted = true;
+                current.phase = PrefixPhase::Committed;
                 current.version = shared.borrow().session.version();
                 current.claim_revision = window.focus_claim_revision();
                 *interaction.keyboard.borrow_mut() = Some(current);
@@ -831,8 +880,7 @@ fn flush(shared: &SharedHost, interaction: &InteractionState, window: &mut Windo
             return;
         }
         if let Some(current) = interaction.keyboard.borrow_mut().as_mut() {
-            current.pending = None;
-            current.submitted = true;
+            current.phase = PrefixPhase::Committed;
             current.version = shared.borrow().session.version();
             current.claim_revision = window.focus_claim_revision();
         }
@@ -888,9 +936,23 @@ pub(super) fn install(
             if !mount.attached
                 || !window.is_focus_handle_rendered(&mount.focus)
                 || mount.capture.is_captured(window)
-                || !current.is_current(&host, window)
             {
                 interaction.keyboard.borrow_mut().take();
+                return;
+            }
+            if !current.is_current(&host, window) {
+                if current.holds_tab_prefix(window) {
+                    // The old header can still receive input until the new
+                    // layout is presented. Enter belongs to its stale prefix.
+                    if event.keystroke.modifiers == open_gpui::Modifiers::none()
+                        && current.control.key_action(&event.keystroke.key)
+                            == Some(ControlAction::Activate)
+                    {
+                        cx.stop_propagation();
+                    }
+                } else {
+                    interaction.keyboard.borrow_mut().take();
+                }
                 return;
             }
             // Dismissal may return focus to this exact mount while its opener
@@ -930,17 +992,20 @@ pub(super) fn restore(
     let Some(mut current) = interaction.keyboard.borrow_mut().take() else {
         return;
     };
-    if !current.is_current(&shared.borrow(), window) {
-        return;
-    }
-    if !admitted.contains(&current.surface)
-        || !input::is_presented(
+    let presented = admitted.contains(&current.surface)
+        && input::is_presented(
             &shared.borrow(),
             window.window_handle().window_id(),
             current.surface,
             serial,
-        )
-    {
+        );
+    if !current.is_current(&shared.borrow(), window) {
+        if current.holds_tab_prefix(window) && (!presented || serial == current.serial) {
+            *interaction.keyboard.borrow_mut() = Some(current);
+        }
+        return;
+    }
+    if !presented {
         *interaction.keyboard.borrow_mut() = Some(current);
         return;
     }
@@ -952,6 +1017,48 @@ pub(super) fn restore(
         restore_menu(shared, interaction, current, serial, controls, window, cx);
         return;
     }
+    if let PrefixPhase::AwaitingTabPresentation { destination } = current.phase {
+        if serial == current.serial {
+            *interaction.keyboard.borrow_mut() = Some(current);
+            return;
+        }
+        let Some(original) = current.control.tab_strip.as_ref() else {
+            return;
+        };
+        let action = controls
+            .iter()
+            .filter(|(surface, control, _)| {
+                *surface == current.surface
+                    && control.receiver.is_some()
+                    && control
+                        .tab_strip
+                        .as_ref()
+                        .is_some_and(|strip| strip.visual_id() == original.visual_id())
+            })
+            .find_map(|(_, control, _)| {
+                resolve_tab(control, destination, SurfaceTabInput::Activate)
+            });
+        if let Some(action) = action {
+            let weak = Rc::downgrade(shared);
+            let weak_interaction = Rc::downgrade(interaction);
+            let surface = current.surface;
+            let version = current.version;
+            let claim = current.claim_revision;
+            // Publish the focus request after this output's focus observers.
+            window.defer(cx, move |window, cx| {
+                let Some((shared, interaction)) = weak.upgrade().zip(weak_interaction.upgrade())
+                else {
+                    return;
+                };
+                if shared.borrow().session.version() == version
+                    && window.focus_claim_revision() == claim
+                {
+                    activate_action(&shared, &interaction, surface, serial, &action, window, cx);
+                }
+            });
+        }
+        return;
+    }
     let Some((_, control, focus)) = controls.iter().find(|(surface, control, focus)| {
         *surface == current.surface
             && control.id == current.target
@@ -959,35 +1066,6 @@ pub(super) fn restore(
     }) else {
         return;
     };
-    if current.activate_on_present {
-        let action = current
-            .tab_target
-            .and_then(|start| resolve_tab(control, start, SurfaceTabInput::Activate));
-        if let Some(action) = action {
-            let weak = Rc::downgrade(shared);
-            let weak_interaction = Rc::downgrade(interaction);
-            let surface = current.surface;
-            let version = current.version;
-            let claim = current.claim_revision;
-            // Publish focus intent after this output's focus-stable observers.
-            // Creating it inside Normal prepaint could let the same frame
-            // acknowledge NotFocused before the new request can be applied.
-            window.defer(cx, move |window, cx| {
-                let Some((shared, interaction)) = weak.upgrade().zip(weak_interaction.upgrade())
-                else {
-                    return;
-                };
-                if shared.borrow().session.version() != version
-                    || window.focus_claim_revision() != claim
-                {
-                    return;
-                }
-                activate_action(&shared, &interaction, surface, serial, &action, window, cx);
-            });
-            *interaction.keyboard.borrow_mut() = Some(current);
-        }
-        return;
-    }
     if !focus.is_focused(window) {
         window.focus(focus, cx);
     }
@@ -1051,8 +1129,10 @@ fn restore_opener(
     current.control = control.clone();
     current.serial = serial;
     current.claim_revision = window.focus_claim_revision();
-    current.pending = Some(slot);
-    current.submitted = false;
+    current.phase = PrefixPhase::Pending {
+        action: slot,
+        after_commit: false,
+    };
     *interaction.keyboard.borrow_mut() = Some(current);
     defer_flush(shared, interaction, window, cx);
 }
@@ -1087,18 +1167,23 @@ fn restore_menu(
     let Some(keys) = control.menu_keys.as_ref() else {
         return;
     };
-    if current.pending.is_some() {
-        current.pending = keys.action(current.target, current.menu_end);
-        if current.pending.is_none() {
+    if current.pending().is_some() {
+        let Some(action) = keys.action(current.target, current.menu_end) else {
             return;
-        }
+        };
+        current.phase = PrefixPhase::Pending {
+            action,
+            after_commit: false,
+        };
     } else if control.id != current.target {
         // A different core focus owner has superseded this completed prefix.
         return;
     }
     current.control = control.clone();
     current.serial = serial;
-    current.submitted = false;
+    if current.pending().is_none() {
+        current.phase = PrefixPhase::Presented;
+    }
     if current.menu_end.is_none() {
         if !focus.is_focused(window) {
             window.focus(focus, cx);
@@ -1120,7 +1205,7 @@ fn restore_menu(
             });
         }
     }
-    let pending = current.pending.is_some();
+    let pending = current.pending().is_some();
     *interaction.keyboard.borrow_mut() = Some(current);
     if pending {
         // Keep terminal pane-focus requests outside Normal prepaint, after

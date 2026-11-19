@@ -254,8 +254,11 @@ impl Render for FocusableEditor {
 }
 
 #[open_gpui::test]
-fn body_shortcut_skips_a_last_header_whose_only_live_button_is_close(cx: &mut TestAppContext) {
+fn document_cycle_uses_a_live_sibling_when_the_focused_header_body_is_covered(
+    cx: &mut TestAppContext,
+) {
     use dockspace::runtime::{SurfacePaintProgramOperation, SurfacePaintProgramStep};
+    use open_gpui::accesskit::{Action, ActionRequest, TreeId};
     cx.defer_next_window_frame_requests();
     let third = ItemId::new(774);
     let floating = ItemId::new(775);
@@ -342,5 +345,30 @@ fn body_shortcut_skips_a_last_header_whose_only_live_button_is_close(cx: &mut Te
             selected,
             "Ctrl+Tab should select the second tab with covered={should_cover}, handled={handled}"
         );
+
+        if should_cover {
+            cx.update(|app| {
+                dock.update(|frame| Ok(frame.select_item_current(CENTER)?), app)
+                    .unwrap();
+            });
+            assert!(visual.activate_accessibility());
+            present(&mut visual, &dock);
+            let tree = visual.latest_accessibility_tree_update().unwrap();
+            let (target, _) = tree
+                .nodes
+                .iter()
+                .find(|(_, node)| node.role() == Role::Tab && node.label() == Some("Tab 774"))
+                .unwrap();
+            assert!(visual.dispatch_accessibility_action(ActionRequest {
+                action: Action::Focus,
+                target_tree: TreeId::ROOT,
+                target_node: *target,
+                data: None,
+            }));
+            assert!(dock.with_view(|view| view.item(CENTER).unwrap().is_active()));
+            visual.simulate_keystrokes("ctrl-tab");
+            present(&mut visual, &dock);
+            assert!(dock.with_view(|view| view.item(FLOATING).unwrap().is_active()));
+        }
     }
 }

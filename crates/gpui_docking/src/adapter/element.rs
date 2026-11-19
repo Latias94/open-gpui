@@ -1637,26 +1637,43 @@ impl DockspaceElement {
             let control = {
                 let host = shared.borrow();
                 let scope = &host.mounts[&owner].focus;
-                let content_bar = pane_bars.iter().find_map(|(item, bar)| {
-                    host.panels
-                        .get(item)
-                        .and_then(|pane| pane.content_focus.as_ref())
-                        .is_some_and(|focus| focus.contains_focused(window, cx))
-                        .then_some(*bar)
-                        .flatten()
+                let focused_header = controls.iter().find(|(control, focus, _)| {
+                    matches!(control.kind, ControlKind::Tab(_)) && focus.is_focused(window)
                 });
-                controls.iter().rev().find_map(|(control, focus, _)| {
-                    if !matches!(control.kind, ControlKind::Tab(_)) || control.receiver.is_none() {
-                        return None;
-                    }
-                    let owns_focus = focus.is_focused(window)
-                        || control
-                            .tab_strip
-                            .as_ref()
-                            .is_some_and(|strip| Some(strip.visual_id()) == content_bar);
-                    (owns_focus || (scope.is_focused(window) && control.selected == Some(true)))
-                        .then(|| control.clone())
-                })
+                let focused_bar = focused_header
+                    .and_then(|(control, _, _)| Some(control.tab_strip.as_ref()?.visual_id()))
+                    .or_else(|| {
+                        pane_bars.iter().find_map(|(item, bar)| {
+                            host.panels
+                                .get(item)
+                                .and_then(|pane| pane.content_focus.as_ref())
+                                .is_some_and(|focus| focus.contains_focused(window, cx))
+                                .then_some(*bar)
+                                .flatten()
+                        })
+                    });
+                focused_header
+                    .filter(|(control, _, _)| control.receiver.is_some())
+                    .map(|(control, _, _)| control.clone())
+                    .or_else(|| {
+                        controls.iter().rev().find_map(|(control, _, _)| {
+                            if !matches!(control.kind, ControlKind::Tab(_))
+                                || control.receiver.is_none()
+                            {
+                                return None;
+                            }
+                            let owns_focus = focused_bar.map_or_else(
+                                || scope.is_focused(window) && control.selected == Some(true),
+                                |bar| {
+                                    control
+                                        .tab_strip
+                                        .as_ref()
+                                        .is_some_and(|strip| strip.visual_id() == bar)
+                                },
+                            );
+                            owns_focus.then(|| control.clone())
+                        })
+                    })
             };
             if let Some(control) = control
                 && keyboard::handle(
