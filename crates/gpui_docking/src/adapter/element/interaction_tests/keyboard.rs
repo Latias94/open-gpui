@@ -861,6 +861,122 @@ fn an_application_blur_cancels_clipped_activation_waiting_for_presentation(
 }
 
 #[open_gpui::test]
+fn clipped_tab_navigation_survives_intermediate_updates(cx: &mut TestAppContext) {
+    cx.defer_next_window_frame_requests();
+    let items = (61..91).map(ItemId::new).collect::<Vec<_>>();
+    let (dock, handles, _) = tab_fixture(cx, &items);
+    let window = cx.open_window(size(px(640.0), px(600.0)), |_, _| Root {
+        dock: dock.clone(),
+    });
+    let mut visual = active_visual(window.into(), cx);
+    assert!(visual.activate_accessibility());
+    frames(&mut visual, &dock);
+    focus_tab(FIRST, &mut visual);
+    visual.simulate_keystrokes("end");
+    assert!(dock.with_view(|view| view.item(items[29]).unwrap().is_active()));
+    assert!(visual.simulate_frame(RequestFrameOptions {
+        require_presentation: true,
+        force_render: true,
+        ..Default::default()
+    }));
+    for key in ["left", "enter"] {
+        assert!(
+            visual
+                .update(|window, cx| window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx)),
+            "{key}"
+        );
+    }
+    frames(&mut visual, &dock);
+    assert!(dock.with_view(|view| view.item(items[28]).unwrap().is_active()));
+    assert!(visual.update(|window, cx| handles[28].contains_focused(window, cx)));
+}
+
+#[open_gpui::test]
+fn application_blur_wins_after_tab_activation_commits(cx: &mut TestAppContext) {
+    cx.defer_next_window_frame_requests();
+    let (dock, _, _) = tab_fixture(cx, &[FIRST, SECOND, ItemId::new(63)]);
+    let window = cx.open_window(size(px(800.0), px(600.0)), |_, _| Root {
+        dock: dock.clone(),
+    });
+    let mut visual = active_visual(window.into(), cx);
+    assert!(visual.activate_accessibility());
+    frames(&mut visual, &dock);
+    focus_tab(FIRST, &mut visual);
+    visual.update(|window, cx| {
+        for key in ["right", "enter"] {
+            assert!(window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx));
+        }
+        assert_eq!(
+            dock.host
+                .borrow()
+                .session
+                .pane_focus_request(SURFACE)
+                .unwrap()
+                .item(),
+            Some(SECOND)
+        );
+        window.blur(cx);
+        assert!(window.focused(cx).is_none());
+    });
+    frames(&mut visual, &dock);
+    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_active()));
+    assert!(visual.update(|window, cx| window.focused(cx).is_none()));
+    assert!(
+        dock.host
+            .borrow()
+            .session
+            .pane_focus_request(SURFACE)
+            .is_none()
+    );
+}
+
+#[open_gpui::test]
+fn a_presented_header_accepts_independent_keys_after_a_sibling_reorder(cx: &mut TestAppContext) {
+    cx.defer_next_window_frame_requests();
+    let third = ItemId::new(63);
+    let fourth = ItemId::new(64);
+    for key in ["enter", "delete"] {
+        let (dock, handles, _) = tab_fixture(cx, &[FIRST, SECOND, third, fourth]);
+        let window = cx.open_window(size(px(800.0), px(600.0)), |_, _| Root {
+            dock: dock.clone(),
+        });
+        let mut visual = active_visual(window.into(), cx);
+        assert!(visual.activate_accessibility());
+        frames(&mut visual, &dock);
+        focus_tab(FIRST, &mut visual);
+        visual.simulate_keystrokes("right");
+        frames(&mut visual, &dock);
+        assert_accessibility_focus(&visual, Role::Tab, "Pane 62");
+
+        visual.update(|window, cx| {
+            let header = window.focused(cx).unwrap();
+            dock.update(
+                |frame| {
+                    frame.dock_item_current(
+                        fourth,
+                        dockspace::model::DockPlacement::Before(third),
+                    )?;
+                    Ok(())
+                },
+                cx,
+            )
+            .unwrap();
+            assert!(header.is_focused(window) && window.is_focus_handle_rendered(&header));
+            assert!(window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx));
+        });
+        frames(&mut visual, &dock);
+        assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_active()));
+        if key == "enter" {
+            assert!(visual.update(|window, cx| handles[1].contains_focused(window, cx)));
+        } else {
+            let plans = dock.pending_content_close_plans().unwrap();
+            assert_eq!(plans.len(), 1);
+            assert_eq!(plans[0].items()[0].item(), SECOND);
+        }
+    }
+}
+
+#[open_gpui::test]
 fn one_update_navigation_round_trip_and_cycles_preserve_event_order(cx: &mut TestAppContext) {
     cx.defer_next_window_frame_requests();
     let third = ItemId::new(63);

@@ -144,8 +144,25 @@ struct InteractionState {
 
 struct PaneFocusAttempt {
     request: DockspacePaneFocusRequest,
+    claim_revision: Option<u64>,
     applied: bool,
     observation: Option<DockspacePaneFocusObservation>,
+}
+
+impl PaneFocusAttempt {
+    fn new(request: DockspacePaneFocusRequest) -> Self {
+        Self {
+            request,
+            claim_revision: None,
+            applied: false,
+            observation: None,
+        }
+    }
+
+    fn owns_focus_claim(&self, window: &Window) -> bool {
+        self.claim_revision
+            .is_none_or(|claim| claim == window.focus_claim_revision())
+    }
 }
 
 struct PendingTabFocus {
@@ -1861,6 +1878,7 @@ fn activate_action_with_continuation(
     let tab_focus = action.tab_focus;
     let version = action.intent.expected_version();
     let yields_content = action.yields_content;
+    let previous_focus = host.session.pane_focus_request(surface);
     let result = (|| -> Result<_> {
         let HostState {
             session,
@@ -1906,21 +1924,19 @@ fn activate_action_with_continuation(
             return false;
         }
     }
-    let content_focus = yields_content
-        .then(|| {
-            host.session
-                .pane_focus_request(surface)
-                .and_then(|request| {
-                    request
-                        .item()
-                        .and_then(|item| host.panels.get(&item))
-                        .and_then(|pane| pane.content_focus.as_ref())
-                        .filter(|focus| window.is_focus_handle_rendered(focus))
-                        .cloned()
-                        .or_else(|| host.mounts.get(&owner).map(|mount| mount.focus.clone()))
-                })
-        })
-        .flatten();
+    let request = host
+        .session
+        .pane_focus_request(surface)
+        .filter(|request| yields_content && Some(*request) != previous_focus);
+    let content_focus = request.and_then(|request| {
+        request
+            .item()
+            .and_then(|item| host.panels.get(&item))
+            .and_then(|pane| pane.content_focus.as_ref())
+            .filter(|focus| window.is_focus_handle_rendered(focus))
+            .cloned()
+            .or_else(|| host.mounts.get(&owner).map(|mount| mount.focus.clone()))
+    });
     let focus = tab_focus
         .filter(|_| !yields_content)
         .filter(|(_, key)| keyboard::tab_is_selected(host.session.view(), surface, *key))
@@ -1944,6 +1960,11 @@ fn activate_action_with_continuation(
         interaction.pending_tab_focus.borrow_mut().take();
         if let Some(focus) = content_focus {
             window.focus(&focus, cx);
+        }
+        if let Some(request) = request {
+            let mut attempt = PaneFocusAttempt::new(request);
+            attempt.claim_revision = Some(window.focus_claim_revision());
+            interaction.pane_focus.borrow_mut().insert(surface, attempt);
         }
     } else if let Some((visual, focus)) = focus {
         window.focus(&focus, cx);
@@ -2124,25 +2145,21 @@ fn apply_pane_focus(
         let mut attempts = interaction.pane_focus.borrow_mut();
         let attempt = attempts
             .entry(request.surface())
-            .or_insert(PaneFocusAttempt {
-                request,
-                applied: false,
-                observation: None,
-            });
+            .or_insert_with(|| PaneFocusAttempt::new(request));
         if attempt.request != request {
-            *attempt = PaneFocusAttempt {
-                request,
-                applied: false,
-                observation: None,
-            };
+            *attempt = PaneFocusAttempt::new(request);
         }
         if !attempt.applied {
             attempt.applied = true;
             if let Some(target) = target
+                && attempt.owns_focus_claim(window)
                 && window.is_focus_handle_rendered(&target)
                 && (scope.contains_focused(window, cx) || window.focused(cx).is_none())
             {
                 window.focus(&target, cx);
+                if attempt.claim_revision.is_some() {
+                    attempt.claim_revision = Some(window.focus_claim_revision());
+                }
             }
         }
     }
@@ -2158,31 +2175,22 @@ fn observe_pane_focus(
 ) {
     let mut observations = Vec::new();
     for (request, target, _) in pane_focus_requests(shared, serial, visible_panes, window) {
-        let observation = match target {
-            Some(target) if window.is_focus_handle_rendered(&target) => {
-                if target.contains_focused(window, cx) {
-                    DockspacePaneFocusObservation::Focused
-                } else {
-                    DockspacePaneFocusObservation::NotFocused
-                }
-            }
-            _ => DockspacePaneFocusObservation::Unavailable,
-        };
         let mut attempts = interaction.pane_focus.borrow_mut();
         let attempt = attempts
             .entry(request.surface())
-            .or_insert(PaneFocusAttempt {
-                request,
-                applied: false,
-                observation: None,
-            });
+            .or_insert_with(|| PaneFocusAttempt::new(request));
         if attempt.request != request {
-            *attempt = PaneFocusAttempt {
-                request,
-                applied: false,
-                observation: None,
-            };
+            *attempt = PaneFocusAttempt::new(request);
         }
+        let observation = match target.filter(|target| window.is_focus_handle_rendered(target)) {
+            Some(target) if target.contains_focused(window, cx) => {
+                DockspacePaneFocusObservation::Focused
+            }
+            Some(_) if attempt.owns_focus_claim(window) => {
+                DockspacePaneFocusObservation::NotFocused
+            }
+            _ => DockspacePaneFocusObservation::Unavailable,
+        };
         if attempt.observation != Some(observation) {
             observations.push((request, observation));
         }
