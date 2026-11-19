@@ -80,7 +80,7 @@ pub(super) fn pane_center(
             .draws
             .iter()
             .find_map(|draw| match draw {
-                Draw::Pane(bounds, candidate, _) if *candidate == item => Some(*bounds),
+                Draw::Pane(candidate, geometry) if *candidate == item => Some(geometry.clip()),
                 _ => None,
             })
             .unwrap();

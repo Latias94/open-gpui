@@ -12,10 +12,11 @@ use dockspace::{
     model::{ItemId, SurfaceId, TabKey},
     runtime::{
         DockspacePaneFocusObservation, DockspacePaneFocusRequest, DockspaceReceiverDescriptor,
-        DockspaceUpdate, DockspaceVisualId, HostFrameReport, SurfaceMeasurementAnswer as Answer,
-        SurfaceMeasurementRequest as Request, SurfacePointerButton, SurfacePointerCancelReason,
-        SurfacePointerEvent, SurfaceWork, SurfaceWorkDeferred, TabListMenuMetrics,
-        TabStripControlMetric, TabStripControlMetrics, TabStripControlPlacement, TabStripMetrics,
+        DockspaceUpdate, DockspaceVisualId, HostFrameReport, PaneContentGeometry,
+        SurfaceMeasurementAnswer as Answer, SurfaceMeasurementRequest as Request,
+        SurfacePointerButton, SurfacePointerCancelReason, SurfacePointerEvent, SurfaceWork,
+        SurfaceWorkDeferred, TabListMenuMetrics, TabStripControlMetric, TabStripControlMetrics,
+        TabStripControlPlacement, TabStripMetrics,
     },
 };
 use open_gpui::{
@@ -27,8 +28,8 @@ use open_gpui::{
 };
 
 use crate::adapter::{
-    HostState, SharedHost,
-    host::DockRegion,
+    GpuiDockspaceConfig, HostState, SharedHost,
+    host::{DockRegion, TabContent},
     host_native,
     input::{self, InputFrame},
     presentation,
@@ -73,7 +74,7 @@ impl Packet {
         self.draws
             .iter()
             .filter_map(|draw| match draw {
-                Draw::Pane(_, item, _) => Some(*item),
+                Draw::Pane(item, _) => Some(*item),
                 _ => None,
             })
             .collect()
@@ -88,8 +89,15 @@ enum Draw {
     Guide(LogicalRect, GuideState),
     Outline(LogicalRect, Hsla),
     Text(LogicalRect, String, Hsla),
-    TabText(LogicalRect, LogicalRect, TabKey, String, Hsla),
-    Pane(LogicalRect, ItemId, LogicalRect),
+    TabLabel {
+        layout: LogicalRect,
+        clip: LogicalRect,
+        key: TabKey,
+        title: String,
+        content: Option<TabContent>,
+        color: Hsla,
+    },
+    Pane(ItemId, PaneContentGeometry),
     Receiver(DockspaceReceiverDescriptor),
     Preview(LogicalRect),
     NativePreview(host_native::provisional::Preview),
@@ -945,48 +953,51 @@ impl DockspaceElement {
                     hitboxes.push(hitbox);
                     receivers.push((*receiver, hitbox));
                 }
-                Draw::Text(rect, title, color) | Draw::TabText(rect, _, _, title, color) => {
-                    let clip = match draw {
-                        Draw::TabText(_, clip, _, _, _) => to_gpui(*clip, bounds),
-                        _ => to_gpui(*rect, bounds),
-                    };
+                Draw::Text(rect, title, color) => {
                     let rect = to_gpui(*rect, bounds);
-                    let mut element = div()
+                    let label = tab_label_style(&config, *color)
                         .w(rect.size.width)
                         .h(rect.size.height)
                         .overflow_hidden()
-                        .whitespace_nowrap()
-                        .flex()
-                        .items_center()
-                        .font(config.font.clone())
-                        .text_size(config.text_size)
-                        .text_color(*color)
-                        .when_some(
-                            match draw {
-                                Draw::TabText(_, _, key, _, _) => key.item(),
-                                _ => None,
-                            },
-                            |text, item| {
-                                text.debug_selector(move || format!("dockspace:tab:{}", item.get()))
-                            },
-                        )
                         .child(title.clone())
                         .into_any_element();
-                    let clip = window.prepare_subtree_clip(&SubtreeClip::own_border_box(), clip);
-                    if window
-                        .with_prepared_subtree_clip(&clip, |window| {
-                            element.prepaint_as_root(rect.origin, definite(rect), window, cx);
-                        })
-                        .is_some()
-                    {
-                        draws.push(PreparedDraw::ClippedElement(element, clip));
-                    }
+                    draws.extend(prepare_label(label, rect, rect, window, cx));
                 }
-                Draw::Pane(rect, item, clip) => {
-                    let rect = to_gpui(*rect, bounds);
+                Draw::TabLabel {
+                    layout,
+                    clip,
+                    key,
+                    title,
+                    content,
+                    color,
+                } => {
+                    let rect = to_gpui(*layout, bounds);
+                    let label = tab_label_style(&config, *color)
+                        .w(rect.size.width)
+                        .h(rect.size.height)
+                        .overflow_hidden()
+                        .when_some(key.item(), |label, item| {
+                            label.debug_selector(move || format!("dockspace:tab:{}", item.get()))
+                        })
+                        .child(content.as_ref().map_or_else(
+                            || title.clone().into_any_element(),
+                            |content| content(cx),
+                        ))
+                        .with_subtree_presentation(SubtreePresentation::Inert)
+                        .into_any_element();
+                    draws.extend(prepare_label(
+                        label,
+                        rect,
+                        to_gpui(*clip, bounds),
+                        window,
+                        cx,
+                    ));
+                }
+                Draw::Pane(item, geometry) => {
+                    let rect = to_gpui(geometry.layout_bounds(), bounds);
                     let clip = window.prepare_subtree_clip(
                         &SubtreeClip::own_border_box(),
-                        to_gpui(*clip, bounds),
+                        to_gpui(geometry.clip(), bounds),
                     );
                     let geometry = window
                         .with_prepared_subtree_clip(&clip, |window| window.hit_test_snapshot(rect));
@@ -1605,9 +1616,9 @@ impl DockspaceElement {
                     }
                     let owns_focus = focus.is_focused(window)
                         || control
-                            .tab_keys
+                            .tab_strip
                             .as_ref()
-                            .is_some_and(|keys| Some(keys.bar) == content_bar);
+                            .is_some_and(|strip| Some(strip.visual_id()) == content_bar);
                     (owns_focus || (scope.is_focused(window) && control.selected == Some(true)))
                         .then(|| control.clone())
                 })
@@ -2213,7 +2224,7 @@ fn build_candidate(
     inputs: &[input::QueuedInput],
     regions: &BTreeMap<SurfaceId, Bounds<Pixels>>,
     open_menu: Option<presentation_menu::OpenMenu>,
-    window: &Window,
+    window: &mut Window,
     cx: &mut App,
 ) -> Result<Candidate> {
     let panels = &host.panels;
@@ -2323,7 +2334,23 @@ fn build_candidate(
                         |pane| pane.sizing,
                     ))
                 }
-                Request::TabIntrinsic { label, .. } => {
+                Request::TabIntrinsic { key, label, .. } => {
+                    if let Some(content) = key
+                        .item()
+                        .and_then(|item| panels.get(&item))
+                        .and_then(|pane| pane.tab_content.as_ref())
+                    {
+                        let measured = tab_label_style(config, config.colors.text)
+                            .child(content(cx))
+                            .with_subtree_presentation(SubtreePresentation::Inert)
+                            .into_any_element()
+                            .layout_as_root(
+                                size(AvailableSpace::MaxContent, AvailableSpace::MaxContent),
+                                window,
+                                cx,
+                            );
+                        return Ok(Answer::TabIntrinsic(f64::from(f32::from(measured.width))));
+                    }
                     let title: open_gpui::SharedString = recording::tab_label(label, panels).into();
                     let width = {
                         let line = window.text_system().shape_line(
@@ -2397,6 +2424,30 @@ fn definite(bounds: Bounds<Pixels>) -> open_gpui::Size<AvailableSpace> {
         AvailableSpace::Definite(bounds.size.width),
         AvailableSpace::Definite(bounds.size.height),
     )
+}
+
+fn tab_label_style(config: &GpuiDockspaceConfig, color: Hsla) -> open_gpui::Div {
+    div()
+        .whitespace_nowrap()
+        .flex()
+        .items_center()
+        .font(config.font.clone())
+        .text_size(config.text_size)
+        .text_color(color)
+}
+
+fn prepare_label(
+    mut label: AnyElement,
+    rect: Bounds<Pixels>,
+    clip: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<PreparedDraw> {
+    let clip = window.prepare_subtree_clip(&SubtreeClip::own_border_box(), clip);
+    window.with_prepared_subtree_clip(&clip, |window| {
+        label.prepaint_as_root(rect.origin, definite(rect), window, cx);
+    })?;
+    Some(PreparedDraw::ClippedElement(label, clip))
 }
 
 fn outline(bounds: Bounds<Pixels>, color: Hsla, window: &mut Window) {

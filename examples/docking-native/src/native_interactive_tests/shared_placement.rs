@@ -11,7 +11,7 @@ use open_gpui_docking::{
     DockSurface,
     dockspace::{
         geometry::PhysicalRect,
-        model::{NativeTearOffSource, NativeWindowPlacement, SurfaceId},
+        model::{DockMoveSource, NativeWindowPlacement, SurfaceId},
     },
     native::{NativeReport, NativeWindowRequest},
 };
@@ -140,7 +140,7 @@ fn real_windows_shared_native_placement_matches_target_dpi_in_both_directions() 
                     session.dock.update(
                         |frame| {
                             frame.move_to_new_window_current(
-                                NativeTearOffSource::Item(source.item),
+                                DockMoveSource::Item(source.item),
                                 NativeWindowPlacement::new(planned_outer),
                             )?;
                             Ok(())

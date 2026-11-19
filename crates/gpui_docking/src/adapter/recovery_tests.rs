@@ -3,7 +3,7 @@
 use super::*;
 use dockspace::{
     geometry::PhysicalRect,
-    model::{DockspaceActionRejection, NativeTearOffSource, NativeWindowPlacement},
+    model::{DockMoveSource, DockspaceActionRejection, NativeWindowPlacement},
     runtime::SurfaceUnavailableReason,
 };
 use open_gpui::{WindowMutationDomain, WindowPlacementRequest, WindowPlacementState};
@@ -53,7 +53,7 @@ fn native_dock_back_preserves_recovery_geometry_until_the_host_marks_it_unavaila
         .borrow()
         .session
         .native_window_command(
-            NativeTearOffSource::Item(B),
+            DockMoveSource::Item(B),
             NativeWindowPlacement::new(PhysicalRect::new(20.0, 30.0, 600.0, 450.0).unwrap()),
         )
         .unwrap()

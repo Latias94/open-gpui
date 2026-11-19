@@ -20,7 +20,6 @@ use super::{DockSurface, HostState, SharedHost};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DockCommitNotification {
     notification: DockspaceNotification,
-    presentation_transitions: Vec<DockspacePresentationTransition>,
 }
 
 impl DockCommitNotification {
@@ -34,7 +33,7 @@ impl DockCommitNotification {
     /// Match each terminal's identity to the transition returned by
     /// [`DockSurface::update_action`], including requests from earlier commits.
     pub fn presentation_transitions(&self) -> &[DockspacePresentationTransition] {
-        &self.presentation_transitions
+        self.notification.presentation_transitions()
     }
 }
 
@@ -90,14 +89,11 @@ impl DockSurface {
 }
 
 pub(super) fn observe(host: &mut HostState, report: &HostFrameReport) {
-    if host.commit_handler.is_none()
-        || (report.notification().is_empty() && report.presentation_transitions().is_empty())
-    {
+    if host.commit_handler.is_none() || report.notification().is_empty() {
         return;
     }
     host.commit_notifications.push_back(DockCommitNotification {
         notification: report.notification().clone(),
-        presentation_transitions: report.presentation_transitions().to_vec(),
     });
 }
 

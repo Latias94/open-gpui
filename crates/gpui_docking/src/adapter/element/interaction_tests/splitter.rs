@@ -121,7 +121,7 @@ fn splitter_double_click_restores_preferred_extents(cx: &mut TestAppContext) {
             .draws
             .iter()
             .find_map(|draw| match draw {
-                Draw::Pane(rect, FIRST, _) => Some(rect.width()),
+                Draw::Pane(FIRST, geometry) => Some(geometry.layout_bounds().width()),
                 _ => None,
             })
             .unwrap()

@@ -12,7 +12,7 @@ use dockspace::{
         DockspaceReceiverDescriptor, DockspaceTabsGroupCommandKind,
         SurfaceContainedResizeAdjustment, SurfacePaintPlan,
         SurfacePaintProgramOperation as Operation, SurfacePaintProgramStep as Step,
-        SurfaceSplitterAdjustment, SurfaceTabInput, SurfaceTabNavigation, TabStripControlKind,
+        SurfaceSplitterAdjustment, TabStripControlKind,
     },
 };
 
@@ -36,7 +36,7 @@ pub(super) fn record(
     let mut pane_receivers = BTreeMap::new();
     let mut native_preview = None;
     let mut menu_backdrop = None;
-    let mut tab_keys = BTreeMap::new();
+    let mut tab_strips = BTreeMap::new();
     let mut menu_openers = BTreeMap::new();
     let receiver = |draws: &mut Vec<Draw>, value: Option<DockspaceReceiverDescriptor>| {
         if let Some(value) = value {
@@ -60,14 +60,16 @@ pub(super) fn record(
                     root,
                 } => match operation {
                     Operation::Pane(pane) => {
-                        receiver(&mut draws, plan.receiver_for_pane(pane));
+                        let pane_receiver = plan.receiver_for_pane(pane);
+                        receiver(&mut draws, pane_receiver);
                         if !paint.is_source_gap() {
-                            if let Some(receiver) = plan.receiver_for_pane(pane) {
+                            if let Some(receiver) = pane_receiver {
                                 pane_receivers.insert(pane.item(), receiver);
                             }
+                            let geometry = pane.content_geometry();
                             pane_bars.insert(pane.item(), pane.tab_bar_visual_id());
-                            draws.push(Draw::Fill(pane.content_bounds(), colors.pane));
-                            draws.push(Draw::Pane(pane.content_bounds(), pane.item(), pane.clip()));
+                            draws.push(Draw::Fill(geometry.clip(), colors.pane));
+                            draws.push(Draw::Pane(pane.item(), geometry));
                         }
                     }
                     Operation::Tabs(tabs) => {
@@ -78,8 +80,8 @@ pub(super) fn record(
                     }
                     Operation::TabBar(bar) => {
                         if !paint.is_source_gap() {
-                            if let Some(keys) = super::keyboard::TabKeys::record(plan, bar) {
-                                tab_keys.insert(bar.visual_id(), Rc::new(keys));
+                            if let Some(strip) = plan.retain_tab_strip(bar) {
+                                tab_strips.insert(bar.visual_id(), Rc::new(strip));
                             }
                             if let Some(receiver) = plan.receiver_for_tab_strip_scroll(bar) {
                                 draws.push(Draw::Scroll(super::wheel::ScrollTarget::Strip(
@@ -152,47 +154,36 @@ pub(super) fn record(
                                 },
                                 tab.selected(),
                             ));
-                            draws.push(Draw::TabText(
-                                tab.text_layout_bounds(),
-                                tab.text_bounds(),
-                                tab.key(),
-                                tab_label(tab.label(), panels),
-                                if tab.selected() {
+                            let title = tab_label(tab.label(), panels);
+                            draws.push(Draw::TabLabel {
+                                layout: tab.text_layout_bounds(),
+                                clip: tab.text_bounds(),
+                                key: tab.key(),
+                                title: title.clone(),
+                                content: tab
+                                    .item()
+                                    .and_then(|item| panels.get(&item)?.tab_content.clone()),
+                                color: if tab.selected() {
                                     colors.text
                                 } else {
                                     colors.muted_text
                                 },
-                            ));
+                            });
                             let body = plan.receiver_for_tab_body(tab);
                             let mut control = Control::new(
                                 tab.visual_id(),
                                 tab.visible_bounds(),
                                 ControlKind::Tab(tab.key()),
-                                tab_label(tab.label(), panels),
+                                title,
                                 body,
                             );
                             control.selected = Some(tab.selected());
-                            control.tab_keys = tab_keys.get(&tab.tab_bar_visual_id()).cloned();
+                            control.tab_strip = tab_strips.get(&tab.tab_bar_visual_id()).cloned();
                             control.action(
                                 ControlAction::Activate,
                                 plan.prepare_tab_select(tab.key()),
                             );
                             control.action(ControlAction::Close, plan.prepare_tab_close(tab.key()));
-                            for (key, navigation) in [
-                                (ControlAction::Previous, SurfaceTabNavigation::Previous),
-                                (ControlAction::Next, SurfaceTabNavigation::Next),
-                                (ControlAction::First, SurfaceTabNavigation::First),
-                                (ControlAction::Last, SurfaceTabNavigation::Last),
-                            ] {
-                                control.action(
-                                    key,
-                                    plan.prepare_tab_input_sequence(
-                                        tab.key(),
-                                        tab.key(),
-                                        [SurfaceTabInput::Navigate(navigation)],
-                                    ),
-                                );
-                            }
                             draws.push(Draw::Control(Rc::new(control)));
                             let close = plan.receiver_for_tab_close(tab);
                             receiver(&mut draws, close);

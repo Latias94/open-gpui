@@ -4,102 +4,39 @@ use std::collections::VecDeque;
 
 use dockspace::{
     model::{DockspaceTabView, DockspaceTabsView, DockspaceView, WorkspaceVersion},
-    runtime::{
-        SurfacePaintPlan, SurfaceTabInput, SurfaceTabNavigation, TabBarPaintRecord,
-        TabListMenuPaintRecord,
-    },
+    runtime::{SurfacePaintPlan, SurfaceTabInput, SurfaceTabNavigation, TabListMenuPaintRecord},
 };
 use open_gpui::Keystroke;
 
 use super::*;
 
-/// Each destination keeps actions from the original operable receiver, including
-/// members with no visible control. Core resolves every move and validates its
-/// frozen witness; the adapter only chooses the focused or selected starting item.
-pub(super) struct TabKeys {
-    pub(super) bar: DockspaceVisualId,
-    surface: SurfaceId,
-    members: BTreeMap<DockspaceVisualId, TabMember>,
+fn tab_input(key: ControlAction) -> Option<SurfaceTabInput> {
+    let navigation = match key {
+        ControlAction::Activate => return Some(SurfaceTabInput::Activate),
+        ControlAction::Previous => SurfaceTabNavigation::Previous,
+        ControlAction::Next => SurfaceTabNavigation::Next,
+        ControlAction::First => SurfaceTabNavigation::First,
+        ControlAction::Last => SurfaceTabNavigation::Last,
+        _ => return None,
+    };
+    Some(SurfaceTabInput::Navigate(navigation))
 }
 
-struct TabMember {
-    key: TabKey,
-    actions: Vec<(ControlAction, chrome::ActionSlot)>,
-}
-
-impl TabKeys {
-    pub(super) fn record(plan: SurfacePaintPlan<'_>, bar: TabBarPaintRecord<'_>) -> Option<Self> {
-        let source = bar.members().find_map(|member| {
-            plan.prepare_tab_input_sequence(member.key(), member.key(), [SurfaceTabInput::Activate])
-                .map(|_| member.key())
-        })?;
-        let mut members = BTreeMap::new();
-        for member in bar.members() {
-            let mut actions = Vec::new();
-            for (key, input) in [
-                (ControlAction::Activate, SurfaceTabInput::Activate),
-                (
-                    ControlAction::Previous,
-                    SurfaceTabInput::Navigate(SurfaceTabNavigation::Previous),
-                ),
-                (
-                    ControlAction::Next,
-                    SurfaceTabInput::Navigate(SurfaceTabNavigation::Next),
-                ),
-                (
-                    ControlAction::First,
-                    SurfaceTabInput::Navigate(SurfaceTabNavigation::First),
-                ),
-                (
-                    ControlAction::Last,
-                    SurfaceTabInput::Navigate(SurfaceTabNavigation::Last),
-                ),
-            ] {
-                let Some(action) = plan.prepare_tab_input_sequence(source, member.key(), [input])
-                else {
-                    continue;
-                };
-                let mut action = chrome::Action::from(action);
-                action.yields_content = key == ControlAction::Activate;
-                actions.push((key, Rc::new(RefCell::new(Some(action)))));
-            }
-            members.insert(
-                member.visual_id(),
-                TabMember {
-                    key: member.key(),
-                    actions,
-                },
-            );
-        }
-        Some(Self {
-            bar: bar.visual_id(),
-            surface: plan.surface(),
-            members,
-        })
-    }
-
-    fn slot(
-        &self,
-        focused: DockspaceVisualId,
-        key: ControlAction,
-        selected_start: bool,
-        host: &HostState,
-    ) -> Option<chrome::ActionSlot> {
-        let member = if selected_start {
-            let first = self.members.values().next()?;
-            let selected =
-                tab_group(host.session.view(), self.surface, first.key)?.visible_selected()?;
-            self.members
-                .values()
-                .find(|member| member.key == selected)?
-        } else {
-            self.members.get(&focused)?
-        };
-        member
-            .actions
-            .iter()
-            .find_map(|(candidate, action)| (*candidate == key).then(|| action.clone()))
-    }
+fn resolve_tab(
+    control: &Control,
+    start: TabKey,
+    input: SurfaceTabInput,
+) -> Option<chrome::ActionSlot> {
+    let ControlKind::Tab(receiver) = control.kind else {
+        return None;
+    };
+    let deferred = control
+        .tab_strip
+        .as_ref()?
+        .resolve(receiver, start, [input])?;
+    let mut action = chrome::Action::from(deferred);
+    action.yields_content = input == SurfaceTabInput::Activate;
+    Some(Rc::new(RefCell::new(Some(action))))
 }
 
 /// Query direct membership rather than choosing a representative descendant.
@@ -235,6 +172,7 @@ pub(super) struct Continuation {
     version: WorkspaceVersion,
     control: Rc<Control>,
     target: DockspaceVisualId,
+    tab_target: Option<TabKey>,
     claim_revision: u64,
     pending: Option<chrome::ActionSlot>,
     submitted: bool,
@@ -261,9 +199,9 @@ impl Continuation {
             || self.target == control.id
             || self
                 .control
-                .tab_keys
+                .tab_strip
                 .as_ref()
-                .zip(control.tab_keys.as_ref())
+                .zip(control.tab_strip.as_ref())
                 .is_some_and(|(left, right)| Rc::ptr_eq(left, right))
             || self
                 .control
@@ -386,23 +324,24 @@ pub(super) fn handle(
         let target = previous
             .as_ref()
             .map_or(control.id, |current| current.target);
-        let slot = if matches!(origin.kind, ControlKind::Tab(_))
-            && matches!(
-                key,
-                ControlAction::Activate
-                    | ControlAction::Previous
-                    | ControlAction::Next
-                    | ControlAction::First
-                    | ControlAction::Last
-            ) {
+        let slot = if let (ControlKind::Tab(receiver), Some(input)) = (origin.kind, tab_input(key))
+        {
             let selected_start = selected_start
                 && previous
                     .as_ref()
                     .is_none_or(|current| current.pending.is_none());
-            origin
-                .tab_keys
-                .as_ref()
-                .and_then(|keys| keys.slot(target, key, selected_start, &host))
+            let start = if selected_start {
+                tab_group(host.session.view(), surface, receiver)
+                    .and_then(|group| group.visible_selected())
+            } else {
+                Some(
+                    previous
+                        .as_ref()
+                        .and_then(|current| current.tab_target)
+                        .unwrap_or(receiver),
+                )
+            };
+            start.and_then(|start| resolve_tab(origin, start, input))
         } else {
             (target == control.id).then(|| control.slot(key)).flatten()
         };
@@ -478,6 +417,7 @@ pub(super) fn handle(
             version: shared.borrow().session.version(),
             control: previous.map_or_else(|| control.clone(), |current| current.control),
             target,
+            tab_target: action.tab_focus.map(|(_, key)| key),
             claim_revision: window.focus_claim_revision(),
             pending: Some(slot),
             submitted: continuing,
@@ -520,6 +460,7 @@ pub(super) fn handle(
             version: shared.borrow().session.version(),
             control: previous.map_or_else(|| control.clone(), |current| current.control),
             target,
+            tab_target: action.tab_focus.map(|(_, key)| key),
             claim_revision: window.focus_claim_revision(),
             pending: None,
             submitted: true,
@@ -619,6 +560,7 @@ fn handle_menu(
         version: shared.borrow().session.version(),
         control: previous.map_or_else(|| control.clone(), |current| current.control),
         target,
+        tab_target: None,
         claim_revision: window.focus_claim_revision(),
         pending: Some(slot),
         submitted,
@@ -1004,9 +946,9 @@ pub(super) fn restore(
         return;
     };
     if current.activate_on_present {
-        let action = control.tab_keys.as_ref().and_then(|keys| {
-            keys.slot(control.id, ControlAction::Activate, false, &shared.borrow())
-        });
+        let action = current
+            .tab_target
+            .and_then(|start| resolve_tab(control, start, SurfaceTabInput::Activate));
         if let Some(action) = action {
             let weak = Rc::downgrade(shared);
             let weak_interaction = Rc::downgrade(interaction);

@@ -17,8 +17,8 @@ use dockspace::{
     },
 };
 use open_gpui::{
-    AnyView, AnyWindowHandle, App, Bounds, FocusHandle, GlobalElementId, HitboxTag, IntoElement,
-    Pixels, SharedString, Subscription, Window, WindowId,
+    AnyElement, AnyView, AnyWindowHandle, App, Bounds, FocusHandle, GlobalElementId, HitboxTag,
+    IntoElement, Pixels, SharedString, Subscription, Window, WindowId,
 };
 use web_time::Instant;
 
@@ -27,6 +27,7 @@ use super::{
 };
 
 pub(super) type SharedHost = Rc<RefCell<HostState>>;
+pub(super) type TabContent = Rc<dyn Fn(&App) -> AnyElement>;
 
 /// Application intent was rejected after an original protocol or internal failure.
 ///
@@ -63,6 +64,7 @@ pub struct DockPane {
     pub(super) title: SharedString,
     pub(super) view: AnyView,
     pub(super) sizing: PaneSizing,
+    pub(super) tab_content: Option<TabContent>,
     pub(super) content_focus: Option<FocusHandle>,
     pub(super) content_receivers: Vec<HitboxTag>,
 }
@@ -77,6 +79,7 @@ impl DockPane {
             sizing: LogicalSize::new(120.0, 90.0)
                 .expect("valid default pane size")
                 .into(),
+            tab_content: None,
             content_focus: None,
             content_receivers: Vec::new(),
         }
@@ -106,6 +109,23 @@ impl DockPane {
     /// Binds the content's existing focus target without replacing its View.
     pub fn with_focus_handle(mut self, focus: FocusHandle) -> Self {
         self.content_focus = Some(focus);
+        self
+    }
+
+    /// Replaces the visible label of this pane's tab with a GPUI element.
+    ///
+    /// The factory may run separately for measurement and painting. Return
+    /// equivalent content for the same application state and keep it free of
+    /// side effects. The tab still owns input, focus and the close button. Its
+    /// accessible label and the overflow menu use the pane title.
+    ///
+    /// Call [`DockSurface::refresh_tab_content`] when the intrinsic width
+    /// changes, or reserve room for adornments that appear and disappear.
+    pub fn with_tab_content<E: IntoElement>(
+        mut self,
+        content: impl Fn(&App) -> E + 'static,
+    ) -> Self {
+        self.tab_content = Some(Rc::new(move |cx| content(cx).into_any_element()));
         self
     }
 
@@ -380,8 +400,22 @@ impl DockSurface {
         sizing: impl Into<PaneSizing>,
         cx: &mut App,
     ) -> Result<()> {
-        let title = title.into();
-        let sizing = sizing.into();
+        self.refresh_pane_presentation(item, Some((title.into(), sizing.into())), cx)
+    }
+
+    /// Remeasures a pane after its custom tab content changes intrinsic width.
+    ///
+    /// Uses the same admission rules as [`Self::update_pane_metadata`].
+    pub fn refresh_tab_content(&self, item: ItemId, cx: &mut App) -> Result<()> {
+        self.refresh_pane_presentation(item, None, cx)
+    }
+
+    fn refresh_pane_presentation(
+        &self,
+        item: ItemId,
+        metadata: Option<(SharedString, PaneSizing)>,
+        cx: &mut App,
+    ) -> Result<()> {
         let mut host = self
             .host
             .try_borrow_mut()
@@ -404,7 +438,10 @@ impl DockSurface {
             .ok_or(DockPaneError::UnknownPane(item))?;
         // Even an unchanged value must respect the session's original update lease.
         let mut frame = host_native::begin_frame(session, mounts, native.as_ref(), None, cx)?;
-        if pane.title == title && pane.sizing == sizing {
+        if metadata
+            .as_ref()
+            .is_some_and(|(title, sizing)| pane.title == *title && pane.sizing == *sizing)
+        {
             return Ok(());
         }
         let surface = frame.view().item(item).map(|item| item.surface());
@@ -414,8 +451,10 @@ impl DockSurface {
             frame.defer_surface(surface, SurfaceUnavailableReason::Deferred)?;
         }
         let report = frame.commit()?;
-        pane.title = title;
-        pane.sizing = sizing;
+        if let Some((title, sizing)) = metadata {
+            pane.title = title;
+            pane.sizing = sizing;
+        }
         host.apply_report(report);
         if let Some(surface) = surface {
             if let Some(owner) = host.owners.get(&surface).copied() {

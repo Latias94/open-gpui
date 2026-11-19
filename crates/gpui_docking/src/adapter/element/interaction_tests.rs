@@ -122,9 +122,9 @@ fn prepared_chrome_action_waits_for_earlier_original_native_ingress(cx: &mut Tes
                 .iter()
                 .find_map(|draw| match draw {
                     Draw::Control(control)
-                        if matches!(control.kind, ControlKind::Tab(key) if key == FIRST.into()) =>
+                        if matches!(control.kind, ControlKind::Tab(key) if key == SECOND.into()) =>
                     {
-                        control.slot(ControlAction::Next)
+                        control.slot(ControlAction::Activate)
                     }
                     _ => None,
                 })
@@ -375,7 +375,7 @@ fn an_unbound_content_focus_request_is_reported_unavailable(cx: &mut TestAppCont
 }
 
 #[open_gpui::test]
-fn a_control_from_a_superseded_output_cannot_consume_its_action(cx: &mut TestAppContext) {
+fn a_control_from_a_superseded_output_cannot_navigate_tabs(cx: &mut TestAppContext) {
     cx.defer_next_window_frame_requests();
     let (dock, _) = fixture(cx, false);
     let window = cx.open_window(size(px(800.0), px(600.0)), |_, _| Root {
@@ -383,23 +383,23 @@ fn a_control_from_a_superseded_output_cannot_consume_its_action(cx: &mut TestApp
     });
     let mut visual = active_visual(window.into(), cx);
     frames(&mut visual, &dock);
-    let (serial, action) = {
+    let (serial, control) = {
         let host = dock.host.borrow();
         let mount = &host.mounts[&window.window_id()];
         let packet = mount.regions[&SURFACE].packet.as_ref().unwrap();
-        let action = packet
+        let control = packet
             .draws
             .iter()
             .find_map(|draw| match draw {
                 Draw::Control(control)
                     if matches!(control.kind, ControlKind::Tab(key) if key == FIRST.into()) =>
                 {
-                    control.slot(ControlAction::Next)
+                    Some(control.clone())
                 }
                 _ => None,
             })
             .unwrap();
-        (mount.serial, action)
+        (mount.serial, control)
     };
     visual.update(|_, cx| {
         dock.update(
@@ -412,19 +412,18 @@ fn a_control_from_a_superseded_output_cannot_consume_its_action(cx: &mut TestApp
         .unwrap()
     });
     frames(&mut visual, &dock);
-    assert!(!visual.update(|window, cx| activate_action(
+    let version = dock.host.borrow().session.version();
+    assert!(!visual.update(|window, cx| super::keyboard::handle(
         &dock.host,
-        &InteractionState::default(),
+        &Rc::new(InteractionState::default()),
         SURFACE,
         serial,
-        &action,
+        &control,
+        &open_gpui::Keystroke::parse("right").unwrap(),
         window,
-        cx
+        cx,
     )));
-    assert!(
-        action.borrow().is_some(),
-        "rejected output authority must not consume an affine action"
-    );
+    assert_eq!(dock.host.borrow().session.version(), version);
 }
 
 #[open_gpui::test]

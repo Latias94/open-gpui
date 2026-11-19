@@ -10,7 +10,7 @@ use dockspace::{
     model::{DockspaceAxis, TabKey},
     runtime::{
         DeferredSurfaceAction, DockspaceDropDirection, DockspaceReceiverDescriptor,
-        DockspaceVisualId, DockspaceWorkspaceStamp, PreparedSurfaceAction,
+        DockspaceVisualId, DockspaceWorkspaceStamp, PreparedSurfaceAction, RetainedTabStrip,
     },
 };
 use open_gpui::{
@@ -73,9 +73,15 @@ pub(super) type ActionSlot = Rc<RefCell<Option<Action>>>;
 
 impl From<PreparedSurfaceAction> for Action {
     fn from(action: PreparedSurfaceAction) -> Self {
+        action.into_deferred().into()
+    }
+}
+
+impl From<DeferredSurfaceAction> for Action {
+    fn from(action: DeferredSurfaceAction) -> Self {
         Self {
             tab_focus: action.tab_focus_visual().zip(action.tab_focus_target()),
-            intent: action.into_deferred(),
+            intent: action,
             yields_content: false,
         }
     }
@@ -94,7 +100,7 @@ pub(super) struct Control {
     pub(super) focused: bool,
     pub(super) receiver: Option<DockspaceReceiverDescriptor>,
     pub(super) actions: Vec<(ControlAction, ActionSlot)>,
-    pub(super) tab_keys: Option<Rc<super::keyboard::TabKeys>>,
+    pub(super) tab_strip: Option<Rc<RetainedTabStrip>>,
     pub(super) menu_keys: Option<Rc<super::keyboard::MenuKeys>>,
 }
 
@@ -119,7 +125,7 @@ impl Control {
             focused: false,
             receiver,
             actions: Vec::new(),
-            tab_keys: None,
+            tab_strip: None,
             menu_keys: None,
         }
     }

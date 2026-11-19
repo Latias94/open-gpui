@@ -5,7 +5,7 @@ use open_gpui::{App, AppContext as _, AsyncApp, WindowFrameSubmissionOutcome, px
 use open_gpui_docking::{
     dockspace::{
         geometry::PhysicalRect,
-        model::{NativeTearOffSource, NativeWindowPlacement, RootId, SurfaceId},
+        model::{DockMoveSource, NativeWindowPlacement, RootId, SurfaceId},
     },
     native::NativeReport,
 };
@@ -426,7 +426,7 @@ fn real_windows_committed_destination_loss_recovers_the_same_view_without_system
                 session.dock.update(
                     |frame| {
                         frame.move_to_new_window_current(
-                            NativeTearOffSource::Item(session.source_window()?.item),
+                            DockMoveSource::Item(session.source_window()?.item),
                             NativeWindowPlacement::new(PhysicalRect::new(
                                 150.0, 180.0, 720.0, 540.0,
                             )?),

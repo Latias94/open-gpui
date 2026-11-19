@@ -11,8 +11,8 @@ use std::{
 use dockspace::{
     geometry::PhysicalRect,
     model::{
-        DockspaceLayout, DockspaceNode, DockspaceRootLayout, DockspaceSurfaceLayout, ItemId,
-        NativeTearOffSource, NativeWindowPlacement, RootId, SurfaceId,
+        DockMoveSource, DockspaceLayout, DockspaceNode, DockspaceRootLayout,
+        DockspaceSurfaceLayout, ItemId, NativeWindowPlacement, RootId, SurfaceId,
     },
     policy::DockPolicy,
     runtime::DockspaceSession,
@@ -247,7 +247,7 @@ fn a_custom_factory_renders_a_new_staging_surface_and_admits_the_original_pane(
         .borrow()
         .session
         .native_window_command(
-            NativeTearOffSource::Item(MOVED),
+            DockMoveSource::Item(MOVED),
             NativeWindowPlacement::new(PhysicalRect::new(900.0, 40.0, 640.0, 480.0).unwrap()),
         )
         .unwrap()
