@@ -27,7 +27,21 @@ use super::{
 };
 
 pub(super) type SharedHost = Rc<RefCell<HostState>>;
-pub(super) type TabContent = Rc<dyn Fn(&App) -> AnyElement>;
+pub(super) type TabContent = Rc<dyn Fn(DockTabContentContext<'_>, &App) -> AnyElement>;
+
+/// Read-only inputs for measuring and painting a pane's custom tab label.
+#[derive(Clone, Copy, Debug)]
+pub struct DockTabContentContext<'a> {
+    /// The pane whose label is being rendered.
+    pub item: ItemId,
+    /// The pane title used for accessibility and overflow.
+    pub title: &'a str,
+    /// Whether this label should use its selected appearance.
+    pub selected: bool,
+    /// The label height in logical pixels. Intrinsic measurement uses the
+    /// configured tab-bar height while painting uses the allocated height.
+    pub height: Pixels,
+}
 
 /// Application intent was rejected after an original protocol or internal failure.
 ///
@@ -114,18 +128,23 @@ impl DockPane {
 
     /// Replaces the visible label of this pane's tab with a GPUI element.
     ///
-    /// The factory may run separately for measurement and painting. Return
-    /// equivalent content for the same application state and keep it free of
-    /// side effects. The tab still owns input, focus and the close button. Its
-    /// accessible label and the overflow menu use the pane title.
+    /// The factory runs outside the docking host borrow. It may read the
+    /// committed workspace or application state. Use `context.selected` to
+    /// style the label. Measurement reserves enough width for both selection
+    /// states, and painting supplies the output's actual selection.
+    /// The factory may run several times, so keep it free of side effects.
+    /// The tab owns input, focus and close. Its accessible name and the overflow
+    /// menu still use the pane title.
     ///
     /// Call [`DockSurface::refresh_tab_content`] when the intrinsic width
     /// changes, or reserve room for adornments that appear and disappear.
     pub fn with_tab_content<E: IntoElement>(
         mut self,
-        content: impl Fn(&App) -> E + 'static,
+        content: impl Fn(DockTabContentContext<'_>, &App) -> E + 'static,
     ) -> Self {
-        self.tab_content = Some(Rc::new(move |cx| content(cx).into_any_element()));
+        self.tab_content = Some(Rc::new(move |context, cx| {
+            content(context, cx).into_any_element()
+        }));
         self
     }
 

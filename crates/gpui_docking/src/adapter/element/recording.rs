@@ -2,6 +2,7 @@
 
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
+use crate::adapter::{DockPane, DockspaceColors};
 use anyhow::{Result, anyhow};
 use dockspace::{
     geometry::LogicalRect,
@@ -16,12 +17,11 @@ use dockspace::{
     },
 };
 
-use crate::adapter::{DockPane, DockspaceColors};
-
 use super::{
     Draw, Packet,
     chrome::{Control, ControlAction, ControlKind, GuideState, Icon, PresentationMenu},
     presentation_menu::{OpenMenu, Scope},
+    tab_label::CustomTabLabel,
 };
 
 pub(super) fn record(
@@ -162,7 +162,9 @@ pub(super) fn record(
                                 title: title.clone(),
                                 content: tab
                                     .item()
-                                    .and_then(|item| panels.get(&item)?.tab_content.clone()),
+                                    .and_then(|item| panels.get(&item))
+                                    .and_then(CustomTabLabel::new),
+                                selected: tab.selected(),
                                 color: if tab.selected() {
                                     colors.text
                                 } else {

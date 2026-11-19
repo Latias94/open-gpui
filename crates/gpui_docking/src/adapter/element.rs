@@ -29,7 +29,7 @@ use open_gpui::{
 
 use crate::adapter::{
     GpuiDockspaceConfig, HostState, SharedHost,
-    host::{DockRegion, TabContent},
+    host::DockRegion,
     host_native,
     input::{self, InputFrame},
     presentation,
@@ -40,10 +40,12 @@ mod keyboard;
 mod presentation_menu;
 mod recording;
 mod splitter;
+mod tab_label;
 mod wheel;
 
 use chrome::{Control, ControlAction, ControlKind, GuideState, Icon, PresentationMenu};
 use recording::record;
+use tab_label::CustomTabLabel;
 
 #[cfg(test)]
 mod interaction_tests;
@@ -94,7 +96,8 @@ enum Draw {
         clip: LogicalRect,
         key: TabKey,
         title: String,
-        content: Option<TabContent>,
+        content: Option<CustomTabLabel>,
+        selected: bool,
         color: Hsla,
     },
     Pane(ItemId, PaneContentGeometry),
@@ -504,14 +507,34 @@ impl DockspaceElement {
                 )
             } else {
                 let inputs = std::mem::take(&mut host.inputs);
-                let candidate = build_candidate(
-                    &mut host,
-                    &inputs,
-                    &region_bounds,
-                    self.interaction.menu.get(),
-                    window,
-                    cx,
-                );
+                let candidate =
+                    match begin_candidate(&mut host, &inputs, &region_bounds, window, cx) {
+                        Ok((update, height, labels)) => {
+                            let widths = if labels.is_empty() {
+                                BTreeMap::new()
+                            } else {
+                                let config = host.config.clone();
+                                drop(host);
+                                let widths = labels
+                                    .into_iter()
+                                    .map(|(item, label)| {
+                                        (item, label.measure(&config, height, window, cx))
+                                    })
+                                    .collect();
+                                host = self.host.borrow_mut();
+                                widths
+                            };
+                            encode_candidate(
+                                &mut host,
+                                update,
+                                &region_bounds,
+                                self.interaction.menu.get(),
+                                &widths,
+                                window,
+                            )
+                        }
+                        Err(error) => Err(error),
+                    };
                 let candidate = match candidate {
                     Ok(candidate) => candidate,
                     Err(error) => {
@@ -969,22 +992,34 @@ impl DockspaceElement {
                     key,
                     title,
                     content,
+                    selected,
                     color,
                 } => {
                     let rect = to_gpui(*layout, bounds);
-                    let label = tab_label_style(&config, *color)
-                        .w(rect.size.width)
-                        .h(rect.size.height)
-                        .overflow_hidden()
-                        .when_some(key.item(), |label, item| {
-                            label.debug_selector(move || format!("dockspace:tab:{}", item.get()))
-                        })
-                        .child(content.as_ref().map_or_else(
-                            || title.clone().into_any_element(),
-                            |content| content(cx),
-                        ))
-                        .with_subtree_presentation(SubtreePresentation::Inert)
-                        .into_any_element();
+                    let label = if let Some(content) = content {
+                        content
+                            .element(&config, *selected, *color, rect.size.height, cx)
+                            .w(rect.size.width)
+                            .overflow_hidden()
+                            .debug_selector({
+                                let item = key.item().expect("custom tab labels belong to panes");
+                                move || format!("dockspace:tab:{}", item.get())
+                            })
+                            .into_any_element()
+                    } else {
+                        tab_label_style(&config, *color)
+                            .w(rect.size.width)
+                            .h(rect.size.height)
+                            .overflow_hidden()
+                            .when_some(key.item(), |label, item| {
+                                label
+                                    .debug_selector(move || format!("dockspace:tab:{}", item.get()))
+                            })
+                            .child(title.clone())
+                            .into_any_element()
+                    }
+                    .with_subtree_presentation(SubtreePresentation::Inert)
+                    .into_any_element();
                     draws.extend(prepare_label(
                         label,
                         rect,
@@ -1611,7 +1646,7 @@ impl DockspaceElement {
                         .flatten()
                 });
                 controls.iter().rev().find_map(|(control, focus, _)| {
-                    if !matches!(control.kind, ControlKind::Tab(_)) {
+                    if !matches!(control.kind, ControlKind::Tab(_)) || control.receiver.is_none() {
                         return None;
                     }
                     let owns_focus = focus.is_focused(window)
@@ -2219,13 +2254,48 @@ fn hovered_tab_at(
     })
 }
 
-fn build_candidate(
+fn begin_candidate(
     host: &mut HostState,
     inputs: &[input::QueuedInput],
     regions: &BTreeMap<SurfaceId, Bounds<Pixels>>,
-    open_menu: Option<presentation_menu::OpenMenu>,
-    window: &mut Window,
+    window: &Window,
     cx: &mut App,
+) -> Result<(DockspaceUpdate, Pixels, BTreeMap<ItemId, CustomTabLabel>)> {
+    let mut frame = host_native::begin_frame(
+        &mut host.session,
+        &host.mounts,
+        host.native.as_ref(),
+        Some(window),
+        cx,
+    )
+    .context("beginning retained docking candidate")?;
+    let owner = window.window_handle().window_id();
+    host_native::set_placements(&mut frame, host.native.as_ref(), owner, regions, window)?;
+    for input in inputs {
+        input.submit(&mut frame)?;
+    }
+    frame.begin_encoding_pass()?;
+    let height = px(frame.presentation_config().tab_bar_height() as f32);
+    let mut labels = BTreeMap::new();
+    if host.panels.values().any(|pane| pane.tab_content.is_some()) {
+        for &surface in regions.keys() {
+            for item in frame.tab_measurement_items(surface)? {
+                if let Some(label) = host.panels.get(&item).and_then(CustomTabLabel::new) {
+                    labels.insert(item, label);
+                }
+            }
+        }
+    }
+    Ok((frame.suspend(), height, labels))
+}
+
+fn encode_candidate(
+    host: &mut HostState,
+    update: DockspaceUpdate,
+    regions: &BTreeMap<SurfaceId, Bounds<Pixels>>,
+    open_menu: Option<presentation_menu::OpenMenu>,
+    tab_widths: &BTreeMap<ItemId, f64>,
+    window: &Window,
 ) -> Result<Candidate> {
     let panels = &host.panels;
     let config = &host.config;
@@ -2258,19 +2328,7 @@ fn build_candidate(
                 )?),
         )
         .with_tab_list_menu(TabListMenuMetrics::new(28.0, 8.0, 4.0, 0.0, 280.0, 8.0)?);
-    let mut frame = host_native::begin_frame(
-        &mut host.session,
-        &host.mounts,
-        host.native.as_ref(),
-        Some(window),
-        cx,
-    )
-    .context("beginning retained docking candidate")?;
-    host_native::set_placements(&mut frame, host.native.as_ref(), owner, regions, window)?;
-    for input in inputs {
-        input.submit(&mut frame)?;
-    }
-    frame.begin_encoding_pass()?;
+    let mut frame = host.session.resume_update(update)?;
     let presentation_surfaces = frame.surfaces();
     let mut packets = BTreeMap::new();
     for (surface, bounds) in regions {
@@ -2335,21 +2393,8 @@ fn build_candidate(
                     ))
                 }
                 Request::TabIntrinsic { key, label, .. } => {
-                    if let Some(content) = key
-                        .item()
-                        .and_then(|item| panels.get(&item))
-                        .and_then(|pane| pane.tab_content.as_ref())
-                    {
-                        let measured = tab_label_style(config, config.colors.text)
-                            .child(content(cx))
-                            .with_subtree_presentation(SubtreePresentation::Inert)
-                            .into_any_element()
-                            .layout_as_root(
-                                size(AvailableSpace::MaxContent, AvailableSpace::MaxContent),
-                                window,
-                                cx,
-                            );
-                        return Ok(Answer::TabIntrinsic(f64::from(f32::from(measured.width))));
+                    if let Some(width) = key.item().and_then(|item| tab_widths.get(&item)) {
+                        return Ok(Answer::TabIntrinsic(*width));
                     }
                     let title: open_gpui::SharedString = recording::tab_label(label, panels).into();
                     let width = {

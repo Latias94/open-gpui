@@ -105,7 +105,7 @@ fn tab_content_controls_width_without_taking_input_from_the_tab(cx: &mut TestApp
         let clicks = label_clicks.clone();
         let first = DockPane::new(CENTER, "Document", app.new(|_| Document(CENTER)));
         let editor = DockPane::new(FLOATING, "Editor", app.new(|_| Document(FLOATING)))
-            .with_tab_content(move |_| {
+            .with_tab_content(move |_, _| {
                 let clicks = clicks.clone();
                 div()
                     .id("editor-tab-content")
@@ -151,3 +151,6 @@ fn tab_content_controls_width_without_taking_input_from_the_tab(cx: &mut TestApp
     assert!(dock.with_view(|view| view.item(FLOATING).unwrap().is_active()));
     assert_eq!(label_clicks.get(), 0);
 }
+
+#[path = "pane_content_geometry/tab_labels.rs"]
+mod tab_labels;

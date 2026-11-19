@@ -89,9 +89,10 @@ Use `DockPane::with_tab_content` to render a tab's label with GPUI elements.
 The pane title remains its accessible name and overflow-menu label. Docking
 still handles selection, dragging and closing. Give an adornment a fixed slot
 or call `dock.refresh_tab_content(item, cx)` when its intrinsic width changes.
+Use the label context for the pane's selection state and the available height.
 
 ```rust,ignore
-let pane = DockPane::new(item, "Editor", editor_view).with_tab_content(move |app| {
+let pane = DockPane::new(item, "Editor", editor_view).with_tab_content(move |_, app| {
     div().flex().items_center().gap_1().child("Editor").child(
         div().w_3().when(document.read(app).is_dirty(), |slot| slot.child("•")),
     )

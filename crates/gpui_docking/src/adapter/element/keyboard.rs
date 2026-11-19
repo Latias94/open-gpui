@@ -341,7 +341,21 @@ pub(super) fn handle(
                         .unwrap_or(receiver),
                 )
             };
-            start.and_then(|start| resolve_tab(origin, start, input))
+            let pending_activation = if input == SurfaceTabInput::Activate {
+                previous
+                    .as_ref()
+                    .and_then(|current| current.pending.as_ref())
+                    .and_then(|slot| slot.borrow().as_ref().cloned())
+                    .and_then(|action| action.intent.activate_navigated_tab())
+                    .map(|intent| {
+                        let mut action = chrome::Action::from(intent);
+                        action.yields_content = true;
+                        Rc::new(RefCell::new(Some(action)))
+                    })
+            } else {
+                None
+            };
+            pending_activation.or_else(|| start.and_then(|start| resolve_tab(origin, start, input)))
         } else {
             (target == control.id).then(|| control.slot(key)).flatten()
         };

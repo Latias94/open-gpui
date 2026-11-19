@@ -26,7 +26,9 @@ pub use config::{
 };
 pub use dockspace;
 pub use failure::{DockHostFailure, DockNativeTermination};
-pub use host::{DockHostAdmissionError, DockPane, DockPaneError, DockRegion, DockSurface};
+pub use host::{
+    DockHostAdmissionError, DockPane, DockPaneError, DockRegion, DockSurface, DockTabContentContext,
+};
 pub use inspection::{
     DockInspectionError, DockModelSurfaceInspection, DockMountInspection, DockNativeInspection,
     DockRegionInspection, DockSurfaceInspection,
