@@ -618,9 +618,6 @@ fn switching_between_tab_list_and_product_menus_retires_the_old_commands(cx: &mu
                         visual
                             .set_platform_mouse_button_is_pressed(MouseButton::Left, Some(pressed));
                         super::content_receivers::native_input(&mut visual, position, event);
-                        if pressed {
-                            frames(&mut visual, &dock);
-                        }
                     }
                 } else {
                     visual.simulate_click(position, Modifiers::none());

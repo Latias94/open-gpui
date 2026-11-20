@@ -1193,8 +1193,9 @@ pub(super) fn queue_pointer(
         .get_mut(&owner)
         .and_then(|mount| mount.regions.get_mut(&surface))
     {
+        // Pointer position feeds the retained drag ghost. The committed core
+        // report drives paint program invalidation when interaction changes it.
         region.pointer = super::input::logical_point(position, bounds);
-        region.dirty = true;
     }
     true
 }

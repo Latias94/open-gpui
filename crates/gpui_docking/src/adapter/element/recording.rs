@@ -5,7 +5,6 @@ use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 use crate::adapter::{DockPane, DockspaceColors};
 use anyhow::{Result, anyhow};
 use dockspace::{
-    geometry::LogicalRect,
     model::{DockspaceActionRejection, DockspaceAxis, ItemId, TabLabel},
     runtime::{
         ContainedResizeDirection, DockspaceDropEligibility, DockspacePresentationCommandKind,
@@ -27,7 +26,6 @@ use super::{
 pub(super) fn record(
     plan: SurfacePaintPlan<'_>,
     panels: &BTreeMap<ItemId, DockPane>,
-    pointer: Option<dockspace::geometry::LogicalPoint>,
     colors: &DockspaceColors,
     open_menu: Option<OpenMenu>,
 ) -> Result<(Packet, dockspace::runtime::SurfaceProgramExecutionReceipt)> {
@@ -534,26 +532,8 @@ pub(super) fn record(
                         draws.push(Draw::Preview(preview.rect()));
                     }
                 }
-                Step::DragDecoration(decoration) => {
-                    if !decoration.source_is_projected() {
-                        if let Some(pointer) = pointer {
-                            if let Ok(ghost) = LogicalRect::new(
-                                pointer.x() + 12.0,
-                                pointer.y() + 14.0,
-                                160.0,
-                                28.0,
-                            ) {
-                                draws.push(Draw::Fill(ghost, colors.drag_ghost));
-                                draws.push(Draw::Outline(ghost, colors.accent));
-                                draws.push(Draw::Text {
-                                    layout: ghost,
-                                    clip: ghost,
-                                    title: tab_label(decoration.label(), panels),
-                                    color: colors.text,
-                                });
-                            }
-                        }
-                    }
+                Step::DragDecoration(decoration) if !decoration.source_is_projected() => {
+                    draws.push(Draw::DragGhost(tab_label(decoration.label(), panels)));
                 }
                 Step::PopupBackdrop(backdrop) => {
                     tab_list_dismiss = plan
@@ -632,6 +612,7 @@ pub(super) fn record(
                     }
                 }
                 Step::DropTarget(_)
+                | Step::DragDecoration(_)
                 | Step::DropGuide {
                     affordance: None, ..
                 }

@@ -131,6 +131,7 @@ enum Draw {
     Receiver(DockspaceReceiverDescriptor),
     Preview(LogicalRect),
     NativePreview(host_native::provisional::Preview),
+    DragGhost(String),
     Icon(LogicalRect, Icon, bool),
     Control(Rc<Control>),
     PresentationMenu(Rc<PresentationMenu>),
@@ -846,14 +847,15 @@ impl DockspaceElement {
             })
             .collect::<BTreeMap<_, _>>();
         let mut prepared_controls = BTreeMap::new();
-        let config = self.host.borrow().config.clone();
-        let admitted = allow_input
-            && input::is_presented(
-                &self.host.borrow(),
-                window.window_handle().window_id(),
-                surface,
-                serial,
-            );
+        let (config, admitted, pointer) = {
+            let host = self.host.borrow();
+            let owner = window.window_handle().window_id();
+            (
+                host.config.clone(),
+                allow_input && input::is_presented(&host, owner, surface, serial),
+                host.mounts[&owner].regions[&surface].pointer,
+            )
+        };
         for draw in &packet.draws {
             match draw {
                 Draw::Fill(rect, color) => {
@@ -887,6 +889,30 @@ impl DockspaceElement {
                     config.colors.preview,
                     config.colors.accent,
                 )),
+                Draw::DragGhost(title) => {
+                    if let Some(pointer) = pointer {
+                        let rect = Bounds::new(
+                            bounds.origin
+                                + point(
+                                    px((pointer.x() + 12.0) as f32),
+                                    px((pointer.y() + 14.0) as f32),
+                                ),
+                            size(px(160.0), px(28.0)),
+                        );
+                        draws.push(PreparedDraw::Preview(
+                            rect,
+                            config.colors.drag_ghost,
+                            config.colors.accent,
+                        ));
+                        let label = tab_label_style(&config, config.colors.text)
+                            .w(rect.size.width)
+                            .h(rect.size.height)
+                            .overflow_hidden()
+                            .child(title.clone())
+                            .into_any_element();
+                        draws.extend(prepare_label(label, rect, rect, window, cx));
+                    }
+                }
                 Draw::NativePreview(preview) => {
                     let native = host_native::inspection(&self.host.borrow());
                     if preview.host_surface == surface
@@ -2497,11 +2523,6 @@ fn encode_candidate(
         .as_ref()
         .and_then(|native| native.callbacks.get(&owner))
         .map(|callbacks| callbacks.binding());
-    let pointers: BTreeMap<_, _> = host.mounts[&owner]
-        .regions
-        .iter()
-        .map(|(surface, region)| (*surface, region.pointer))
-        .collect();
     let tab_strip = TabStripMetrics::new(0.0, 0.0)?
         .with_controls(
             TabStripControlMetrics::new(2.0)?
@@ -2614,8 +2635,7 @@ fn encode_candidate(
                 continue;
             }
         };
-        let (packet, receipt) =
-            record(plan, panels, pointers[&surface], &config.colors, open_menu)?;
+        let (packet, receipt) = record(plan, panels, &config.colors, open_menu)?;
         frame.confirm_surface_painted(receipt)?;
         packets.insert(surface, Rc::new(packet));
     }
