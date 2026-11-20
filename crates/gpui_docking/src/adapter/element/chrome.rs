@@ -141,9 +141,21 @@ impl Control {
     }
 
     pub(super) fn slot(&self, key: ControlAction) -> Option<ActionSlot> {
+        if let Some(menu) = &self.menu_keys {
+            return menu.action(self.id, Some(key));
+        }
         self.actions.iter().find_map(|(candidate, action)| {
             (*candidate == key && action.borrow().is_some()).then(|| action.clone())
         })
+    }
+
+    pub(super) fn has_action(&self, key: ControlAction) -> bool {
+        if self.menu_keys.is_some() {
+            return matches!(key, ControlAction::Activate | ControlAction::Dismiss);
+        }
+        self.actions
+            .iter()
+            .any(|(candidate, slot)| *candidate == key && slot.borrow().is_some())
     }
 
     pub(super) fn role(&self) -> Role {

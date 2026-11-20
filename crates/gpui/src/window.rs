@@ -4177,6 +4177,22 @@ impl Window {
         subscription
     }
 
+    /// Registers a callback for this window's activation and deactivation.
+    pub fn observe_window_activation(
+        &self,
+        mut callback: impl FnMut(&mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.activation_observers.insert(
+            (),
+            Box::new(move |window, cx| {
+                callback(window, cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
     /// Registers a callback for the terminal initial-presentation result of this window.
     ///
     /// The subscription is owned by the window rather than its current root entity, so replacing

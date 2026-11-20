@@ -35,7 +35,6 @@ pub(super) fn record(
     let mut pane_bars = BTreeMap::new();
     let mut pane_receivers = BTreeMap::new();
     let mut native_preview = None;
-    let mut menu_backdrop = None;
     let mut tab_strips = BTreeMap::new();
     let mut menu_openers = BTreeMap::new();
     let receiver = |draws: &mut Vec<Draw>, value: Option<DockspaceReceiverDescriptor>| {
@@ -352,11 +351,12 @@ pub(super) fn record(
                                 contained.title_bounds(),
                                 colors.contained_title,
                             ));
-                            draws.push(Draw::Text(
-                                contained.title_drag_bounds(),
-                                tab_label(root.label(), panels),
-                                colors.text,
-                            ));
+                            draws.push(Draw::Text {
+                                layout: contained.title_drag_bounds(),
+                                clip: contained.title_drag_bounds(),
+                                title: tab_label(root.label(), panels),
+                                color: colors.text,
+                            });
                             let close = plan.receiver_for_contained_close(contained);
                             receiver(&mut draws, close);
                             if let Some(rect) = contained.close_bounds() {
@@ -535,65 +535,61 @@ pub(super) fn record(
                             ) {
                                 draws.push(Draw::Fill(ghost, colors.drag_ghost));
                                 draws.push(Draw::Outline(ghost, colors.accent));
-                                draws.push(Draw::Text(
-                                    ghost,
-                                    tab_label(decoration.label(), panels),
-                                    colors.text,
-                                ));
+                                draws.push(Draw::Text {
+                                    layout: ghost,
+                                    clip: ghost,
+                                    title: tab_label(decoration.label(), panels),
+                                    color: colors.text,
+                                });
                             }
                         }
                     }
                 }
                 Step::PopupBackdrop(backdrop) => {
-                    menu_backdrop = Some(backdrop);
                     receiver(
                         &mut draws,
                         plan.receiver_for_tab_list_menu_backdrop(backdrop),
                     );
                 }
                 Step::PopupMenu { menu, .. } => {
-                    let menu_keys = super::keyboard::MenuKeys::record(
-                        plan,
-                        menu,
-                        menu_openers.get(&menu.tab_bar_visual_id()).cloned(),
-                    )
-                    .map(Rc::new);
+                    let bar = menu.tab_bar_visual_id();
+                    let menu_keys = plan.retain_tab_list_menu(menu).map(|retained| {
+                        Rc::new(super::keyboard::MenuKeys::new(
+                            retained,
+                            bar,
+                            menu_openers.get(&bar).cloned(),
+                        ))
+                    });
                     draws.push(Draw::Fill(menu.bounds(), colors.selected_tab));
                     if let Some(receiver) = plan.receiver_for_tab_list_menu_scroll(menu) {
                         draws.push(Draw::Scroll(super::wheel::ScrollTarget::Menu(receiver)));
                     }
                     receiver(&mut draws, plan.receiver_for_tab_list_menu_frame(menu));
                     for row in menu.rows() {
-                        receiver(&mut draws, plan.receiver_for_tab_list_menu_row(row));
-                        draws.push(Draw::Text(
-                            row.bounds(),
-                            tab_label(row.label(), panels),
-                            colors.text,
-                        ));
-                        if let Some(bounds) = row.interaction_bounds() {
-                            let mut control = Control::new(
-                                row.visual_id(),
-                                bounds,
-                                ControlKind::MenuRow,
-                                tab_label(row.label(), panels),
-                                plan.receiver_for_tab_list_menu_row(row),
-                            );
-                            control.selected = Some(row.selected());
-                            control.focused = row.focused();
-                            control.menu_owner = Some(menu.tab_bar_visual_id());
-                            control.menu_keys = menu_keys.clone();
-                            control.action(
-                                ControlAction::Activate,
-                                plan.prepare_tab_list_menu_row_activation(row),
-                            );
-                            if let Some(backdrop) = menu_backdrop {
-                                control.action(
-                                    ControlAction::Dismiss,
-                                    plan.prepare_tab_list_menu_dismiss(backdrop),
-                                );
-                            }
-                            draws.push(Draw::Control(Rc::new(control)));
-                        }
+                        let Some(clip) = row.interaction_bounds() else {
+                            continue;
+                        };
+                        let row_receiver = plan.receiver_for_tab_list_menu_row(row);
+                        receiver(&mut draws, row_receiver);
+                        let title = tab_label(row.label(), panels);
+                        draws.push(Draw::Text {
+                            layout: row.bounds(),
+                            clip,
+                            title: title.clone(),
+                            color: colors.text,
+                        });
+                        let mut control = Control::new(
+                            row.visual_id(),
+                            clip,
+                            ControlKind::MenuRow,
+                            title,
+                            row_receiver,
+                        );
+                        control.selected = Some(row.selected());
+                        control.focused = row.focused();
+                        control.menu_owner = Some(bar);
+                        control.menu_keys = menu_keys.clone();
+                        draws.push(Draw::Control(Rc::new(control)));
                     }
                 }
                 Step::DropTarget(_)

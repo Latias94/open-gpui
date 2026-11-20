@@ -956,6 +956,185 @@ fn clipped_navigation_cancels_queued_keys_after_a_presentation_config_replacemen
     }
 }
 
+fn queue_clipped_tab_input(dock: &DockSurface, visual: &mut VisualTestContext, last: ItemId) {
+    focus_tab(FIRST, visual);
+    visual.simulate_keystrokes("ctrl-shift-tab");
+    assert!(visual.simulate_frame(RequestFrameOptions {
+        require_presentation: true,
+        force_render: true,
+        ..Default::default()
+    }));
+    visual.update(|window, cx| {
+        for key in ["home", "space"] {
+            assert!(window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx));
+        }
+        assert!(dock.with_view(|view| view.item(last).unwrap().is_active()));
+    });
+}
+
+#[open_gpui::test]
+fn policy_change_revokes_queued_tab_keys_but_restores_the_committed_header(
+    cx: &mut TestAppContext,
+) {
+    use dockspace::policy::{CloseCapability, DockItemRule};
+
+    for app_takes_focus in [false, true] {
+        cx.defer_next_window_frame_requests();
+        let items = (61..91).map(ItemId::new).collect::<Vec<_>>();
+        let (dock, _, _) = tab_fixture(cx, &items);
+        let window = cx.open_window(size(px(640.0), px(600.0)), |_, _| Root {
+            dock: dock.clone(),
+        });
+        let mut visual = active_visual(window.into(), cx);
+        assert!(visual.activate_accessibility());
+        frames(&mut visual, &dock);
+        queue_clipped_tab_input(&dock, &mut visual, items[29]);
+        visual.update(|window, cx| {
+            let mut policy = DockPolicy::default();
+            let mut rule = DockItemRule::new();
+            rule.set_close_capability(Some(CloseCapability::Disabled));
+            policy.set_item_rule(SECOND, rule);
+            dock.update(
+                |frame| {
+                    frame.replace_policy(policy)?;
+                    Ok(())
+                },
+                cx,
+            )
+            .unwrap();
+            if app_takes_focus {
+                window.blur(cx);
+            }
+        });
+        frames(&mut visual, &dock);
+        assert!(dock.with_view(|view| view.item(items[29]).unwrap().is_active()));
+        if app_takes_focus {
+            assert!(visual.update(|window, cx| window.focused(cx).is_none()));
+        } else {
+            assert_accessibility_focus(&visual, Role::Tab, "Pane 90");
+            visual.simulate_keystrokes("right");
+            frames(&mut visual, &dock);
+            assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
+        }
+    }
+}
+
+#[open_gpui::test]
+fn switching_windows_revokes_queued_tab_keys_even_when_switching_back_before_draw(
+    cx: &mut TestAppContext,
+) {
+    for reactivate in [false, true] {
+        cx.defer_next_window_frame_requests();
+        let other_focus = cx.update(|cx| cx.focus_handle());
+        let other_item = ItemId::new(91);
+        let other_keys = PaneKeys::default();
+        let other = cx.open_window(size(px(320.0), px(240.0)), |_, _| KeyPane {
+            item: other_item,
+            focus: other_focus.clone(),
+            keys: other_keys.clone(),
+        });
+        let items = (61..91).map(ItemId::new).collect::<Vec<_>>();
+        let (dock, _, _) = tab_fixture(cx, &items);
+        cx.defer_next_window_frame_requests();
+        let window = cx.open_window(size(px(640.0), px(600.0)), |_, _| Root {
+            dock: dock.clone(),
+        });
+        let mut visual = active_visual(window.into(), cx);
+        assert!(visual.activate_accessibility());
+        frames(&mut visual, &dock);
+        queue_clipped_tab_input(&dock, &mut visual, items[29]);
+        let mut other_visual = active_visual(other.into(), cx);
+        assert!(other_visual.simulate_frame(RequestFrameOptions {
+            require_presentation: true,
+            force_render: true,
+            ..Default::default()
+        }));
+        other_visual.update(|window, cx| window.focus(&other_focus, cx));
+        assert!(!visual.update(|window, _| window.is_window_active()));
+        if reactivate {
+            visual = active_visual(window.into(), cx);
+        }
+        frames(&mut visual, &dock);
+        assert!(dock.with_view(|view| view.item(items[29]).unwrap().is_active()));
+        if reactivate {
+            assert_accessibility_focus(&visual, Role::Tab, "Pane 90");
+        } else {
+            assert!(other_visual.update(|window, cx| other_focus.contains_focused(window, cx)));
+            assert!(other_keys.borrow().is_empty());
+            other_visual.simulate_keystrokes("space");
+            assert_eq!(&*other_keys.borrow(), &[(other_item, "space".into())]);
+        }
+    }
+}
+
+#[open_gpui::test]
+fn tab_list_opens_with_the_selected_row_visible_and_accepts_keys(cx: &mut TestAppContext) {
+    cx.defer_next_window_frame_requests();
+    let items = (61..91).map(ItemId::new).collect::<Vec<_>>();
+    let (dock, _, _) = tab_fixture(cx, &items);
+    let window = cx.open_window(size(px(640.0), px(600.0)), |_, _| Root {
+        dock: dock.clone(),
+    });
+    let mut visual = active_visual(window.into(), cx);
+    assert!(visual.activate_accessibility());
+    frames(&mut visual, &dock);
+    focus_tab(FIRST, &mut visual);
+    visual.simulate_keystrokes("end");
+    frames(&mut visual, &dock);
+    visual.simulate_click(
+        tab_list_button_bounds(&dock, window.window_id()).center(),
+        Modifiers::none(),
+    );
+    frames(&mut visual, &dock);
+    assert_accessibility_focus(&visual, Role::MenuItem, "Pane 90");
+    visual.simulate_keystrokes("up");
+    frames(&mut visual, &dock);
+    assert_accessibility_focus(&visual, Role::MenuItem, "Pane 89");
+    visual.simulate_keystrokes("escape");
+    frames(&mut visual, &dock);
+    assert_accessibility_focus(&visual, Role::Button, "Show all tabs");
+    assert!(dock.with_view(|view| view.item(items[29]).unwrap().is_active()));
+}
+
+#[open_gpui::test]
+fn tab_list_confirmation_survives_a_committed_navigation_that_scrolls_the_menu(
+    cx: &mut TestAppContext,
+) {
+    cx.defer_next_window_frame_requests();
+    let items = (61..91).map(ItemId::new).collect::<Vec<_>>();
+    let (dock, handles, _) = tab_fixture(cx, &items);
+    let window = cx.open_window(size(px(640.0), px(600.0)), |_, _| Root {
+        dock: dock.clone(),
+    });
+    let mut visual = active_visual(window.into(), cx);
+    assert!(visual.activate_accessibility());
+    frames(&mut visual, &dock);
+    visual.simulate_click(
+        tab_list_button_bounds(&dock, window.window_id()).center(),
+        Modifiers::none(),
+    );
+    frames(&mut visual, &dock);
+    assert_accessibility_focus(&visual, Role::MenuItem, "Pane 61");
+
+    // Commit End in a separate update, but deliver Enter before the scrolled
+    // menu presents.
+    for key in ["end", "enter"] {
+        visual.update(|window, cx| {
+            assert!(window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx));
+        });
+        assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
+    }
+    frames(&mut visual, &dock);
+    assert!(dock.with_view(|view| view.item(items[29]).unwrap().is_active()));
+    let has_content_focus = |visual: &mut VisualTestContext| {
+        visual.update(|window, cx| handles[29].contains_focused(window, cx))
+    };
+    if !has_content_focus(&mut visual) {
+        assert!(visual.simulate_scheduled_frame());
+    }
+    assert!(has_content_focus(&mut visual));
+}
+
 #[open_gpui::test]
 fn application_blur_wins_after_tab_activation_commits(cx: &mut TestAppContext) {
     cx.defer_next_window_frame_requests();

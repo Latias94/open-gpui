@@ -4,7 +4,10 @@ use std::collections::VecDeque;
 
 use dockspace::{
     model::{DockspaceTabView, DockspaceTabsView, DockspaceView, WorkspaceVersion},
-    runtime::{SurfacePaintPlan, SurfaceTabInput, SurfaceTabNavigation, TabListMenuPaintRecord},
+    runtime::{
+        RetainedTabListMenu, SurfaceTabInput, SurfaceTabListInput, SurfaceTabListNavigation,
+        SurfaceTabNavigation,
+    },
 };
 use open_gpui::Keystroke;
 
@@ -75,64 +78,38 @@ pub(super) fn tab_is_selected(view: DockspaceView<'_>, surface: SurfaceId, key: 
     tab_group(view, surface, key).is_some_and(|tabs| tabs.visible_selected() == Some(key))
 }
 
-/// One menu snapshot retains its ordered rows and exact prepared capabilities.
-/// The cursor only folds a keyboard prefix; core still owns focus, scrolling,
-/// permissions and the lifetime of the popup session.
+/// One menu borrows core's immutable input authority across all visible rows.
 pub(super) struct MenuKeys {
-    id: DockspaceVisualId,
     bar: DockspaceVisualId,
     opener: Option<Rc<Control>>,
-    rows: Vec<MenuMember>,
-    dismiss: chrome::ActionSlot,
-}
-
-struct MenuMember {
-    visual: DockspaceVisualId,
-    focus: chrome::ActionSlot,
-    activate: chrome::ActionSlot,
+    retained: RetainedTabListMenu,
 }
 
 impl MenuKeys {
-    pub(super) fn record(
-        plan: SurfacePaintPlan<'_>,
-        menu: TabListMenuPaintRecord<'_>,
+    pub(super) fn new(
+        retained: RetainedTabListMenu,
+        bar: DockspaceVisualId,
         opener: Option<Rc<Control>>,
-    ) -> Option<Self> {
-        let mut rows = Vec::new();
-        for row in menu.rows() {
-            let focus = chrome::Action::from(plan.prepare_tab_list_menu_focus(menu, row.key())?);
-            let mut activate =
-                chrome::Action::from(plan.prepare_tab_list_menu_row_activation(row)?);
-            activate.yields_content = true;
-            rows.push(MenuMember {
-                visual: row.visual_id(),
-                focus: Rc::new(RefCell::new(Some(focus))),
-                activate: Rc::new(RefCell::new(Some(activate))),
-            });
-        }
-        Some(Self {
-            id: menu.visual_id(),
-            bar: menu.tab_bar_visual_id(),
+    ) -> Self {
+        Self {
+            bar,
             opener,
-            rows,
-            dismiss: Rc::new(RefCell::new(Some(chrome::Action::from(
-                plan.prepare_tab_list_menu_dismiss(menu.backdrop())?,
-            )))),
-        })
+            retained,
+        }
     }
 
-    fn action(
+    pub(super) fn action(
         &self,
-        target: DockspaceVisualId,
+        row: DockspaceVisualId,
         end: Option<ControlAction>,
     ) -> Option<chrome::ActionSlot> {
-        let row = self.rows.iter().find(|row| row.visual == target)?;
-        match end {
-            None => Some(row.focus.clone()),
-            Some(ControlAction::Activate) => Some(row.activate.clone()),
-            Some(ControlAction::Dismiss) => Some(self.dismiss.clone()),
-            _ => None,
-        }
+        let input = match end {
+            None => SurfaceTabListInput::Focus,
+            Some(ControlAction::Activate) => SurfaceTabListInput::Activate,
+            Some(ControlAction::Dismiss) => SurfaceTabListInput::Dismiss,
+            _ => return None,
+        };
+        self.resolve(row, input).map(|(_, action)| action)
     }
 
     fn step(
@@ -140,28 +117,28 @@ impl MenuKeys {
         start: DockspaceVisualId,
         key: ControlAction,
     ) -> Option<(DockspaceVisualId, chrome::ActionSlot)> {
-        let cursor = self.rows.iter().position(|row| row.visual == start)?;
-        let last = self.rows.len().checked_sub(1)?;
-        let target = match key {
-            ControlAction::Previous => cursor.saturating_sub(1),
-            ControlAction::Next => cursor.saturating_add(1).min(last),
-            ControlAction::First => 0,
-            ControlAction::Last => last,
-            ControlAction::Activate | ControlAction::Dismiss => cursor,
+        let navigation = match key {
+            ControlAction::Previous => SurfaceTabListNavigation::Previous,
+            ControlAction::Next => SurfaceTabListNavigation::Next,
+            ControlAction::First => SurfaceTabListNavigation::First,
+            ControlAction::Last => SurfaceTabListNavigation::Last,
+            ControlAction::Activate | ControlAction::Dismiss => {
+                return self.action(start, Some(key)).map(|action| (start, action));
+            }
             _ => return None,
         };
-        let target = self.rows[target].visual;
-        let end = matches!(key, ControlAction::Activate | ControlAction::Dismiss).then_some(key);
-        Some((target, self.action(target, end)?))
+        self.resolve(start, SurfaceTabListInput::Navigate(navigation))
     }
 
-    fn same_roster(&self, other: &Self) -> bool {
-        self.id == other.id
-            && self
-                .rows
-                .iter()
-                .map(|row| row.visual)
-                .eq(other.rows.iter().map(|row| row.visual))
+    fn resolve(
+        &self,
+        row: DockspaceVisualId,
+        input: SurfaceTabListInput,
+    ) -> Option<(DockspaceVisualId, chrome::ActionSlot)> {
+        let (target, intent) = self.retained.resolve(row, input)?;
+        let mut action = chrome::Action::from(intent);
+        action.yields_content = input == SurfaceTabListInput::Activate;
+        Some((target, Rc::new(RefCell::new(Some(action)))))
     }
 }
 
@@ -210,6 +187,13 @@ impl Continuation {
 
     fn holds_tab_prefix(&self, window: &Window) -> bool {
         self.tab_target.is_some() && self.owns_focus_claim(window)
+    }
+
+    fn committed_tab(&self) -> Option<TabKey> {
+        match self.phase {
+            PrefixPhase::Committed | PrefixPhase::AwaitingTabPresentation { .. } => self.tab_target,
+            _ => None,
+        }
     }
 
     fn pending(&self) -> Option<&chrome::ActionSlot> {
@@ -916,6 +900,22 @@ pub(super) fn install(
     if interaction.keyboard_subscription.borrow().is_some() {
         return;
     }
+    let weak_interaction = Rc::downgrade(interaction);
+    let activation = window.observe_window_activation(move |window, _| {
+        if !window.is_window_active()
+            && let Some(interaction) = weak_interaction.upgrade()
+        {
+            let mut retained = interaction.keyboard.borrow_mut();
+            if let Some(current) = retained
+                .as_mut()
+                .filter(|current| current.committed_tab().is_some())
+            {
+                current.phase = PrefixPhase::Committed;
+            } else {
+                retained.take();
+            }
+        }
+    });
     let weak_host = Rc::downgrade(shared);
     let weak_interaction = Rc::downgrade(interaction);
     let owner = window.window_handle().window_id();
@@ -996,7 +996,8 @@ pub(super) fn install(
             cx.stop_propagation();
         }
     });
-    *interaction.keyboard_subscription.borrow_mut() = Some(subscription);
+    *interaction.keyboard_subscription.borrow_mut() =
+        Some(open_gpui::Subscription::join(subscription, activation));
 }
 
 pub(super) fn restore(
@@ -1019,10 +1020,23 @@ pub(super) fn restore(
             serial,
         );
     if !current.is_current(&shared.borrow(), window) {
-        if current.holds_tab_prefix(window) && (!presented || serial == current.serial) {
-            *interaction.keyboard.borrow_mut() = Some(current);
+        if !current.holds_tab_prefix(window) {
+            return;
         }
-        return;
+        if !presented || serial == current.serial {
+            *interaction.keyboard.borrow_mut() = Some(current);
+            return;
+        }
+        let host = shared.borrow();
+        let version = host.session.version();
+        if !current.version.is_same_epoch(version)
+            || !current
+                .committed_tab()
+                .is_some_and(|tab| tab_is_selected(host.session.view(), current.surface, tab))
+        {
+            return;
+        }
+        current.phase = PrefixPhase::Committed;
     }
     if !presented {
         *interaction.keyboard.borrow_mut() = Some(current);
@@ -1044,15 +1058,21 @@ pub(super) fn restore(
         let Some(original) = current.control.tab_strip.as_ref() else {
             return;
         };
+        let key = current.tab_target.and_then(|target| {
+            let strip = controls.iter().find_map(|(surface, control, _)| {
+                (*surface == current.surface)
+                    .then_some(control.tab_strip.as_deref())
+                    .flatten()
+                    .filter(|strip| strip.visual_id() == original.visual_id())
+            })?;
+            strip.continuation_receiver(original, target)
+        });
         let receiver = controls
             .iter()
             .find(|(surface, control, _)| {
                 *surface == current.surface
                     && control.receiver.is_some()
-                    && control
-                        .tab_strip
-                        .as_ref()
-                        .is_some_and(|strip| strip.same_navigation_scope(original))
+                    && matches!(control.kind, ControlKind::Tab(tab) if Some(tab) == key)
             })
             .map(|(_, control, _)| control.clone());
         if let Some(receiver) = receiver {
@@ -1264,7 +1284,7 @@ fn restore_menu(
             && control
                 .menu_keys
                 .as_ref()
-                .is_some_and(|keys| original.same_roster(keys))
+                .is_some_and(|keys| keys.retained.can_continue_from(&original.retained))
             && window.is_focus_handle_rendered(focus)
     }) else {
         return;

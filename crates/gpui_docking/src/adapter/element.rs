@@ -67,6 +67,16 @@ enum Candidate {
 }
 
 impl Packet {
+    fn empty(deferred: bool) -> Rc<Self> {
+        Rc::new(Self {
+            draws: Vec::new(),
+            pane_bars: BTreeMap::new(),
+            pane_receivers: BTreeMap::new(),
+            deferred,
+            native_preview: None,
+        })
+    }
+
     pub(super) fn is_deferred(&self) -> bool {
         self.deferred
     }
@@ -90,7 +100,12 @@ enum Draw {
     ContainedTitle(LogicalRect, Hsla),
     Guide(LogicalRect, GuideState),
     Outline(LogicalRect, Hsla),
-    Text(LogicalRect, String, Hsla),
+    Text {
+        layout: LogicalRect,
+        clip: LogicalRect,
+        title: String,
+        color: Hsla,
+    },
     TabLabel {
         layout: LogicalRect,
         clip: LogicalRect,
@@ -477,15 +492,7 @@ impl DockspaceElement {
                         .map(|(surface, region)| {
                             (
                                 *surface,
-                                region.packet.clone().unwrap_or_else(|| {
-                                    Rc::new(Packet {
-                                        draws: Vec::new(),
-                                        pane_bars: BTreeMap::new(),
-                                        pane_receivers: BTreeMap::new(),
-                                        deferred: true,
-                                        native_preview: None,
-                                    })
-                                }),
+                                region.packet.clone().unwrap_or_else(|| Packet::empty(true)),
                             )
                         })
                         .collect(),
@@ -506,15 +513,7 @@ impl DockspaceElement {
                         .map(|(surface, region)| {
                             (
                                 *surface,
-                                region.packet.clone().unwrap_or_else(|| {
-                                    Rc::new(Packet {
-                                        draws: Vec::new(),
-                                        pane_bars: BTreeMap::new(),
-                                        pane_receivers: BTreeMap::new(),
-                                        deferred: true,
-                                        native_preview: None,
-                                    })
-                                }),
+                                region.packet.clone().unwrap_or_else(|| Packet::empty(true)),
                             )
                         })
                         .collect(),
@@ -589,15 +588,10 @@ impl DockspaceElement {
                                 .map(|(surface, region)| {
                                     (
                                         *surface,
-                                        region.packet.clone().unwrap_or_else(|| {
-                                            Rc::new(Packet {
-                                                draws: Vec::new(),
-                                                pane_bars: BTreeMap::new(),
-                                                pane_receivers: BTreeMap::new(),
-                                                deferred: true,
-                                                native_preview: None,
-                                            })
-                                        }),
+                                        region
+                                            .packet
+                                            .clone()
+                                            .unwrap_or_else(|| Packet::empty(true)),
                                     )
                                 })
                                 .collect(),
@@ -993,15 +987,26 @@ impl DockspaceElement {
                     hitboxes.push(hitbox);
                     receivers.push((*receiver, hitbox));
                 }
-                Draw::Text(rect, title, color) => {
-                    let rect = to_gpui(*rect, bounds);
+                Draw::Text {
+                    layout,
+                    clip,
+                    title,
+                    color,
+                } => {
+                    let rect = to_gpui(*layout, bounds);
                     let label = tab_label_style(&config, *color)
                         .w(rect.size.width)
                         .h(rect.size.height)
                         .overflow_hidden()
                         .child(title.clone())
                         .into_any_element();
-                    draws.extend(prepare_label(label, rect, rect, window, cx));
+                    draws.extend(prepare_label(
+                        label,
+                        rect,
+                        to_gpui(*clip, bounds),
+                        window,
+                        cx,
+                    ));
                 }
                 Draw::TabLabel {
                     layout,
@@ -1204,20 +1209,22 @@ impl DockspaceElement {
                 surface,
                 serial,
             );
-        let enabled = control
-            .actions
-            .iter()
-            .any(|(_, action)| action.borrow().is_some());
+        let menu_row = control.menu_keys.is_some();
+        let enabled = menu_row
+            || control
+                .actions
+                .iter()
+                .any(|(_, action)| action.borrow().is_some());
         let mut actions = Vec::new();
         if enabled {
             actions.push(AccessibleAction::Focus);
-            if control.slot(ControlAction::Activate).is_some() {
+            if control.has_action(ControlAction::Activate) {
                 actions.push(AccessibleAction::Click);
             }
-            if control.slot(ControlAction::Increment).is_some() {
+            if control.has_action(ControlAction::Increment) {
                 actions.push(AccessibleAction::Increment);
             }
-            if control.slot(ControlAction::Decrement).is_some() {
+            if control.has_action(ControlAction::Decrement) {
                 actions.push(AccessibleAction::Decrement);
             }
         }
@@ -1295,17 +1302,20 @@ impl DockspaceElement {
             (AccessibleAction::Increment, ControlAction::Increment),
             (AccessibleAction::Decrement, ControlAction::Decrement),
         ] {
-            if let Some(slot) = control.slot(key) {
+            if control.has_action(key) {
                 let shared = self.host.clone();
                 let interaction = self.interaction.clone();
+                let control = control.clone();
                 element = element.on_a11y_action(action, move |_, window, cx| {
-                    activate_action(&shared, &interaction, surface, serial, &slot, window, cx);
+                    if let Some(slot) = control.slot(key) {
+                        activate_action(&shared, &interaction, surface, serial, &slot, window, cx);
+                    }
                 });
             }
         }
         if self.host.borrow().native.is_none()
             && matches!(control.kind, ControlKind::Button | ControlKind::MenuRow)
-            && let Some(slot) = control.slot(ControlAction::Activate)
+            && control.has_action(ControlAction::Activate)
         {
             let shared = self.host.clone();
             let pointer_focus = focus.clone();
@@ -1322,8 +1332,11 @@ impl DockspaceElement {
             });
             let shared = self.host.clone();
             let interaction = self.interaction.clone();
+            let control = control.clone();
             element = element.on_click(move |_, window, cx| {
-                activate_action(&shared, &interaction, surface, serial, &slot, window, cx);
+                if let Some(slot) = control.slot(ControlAction::Activate) {
+                    activate_action(&shared, &interaction, surface, serial, &slot, window, cx);
+                }
                 cx.stop_propagation();
             });
         }
@@ -2367,16 +2380,7 @@ fn encode_candidate(
                     .native_surface_bindings_for_window(binding)
                     .any(|binding| binding.surface() == surface)
             });
-            packets.insert(
-                surface,
-                Rc::new(Packet {
-                    draws: Vec::new(),
-                    pane_bars: BTreeMap::new(),
-                    pane_receivers: BTreeMap::new(),
-                    deferred,
-                    native_preview: None,
-                }),
-            );
+            packets.insert(surface, Packet::empty(deferred));
             continue;
         }
         if !presentation_surfaces.contains(&surface) {
@@ -2384,16 +2388,7 @@ fn encode_candidate(
             // The real child can draw before its Created/Prepared observations
             // admit it to the core's presentation roster. This staging packet
             // supplies no painted output or native content-readiness fact.
-            packets.insert(
-                surface,
-                Rc::new(Packet {
-                    draws: Vec::new(),
-                    pane_bars: BTreeMap::new(),
-                    pane_receivers: BTreeMap::new(),
-                    deferred: true,
-                    native_preview: None,
-                }),
-            );
+            packets.insert(surface, Packet::empty(true));
             continue;
         }
         let bounds = LogicalRect::new(
@@ -2418,9 +2413,6 @@ fn encode_candidate(
                     ))
                 }
                 Request::TabIntrinsic { key, label, .. } => {
-                    if let Some(width) = key.item().and_then(|item| tab_widths.get(&item)) {
-                        return Ok(Answer::TabIntrinsic(*width));
-                    }
                     let title: open_gpui::SharedString = recording::tab_label(label, panels).into();
                     let width = {
                         let line = window.text_system().shape_line(
@@ -2436,7 +2428,13 @@ fn encode_candidate(
                         );
                         f64::from(f32::from(line.width))
                     };
-                    Answer::TabIntrinsic(width)
+                    match key.item().and_then(|item| tab_widths.get(&item)) {
+                        Some(tab_width) => Answer::TabIntrinsicWithMenuWidth {
+                            tab_width: *tab_width,
+                            menu_width: width,
+                        },
+                        None => Answer::TabIntrinsic(width),
+                    }
                 }
                 Request::TabStrip { .. } => Answer::TabStrip(tab_strip),
             })
@@ -2451,20 +2449,10 @@ fn encode_candidate(
                 return Ok(Candidate::CapacityDeferred(frame.commit()?));
             }
             SurfaceWork::Deferred(SurfaceWorkDeferred::Unmeasured) => {
-                anyhow::ensure!(managed, "measured surface has no ready paint plan");
-                // Native creation can render its real initial GPUI frame before
-                // the core receives Created/Prepared. This staging packet grants
-                // no painted output or content-presentation acknowledgement.
-                packets.insert(
-                    surface,
-                    Rc::new(Packet {
-                        draws: Vec::new(),
-                        pane_bars: BTreeMap::new(),
-                        pane_receivers: BTreeMap::new(),
-                        deferred: true,
-                        native_preview: None,
-                    }),
-                );
+                // An unmeasured region owns no output this pass. Commit its
+                // contribution alongside any ready sibling regions so core can
+                // settle local conditions such as insufficient popup space.
+                packets.insert(surface, Packet::empty(true));
                 continue;
             }
         };

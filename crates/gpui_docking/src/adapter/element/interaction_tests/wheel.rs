@@ -158,6 +158,48 @@ fn target(
     to_gpui(rect, region.bounds.unwrap())
 }
 
+#[open_gpui::test]
+fn a_tab_list_without_popup_space_leaves_its_sibling_region_interactive(cx: &mut TestAppContext) {
+    cx.defer_next_window_frame_requests();
+    let sibling = SurfaceId::new(52);
+    let (dock, _) = overflowing_surfaces(&[SURFACE, sibling], cx);
+    let window = cx.open_window(size(px(620.0), px(400.0)), |_, _| RegionsRoot {
+        dock: dock.clone(),
+        regions: vec![
+            DockRegion::new(SURFACE, LogicalRect::new(0.0, 0.0, 620.0, 32.0).unwrap()),
+            DockRegion::new(sibling, LogicalRect::new(0.0, 42.0, 620.0, 350.0).unwrap()),
+        ],
+        scrolls: Rc::default(),
+    });
+    let mut visual = active_visual(window.into(), cx);
+    assert!(visual.activate_accessibility());
+    frames(&mut visual, &dock);
+    let point = |visual: &mut VisualTestContext| {
+        let tree = visual.latest_accessibility_tree_update().unwrap();
+        let bounds = tree.nodes.iter().find_map(|(_, node)| {
+            (node.role() == Role::Tab && node.label() == Some("Tab number 42"))
+                .then(|| node.bounds())
+                .flatten()
+        })?;
+        let scale = visual.update(|window, _| window.scale_factor());
+        Some(open_gpui::point(
+            px((bounds.x0 + bounds.x1) as f32 / (2.0 * scale)),
+            px((bounds.y0 + bounds.y1) as f32 / (2.0 * scale)),
+        ))
+    };
+    let tab = point(&mut visual).unwrap();
+    visual.simulate_click(
+        tab_list_button_bounds(&dock, window.window_id()).center(),
+        Modifiers::none(),
+    );
+    frames(&mut visual, &dock);
+    assert_eq!(point(&mut visual), Some(tab));
+    assert_eq!(offsets(&dock, SURFACE).1, None);
+    visual.simulate_click(tab, Modifiers::none());
+    frames(&mut visual, &dock);
+    assert!(dock.with_view(|view| view.item(ItemId::new(42)).unwrap().is_active()));
+}
+
 fn scroll(
     position: open_gpui::Point<Pixels>,
     delta: ScrollDelta,
