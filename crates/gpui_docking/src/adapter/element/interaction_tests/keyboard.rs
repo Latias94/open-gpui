@@ -574,30 +574,6 @@ fn core_tab_list_pending_prefix_cannot_acquire_a_replacement_epoch(cx: &mut Test
     );
 }
 
-struct ExternalFocusRoot {
-    dock: DockSurface,
-    focus: FocusHandle,
-    keys: Rc<RefCell<Vec<String>>>,
-}
-
-impl Render for ExternalFocusRoot {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let keys = self.keys.clone();
-        div().size_full().child(self.dock.element(SURFACE)).child(
-            div()
-                .id("application-keyboard-target")
-                .absolute()
-                .bottom_0()
-                .right_0()
-                .size(px(1.0))
-                .track_focus(&self.focus)
-                .on_key_down(move |event, _, _| {
-                    keys.borrow_mut().push(event.keystroke.key.clone());
-                }),
-        )
-    }
-}
-
 struct FocusStateRoot {
     dock: DockSurface,
     interaction: Rc<RefCell<Option<Rc<InteractionState>>>>,

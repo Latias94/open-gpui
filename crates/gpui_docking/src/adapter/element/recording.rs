@@ -561,6 +561,27 @@ pub(super) fn record(
                         ))
                     });
                     draws.push(Draw::Fill(menu.bounds(), colors.selected_tab));
+                    if let Some(keys) = &menu_keys
+                        && let Some(row) = menu.rows().find(|row| row.focused())
+                        && row.interaction_bounds().is_none()
+                    {
+                        // Give the popup a keyboard target behind its pointer receivers
+                        // while the focused row is outside the viewport.
+                        let mut control = Control::new(
+                            row.visual_id(),
+                            menu.viewport(),
+                            ControlKind::MenuRow,
+                            String::new(),
+                            None,
+                        );
+                        control.focused = true;
+                        control.menu_owner = Some(bar);
+                        control.menu_keys = Some(keys.clone());
+                        draws.push(Draw::TabListMenuFocus {
+                            menu: menu.visual_id(),
+                            row: Rc::new(control),
+                        });
+                    }
                     if let Some(receiver) = plan.receiver_for_tab_list_menu_scroll(menu) {
                         draws.push(Draw::Scroll(super::wheel::ScrollTarget::Menu(receiver)));
                     }

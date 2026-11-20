@@ -123,6 +123,10 @@ enum Draw {
     Control(Rc<Control>),
     PresentationMenu(Rc<PresentationMenu>),
     TabList(LogicalRect, DockspaceVisualId),
+    TabListMenuFocus {
+        menu: DockspaceVisualId,
+        row: Rc<Control>,
+    },
     Scroll(wheel::ScrollTarget),
 }
 
@@ -218,6 +222,7 @@ pub(crate) struct PreparedRegion {
     bounds: Bounds<Pixels>,
     receivers: Vec<(DockspaceReceiverDescriptor, HitboxId)>,
     controls: Vec<(Rc<Control>, FocusHandle, HitboxId)>,
+    menu_focus: Option<(Rc<Control>, FocusHandle)>,
     visible_panes: Vec<ItemId>,
     pane_bars: BTreeMap<ItemId, Option<DockspaceVisualId>>,
     admitted: bool,
@@ -701,9 +706,17 @@ impl DockspaceElement {
         let focus_controls: Vec<_> = regions
             .iter()
             .flat_map(|region| {
-                region.controls.iter().map(move |(control, focus, _)| {
-                    (region.surface, control.clone(), focus.clone())
-                })
+                region
+                    .controls
+                    .iter()
+                    .map(|(control, focus, _)| (control, focus))
+                    .chain(
+                        region
+                            .menu_focus
+                            .iter()
+                            .map(|(control, focus)| (control, focus)),
+                    )
+                    .map(move |(control, focus)| (region.surface, control.clone(), focus.clone()))
             })
             .collect();
         let retained_focus: std::collections::BTreeSet<_> = packets
@@ -712,6 +725,7 @@ impl DockspaceElement {
             .filter_map(|draw| match draw {
                 Draw::Control(control) => Some(control.id),
                 Draw::TabList(_, id) => Some(*id),
+                Draw::TabListMenuFocus { menu, .. } => Some(*menu),
                 Draw::PresentationMenu(menu) => Some(menu.id),
                 _ => None,
             })
@@ -788,6 +802,7 @@ impl DockspaceElement {
         let mut tabs = Vec::new();
         let mut receivers = Vec::new();
         let mut controls = Vec::new();
+        let mut menu_focus = None;
         let mut visible_panes = Vec::new();
         let mut menus = Vec::new();
         let mut scrolls = Vec::new();
@@ -943,6 +958,43 @@ impl DockspaceElement {
                     element.prepaint_as_root(rect.origin, definite(rect), window, cx);
                     let clip = window.prepare_subtree_clip(&SubtreeClip::own_border_box(), rect);
                     draws.push(PreparedDraw::ClippedElement(element, clip));
+                }
+                Draw::TabListMenuFocus { menu, row } => {
+                    if !admitted {
+                        continue;
+                    }
+                    let rect = to_gpui(row.bounds, bounds);
+                    let focus = self.control_focus(*menu, cx);
+                    let shared = self.host.clone();
+                    let interaction = self.interaction.clone();
+                    let keyboard_row = row.clone();
+                    let element = div()
+                        .id(&focus)
+                        .w(rect.size.width)
+                        .h(rect.size.height)
+                        .track_focus(&focus)
+                        .tab_stop(false)
+                        .role(Role::Menu)
+                        .aria_label("Tab list")
+                        .on_key_down(move |event, window, cx| {
+                            if keyboard::handle(
+                                &shared,
+                                &interaction,
+                                surface,
+                                serial,
+                                &keyboard_row,
+                                &event.keystroke,
+                                window,
+                                cx,
+                            ) {
+                                cx.stop_propagation();
+                            }
+                        })
+                        .into_any_element();
+                    if let Some(draw) = prepare_label(element, rect, rect, window, cx) {
+                        draws.push(draw);
+                        menu_focus = Some((row.clone(), focus));
+                    }
                 }
                 Draw::Receiver(receiver) => {
                     // Prepaint focusable chrome at the original core receiver's
@@ -1175,6 +1227,7 @@ impl DockspaceElement {
             bounds,
             receivers,
             controls,
+            menu_focus,
             visible_panes,
             pane_bars: packet.pane_bars.clone(),
             admitted,
@@ -2054,7 +2107,7 @@ fn apply_chrome_focus(
         let mut previous = interaction.tab_list_focus.borrow_mut();
         if let Some(previous) = previous.as_ref() {
             if previous.claim_revision != window.focus_claim_revision()
-                || (previous.bar == bar && previous.row == control.id)
+                || (previous.bar == bar && previous.row == control.id && focus.is_focused(window))
             {
                 return;
             }
