@@ -15,8 +15,8 @@ use dockspace::{
         DockspaceUpdate, DockspaceVisualId, HostFrameReport, PaneContentGeometry,
         SurfaceMeasurementAnswer as Answer, SurfaceMeasurementRequest as Request,
         SurfacePointerButton, SurfacePointerCancelReason, SurfacePointerEvent, SurfaceWork,
-        SurfaceWorkDeferred, TabListMenuMetrics, TabListMenuRowId, TabStripControlMetric,
-        TabStripControlMetrics, TabStripControlPlacement, TabStripMetrics,
+        SurfaceWorkDeferred, TabChromeInputId, TabListMenuMetrics, TabListMenuRowId,
+        TabStripControlMetric, TabStripControlMetrics, TabStripControlPlacement, TabStripMetrics,
     },
 };
 use open_gpui::{
@@ -56,6 +56,7 @@ pub(super) struct Packet {
     pane_receivers: BTreeMap<ItemId, DockspaceReceiverDescriptor>,
     state: PacketState,
     pub(super) native_preview: Option<host_native::provisional::Preview>,
+    tab_list_dismiss: Option<chrome::ActionSlot>,
 }
 
 enum PacketState {
@@ -80,6 +81,7 @@ impl Packet {
             pane_receivers: BTreeMap::new(),
             state,
             native_preview: None,
+            tab_list_dismiss: None,
         })
     }
 
@@ -134,7 +136,7 @@ enum Draw {
     PresentationMenu(Rc<PresentationMenu>),
     TabList(LogicalRect, DockspaceVisualId),
     TabListMenuFocus {
-        menu: DockspaceVisualId,
+        menu: TabChromeInputId,
         row: Rc<Control>,
     },
     Scroll(wheel::ScrollTarget),
@@ -156,10 +158,8 @@ enum PreparedDraw {
 struct InteractionState {
     hovered_tab: Rc<Cell<Option<TabKey>>>,
     focus: RefCell<HashMap<ControlFocusId, FocusHandle>>,
-    menu: Cell<Option<presentation_menu::OpenMenu>>,
     menu_sequence: Cell<u64>,
-    menu_input: RefCell<Option<presentation_menu::MenuInput>>,
-    menu_row: Cell<usize>,
+    menu: RefCell<Option<presentation_menu::MenuState>>,
     pane_focus: RefCell<BTreeMap<SurfaceId, PaneFocusAttempt>>,
     pending_tab_focus: RefCell<Option<PendingTabFocus>>,
     tab_list_focus: RefCell<Option<TabListFocus>>,
@@ -174,6 +174,8 @@ struct InteractionState {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum ControlFocusId {
     Visual(DockspaceVisualId),
+    TabChrome(TabChromeInputId),
+    TabClose(TabChromeInputId),
     MenuRow(TabListMenuRowId),
 }
 
@@ -202,7 +204,7 @@ impl PaneFocusAttempt {
 
 struct PendingTabFocus {
     surface: SurfaceId,
-    visual: DockspaceVisualId,
+    target: ControlFocusId,
     version: dockspace::model::WorkspaceVersion,
     claim_revision: u64,
 }
@@ -576,7 +578,7 @@ impl DockspaceElement {
                                 &mut host,
                                 update,
                                 &region_bounds,
-                                self.interaction.menu.get(),
+                                presentation_menu::open(&self.interaction),
                                 &widths,
                                 window,
                             )
@@ -751,9 +753,8 @@ impl DockspaceElement {
             .flat_map(|packet| packet.draws.iter())
             .filter_map(|draw| match draw {
                 Draw::Control(control) => Some(control.focus_id()),
-                Draw::TabList(_, id) | Draw::TabListMenuFocus { menu: id, .. } => {
-                    Some(ControlFocusId::Visual(*id))
-                }
+                Draw::TabList(_, id) => Some(ControlFocusId::Visual(*id)),
+                Draw::TabListMenuFocus { menu, .. } => Some(ControlFocusId::TabChrome(*menu)),
                 Draw::PresentationMenu(menu) => Some(ControlFocusId::Visual(menu.id)),
                 _ => None,
             })
@@ -779,7 +780,7 @@ impl DockspaceElement {
                     .pending_tab_focus
                     .borrow()
                     .as_ref()
-                    .map(|focus| ControlFocusId::Visual(focus.visual));
+                    .map(|focus| focus.target);
                 interaction
                     .focus
                     .borrow_mut()
@@ -992,7 +993,7 @@ impl DockspaceElement {
                         continue;
                     }
                     let rect = to_gpui(row.bounds, bounds);
-                    let focus = self.control_focus(ControlFocusId::Visual(*menu), cx);
+                    let focus = self.control_focus(ControlFocusId::TabChrome(*menu), cx);
                     let shared = self.host.clone();
                     let interaction = self.interaction.clone();
                     let keyboard_row = row.clone();
@@ -1980,13 +1981,33 @@ fn activate_action_with_continuation(
     // A preceding selection may revoke current pointer receivers before the
     // next paint, but core can still validate that original deferred command.
     // A replaced output must never lend its witness to a later callback.
-    if !keyboard::admits_action(&host, interaction, surface, serial, continuing, window) {
-        return false;
-    }
     let Some(action) = slot.borrow().clone() else {
         return false;
     };
-    let tab_focus = action.tab_focus;
+    if !keyboard::admits_action(&host, interaction, surface, serial, continuing, window) {
+        // The displayed opener can replace a product menu even while the
+        // renderer is settling a candidate. Retain its original action in the
+        // ordered input queue and retire the product menu's uncommitted keys.
+        if let Some(opener) = action.tab_list_opener
+            && host.has_unaccepted_update()
+            && presentation_menu::open(interaction).is_some()
+            && action.intent.expected_version() == host.session.version()
+            && host.ensure_application_admission().is_ok()
+            && input::is_presented(&host, owner, surface, serial)
+        {
+            input::queue_action(&mut host, action.intent, cx);
+            drop(host);
+            focus_tab_list_opener(shared, interaction, surface, opener, window, cx);
+            window.refresh();
+            host_native::schedule(shared, cx);
+            return true;
+        }
+        return false;
+    }
+    let tab_focus = action
+        .intent
+        .tab_focus_input_id()
+        .zip(action.intent.tab_focus_target());
     let version = action.intent.expected_version();
     let yields_content = action.yields_content;
     let previous_focus = host.session.pane_focus_request(surface);
@@ -2051,13 +2072,14 @@ fn activate_action_with_continuation(
     let focus = tab_focus
         .filter(|_| !yields_content)
         .filter(|(_, key)| keyboard::tab_is_selected(host.session.view(), surface, *key))
-        .map(|(visual, _)| {
+        .map(|(input_id, _)| {
+            let target = ControlFocusId::TabChrome(input_id);
             (
-                visual,
+                target,
                 interaction
                     .focus
                     .borrow_mut()
-                    .entry(ControlFocusId::Visual(visual))
+                    .entry(target)
                     .or_insert_with(|| cx.focus_handle())
                     .clone(),
             )
@@ -2077,31 +2099,43 @@ fn activate_action_with_continuation(
             attempt.claim_revision = Some(window.focus_claim_revision());
             interaction.pane_focus.borrow_mut().insert(surface, attempt);
         }
-    } else if let Some((visual, focus)) = focus {
+    } else if let Some((target, focus)) = focus {
         window.focus(&focus, cx);
         *interaction.pending_tab_focus.borrow_mut() = Some(PendingTabFocus {
             surface,
-            visual,
+            target,
             version,
             claim_revision: window.focus_claim_revision(),
         });
-    } else if let Some((bar, opener)) = action.tab_list_opener {
-        let focus = interaction
-            .focus
-            .borrow()
-            .get(&ControlFocusId::Visual(opener))
-            .cloned();
-        if let Some(focus) = focus.filter(|focus| window.is_focus_handle_rendered(focus)) {
-            if !focus.is_focused(window) {
-                window.focus(&focus, cx);
-            }
-            keyboard::remember_menu_opener(interaction, surface, bar, &focus, window);
-        }
+    } else if let Some(opener) = action.tab_list_opener {
+        focus_tab_list_opener(shared, interaction, surface, opener, window, cx);
     }
     window.refresh();
     cx.refresh_windows();
     host_native::schedule(shared, cx);
     true
+}
+
+fn focus_tab_list_opener(
+    shared: &SharedHost,
+    interaction: &InteractionState,
+    surface: SurfaceId,
+    (bar, opener): (DockspaceVisualId, TabChromeInputId),
+    window: &mut Window,
+    cx: &mut App,
+) {
+    presentation_menu::retire_for_tab_list(shared, interaction, window);
+    let focus = interaction
+        .focus
+        .borrow()
+        .get(&ControlFocusId::TabChrome(opener))
+        .cloned();
+    if let Some(focus) = focus.filter(|focus| window.is_focus_handle_rendered(focus)) {
+        if !focus.is_focused(window) {
+            window.focus(&focus, cx);
+        }
+        keyboard::remember_menu_opener(interaction, surface, bar, &focus, window);
+    }
 }
 
 fn refresh_menu(shared: &SharedHost, surface: SurfaceId, window: &mut Window) {
@@ -2144,7 +2178,7 @@ fn apply_chrome_focus(
         {
             if presented(pending.surface) {
                 if let Some((_, _, focus)) = controls.iter().find(|(surface, control, _)| {
-                    *surface == pending.surface && control.id == pending.visual
+                    *surface == pending.surface && control.focus_id() == pending.target
                 }) && window.is_focus_handle_rendered(focus)
                 {
                     window.focus(focus, cx);

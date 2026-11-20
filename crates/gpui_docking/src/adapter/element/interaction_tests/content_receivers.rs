@@ -160,21 +160,30 @@ fn open_content(cx: &mut TestAppContext, dock: &DockSurface, managed: bool) -> V
     cx.set_platform_hovered_window(Some(window));
     let mut visual = active_visual(window, cx);
     if managed {
-        let (bounds, scale) = visual.update(|window, _| {
-            let facts = window.platform_facts();
-            (
-                facts.bounds.to_device_pixels(facts.scale_factor),
-                facts.scale_factor,
-            )
-        });
-        cx.set_platform_window_physical_client_geometry(window, Some(bounds), scale);
-        cx.simulate_window_scale_factor_change(window, scale);
+        prepare_native_input(&mut visual);
     }
     frames(&mut visual, dock);
     visual
 }
 
-fn native_input(visual: &mut VisualTestContext, position: Point<Pixels>, input: PlatformInput) {
+pub(super) fn prepare_native_input(visual: &mut VisualTestContext) {
+    let (handle, bounds, scale) = visual.update(|window, _| {
+        let facts = window.platform_facts();
+        (
+            window.window_handle(),
+            facts.bounds.to_device_pixels(facts.scale_factor),
+            facts.scale_factor,
+        )
+    });
+    visual.set_platform_window_physical_client_geometry(handle, Some(bounds), scale);
+    visual.simulate_window_scale_factor_change(handle, scale);
+}
+
+pub(super) fn native_input(
+    visual: &mut VisualTestContext,
+    position: Point<Pixels>,
+    input: PlatformInput,
+) {
     let (handle, geometry) = visual.update(|window, _| {
         (
             window.window_handle(),

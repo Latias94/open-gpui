@@ -341,9 +341,11 @@ pub(super) fn admits_action(
                     && current.serial == serial
                     && current.is_current(host, window)
             });
-    (shown || continuing)
-        && !host.has_unaccepted_update()
-        && host.inputs.is_empty()
+    (shown || continuing) && !host.has_unaccepted_update() && allows_chrome_ingress(host)
+}
+
+fn allows_chrome_ingress(host: &HostState) -> bool {
+    host.inputs.is_empty()
         && !host.session.has_pending_native_input()
         && host
             .native
@@ -506,7 +508,7 @@ pub(super) fn handle(
         .as_ref()
         .is_some_and(Continuation::has_committed_prefix);
     let target = action
-        .tab_focus
+        .tab_focus()
         .map(|(visual, _)| visual)
         .unwrap_or_else(|| {
             previous
@@ -515,7 +517,7 @@ pub(super) fn handle(
         });
     if matches!(control.kind, ControlKind::Tab(_))
         && !action.yields_content
-        && action.tab_focus.is_some()
+        && action.tab_focus().is_some()
     {
         if !admits_action(
             &shared.borrow(),
@@ -536,7 +538,7 @@ pub(super) fn handle(
             version: shared.borrow().session.version(),
             control: previous.map_or_else(|| control.clone(), |current| current.control),
             target,
-            tab_target: action.tab_focus.map(|(_, key)| key),
+            tab_target: action.tab_focus().map(|(_, key)| key),
             menu_target: None,
             claim_revision: window.focus_claim_revision(),
             phase: PrefixPhase::Pending {
@@ -581,7 +583,7 @@ pub(super) fn handle(
             version: shared.borrow().session.version(),
             control: previous.map_or_else(|| control.clone(), |current| current.control),
             target,
-            tab_target: action.tab_focus.map(|(_, key)| key),
+            tab_target: action.tab_focus().map(|(_, key)| key),
             menu_target: None,
             claim_revision: window.focus_claim_revision(),
             phase: PrefixPhase::Committed,
@@ -690,16 +692,14 @@ fn handle_menu(
                     .is_some_and(|region| !region.dirty)
                 && input::is_presented(&host, owner, surface, source_serial)
         });
-        if !(submitted || ready)
-            || !admits_action(
-                &host,
-                interaction,
-                surface,
-                source_serial,
-                submitted,
-                window,
-            )
-        {
+        // A committed prefix can retain keys while a renderer owns the next
+        // candidate. restore_menu resolves them against the presented replay.
+        let admitted = if submitted {
+            allows_chrome_ingress(&host)
+        } else {
+            ready && admits_action(&host, interaction, surface, source_serial, false, window)
+        };
+        if !admitted {
             return false;
         }
     }
@@ -1017,9 +1017,7 @@ pub(super) fn install(
         if !window.is_window_active()
             && let Some(interaction) = weak_interaction.upgrade()
         {
-            if let Some(input) = interaction.menu_input.borrow_mut().as_mut() {
-                input.cancel_pending_keys();
-            }
+            super::presentation_menu::cancel_pending_keys(&interaction);
             let mut retained = interaction.keyboard.borrow_mut();
             if let Some(current) = retained
                 .as_mut()
@@ -1298,7 +1296,7 @@ fn resume_tab_input(
         .borrow()
         .as_ref()
         .filter(|action| !action.yields_content)
-        .and_then(|action| action.tab_focus);
+        .and_then(|action| action.tab_focus());
     if activate_action(
         shared,
         interaction,

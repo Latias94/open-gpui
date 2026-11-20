@@ -11,26 +11,82 @@ enum MenuKey {
     Confirm,
 }
 
-/// Only semantic navigation waits here. Actions are obtained from the exact
-/// presented menu, never from the packet that merely opened it.
-pub(super) struct MenuInput {
+/// The open run owns its selection, focus claim and pending keys. Commands
+/// are resolved from the exact presented menu.
+pub(super) struct MenuState {
     open: OpenMenu,
     focus: FocusHandle,
     claim: Rc<Cell<Option<u64>>>,
     version: dockspace::model::WorkspaceVersion,
     keys: std::collections::VecDeque<MenuKey>,
+    row: usize,
 }
 
-impl MenuInput {
+impl MenuState {
     fn is_current(&self, shared: &SharedHost, window: &Window) -> bool {
         window.is_window_active()
             && self.claim.get() == Some(window.focus_claim_revision())
             && self.version == shared.borrow().session.version()
     }
+}
 
-    pub(super) fn cancel_pending_keys(&mut self) {
-        self.keys.clear();
+pub(super) fn open(interaction: &InteractionState) -> Option<OpenMenu> {
+    interaction.menu.borrow().as_ref().map(|input| input.open)
+}
+
+pub(super) fn cancel_pending_keys(interaction: &InteractionState) {
+    if let Some(input) = interaction.menu.borrow_mut().as_mut() {
+        input.keys.clear();
     }
+}
+
+pub(super) fn retire_for_tab_list(
+    shared: &SharedHost,
+    interaction: &InteractionState,
+    window: &mut Window,
+) {
+    if let Some(open) = retire(interaction) {
+        refresh_menu(shared, open.surface, window);
+    }
+}
+
+fn retire(interaction: &InteractionState) -> Option<OpenMenu> {
+    let previous = interaction.menu.borrow_mut().take()?;
+    previous.claim.set(None);
+    Some(previous.open)
+}
+
+fn dismiss_tab_list(
+    shared: &SharedHost,
+    interaction: &InteractionState,
+    window: &mut Window,
+    cx: &mut App,
+) -> bool {
+    let shown = {
+        let host = shared.borrow();
+        let owner = window.window_handle().window_id();
+        let Some(mount) = host.mounts.get(&owner) else {
+            return false;
+        };
+        mount.regions.iter().find_map(|(&surface, region)| {
+            let action = region.packet.as_ref()?.tab_list_dismiss.as_ref()?;
+            Some((
+                surface,
+                mount.serial,
+                input::is_presented(&host, owner, surface, mount.serial),
+                action.clone(),
+            ))
+        })
+    };
+    if let Some((surface, serial, presented, action)) = shown
+        && !(presented
+            && activate_action(shared, interaction, surface, serial, &action, window, cx))
+    {
+        return false;
+    }
+    interaction.tab_list_focus.borrow_mut().take();
+    interaction.keyboard.borrow_mut().take();
+    true
 }
 
 fn begin(
@@ -41,40 +97,49 @@ fn begin(
     claim: &Rc<Cell<Option<u64>>>,
     window: &mut Window,
     cx: &mut App,
-) {
+) -> bool {
     let Some(run) = interaction.menu_sequence.get().checked_add(1) else {
-        return;
+        return false;
     };
+    if !dismiss_tab_list(shared, interaction, window, cx) {
+        return false;
+    }
     interaction.menu_sequence.set(run);
     key.run = run;
-    interaction.menu.set(Some(key));
-    interaction.menu_row.set(0);
+    if let Some(previous) = retire(interaction)
+        && previous.surface != key.surface
+    {
+        refresh_menu(shared, previous.surface, window);
+    }
     window.focus(focus, cx);
     claim.set(Some(window.focus_claim_revision()));
-    *interaction.menu_input.borrow_mut() = Some(MenuInput {
+    *interaction.menu.borrow_mut() = Some(MenuState {
         open: key,
         focus: focus.clone(),
         claim: claim.clone(),
         version: shared.borrow().session.version(),
         keys: [MenuKey::First].into(),
+        row: 0,
     });
     refresh_menu(shared, key.surface, window);
+    true
 }
 
-fn dismiss(interaction: &InteractionState, open: OpenMenu, window: &mut Window, cx: &mut App) {
-    if interaction.menu.get() != Some(open) {
+fn dismiss(interaction: &InteractionState, expected: OpenMenu, window: &mut Window, cx: &mut App) {
+    let Some(input) = interaction
+        .menu
+        .borrow_mut()
+        .take_if(|input| input.open == expected)
+    else {
         return;
-    }
-    interaction.menu.set(None);
-    if let Some(input) = interaction.menu_input.borrow_mut().take() {
-        if input.claim.get() == Some(window.focus_claim_revision())
-            && window.is_focus_handle_rendered(&input.focus)
-        {
-            window.focus(&input.focus, cx);
-            input.claim.set(Some(window.focus_claim_revision()));
-        } else {
-            input.claim.set(None);
-        }
+    };
+    if input.claim.get() == Some(window.focus_claim_revision())
+        && window.is_focus_handle_rendered(&input.focus)
+    {
+        window.focus(&input.focus, cx);
+        input.claim.set(Some(window.focus_claim_revision()));
+    } else {
+        input.claim.set(None);
     }
     window.refresh();
 }
@@ -83,15 +148,27 @@ fn dismiss(interaction: &InteractionState, open: OpenMenu, window: &mut Window, 
 /// command behind earlier local/native input instead of waiting on a UI retry.
 fn submit(
     shared: &SharedHost,
-    surface: SurfaceId,
+    interaction: &InteractionState,
+    expected: OpenMenu,
     serial: u64,
     action: &chrome::ActionSlot,
     window: &mut Window,
     cx: &mut App,
 ) -> bool {
     let mut host = shared.borrow_mut();
-    if host.ensure_application_admission().is_err()
-        || !input::is_presented(&host, window.window_handle().window_id(), surface, serial)
+    let current = interaction
+        .menu
+        .borrow()
+        .as_ref()
+        .is_some_and(|input| input.open == expected && input.version == host.session.version());
+    if !current
+        || host.ensure_application_admission().is_err()
+        || !input::is_presented(
+            &host,
+            window.window_handle().window_id(),
+            expected.surface,
+            serial,
+        )
     {
         return false;
     }
@@ -106,11 +183,8 @@ fn submit(
 }
 
 fn queue_key(interaction: &InteractionState, key: MenuKey) -> bool {
-    let mut input = interaction.menu_input.borrow_mut();
-    let Some(input) = input
-        .as_mut()
-        .filter(|input| Some(input.open) == interaction.menu.get())
-    else {
+    let mut input = interaction.menu.borrow_mut();
+    let Some(input) = input.as_mut() else {
         return false;
     };
     if input.keys.iter().any(|key| matches!(key, MenuKey::Confirm)) {
@@ -131,11 +205,8 @@ fn handle_key(
         return false;
     }
     let valid = {
-        let mut input = interaction.menu_input.borrow_mut();
+        let mut input = interaction.menu.borrow_mut();
         input.as_mut().is_some_and(|input| {
-            if interaction.menu.get() != Some(input.open) {
-                return false;
-            }
             if !input.is_current(shared, window) {
                 // An explicit new key on the refocused opener starts a fresh
                 // prefix. Never revive commands queued under its old claim.
@@ -161,15 +232,14 @@ fn handle_key(
         "end" => MenuKey::Last,
         "enter" | "space" => MenuKey::Confirm,
         "escape" => {
-            let terminal = interaction
-                .menu_input
-                .borrow()
-                .as_ref()
-                .is_some_and(|input| input.keys.iter().any(|key| matches!(key, MenuKey::Confirm)));
+            let terminal =
+                interaction.menu.borrow().as_ref().is_some_and(|input| {
+                    input.keys.iter().any(|key| matches!(key, MenuKey::Confirm))
+                });
             if terminal {
                 return false;
             }
-            if let Some(open) = interaction.menu.get() {
+            if let Some(open) = open(interaction) {
                 dismiss(interaction, open, window, cx);
                 return true;
             }
@@ -219,11 +289,7 @@ fn flush_keys(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let Some(open) = interaction
-        .menu
-        .get()
-        .filter(|open| Some(*open) == menu.open)
-    else {
+    let Some(open) = open(interaction).filter(|open| Some(*open) == menu.open) else {
         return;
     };
     if !input::is_presented(
@@ -235,8 +301,8 @@ fn flush_keys(
         return;
     }
     loop {
-        let key = {
-            let mut input = interaction.menu_input.borrow_mut();
+        let (key, row) = {
+            let mut input = interaction.menu.borrow_mut();
             let Some(input) = input.as_mut().filter(|input| {
                 input.open == open
                     && input.is_current(shared, window)
@@ -244,12 +310,11 @@ fn flush_keys(
             }) else {
                 return;
             };
-            input.keys.pop_front()
+            (input.keys.pop_front(), input.row)
         };
         let Some(key) = key else {
             return;
         };
-        let row = interaction.menu_row.get();
         let destination = match key {
             MenuKey::Next => Some(navigate(menu, row, true)),
             MenuKey::Previous => Some(navigate(menu, row, false)),
@@ -257,14 +322,16 @@ fn flush_keys(
             MenuKey::Last => enabled_rows(menu).next_back(),
             MenuKey::Confirm => {
                 if let Some((_, Some(action))) = menu.choices.get(row) {
-                    submit(shared, surface, serial, action, window, cx);
+                    submit(shared, interaction, open, serial, action, window, cx);
                     dismiss(interaction, open, window, cx);
                 }
                 return;
             }
         };
-        if let Some(destination) = destination {
-            interaction.menu_row.set(destination);
+        if let Some(destination) = destination
+            && let Some(input) = interaction.menu.borrow_mut().as_mut()
+        {
+            input.row = destination;
             window.refresh();
         }
     }
@@ -336,33 +403,43 @@ impl OpenMenu {
 /// Called only when the candidate is installed; a discarded prepaint cannot
 /// dismiss a menu belonging to the artifact still on screen.
 pub(super) fn accept(shared: &SharedHost, interaction: &InteractionState, window: &mut Window) {
-    let Some(open) = interaction.menu.get() else {
+    let Some(open) = open(interaction) else {
         return;
     };
     let host = shared.borrow();
-    let installed = host
-        .mounts
-        .get(&window.window_handle().window_id())
-        .and_then(|mount| {
-            mount.regions.iter().find_map(|(surface, region)| {
-                region
-                    .packet
-                    .as_ref()?
-                    .draws
-                    .iter()
-                    .find_map(|draw| match draw {
-                        Draw::PresentationMenu(menu)
-                            if menu.enabled && open.same_menu(menu.key(*surface)) =>
-                        {
-                            Some(menu)
-                        }
-                        _ => None,
-                    })
+    let mount = host.mounts.get(&window.window_handle().window_id());
+    if mount.is_some_and(|mount| {
+        mount.regions.values().any(|region| {
+            region
+                .packet
+                .as_ref()
+                .is_some_and(|packet| packet.tab_list_dismiss.is_some())
+        })
+    }) {
+        drop(host);
+        retire_for_tab_list(shared, interaction, window);
+        return;
+    }
+    let installed = mount
+        .and_then(|mount| mount.regions.get(&open.surface))
+        .and_then(|region| region.packet.as_ref())
+        .and_then(|packet| {
+            packet.draws.iter().find_map(|draw| match draw {
+                Draw::PresentationMenu(menu)
+                    if menu.enabled && open.same_menu(menu.key(open.surface)) =>
+                {
+                    Some(menu)
+                }
+                _ => None,
             })
         });
     match installed {
         Some(menu) => {
-            let row = interaction.menu_row.get();
+            let mut current = interaction.menu.borrow_mut();
+            let Some(input) = current.as_mut() else {
+                return;
+            };
+            let row = input.row;
             if !menu
                 .choices
                 .get(row)
@@ -370,16 +447,12 @@ pub(super) fn accept(shared: &SharedHost, interaction: &InteractionState, window
                 && let Some(first) = enabled_rows(menu).next()
                 && row != first
             {
-                interaction.menu_row.set(first);
+                input.row = first;
                 window.refresh();
             }
         }
         None => {
-            interaction.menu.set(None);
-            if let Some(input) = interaction.menu_input.borrow_mut().take() {
-                input.claim.set(None);
-            }
-            interaction.menu_row.set(0);
+            retire(interaction);
             window.refresh();
         }
     }
@@ -429,7 +502,9 @@ impl DockspaceElement {
             );
         let enabled = admitted && menu.enabled;
         let key = menu.key(surface);
-        let open = enabled && menu.open.is_some() && self.interaction.menu.get() == menu.open;
+        let popup = self.interaction.menu.borrow().as_ref().and_then(|input| {
+            (enabled && Some(input.open) == menu.open).then_some((input.open, input.row))
+        });
         draws.push(PreparedDraw::Icon(rect, menu.scope.icon(), menu.enabled));
         let focus_claim = window.with_global_id(
             ElementId::NamedChild(std::sync::Arc::new((&focus).into()), "menu-focus".into()),
@@ -443,7 +518,7 @@ impl DockspaceElement {
         let close_menu = {
             let interaction = self.interaction.clone();
             move |window: &mut Window, cx: &mut App| {
-                if let Some(open) = interaction.menu.get().filter(|open| open.same_menu(key)) {
+                if let Some(open) = open(&interaction).filter(|open| open.same_menu(key)) {
                     dismiss(&interaction, open, window, cx);
                 }
             }
@@ -463,16 +538,13 @@ impl DockspaceElement {
                         serial,
                     )
                 {
-                    return;
+                    return false;
                 }
-                if interaction
-                    .menu
-                    .get()
-                    .is_some_and(|open| open.same_menu(key))
-                {
+                if open(&interaction).is_some_and(|open| open.same_menu(key)) {
                     close_menu(window, cx);
+                    true
                 } else {
-                    begin(&shared, &interaction, key, &focus, &focus_claim, window, cx);
+                    begin(&shared, &interaction, key, &focus, &focus_claim, window, cx)
                 }
             }
         };
@@ -489,7 +561,7 @@ impl DockspaceElement {
             .role(Role::Button)
             .aria_label(menu.scope.label())
             .aria_description(menu.scope.description())
-            .aria_expanded(open)
+            .aria_expanded(popup.is_some())
             .aria_disabled(!enabled)
             .aria_actions(if enabled {
                 vec![AccessibleAction::Click, AccessibleAction::Focus]
@@ -501,10 +573,9 @@ impl DockspaceElement {
             .on_click(move |event, window, cx| {
                 // KeyDown owns menu navigation and confirmation. GPUI also
                 // synthesizes a button click for a matching real KeyUp.
-                if !event.window_event().is_keyboard() {
-                    pointer_toggle(window, cx);
+                if event.window_event().is_keyboard() || pointer_toggle(window, cx) {
+                    cx.stop_propagation();
                 }
-                cx.stop_propagation();
             });
         let interaction = self.interaction.clone();
         let shared = self.host.clone();
@@ -516,10 +587,7 @@ impl DockspaceElement {
             {
                 return;
             }
-            let is_open = interaction
-                .menu
-                .get()
-                .is_some_and(|open| open.same_menu(key));
+            let is_open = open(&interaction).is_some_and(|open| open.same_menu(key));
             if is_open {
                 if handle_key(&shared, &interaction, &event.keystroke, window, cx) {
                     flush_keys(
@@ -544,8 +612,8 @@ impl DockspaceElement {
                     event.keystroke.key.as_str(),
                     "enter" | "space" | "down" | "up"
                 )
+                && keyboard_toggle(window, cx)
             {
-                keyboard_toggle(window, cx);
                 if event.keystroke.key == "up" {
                     queue_key(&interaction, MenuKey::Last);
                 }
@@ -608,11 +676,7 @@ impl DockspaceElement {
                         window.focus(&focus, cx);
                         focus_claim.set(Some(window.focus_claim_revision()));
                     }
-                    if !interaction
-                        .menu
-                        .get()
-                        .is_some_and(|open| open.same_menu(key))
-                    {
+                    if !open(&interaction).is_some_and(|open| open.same_menu(key)) {
                         focus_claim.set(None);
                     }
                     let shared = Rc::downgrade(&shared);
@@ -630,9 +694,9 @@ impl DockspaceElement {
                 }
             });
         }
-        if !open {
+        let Some((popup_run, selected_row)) = popup else {
             return;
-        }
+        };
 
         let colors = self.host.borrow().config.colors.clone();
         let width = px(260.0).min(bounds.size.width);
@@ -647,11 +711,10 @@ impl DockspaceElement {
         );
         let shared = self.host.clone();
         let outside_close = close_menu.clone();
-        let popup_run = menu.open;
         let outside_interaction = self.interaction.clone();
         let popup_id = ElementId::NamedChild(
             std::sync::Arc::new((&focus).into()),
-            format!("popup:{}", popup_run.map_or(0, |open| open.run)).into(),
+            format!("popup:{}", popup_run.run).into(),
         );
         let mut popup = div()
             .id(popup_id)
@@ -669,7 +732,7 @@ impl DockspaceElement {
             .aria_label(menu.scope.label())
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_mouse_down_out(move |event, window, cx| {
-                if outside_interaction.menu.get() == popup_run
+                if open(&outside_interaction) == Some(popup_run)
                     && !rect.contains(&event.window_event().position)
                     && input::is_presented(
                         &shared.borrow(),
@@ -696,7 +759,7 @@ impl DockspaceElement {
                 .role(Role::MenuItem)
                 .aria_label(*label)
                 .aria_disabled(action.is_none())
-                .aria_selected(action.is_some() && self.interaction.menu_row.get() == index)
+                .aria_selected(action.is_some() && selected_row == index)
                 .aria_actions(if action.is_some() {
                     vec![AccessibleAction::Click]
                 } else {
@@ -708,48 +771,39 @@ impl DockspaceElement {
                     colors.muted_text
                 })
                 .child(*label);
-            if action.is_some() && self.interaction.menu_row.get() == index {
+            if action.is_some() && selected_row == index {
                 row = row.bg(colors.hovered_tab);
             }
             if let Some(action) = action {
                 let accessible_action = action.clone();
                 let accessible_shared = shared.clone();
                 let accessible_interaction = interaction.clone();
-                let pointer_close = close_menu.clone();
-                let accessible_close = close_menu.clone();
                 row = row
                     .on_click(move |_, window, cx| {
-                        if interaction.menu.get() == popup_run
-                            && input::is_presented(
-                                &shared.borrow(),
-                                window.window_handle().window_id(),
-                                surface,
-                                serial,
-                            )
-                            && submit(&shared, surface, serial, &action, window, cx)
-                        {
-                            pointer_close(window, cx);
+                        if submit(
+                            &shared,
+                            &interaction,
+                            popup_run,
+                            serial,
+                            &action,
+                            window,
+                            cx,
+                        ) {
+                            dismiss(&interaction, popup_run, window, cx);
                         }
                         cx.stop_propagation();
                     })
                     .on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
-                        if accessible_interaction.menu.get() == popup_run
-                            && input::is_presented(
-                                &accessible_shared.borrow(),
-                                window.window_handle().window_id(),
-                                surface,
-                                serial,
-                            )
-                            && submit(
-                                &accessible_shared,
-                                surface,
-                                serial,
-                                &accessible_action,
-                                window,
-                                cx,
-                            )
-                        {
-                            accessible_close(window, cx);
+                        if submit(
+                            &accessible_shared,
+                            &accessible_interaction,
+                            popup_run,
+                            serial,
+                            &accessible_action,
+                            window,
+                            cx,
+                        ) {
+                            dismiss(&accessible_interaction, popup_run, window, cx);
                         }
                     });
             }

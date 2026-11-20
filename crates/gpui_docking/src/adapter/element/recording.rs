@@ -18,7 +18,7 @@ use dockspace::{
 };
 
 use super::{
-    Draw, Packet, PacketState,
+    ControlFocusId, Draw, Packet, PacketState,
     chrome::{Control, ControlAction, ControlKind, GuideState, Icon, PresentationMenu},
     presentation_menu::{OpenMenu, Scope},
     tab_label::CustomTabLabel,
@@ -35,6 +35,7 @@ pub(super) fn record(
     let mut pane_bars = BTreeMap::new();
     let mut pane_receivers = BTreeMap::new();
     let mut native_preview = None;
+    let mut tab_list_dismiss = None;
     let mut tab_strips = BTreeMap::new();
     let mut menu_openers = BTreeMap::new();
     let receiver = |draws: &mut Vec<Draw>, value: Option<DockspaceReceiverDescriptor>| {
@@ -178,6 +179,7 @@ pub(super) fn record(
                                 title,
                                 body,
                             );
+                            control.identity = ControlFocusId::TabChrome(tab.input_id());
                             control.selected = Some(tab.selected());
                             control.tab_strip = tab_strips.get(&tab.tab_bar_visual_id()).cloned();
                             control.action(
@@ -199,6 +201,7 @@ pub(super) fn record(
                                     format!("Close {}", tab_label(tab.label(), panels)),
                                     Some(close),
                                 );
+                                control.identity = ControlFocusId::TabClose(tab.input_id());
                                 control.action(
                                     ControlAction::Activate,
                                     plan.prepare_tab_close(tab.key()),
@@ -402,6 +405,7 @@ pub(super) fn record(
                                 title.into(),
                                 plan.receiver_for_tab_strip_control(control),
                             );
+                            semantic.identity = ControlFocusId::TabChrome(control.input_id());
                             if control.kind() == TabStripControlKind::TabListMenu {
                                 semantic.expanded = Some(control.menu_open());
                                 semantic.opens_menu = Some(control.tab_bar_visual_id());
@@ -414,7 +418,7 @@ pub(super) fn record(
                                 && let Some(action) = semantic.slot(ControlAction::Activate)
                                 && let Some(action) = action.borrow_mut().as_mut()
                             {
-                                action.tab_list_opener = Some((bar, semantic.id));
+                                action.tab_list_opener = Some((bar, control.input_id()));
                             }
                             let semantic = Rc::new(semantic);
                             if let Some(bar) = semantic.opens_menu {
@@ -552,6 +556,9 @@ pub(super) fn record(
                     }
                 }
                 Step::PopupBackdrop(backdrop) => {
+                    tab_list_dismiss = plan
+                        .prepare_tab_list_menu_dismiss(backdrop)
+                        .map(|action| Rc::new(RefCell::new(Some(action.into()))));
                     receiver(
                         &mut draws,
                         plan.receiver_for_tab_list_menu_backdrop(backdrop),
@@ -586,7 +593,7 @@ pub(super) fn record(
                             keys: keys.clone(),
                         });
                         draws.push(Draw::TabListMenuFocus {
-                            menu: menu.visual_id(),
+                            menu: menu.input_id(),
                             row: Rc::new(control),
                         });
                     }
@@ -642,6 +649,7 @@ pub(super) fn record(
             pane_receivers,
             state: PacketState::Ready,
             native_preview,
+            tab_list_dismiss,
         },
         receipt,
     ))

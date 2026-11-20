@@ -11,6 +11,7 @@ use dockspace::{
     runtime::{
         DeferredSurfaceAction, DockspaceDropDirection, DockspaceReceiverDescriptor,
         DockspaceVisualId, DockspaceWorkspaceStamp, PreparedSurfaceAction, RetainedTabStrip,
+        TabChromeInputId,
     },
 };
 use open_gpui::{
@@ -20,6 +21,8 @@ use open_gpui::{
 };
 
 use crate::adapter::DockspaceColors;
+
+use super::ControlFocusId;
 
 #[derive(Clone, Copy)]
 pub(super) enum Icon {
@@ -65,9 +68,16 @@ pub(super) enum ControlAction {
 #[derive(Clone)]
 pub(super) struct Action {
     pub(super) intent: DeferredSurfaceAction,
-    pub(super) tab_focus: Option<(DockspaceVisualId, TabKey)>,
     pub(super) yields_content: bool,
-    pub(super) tab_list_opener: Option<(DockspaceVisualId, DockspaceVisualId)>,
+    pub(super) tab_list_opener: Option<(DockspaceVisualId, TabChromeInputId)>,
+}
+
+impl Action {
+    pub(super) fn tab_focus(&self) -> Option<(DockspaceVisualId, TabKey)> {
+        self.intent
+            .tab_focus_visual()
+            .zip(self.intent.tab_focus_target())
+    }
 }
 
 pub(super) type ActionSlot = Rc<RefCell<Option<Action>>>;
@@ -81,7 +91,6 @@ impl From<PreparedSurfaceAction> for Action {
 impl From<DeferredSurfaceAction> for Action {
     fn from(action: DeferredSurfaceAction) -> Self {
         Self {
-            tab_focus: action.tab_focus_visual().zip(action.tab_focus_target()),
             intent: action,
             yields_content: false,
             tab_list_opener: None,
@@ -91,6 +100,7 @@ impl From<DeferredSurfaceAction> for Action {
 
 pub(super) struct Control {
     pub(super) id: DockspaceVisualId,
+    pub(super) identity: ControlFocusId,
     pub(super) bounds: LogicalRect,
     pub(super) kind: ControlKind,
     pub(super) label: String,
@@ -114,6 +124,7 @@ impl Control {
     ) -> Self {
         Self {
             id,
+            identity: ControlFocusId::Visual(id),
             bounds: receiver.map_or(bounds, |receiver| receiver.bounds()),
             kind,
             label,
@@ -128,10 +139,10 @@ impl Control {
         }
     }
 
-    pub(super) fn focus_id(&self) -> super::ControlFocusId {
+    pub(super) fn focus_id(&self) -> ControlFocusId {
         match &self.menu_row {
-            Some(row) => super::ControlFocusId::MenuRow(row.id),
-            None => super::ControlFocusId::Visual(self.id),
+            Some(row) => ControlFocusId::MenuRow(row.id),
+            None => self.identity,
         }
     }
 

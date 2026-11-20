@@ -2,7 +2,8 @@
 
 use super::*;
 use open_gpui::{
-    KeyUpEvent, Keystroke, PlatformInput, ScrollDelta, ScrollEvent, ScrollSource, TouchPhase, point,
+    KeyUpEvent, Keystroke, MouseDownEvent, MouseUpEvent, PlatformFrameDeliveryMode, PlatformInput,
+    ScrollDelta, ScrollEvent, ScrollSource, TouchPhase, point,
 };
 
 fn focus_tab(item: ItemId, visual: &mut VisualTestContext) {
@@ -292,6 +293,18 @@ fn overflowing_tab_list(
     cx: &mut TestAppContext,
     managed: bool,
 ) -> (DockSurface, Vec<FocusHandle>, VisualTestContext) {
+    let (dock, handles, mut visual) = overflowing_tabs(cx, managed);
+    let opener = accessible_node(&visual, Role::Button, "Show all tabs");
+    dispatch_accessible(&visual, opener, AccessibleAction::Click);
+    frames(&mut visual, &dock);
+    assert_accessibility_focus(&visual, Role::MenuItem, "Pane 61");
+    (dock, handles, visual)
+}
+
+fn overflowing_tabs(
+    cx: &mut TestAppContext,
+    managed: bool,
+) -> (DockSurface, Vec<FocusHandle>, VisualTestContext) {
     cx.defer_next_window_frame_requests();
     let items = (FIRST.get()..=LAST_MENU_ITEM.get())
         .map(ItemId::new)
@@ -306,10 +319,6 @@ fn overflowing_tab_list(
     let mut visual = active_visual(window.into(), cx);
     assert!(visual.activate_accessibility());
     frames(&mut visual, &dock);
-    let opener = accessible_node(&visual, Role::Button, "Show all tabs");
-    dispatch_accessible(&visual, opener, AccessibleAction::Click);
-    frames(&mut visual, &dock);
-    assert_accessibility_focus(&visual, Role::MenuItem, "Pane 61");
     (dock, handles, visual)
 }
 
@@ -357,6 +366,69 @@ fn assert_pane_focus_settles(visual: &mut VisualTestContext, focus: &FocusHandle
 }
 
 #[open_gpui::test]
+fn tab_chrome_accessibility_cannot_act_on_a_replacement_layout(cx: &mut TestAppContext) {
+    let (dock, _, mut visual) = overflowing_tabs(cx, false);
+    let targets = [
+        (Role::Tab, "Pane 62"),
+        (Role::Button, "Close Pane 62"),
+        (Role::Button, "Scroll tabs forward"),
+        (Role::Button, "Show all tabs"),
+    ];
+    let old = targets.map(|(role, label)| accessible_node(&visual, role, label));
+    let reset = dock
+        .host
+        .borrow()
+        .session
+        .prepare_layout_reset(dock.with_view(|view| view.to_layout()))
+        .unwrap();
+    cx.update(|cx| {
+        dock.update(
+            |frame| {
+                frame.submit_layout_reset(&reset)?;
+                Ok(())
+            },
+            cx,
+        )
+    })
+    .unwrap();
+    frames(&mut visual, &dock);
+    let current = targets.map(|(role, label)| accessible_node(&visual, role, label));
+    for target in old {
+        dispatch_accessible(&visual, target, AccessibleAction::Click);
+        frames(&mut visual, &dock);
+    }
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
+    assert!(dock.pending_content_close_plans().unwrap().is_empty());
+    assert_eq!(
+        current,
+        targets.map(|(role, label)| accessible_node(&visual, role, label))
+    );
+    assert!(
+        !visual
+            .latest_accessibility_tree_update()
+            .unwrap()
+            .nodes
+            .iter()
+            .any(|(_, node)| node.role() == Role::MenuItem)
+    );
+    for (prior, replacement) in old.into_iter().zip(current) {
+        assert_ne!(prior, replacement);
+    }
+
+    dispatch_accessible(&visual, current[0], AccessibleAction::Click);
+    frames(&mut visual, &dock);
+    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_active()));
+    dispatch_accessible(&visual, current[1], AccessibleAction::Click);
+    frames(&mut visual, &dock);
+    let plans = dock.pending_content_close_plans().unwrap();
+    assert_eq!(plans.len(), 1);
+    assert_eq!(plans[0].items()[0].item(), SECOND);
+    dispatch_accessible(&visual, current[3], AccessibleAction::Click);
+    frames(&mut visual, &dock);
+    assert_accessibility_focus(&visual, Role::MenuItem, "Pane 62");
+}
+
+#[open_gpui::test]
 fn core_tab_list_accessibility_row_expires_when_its_roster_changes(cx: &mut TestAppContext) {
     let (dock, _, mut visual) = overflowing_tab_list(cx, false);
     let old_row = accessible_node(&visual, Role::MenuItem, "Pane 62");
@@ -380,10 +452,34 @@ fn core_tab_list_accessibility_row_expires_when_its_roster_changes(cx: &mut Test
 
 #[open_gpui::test]
 fn core_tab_list_accessibility_focus_routes_keys_before_its_new_frame(cx: &mut TestAppContext) {
+    tab_list_focus_then_keys(cx, false);
+}
+
+#[open_gpui::test]
+fn core_tab_list_accessibility_focus_retains_keys_during_deferred_presentation(
+    cx: &mut TestAppContext,
+) {
+    tab_list_focus_then_keys(cx, true);
+}
+
+fn tab_list_focus_then_keys(cx: &mut TestAppContext, deferred: bool) {
     for managed in [false, true] {
         let (dock, handles, mut visual) = overflowing_tab_list(cx, managed);
+        let owner = visual.update(|window, _| window.window_handle());
+        if deferred {
+            visual.set_window_frame_delivery_mode(owner, PlatformFrameDeliveryMode::Deferred);
+        }
         let third = accessible_node(&visual, Role::MenuItem, "Pane 63");
         dispatch_accessible(&visual, third, AccessibleAction::Focus);
+        let request = RequestFrameOptions {
+            require_presentation: true,
+            force_render: true,
+            ..Default::default()
+        };
+        if deferred {
+            assert!(visual.simulate_frame(request));
+            assert!(visual.pending_window_frame_submission(owner).is_some());
+        }
         for name in ["down", "enter"] {
             visual.update(|window, cx| {
                 let keystroke = Keystroke::parse(name).unwrap();
@@ -399,7 +495,21 @@ fn core_tab_list_accessibility_focus_routes_keys_before_its_new_frame(cx: &mut T
                 assert!(!result.propagate, "the focused menu must receive {name}");
             });
         }
-        frames(&mut visual, &dock);
+        if deferred {
+            assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
+            for _ in 0..9 {
+                assert!(visual.simulate_frame(request));
+                if let Some(token) = visual.pending_window_frame_submission(owner) {
+                    visual.update(|_, _| {
+                        assert!(token.complete(PlatformWindowPresentOutcome::Submitted));
+                    });
+                    visual.run_until_parked();
+                }
+                assert!(dock.error().is_none(), "{:?}", dock.error());
+            }
+        } else {
+            frames(&mut visual, &dock);
+        }
         assert!(dock.with_view(|view| view.item(ItemId::new(64)).unwrap().is_active()));
         assert_pane_focus_settles(&mut visual, &handles[3]);
         finish_tab_list_fixture(&dock, managed, cx);
@@ -444,6 +554,138 @@ fn core_tab_list_wheel_allows_a_key_with_invalidated_menu_authority_to_propagate
         frames(&mut visual, &dock);
         assert!(dock.with_view(|view| view.item(LAST_MENU_ITEM).unwrap().is_active()));
         assert_pane_focus_settles(&mut visual, handles.last().unwrap());
+        finish_tab_list_fixture(&dock, managed, cx);
+    }
+}
+
+#[open_gpui::test]
+fn switching_between_tab_list_and_product_menus_retires_the_old_commands(cx: &mut TestAppContext) {
+    for managed in [false, true] {
+        let (dock, _, mut visual) = overflowing_tab_list(cx, managed);
+        let owner = visual.update(|window, _| window.window_handle());
+        if managed {
+            visual.set_platform_hovered_window(Some(owner));
+            super::content_receivers::prepare_native_input(&mut visual);
+            frames(&mut visual, &dock);
+        }
+        for (opener, close, mouse) in [
+            ("Layout actions", "Close Layout", false),
+            ("Tab group actions", "Close Tab Group", true),
+        ] {
+            let old_row = accessible_node(&visual, Role::MenuItem, "Pane 62");
+            if mouse {
+                let point =
+                    super::product_menu_keys::semantic_center(&mut visual, Role::Button, opener);
+                visual.simulate_click(point, Modifiers::none());
+            } else {
+                let target = accessible_node(&visual, Role::Button, opener);
+                dispatch_accessible(&visual, target, AccessibleAction::Click);
+            }
+            dispatch_accessible(&visual, old_row, AccessibleAction::Click);
+            frames(&mut visual, &dock);
+            assert_accessibility_focus(&visual, Role::Button, opener);
+            assert!(
+                !visual
+                    .latest_accessibility_tree_update()
+                    .unwrap()
+                    .nodes
+                    .iter()
+                    .any(|(_, node)| node.role() == Role::MenuItem
+                        && node.label() == Some("Pane 62"))
+            );
+            assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
+
+            let old_close = accessible_node(&visual, Role::MenuItem, close);
+            if mouse {
+                let position = tab_list_button_bounds(&dock, owner.window_id()).center();
+                if managed {
+                    for event in [
+                        PlatformInput::MouseDown(MouseDownEvent {
+                            button: MouseButton::Left,
+                            position,
+                            modifiers: Modifiers::none(),
+                            click_count: 1,
+                            first_mouse: false,
+                        }),
+                        PlatformInput::MouseUp(MouseUpEvent {
+                            button: MouseButton::Left,
+                            position,
+                            modifiers: Modifiers::none(),
+                            click_count: 1,
+                        }),
+                    ] {
+                        let pressed = matches!(&event, PlatformInput::MouseDown(_));
+                        visual
+                            .set_platform_mouse_button_is_pressed(MouseButton::Left, Some(pressed));
+                        super::content_receivers::native_input(&mut visual, position, event);
+                        if pressed {
+                            frames(&mut visual, &dock);
+                        }
+                    }
+                } else {
+                    visual.simulate_click(position, Modifiers::none());
+                }
+            } else {
+                let target = accessible_node(&visual, Role::Button, "Show all tabs");
+                dispatch_accessible(&visual, target, AccessibleAction::Click);
+            }
+            dispatch_accessible(&visual, old_close, AccessibleAction::Click);
+            frames(&mut visual, &dock);
+            assert_accessibility_focus(&visual, Role::MenuItem, "Pane 61");
+            assert!(dock.pending_content_close_plans().unwrap().is_empty());
+            assert!(
+                !visual
+                    .latest_accessibility_tree_update()
+                    .unwrap()
+                    .nodes
+                    .iter()
+                    .any(|(_, node)| node.role() == Role::MenuItem && node.label() == Some(close))
+            );
+        }
+        finish_tab_list_fixture(&dock, managed, cx);
+    }
+}
+
+#[open_gpui::test]
+fn opening_tab_list_cancels_a_product_menu_confirmation_waiting_for_presentation(
+    cx: &mut TestAppContext,
+) {
+    for managed in [false, true] {
+        let (dock, _, mut visual) = overflowing_tab_list(cx, managed);
+        visual.simulate_keystrokes("escape");
+        frames(&mut visual, &dock);
+        let product = accessible_node(&visual, Role::Button, "Layout actions");
+        dispatch_accessible(&visual, product, AccessibleAction::Focus);
+        frames(&mut visual, &dock);
+        let opener = accessible_node(&visual, Role::Button, "Show all tabs");
+        let owner = visual.update(|window, _| window.window_handle());
+        visual.set_window_frame_delivery_mode(owner, PlatformFrameDeliveryMode::Deferred);
+        visual.update(|window, cx| {
+            for key in ["down", "end", "enter"] {
+                assert!(window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx));
+            }
+        });
+        let request = RequestFrameOptions {
+            require_presentation: true,
+            force_render: true,
+            ..Default::default()
+        };
+        assert!(visual.simulate_frame(request));
+        assert!(visual.pending_window_frame_submission(owner).is_some());
+        assert!(dock.pending_content_close_plans().unwrap().is_empty());
+        dispatch_accessible(&visual, opener, AccessibleAction::Click);
+        for _ in 0..8 {
+            assert!(visual.simulate_frame(request));
+            if let Some(token) = visual.pending_window_frame_submission(owner) {
+                visual.update(|_, _| {
+                    assert!(token.complete(PlatformWindowPresentOutcome::Submitted));
+                });
+                visual.run_until_parked();
+            }
+            assert!(dock.error().is_none(), "{:?}", dock.error());
+        }
+        assert_accessibility_focus(&visual, Role::MenuItem, "Pane 61");
+        assert!(dock.pending_content_close_plans().unwrap().is_empty());
         finish_tab_list_fixture(&dock, managed, cx);
     }
 }

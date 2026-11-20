@@ -5,7 +5,7 @@ use dockspace::{
     model::DockPlacement,
 };
 
-use super::super::presentation_menu::Scope;
+use super::super::presentation_menu::{Scope, open as open_product_menu};
 use super::*;
 
 const THIRD: ItemId = ItemId::new(63);
@@ -444,10 +444,7 @@ fn selection_and_topology_changes_invalidate_old_menu_targets_before_another_gro
         let old_close = semantic_target(&visual, Role::MenuItem, "Close Tab Group");
         let interaction = probe.interaction.borrow().as_ref().unwrap().clone();
         assert!(
-            interaction
-                .menu
-                .get()
-                .is_some_and(|open| open.same_menu(menu.key(SURFACE)))
+            open_product_menu(&interaction).is_some_and(|open| open.same_menu(menu.key(SURFACE)))
         );
         visual.update(|_, cx| {
             dock.update(
@@ -463,8 +460,16 @@ fn selection_and_topology_changes_invalidate_old_menu_targets_before_another_gro
             )
             .unwrap();
         });
+        for target in [old_float, old_close] {
+            assert!(accessibility_action(
+                &visual,
+                target,
+                AccessibleAction::Click
+            ));
+        }
+        assert!(dock.pending_content_close_plans().unwrap().is_empty());
         frames(&mut visual, &dock);
-        assert!(interaction.menu.get().is_none());
+        assert!(open_product_menu(&interaction).is_none());
         assert!(!menu_is_open(&visual, "Tab group actions"));
         let (replacement, bounds) = anchor(&dock, &mut visual, Scope::Tabs, 1);
         assert_ne!(replacement.key(SURFACE), menu.key(SURFACE));
@@ -479,9 +484,7 @@ fn selection_and_topology_changes_invalidate_old_menu_targets_before_another_gro
         assert_eq!(dock.host.borrow().session.version(), version);
         assert!(dock.pending_content_close_plans().unwrap().is_empty());
         assert!(
-            interaction
-                .menu
-                .get()
+            open_product_menu(&interaction)
                 .is_some_and(|open| open.same_menu(replacement.key(SURFACE)))
         );
         dock.with_view(|view| {
@@ -559,10 +562,7 @@ fn discarded_prepaint_keeps_the_installed_menu_until_a_replacement_is_accepted(
         assert!(!probe.discard_next_prepaint.get());
         assert_eq!(window.rendered_frame_revision(), revision);
         assert!(
-            interaction
-                .menu
-                .get()
-                .is_some_and(|open| open.same_menu(menu.key(SURFACE)))
+            open_product_menu(&interaction).is_some_and(|open| open.same_menu(menu.key(SURFACE)))
         );
         let host = dock.host.borrow();
         let mount = &host.mounts[&window.window_handle().window_id()];
@@ -584,14 +584,11 @@ fn discarded_prepaint_keeps_the_installed_menu_until_a_replacement_is_accepted(
         drop(host);
         presentation::abandon_unaccepted(&mut dock.host.borrow_mut(), window, cx);
         assert!(
-            interaction
-                .menu
-                .get()
-                .is_some_and(|open| open.same_menu(menu.key(SURFACE)))
+            open_product_menu(&interaction).is_some_and(|open| open.same_menu(menu.key(SURFACE)))
         );
     });
     frames(&mut visual, &dock);
-    assert!(interaction.menu.get().is_none());
+    assert!(open_product_menu(&interaction).is_none());
     assert!(!menu_is_open(&visual, "Tab group actions"));
     dock.with_view(|view| {
         assert!(view.item(SECOND).unwrap().is_active());
@@ -738,10 +735,8 @@ fn narrow_strips_keep_group_root_list_and_grip_hits_inside_their_visible_chrome(
                 probe
                     .interaction
                     .borrow()
-                    .as_ref()
-                    .unwrap()
-                    .menu
-                    .get()
+                    .as_deref()
+                    .and_then(open_product_menu)
                     .is_none()
             );
             assert!(visual.update(|window, _| {
@@ -794,10 +789,8 @@ fn narrow_strips_keep_group_root_list_and_grip_hits_inside_their_visible_chrome(
                 probe
                     .interaction
                     .borrow()
-                    .as_ref()
-                    .unwrap()
-                    .menu
-                    .get()
+                    .as_deref()
+                    .and_then(open_product_menu)
                     .is_none()
             );
             assert!(dock.pending_content_close_plans().unwrap().is_empty());

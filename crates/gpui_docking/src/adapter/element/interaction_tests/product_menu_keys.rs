@@ -29,7 +29,11 @@ fn focus_layout_actions(dock: &DockSurface, visual: &mut VisualTestContext) {
     assert!(!presentation_menu_is_open(visual));
 }
 
-fn semantic_center(visual: &mut VisualTestContext, role: Role, label: &str) -> Point<Pixels> {
+pub(super) fn semantic_center(
+    visual: &mut VisualTestContext,
+    role: Role,
+    label: &str,
+) -> Point<Pixels> {
     let tree = visual.latest_accessibility_tree_update().unwrap();
     let node = tree
         .nodes
