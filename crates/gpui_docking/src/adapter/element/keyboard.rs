@@ -1052,7 +1052,7 @@ pub(super) fn restore(
                     && control
                         .tab_strip
                         .as_ref()
-                        .is_some_and(|strip| strip.visual_id() == original.visual_id())
+                        .is_some_and(|strip| strip.same_navigation_scope(original))
             })
             .map(|(_, control, _)| control.clone());
         if let Some(receiver) = receiver {
@@ -1085,8 +1085,11 @@ pub(super) fn restore(
                     cx,
                 );
             });
+            return;
         }
-        return;
+        // The committed selection still owns header focus. Only the queued keys
+        // lose authority when the replacement strip is outside their scope.
+        current.phase = PrefixPhase::Committed;
     }
     let Some((_, control, focus)) = controls.iter().find(|(surface, control, focus)| {
         *surface == current.surface

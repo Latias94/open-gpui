@@ -892,6 +892,71 @@ fn clipped_tab_navigation_survives_intermediate_updates(cx: &mut TestAppContext)
 }
 
 #[open_gpui::test]
+fn clipped_navigation_cancels_queued_keys_after_a_presentation_config_replacement(
+    cx: &mut TestAppContext,
+) {
+    let items = (61..91).map(ItemId::new).collect::<Vec<_>>();
+    let last = items[29];
+    for heights in [&[48.0][..], &[48.0, 28.0][..]] {
+        cx.defer_next_window_frame_requests();
+        let (dock, handles, _) = tab_fixture(cx, &items);
+        let window = cx.open_window(size(px(640.0), px(600.0)), |_, _| Root {
+            dock: dock.clone(),
+        });
+        let mut visual = active_visual(window.into(), cx);
+        assert!(visual.activate_accessibility());
+        frames(&mut visual, &dock);
+        focus_tab(FIRST, &mut visual);
+        visual.simulate_keystrokes("end");
+        assert!(visual.simulate_frame(RequestFrameOptions {
+            require_presentation: true,
+            force_render: true,
+            ..Default::default()
+        }));
+        visual.update(|window, cx| {
+            for key in ["left", "enter"] {
+                assert!(window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx));
+            }
+            assert!(
+                dock.with_view(|view| view.item(last).unwrap().is_active()),
+                "the keys must still be queued before replacements {heights:?}"
+            );
+            let before = dock.host.borrow().session.version();
+            dock.update(
+                |frame| {
+                    for &height in heights {
+                        let config = frame
+                            .presentation_config()
+                            .to_builder()
+                            .tab_bar_height(height)
+                            .build()
+                            .unwrap();
+                        frame.replace_presentation_config(config)?;
+                    }
+                    Ok(())
+                },
+                cx,
+            )
+            .unwrap();
+            let host = dock.host.borrow();
+            assert_eq!(host.session.version(), before);
+            assert_eq!(
+                host.session.presentation_config().tab_bar_height(),
+                *heights.last().unwrap()
+            );
+        });
+        frames(&mut visual, &dock);
+        assert!(dock.with_view(|view| view.item(last).unwrap().is_active()));
+        assert_accessibility_focus(&visual, Role::Tab, "Pane 90");
+
+        visual.simulate_keystrokes("left enter");
+        frames(&mut visual, &dock);
+        assert!(dock.with_view(|view| view.item(items[28]).unwrap().is_active()));
+        assert!(visual.update(|window, cx| handles[28].contains_focused(window, cx)));
+    }
+}
+
+#[open_gpui::test]
 fn application_blur_wins_after_tab_activation_commits(cx: &mut TestAppContext) {
     cx.defer_next_window_frame_requests();
     let (dock, _, _) = tab_fixture(cx, &[FIRST, SECOND, ItemId::new(63)]);
