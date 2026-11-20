@@ -6523,6 +6523,11 @@ impl Window {
         self.window_capabilities
     }
 
+    /// Returns how the renderer accepts this window's prepared frames.
+    pub fn frame_delivery_mode(&self) -> PlatformFrameDeliveryMode {
+        self.platform_window.frame_delivery_mode()
+    }
+
     pub(crate) fn window_profile(&self) -> PlatformWindowProfile {
         PlatformWindowProfile {
             kind: self.window_kind.clone(),

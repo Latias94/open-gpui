@@ -18,8 +18,9 @@ use dockspace::{
     },
 };
 use open_gpui::{
-    AnyWindowHandle, App, AppContext as _, Bounds, Context, IntoElement, Pixels, Render,
-    Subscription, Window, WindowId, WindowOptions, div, prelude::*,
+    AnyWindowHandle, App, AppContext as _, Bounds, Context, IntoElement, Pixels,
+    PlatformFrameDeliveryMode, Render, Subscription, Window, WindowId, WindowOptions, div,
+    prelude::*,
 };
 
 use super::{
@@ -631,6 +632,9 @@ impl DockSurface {
     }
 
     /// Opens a normal native root containing the original retained workspace Views.
+    /// On deferred renderers the construction draw paints the background and
+    /// leaves the semantic update available for other roots opened in the same
+    /// App update. Dockspace content mounts in a subsequent frame.
     pub fn open_native_root(
         &self,
         surface: SurfaceId,
@@ -655,10 +659,13 @@ impl DockSurface {
                 *root_failure.borrow_mut() = Some(error);
                 window.remove_window(cx);
             }
+            let stage_construction_draw =
+                window.frame_delivery_mode() == PlatformFrameDeliveryMode::Deferred;
             cx.new(|_| NativeRoot {
                 dock,
                 surface,
                 provisional: None,
+                stage_construction_draw,
             })
         });
         let root_binding = failure.borrow_mut().take();
@@ -667,6 +674,9 @@ impl DockSurface {
             Err(source) => {
                 self.retain_native_root_open_failure(&source, cx);
                 let mut error = NativeOpenFailure::from(source);
+                if let Some(binding_error) = &root_binding {
+                    error.message = format!("{}: {binding_error}", error.message);
+                }
                 error.root_binding = root_binding;
                 Err(error)
             }
@@ -880,10 +890,16 @@ struct NativeRoot {
     dock: DockSurface,
     surface: SurfaceId,
     provisional: Option<Rc<RefCell<provisional::ProvisionalWindow>>>,
+    stage_construction_draw: bool,
 }
 
 impl Render for NativeRoot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if std::mem::take(&mut self.stage_construction_draw) {
+            window.defer(cx, |window, _| window.refresh());
+            let background = self.dock.host.borrow().config.colors.background;
+            return div().size_full().bg(background).into_any_element();
+        }
         if let Some(preview) = self
             .provisional
             .as_ref()
@@ -915,6 +931,7 @@ fn default_factory(
                 dock,
                 surface: request.binding.surface(),
                 provisional: None,
+                stage_construction_draw: false,
             })
         },
         cx,

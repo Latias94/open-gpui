@@ -1,7 +1,10 @@
 //! Original renderer terminals cannot overtake native callback prefixes.
 
 use super::*;
-use open_gpui::{PlatformWindowPresentOutcome, RequestFrameOptions, VisualTestContext};
+use open_gpui::{
+    PlatformFrameDeliveryMode, PlatformWindowCreationCapabilities, PlatformWindowPresentOutcome,
+    RequestFrameOptions, VisualTestContext,
+};
 
 fn frames(visual: &mut VisualTestContext, dock: &DockSurface) {
     for _ in 0..4 {
@@ -12,6 +15,52 @@ fn frames(visual: &mut VisualTestContext, dock: &DockSurface) {
         }));
         assert!(dock.error().is_none(), "{:?}", dock.error());
     }
+}
+
+#[open_gpui::test]
+fn deferred_construction_draw_allows_multiple_roots_in_one_update(cx: &mut TestAppContext) {
+    cx.set_platform_window_creation_capabilities(PlatformWindowCreationCapabilities::default());
+    let dock = cx.update(workspace);
+    cx.set_next_window_frame_delivery_mode(PlatformFrameDeliveryMode::Deferred);
+    cx.defer_next_window_frame_requests();
+    let (first, second) = cx.update(|cx| {
+        let first = dock
+            .open_native_root(FIRST, true, WindowOptions::default(), cx)
+            .unwrap();
+        let second = dock
+            .open_native_root(SECOND, false, WindowOptions::default(), cx)
+            .expect("the deferred construction frame must not block the next root binding");
+        (first, second)
+    });
+    assert_eq!(dock.inspection().unwrap().native_window_binding_count, 2);
+
+    let mut first_visual = VisualTestContext::from_window(first, cx);
+    for _ in 0..4 {
+        assert!(first_visual.simulate_frame(RequestFrameOptions {
+            require_presentation: true,
+            force_render: true,
+            ..Default::default()
+        }));
+        if let Some(submission) = cx.pending_window_frame_submission(first) {
+            cx.update(|_| assert!(submission.complete(PlatformWindowPresentOutcome::Submitted)));
+            cx.run_until_parked();
+        }
+    }
+    frames(&mut VisualTestContext::from_window(second, cx), &dock);
+    {
+        let host = dock.host.borrow();
+        for (window, surface) in [(first, FIRST), (second, SECOND)] {
+            assert!(
+                host.mounts[&window.window_id()].regions[&surface]
+                    .presented
+                    .is_some(),
+                "{surface:?} must present its original content after construction"
+            );
+        }
+    }
+    cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();
+    finish(cx, &dock);
+    assert!(dock.native_is_quiescent());
 }
 
 #[open_gpui::test]

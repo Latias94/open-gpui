@@ -3,8 +3,8 @@
 use anyhow::Result;
 use open_gpui::{
     AnyWindowHandle, App, AppContext as _, Bounds, Context, Entity, IntoElement, Render,
-    Subscription, TitlebarOptions, Window, WindowBounds, WindowOptions, div, prelude::*, px, rgb,
-    size,
+    Subscription, TitlebarOptions, Window, WindowBounds, WindowOptions, div, point, prelude::*, px,
+    rgb, size,
 };
 use open_gpui_docking::{
     DockNativeTermination,
@@ -103,11 +103,27 @@ impl Recovery {
             .copied()
             .find(|surface| *surface == EDITOR)
             .or_else(|| surfaces.first().copied());
-        for surface in surfaces {
+        let display = cx
+            .primary_display()
+            .map(|display| (display.id(), display.visible_bounds()));
+        let count = surfaces.len() as f32;
+        for (index, surface) in surfaces.into_iter().enumerate() {
+            // Give each root its own visible area on startup and reconstruction.
+            let window_bounds = display.map(|(_, area)| {
+                let column = area.size.width / count;
+                WindowBounds::Windowed(Bounds::new(
+                    area.origin + point(column * (index as f32 + 0.04), area.size.height * 0.1),
+                    size(column * 0.92, area.size.height * 0.8),
+                ))
+            });
             match self.workspace.dock.open_native_root(
                 surface,
                 Some(surface) == anchor,
-                WindowOptions::default(),
+                WindowOptions {
+                    window_bounds,
+                    display_id: display.map(|(display_id, _)| display_id),
+                    ..WindowOptions::default()
+                },
                 cx,
             ) {
                 Ok(window) => {

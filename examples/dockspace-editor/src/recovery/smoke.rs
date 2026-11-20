@@ -40,7 +40,8 @@ pub(crate) fn run(recovery: Entity<Recovery>, cx: &mut App) -> Result<()> {
         let owner = recovery.read(cx);
         ensure!(
             owner.phase == Phase::Running && owner.roots.len() == 2,
-            "the initial workspace did not open completely"
+            "the initial workspace did not open completely: {}",
+            owner.notice
         );
         Smoke {
             recovery: recovery.clone(),
@@ -106,7 +107,10 @@ impl Smoke {
                 )
             })
             .collect::<Vec<_>>();
-        format!("failure={failure:?}; frames={frames:?}; facts={facts:?}")
+        format!(
+            "failure={failure:?}; frames={frames:?}; facts={facts:?}; windows={}",
+            cx.debug_state()["windows"]
+        )
     }
 
     fn step(&mut self, cx: &mut App) -> Result<bool> {
@@ -122,6 +126,9 @@ impl Smoke {
         dock.pump_native(cx);
         match self.step {
             Step::Initial => {
+                if dock.is_update_pending() {
+                    return Ok(false);
+                }
                 for (view, surface) in views.iter().zip([EDITOR, INSPECTOR]) {
                     if presented(view, roots[&surface], 0, 0, cx)?.is_none() {
                         return Ok(false);

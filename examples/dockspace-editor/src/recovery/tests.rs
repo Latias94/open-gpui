@@ -378,6 +378,10 @@ fn partial_reconstruction_retires_its_original_windows_before_an_explicit_retry(
                 .with_view(|view| view.item(FIRST).unwrap().surface()),
             INSPECTOR
         );
+        let windows = [owner.roots[&EDITOR], owner.roots[&INSPECTOR]];
+        let [editor, inspector] =
+            windows.map(|window| window.update(cx, |_, window, _| window.bounds()).unwrap());
+        assert!(editor.origin.x + editor.size.width <= inspector.origin.x);
         recovery.update(cx, |owner, cx| owner.close(cx));
     });
     settle(cx, &recovery);

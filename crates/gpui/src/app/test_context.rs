@@ -765,6 +765,11 @@ impl TestAppContext {
         self.test_window(window).set_frame_delivery_mode(mode);
     }
 
+    /// Selects the next test window's frame delivery mode before its construction draw.
+    pub fn set_next_window_frame_delivery_mode(&self, mode: crate::PlatformFrameDeliveryMode) {
+        self.test_platform.set_next_window_frame_delivery_mode(mode);
+    }
+
     /// Returns the original pending CPU-platform submission token, if one was delivered.
     ///
     /// Completing this token simulates a renderer terminal; it does not prove GPU execution.

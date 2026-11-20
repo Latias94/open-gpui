@@ -415,6 +415,7 @@ fn open_preview(
             dock,
             surface: preview.target_surface,
             provisional: Some(root_state),
+            stage_construction_draw: false,
         })
     })?;
     state.borrow_mut().window = Some(window.into());

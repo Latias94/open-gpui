@@ -53,6 +53,7 @@ pub(crate) struct TestPlatform {
     window_creation_capabilities_override: RefCell<Option<PlatformWindowCreationCapabilities>>,
     window_mutation_capabilities_override: RefCell<Option<PlatformWindowMutationCapabilities>>,
     next_window_map_error: RefCell<Option<String>>,
+    next_window_frame_delivery: Cell<Option<crate::PlatformFrameDeliveryMode>>,
     #[cfg(any(test, feature = "test-support"))]
     next_window_present_outcome: RefCell<VecDeque<crate::PlatformWindowPresentOutcome>>,
     last_created_window: RefCell<Option<TestWindow>>,
@@ -289,6 +290,7 @@ impl TestPlatform {
             window_creation_capabilities_override: RefCell::new(None),
             window_mutation_capabilities_override: RefCell::new(None),
             next_window_map_error: RefCell::new(None),
+            next_window_frame_delivery: Cell::new(None),
             #[cfg(any(test, feature = "test-support"))]
             next_window_present_outcome: RefCell::new(VecDeque::new()),
             last_created_window: RefCell::new(None),
@@ -534,6 +536,13 @@ impl TestPlatform {
                 PlatformWindowCommandOutcome::Rejected,
                 PlatformWindowCommandOutcome::Rejected,
             ]));
+    }
+
+    pub(crate) fn set_next_window_frame_delivery_mode(
+        &self,
+        mode: crate::PlatformFrameDeliveryMode,
+    ) {
+        self.next_window_frame_delivery.set(Some(mode));
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1372,6 +1381,9 @@ impl Platform for TestPlatform {
                 .replace(false),
             self.next_window_defer_frame_requests.replace(false),
         );
+        if let Some(mode) = self.next_window_frame_delivery.take() {
+            window.set_frame_delivery_mode(mode);
+        }
         #[cfg(any(test, feature = "test-support"))]
         if let Some(outcome) = self.next_window_present_outcome.borrow_mut().pop_front() {
             window.set_present_outcome(outcome);
