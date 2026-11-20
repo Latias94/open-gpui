@@ -258,7 +258,80 @@ fn wheel_browses_strip_and_tab_list_without_selecting_or_scrolling_content(
     assert!(dock.with_view(|view| view.item(ItemId::new(1)).unwrap().is_active()));
 }
 
-fn scroll_tab_list_past_focus(visual: &mut VisualTestContext, dock: &DockSurface) {
+#[open_gpui::test]
+fn single_short_tab_list_recovers_through_scheduled_frames(cx: &mut TestAppContext) {
+    for accessibility in [false, true] {
+        let (dock, _) = overflowing(cx);
+        let window = cx.open_window(size(px(620.0), px(32.0)), |_, _| Root {
+            dock: dock.clone(),
+        });
+        let mut visual = active_visual(window.into(), cx);
+        assert!(visual.activate_accessibility());
+        frames(&mut visual, &dock);
+        let tab_count = |visual: &VisualTestContext| {
+            visual
+                .latest_accessibility_tree_update()
+                .unwrap()
+                .nodes
+                .iter()
+                .filter(|(_, node)| node.role() == Role::Tab)
+                .count()
+        };
+        let before = tab_count(&visual);
+        assert!(before > 0);
+        if accessibility {
+            tab_list_accessible_action(
+                &visual,
+                Role::Button,
+                "Show all tabs",
+                AccessibleAction::Click,
+            );
+        } else {
+            let button = tab_list_button_bounds(&dock, window.window_id());
+            visual.simulate_click(button.center(), Modifiers::none());
+        }
+        for _ in 0..10 {
+            if !visual.simulate_scheduled_frame() {
+                break;
+            }
+        }
+        assert_eq!(tab_count(&visual), before);
+        assert_eq!(offsets(&dock, SURFACE).1, None);
+        assert!(
+            !visual.frame_scheduled(),
+            "popup recovery must settle after repainting"
+        );
+        let host = dock.host.borrow();
+        let region = &host.mounts[&window.window_id()].regions[&SURFACE];
+        assert!(!region.dirty && !region.packet.as_ref().unwrap().is_deferred());
+        drop(host);
+        assert!(dock.error().is_none());
+    }
+}
+
+fn tab_list_accessible_action(
+    visual: &VisualTestContext,
+    role: Role,
+    label: &str,
+    action: AccessibleAction,
+) {
+    let tree = visual.latest_accessibility_tree_update().unwrap();
+    let target_node = tree
+        .nodes
+        .iter()
+        .find_map(|(id, node)| (node.role() == role && node.label() == Some(label)).then_some(*id))
+        .unwrap();
+    assert!(
+        visual.dispatch_accessibility_action(accesskit::ActionRequest {
+            action,
+            target_tree: accesskit::TreeId::ROOT,
+            target_node,
+            data: None,
+        })
+    );
+}
+
+fn scroll_tab_list_past_focus(visual: &mut VisualTestContext, dock: &DockSurface, row: u64) {
     let owner = visual.update(|window, _| window.window_handle().window_id());
     assert!(visual.activate_accessibility());
     frames(visual, dock);
@@ -267,7 +340,12 @@ fn scroll_tab_list_past_focus(visual: &mut VisualTestContext, dock: &DockSurface
         Modifiers::none(),
     );
     frames(visual, dock);
-    assert_accessibility_focus(visual, Role::MenuItem, "Tab number 1");
+    let name = format!("Tab number {row}");
+    if row != 1 {
+        tab_list_accessible_action(visual, Role::MenuItem, &name, AccessibleAction::Focus);
+        frames(visual, dock);
+    }
+    assert_accessibility_focus(visual, Role::MenuItem, &name);
     let menu = target(dock, owner, SURFACE, true).center();
     visual.simulate_event(scroll(
         menu,
@@ -283,7 +361,7 @@ fn scroll_tab_list_past_focus(visual: &mut VisualTestContext, dock: &DockSurface
             .unwrap()
             .nodes
             .iter()
-            .any(|(_, node)| node.role() == Role::MenuItem && node.label() == Some("Tab number 1"))
+            .any(|(_, node)| node.role() == Role::MenuItem && node.label() == Some(name.as_str()))
     );
     assert_accessibility_focus(visual, Role::Menu, "Tab list");
     visual.simulate_event(scroll(
@@ -299,18 +377,18 @@ fn scroll_tab_list_past_focus(visual: &mut VisualTestContext, dock: &DockSurface
 fn tab_list_keeps_keyboard_focus_when_wheel_scrolling_hides_the_focused_row(
     cx: &mut TestAppContext,
 ) {
-    for navigate in [false, true] {
+    for (row, navigate) in [(1, false), (1, true), (3, true)] {
         cx.defer_next_window_frame_requests();
         let (dock, _) = overflowing(cx);
         let window = cx.open_window(size(px(640.0), px(600.0)), |_, _| Root {
             dock: dock.clone(),
         });
         let mut visual = active_visual(window.into(), cx);
-        scroll_tab_list_past_focus(&mut visual, &dock);
+        scroll_tab_list_past_focus(&mut visual, &dock, row);
         if navigate {
             visual.simulate_keystrokes("down");
             frames(&mut visual, &dock);
-            assert_accessibility_focus(&visual, Role::MenuItem, "Tab number 2");
+            assert_accessibility_focus(&visual, Role::MenuItem, &format!("Tab number {}", row + 1));
         }
         assert!(dock.with_view(|view| view.item(ItemId::new(1)).unwrap().is_active()));
         visual.simulate_keystrokes("escape");
@@ -318,6 +396,52 @@ fn tab_list_keeps_keyboard_focus_when_wheel_scrolling_hides_the_focused_row(
         assert_eq!(offsets(&dock, SURFACE).1, None);
         assert_accessibility_focus(&visual, Role::Button, "Show all tabs");
     }
+}
+
+#[open_gpui::test]
+fn opening_a_sibling_tab_list_moves_keyboard_focus_to_its_first_row(cx: &mut TestAppContext) {
+    cx.defer_next_window_frame_requests();
+    let sibling = SurfaceId::new(52);
+    let (dock, _) = overflowing_surfaces(&[SURFACE, sibling], cx);
+    let window = cx.open_window(size(px(620.0), px(600.0)), |_, _| RegionsRoot {
+        dock: dock.clone(),
+        regions: vec![
+            DockRegion::new(SURFACE, LogicalRect::new(0.0, 0.0, 620.0, 290.0).unwrap()),
+            DockRegion::new(sibling, LogicalRect::new(0.0, 300.0, 620.0, 290.0).unwrap()),
+        ],
+        scrolls: Rc::default(),
+    });
+    let mut visual = active_visual(window.into(), cx);
+    assert!(visual.activate_accessibility());
+    frames(&mut visual, &dock);
+    let openers = {
+        let host = dock.host.borrow();
+        [SURFACE, sibling].map(|surface| {
+            let region = &host.mounts[&window.window_id()].regions[&surface];
+            let control = region
+                .packet
+                .as_ref()
+                .unwrap()
+                .draws
+                .iter()
+                .find_map(|draw| match draw {
+                    Draw::Control(control) if control.opens_menu.is_some() => Some(control),
+                    _ => None,
+                })
+                .unwrap();
+            to_gpui(control.bounds, region.bounds.unwrap()).center()
+        })
+    };
+    visual.simulate_click(openers[0], Modifiers::none());
+    frames(&mut visual, &dock);
+    assert_accessibility_focus(&visual, Role::MenuItem, "Tab number 1");
+    visual.simulate_click(openers[1], Modifiers::none());
+    frames(&mut visual, &dock);
+    assert_accessibility_focus(&visual, Role::MenuItem, "Tab number 41");
+    visual.simulate_keystrokes("down enter");
+    frames(&mut visual, &dock);
+    assert!(dock.with_view(|view| view.item(ItemId::new(42)).unwrap().is_active()));
+    assert!(dock.with_view(|view| view.item(ItemId::new(1)).unwrap().is_active()));
 }
 
 #[open_gpui::test]
@@ -334,7 +458,7 @@ fn tab_list_yields_keyboard_input_to_an_application_focus_claim_while_its_row_is
         keys: keys.clone(),
     });
     let mut visual = active_visual(window.into(), cx);
-    scroll_tab_list_past_focus(&mut visual, &dock);
+    scroll_tab_list_past_focus(&mut visual, &dock, 1);
     let offset = offsets(&dock, SURFACE).1;
     visual.update(|window, cx| window.focus(&focus, cx));
     frames(&mut visual, &dock);

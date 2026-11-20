@@ -6,7 +6,7 @@ use dockspace::{
     model::{DockspaceTabView, DockspaceTabsView, DockspaceView, WorkspaceVersion},
     runtime::{
         RetainedTabListMenu, SurfaceTabInput, SurfaceTabListInput, SurfaceTabListNavigation,
-        SurfaceTabNavigation,
+        SurfaceTabNavigation, TabListMenuRowId,
     },
 };
 use open_gpui::Keystroke;
@@ -78,9 +78,15 @@ pub(super) fn tab_is_selected(view: DockspaceView<'_>, surface: SurfaceId, key: 
     tab_group(view, surface, key).is_some_and(|tabs| tabs.visible_selected() == Some(key))
 }
 
+pub(super) struct MenuRow {
+    pub(super) id: TabListMenuRowId,
+    pub(super) focused: bool,
+    pub(super) keys: Rc<MenuKeys>,
+}
+
 /// One menu borrows core's immutable input authority across all visible rows.
 pub(super) struct MenuKeys {
-    bar: DockspaceVisualId,
+    pub(super) bar: DockspaceVisualId,
     opener: Option<Rc<Control>>,
     retained: RetainedTabListMenu,
 }
@@ -100,7 +106,7 @@ impl MenuKeys {
 
     pub(super) fn action(
         &self,
-        row: DockspaceVisualId,
+        row: TabListMenuRowId,
         end: Option<ControlAction>,
     ) -> Option<chrome::ActionSlot> {
         let input = match end {
@@ -114,9 +120,9 @@ impl MenuKeys {
 
     fn step(
         &self,
-        start: DockspaceVisualId,
+        start: TabListMenuRowId,
         key: ControlAction,
-    ) -> Option<(DockspaceVisualId, chrome::ActionSlot)> {
+    ) -> Option<(TabListMenuRowId, chrome::ActionSlot)> {
         let navigation = match key {
             ControlAction::Previous => SurfaceTabListNavigation::Previous,
             ControlAction::Next => SurfaceTabListNavigation::Next,
@@ -132,13 +138,64 @@ impl MenuKeys {
 
     fn resolve(
         &self,
-        row: DockspaceVisualId,
+        row: TabListMenuRowId,
         input: SurfaceTabListInput,
-    ) -> Option<(DockspaceVisualId, chrome::ActionSlot)> {
+    ) -> Option<(TabListMenuRowId, chrome::ActionSlot)> {
         let (target, intent) = self.retained.resolve(row, input)?;
         let mut action = chrome::Action::from(intent);
         action.yields_content = input == SurfaceTabListInput::Activate;
         Some((target, Rc::new(RefCell::new(Some(action)))))
+    }
+}
+
+pub(super) fn remember_menu_opener(
+    interaction: &InteractionState,
+    surface: SurfaceId,
+    bar: DockspaceVisualId,
+    opener: &FocusHandle,
+    window: &Window,
+) {
+    *interaction.tab_list_focus.borrow_mut() = Some(TabListFocus {
+        surface,
+        bar,
+        row: None,
+        opener: opener.clone(),
+        claim_revision: window.focus_claim_revision(),
+    });
+}
+
+/// Keep the framework focus and the core's keyboard row on the same target.
+pub(super) fn focus_menu_row(
+    shared: &SharedHost,
+    interaction: &InteractionState,
+    surface: SurfaceId,
+    serial: u64,
+    row: &MenuRow,
+    focus: &FocusHandle,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let keys = &row.keys;
+    let Some(action) = keys.action(row.id, None) else {
+        return;
+    };
+    if !activate_action(shared, interaction, surface, serial, &action, window, cx) {
+        return;
+    }
+    interaction.keyboard.borrow_mut().take();
+    window.focus(focus, cx);
+    let opener = keys
+        .opener
+        .as_ref()
+        .and_then(|opener| interaction.focus.borrow().get(&opener.id).cloned());
+    if let Some(opener) = opener {
+        *interaction.tab_list_focus.borrow_mut() = Some(TabListFocus {
+            surface,
+            bar: keys.bar,
+            row: Some(row.id.visual_id()),
+            opener,
+            claim_revision: window.focus_claim_revision(),
+        });
     }
 }
 
@@ -150,6 +207,7 @@ pub(super) struct Continuation {
     control: Rc<Control>,
     target: DockspaceVisualId,
     tab_target: Option<TabKey>,
+    menu_target: Option<TabListMenuRowId>,
     claim_revision: u64,
     phase: PrefixPhase,
     menu_end: Option<ControlAction>,
@@ -183,6 +241,10 @@ impl Continuation {
 
     fn owns_focus_claim(&self, window: &Window) -> bool {
         self.claim_revision == window.focus_claim_revision()
+    }
+
+    pub(super) fn owns_menu_focus(&self, window: &Window) -> bool {
+        self.owns_focus_claim(window) && (self.opener.is_some() || self.menu_target.is_some())
     }
 
     fn holds_tab_prefix(&self, window: &Window) -> bool {
@@ -225,10 +287,10 @@ impl Continuation {
                 .is_some_and(|(left, right)| Rc::ptr_eq(left, right))
             || self
                 .control
-                .menu_keys
+                .menu_row
                 .as_ref()
-                .zip(control.menu_keys.as_ref())
-                .is_some_and(|(left, right)| Rc::ptr_eq(left, right))
+                .zip(control.menu_row.as_ref())
+                .is_some_and(|(left, right)| Rc::ptr_eq(&left.keys, &right.keys))
     }
 }
 
@@ -291,6 +353,9 @@ pub(super) fn handle(
     window: &mut Window,
     cx: &mut App,
 ) -> bool {
+    if !window.is_window_active() {
+        return false;
+    }
     if matches!(control.kind, ControlKind::MenuRow) {
         return handle_menu(
             shared,
@@ -450,6 +515,7 @@ pub(super) fn handle(
             control: previous.map_or_else(|| control.clone(), |current| current.control),
             target,
             tab_target: action.tab_focus.map(|(_, key)| key),
+            menu_target: None,
             claim_revision: window.focus_claim_revision(),
             phase: PrefixPhase::Pending {
                 action: slot,
@@ -494,6 +560,7 @@ pub(super) fn handle(
             control: previous.map_or_else(|| control.clone(), |current| current.control),
             target,
             tab_target: action.tab_focus.map(|(_, key)| key),
+            menu_target: None,
             claim_revision: window.focus_claim_revision(),
             phase: PrefixPhase::Committed,
             menu_end: None,
@@ -573,12 +640,14 @@ fn handle_menu(
         let origin = previous
             .as_ref()
             .map_or(control, |current| &current.control);
-        let Some(keys) = origin.menu_keys.clone() else {
+        let Some(row) = origin.menu_row.as_ref() else {
             return false;
         };
+        let keys = row.keys.clone();
         let start = previous
             .as_ref()
-            .map_or(control.id, |current| current.target);
+            .and_then(|current| current.menu_target)
+            .unwrap_or(row.id);
         let Some((target, slot)) = keys.step(start, key) else {
             return false;
         };
@@ -623,8 +692,9 @@ fn handle_menu(
         serial: source_serial,
         version: shared.borrow().session.version(),
         control: previous.map_or_else(|| control.clone(), |current| current.control),
-        target,
+        target: target.visual_id(),
         tab_target: None,
+        menu_target: Some(target),
         claim_revision: window.focus_claim_revision(),
         phase: PrefixPhase::Pending {
             action: slot,
@@ -671,9 +741,9 @@ fn retain_opener_input(
     } else if current.menu_end == Some(ControlAction::Dismiss)
         && let Some(source) = current
             .control
-            .menu_keys
+            .menu_row
             .as_ref()
-            .and_then(|keys| keys.opener.as_ref())
+            .and_then(|row| row.keys.opener.as_ref())
     {
         source
     } else {
@@ -778,6 +848,14 @@ fn yield_menu_prefix(
     {
         window.focus(&focus, cx);
     }
+    // The adapter's own focus handoff still belongs to this menu. Remember
+    // its new claim so discarding its queued keys can leave the menu usable.
+    if let Some(previous) = interaction.tab_list_focus.borrow_mut().as_mut()
+        && previous.surface == surface
+        && previous.bar == bar
+    {
+        previous.claim_revision = window.focus_claim_revision();
+    }
 }
 
 fn finish_menu(
@@ -793,15 +871,6 @@ fn finish_menu(
     interaction.pending_tab_focus.borrow_mut().take();
     if end == ControlAction::Dismiss {
         yield_menu_prefix(shared, interaction, surface, bar, end, window, cx);
-        // Keep the opener's claim through the intervening inert replay. The
-        // existing presented-menu settlement restores it once the closed
-        // popup's replacement is interactive, unless application focus wins.
-        if let Some(previous) = interaction.tab_list_focus.borrow_mut().as_mut()
-            && previous.surface == surface
-            && previous.bar == bar
-        {
-            previous.claim_revision = window.focus_claim_revision();
-        }
     } else {
         interaction.tab_list_focus.borrow_mut().take();
     }
@@ -811,6 +880,9 @@ fn finish_menu(
 /// scroll geometry. Activation submits its final destination synchronously and
 /// retires this pending navigation, so later keys already belong to content.
 fn flush(shared: &SharedHost, interaction: &InteractionState, window: &mut Window, cx: &mut App) {
+    if !window.is_window_active() {
+        return;
+    }
     let current = interaction.keyboard.borrow().clone();
     let Some(current) = current else {
         return;
@@ -821,7 +893,7 @@ fn flush(shared: &SharedHost, interaction: &InteractionState, window: &mut Windo
         }
         return;
     }
-    if current.control.menu_keys.is_some() && current.has_committed_prefix() {
+    if current.menu_target.is_some() && current.has_committed_prefix() {
         // Its original menu record became stale when the preceding focus move
         // committed. restore() will rebind this intent only after presentation.
         return;
@@ -840,13 +912,13 @@ fn flush(shared: &SharedHost, interaction: &InteractionState, window: &mut Windo
         cx,
     ) {
         if let Some(end) = current.menu_end
-            && let Some(keys) = current.control.menu_keys.as_ref()
+            && let Some(row) = current.control.menu_row.as_ref()
         {
             finish_menu(
                 shared,
                 interaction,
                 current.surface,
-                keys.bar,
+                row.keys.bar,
                 end,
                 window,
                 cx,
@@ -855,6 +927,7 @@ fn flush(shared: &SharedHost, interaction: &InteractionState, window: &mut Windo
                 let mut current = current.clone();
                 current.control = opener.source.clone();
                 current.target = opener.source.id;
+                current.menu_target = None;
                 current.menu_end = None;
                 current.phase = PrefixPhase::Committed;
                 current.version = shared.borrow().session.version();
@@ -905,6 +978,9 @@ pub(super) fn install(
         if !window.is_window_active()
             && let Some(interaction) = weak_interaction.upgrade()
         {
+            if let Some(input) = interaction.menu_input.borrow_mut().as_mut() {
+                input.cancel_pending_keys();
+            }
             let mut retained = interaction.keyboard.borrow_mut();
             if let Some(current) = retained
                 .as_mut()
@@ -920,7 +996,7 @@ pub(super) fn install(
     let weak_interaction = Rc::downgrade(interaction);
     let owner = window.window_handle().window_id();
     let subscription = cx.intercept_keystrokes(move |event, window, cx| {
-        if owner != window.window_handle().window_id() {
+        if owner != window.window_handle().window_id() || !window.is_window_active() {
             return;
         }
         let Some((shared, interaction)) = weak_host.upgrade().zip(weak_interaction.upgrade())
@@ -942,7 +1018,7 @@ pub(super) fn install(
             .map(|opener| opener.source.clone())
             .or_else(|| {
                 (current.menu_end == Some(ControlAction::Dismiss))
-                    .then(|| current.control.menu_keys.as_ref()?.opener.clone())
+                    .then(|| current.control.menu_row.as_ref()?.keys.opener.clone())
                     .flatten()
             });
         {
@@ -1009,6 +1085,9 @@ pub(super) fn restore(
     window: &mut Window,
     cx: &mut App,
 ) {
+    if !window.is_window_active() {
+        return;
+    }
     let Some(mut current) = interaction.keyboard.borrow_mut().take() else {
         return;
     };
@@ -1046,7 +1125,7 @@ pub(super) fn restore(
         restore_opener(shared, interaction, current, serial, controls, window, cx);
         return;
     }
-    if current.control.menu_keys.is_some() {
+    if current.menu_target.is_some() {
         restore_menu(shared, interaction, current, serial, controls, window, cx);
         return;
     }
@@ -1241,13 +1320,17 @@ fn restore_opener(
     if !focus.is_focused(window) {
         window.focus(focus, cx);
     }
-    let focused_row = controls.iter().find(|(surface, row, _)| {
-        *surface == current.surface && row.focused && row.menu_owner == Some(bar)
+    let focused_row = controls.iter().find(|(surface, control, _)| {
+        *surface == current.surface
+            && control
+                .menu_row
+                .as_ref()
+                .is_some_and(|row| row.focused && row.keys.bar == bar)
     });
     *interaction.tab_list_focus.borrow_mut() = focused_row.map(|(_, row, _)| TabListFocus {
         surface: current.surface,
         bar,
-        row: row.id,
+        row: Some(row.id),
         opener: focus.clone(),
         claim_revision: window.focus_claim_revision(),
     });
@@ -1271,7 +1354,10 @@ fn restore_menu(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let Some(original) = current.control.menu_keys.as_ref() else {
+    let Some(original) = current.control.menu_row.as_ref() else {
+        return;
+    };
+    let Some(target) = current.menu_target else {
         return;
     };
     if serial == current.serial {
@@ -1280,27 +1366,26 @@ fn restore_menu(
     }
     let Some((_, control, focus)) = controls.iter().find(|(surface, control, focus)| {
         *surface == current.surface
-            && control.focused
-            && control
-                .menu_keys
-                .as_ref()
-                .is_some_and(|keys| keys.retained.can_continue_from(&original.retained))
+            && control.menu_row.as_ref().is_some_and(|row| {
+                row.focused && row.keys.retained.can_continue_from(&original.keys.retained)
+            })
             && window.is_focus_handle_rendered(focus)
     }) else {
         return;
     };
-    let Some(keys) = control.menu_keys.as_ref() else {
+    let Some(row) = control.menu_row.as_ref() else {
         return;
     };
+    let keys = &row.keys;
     if current.pending().is_some() {
-        let Some(action) = keys.action(current.target, current.menu_end) else {
+        let Some(action) = keys.action(target, current.menu_end) else {
             return;
         };
         current.phase = PrefixPhase::Pending {
             action,
             after_commit: false,
         };
-    } else if control.id != current.target {
+    } else if row.id != target {
         // A different core focus owner has superseded this completed prefix.
         return;
     }
@@ -1324,7 +1409,7 @@ fn restore_menu(
             *interaction.tab_list_focus.borrow_mut() = Some(TabListFocus {
                 surface: current.surface,
                 bar: keys.bar,
-                row: control.id,
+                row: Some(control.id),
                 opener,
                 claim_revision: current.claim_revision,
             });

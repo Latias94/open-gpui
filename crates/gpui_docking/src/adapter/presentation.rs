@@ -215,6 +215,17 @@ pub(super) fn accept(
                 if released_capacity {
                     wake_capacity_blocked(&mut host, cx);
                 }
+                if let Some(mount) = host.mounts.get_mut(&owner) {
+                    for (surface, packet) in &pending.packets {
+                        if packet.preserves_repaint_request()
+                            && let Some(region) = mount.regions.get_mut(surface)
+                        {
+                            // The attempt consumed the earlier repaint. A
+                            // retry only follows invalidation from this report.
+                            region.dirty = false;
+                        }
+                    }
+                }
                 host.apply_report(report);
                 host_native::provisional::accept_preview(&mut host, owner, &pending.packets);
                 pending.inputs.clear();
@@ -222,10 +233,9 @@ pub(super) fn accept(
                     for (surface, packet) in &pending.packets {
                         if let Some(region) = mount.regions.get_mut(surface) {
                             region.packet = Some(packet.clone());
-                            // This exact candidate already encoded the report's
-                            // current scene. Other physical mounts stay dirty.
-                            // Submission still owns presentation admission.
-                            region.dirty = false;
+                            if !packet.preserves_repaint_request() {
+                                region.dirty = false;
+                            }
                         }
                     }
                 }

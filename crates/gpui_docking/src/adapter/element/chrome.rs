@@ -67,6 +67,7 @@ pub(super) struct Action {
     pub(super) intent: DeferredSurfaceAction,
     pub(super) tab_focus: Option<(DockspaceVisualId, TabKey)>,
     pub(super) yields_content: bool,
+    pub(super) tab_list_opener: Option<(DockspaceVisualId, DockspaceVisualId)>,
 }
 
 pub(super) type ActionSlot = Rc<RefCell<Option<Action>>>;
@@ -83,6 +84,7 @@ impl From<DeferredSurfaceAction> for Action {
             tab_focus: action.tab_focus_visual().zip(action.tab_focus_target()),
             intent: action,
             yields_content: false,
+            tab_list_opener: None,
         }
     }
 }
@@ -95,13 +97,11 @@ pub(super) struct Control {
     pub(super) selected: Option<bool>,
     pub(super) expanded: Option<bool>,
     pub(super) value: Option<(f64, f64, f64)>,
-    pub(super) menu_owner: Option<DockspaceVisualId>,
     pub(super) opens_menu: Option<DockspaceVisualId>,
-    pub(super) focused: bool,
     pub(super) receiver: Option<DockspaceReceiverDescriptor>,
     pub(super) actions: Vec<(ControlAction, ActionSlot)>,
     pub(super) tab_strip: Option<Rc<RetainedTabStrip>>,
-    pub(super) menu_keys: Option<Rc<super::keyboard::MenuKeys>>,
+    pub(super) menu_row: Option<super::keyboard::MenuRow>,
 }
 
 impl Control {
@@ -120,13 +120,11 @@ impl Control {
             selected: None,
             expanded: None,
             value: None,
-            menu_owner: None,
             opens_menu: None,
-            focused: false,
             receiver,
             actions: Vec::new(),
             tab_strip: None,
-            menu_keys: None,
+            menu_row: None,
         }
     }
 
@@ -141,8 +139,8 @@ impl Control {
     }
 
     pub(super) fn slot(&self, key: ControlAction) -> Option<ActionSlot> {
-        if let Some(menu) = &self.menu_keys {
-            return menu.action(self.id, Some(key));
+        if let Some(row) = &self.menu_row {
+            return row.keys.action(row.id, Some(key));
         }
         self.actions.iter().find_map(|(candidate, action)| {
             (*candidate == key && action.borrow().is_some()).then(|| action.clone())
@@ -150,7 +148,7 @@ impl Control {
     }
 
     pub(super) fn has_action(&self, key: ControlAction) -> bool {
-        if self.menu_keys.is_some() {
+        if self.menu_row.is_some() {
             return matches!(key, ControlAction::Activate | ControlAction::Dismiss);
         }
         self.actions

@@ -23,8 +23,13 @@ pub(super) struct MenuInput {
 
 impl MenuInput {
     fn is_current(&self, shared: &SharedHost, window: &Window) -> bool {
-        self.claim.get() == Some(window.focus_claim_revision())
+        window.is_window_active()
+            && self.claim.get() == Some(window.focus_claim_revision())
             && self.version == shared.borrow().session.version()
+    }
+
+    pub(super) fn cancel_pending_keys(&mut self) {
+        self.keys.clear();
     }
 }
 
@@ -122,7 +127,7 @@ fn handle_key(
     window: &mut Window,
     cx: &mut App,
 ) -> bool {
-    if key.modifiers != open_gpui::Modifiers::none() {
+    if !window.is_window_active() || key.modifiers != open_gpui::Modifiers::none() {
         return false;
     }
     let valid = {
@@ -506,7 +511,9 @@ impl DockspaceElement {
         let keyboard_menu = menu.clone();
         let keyboard_toggle = toggle_menu.clone();
         button = button.on_key_down(move |event, window, cx| {
-            if event.keystroke.modifiers != open_gpui::Modifiers::none() {
+            if !window.is_window_active()
+                || event.keystroke.modifiers != open_gpui::Modifiers::none()
+            {
                 return;
             }
             let is_open = interaction
@@ -580,6 +587,9 @@ impl DockspaceElement {
             let focus = focus.clone();
             let menu = menu.clone();
             window.record_prepaint_window_commit(move |_, window, cx| {
+                if !window.is_window_active() {
+                    return;
+                }
                 let Some(revision) = focus_claim.get() else {
                     return;
                 };

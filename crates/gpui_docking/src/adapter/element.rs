@@ -54,8 +54,14 @@ pub(super) struct Packet {
     draws: Vec<Draw>,
     pane_bars: BTreeMap<ItemId, Option<DockspaceVisualId>>,
     pane_receivers: BTreeMap<ItemId, DockspaceReceiverDescriptor>,
-    deferred: bool,
+    state: PacketState,
     pub(super) native_preview: Option<host_native::provisional::Preview>,
+}
+
+enum PacketState {
+    Ready,
+    Waiting,
+    Unmeasured,
 }
 
 enum Candidate {
@@ -67,18 +73,22 @@ enum Candidate {
 }
 
 impl Packet {
-    fn empty(deferred: bool) -> Rc<Self> {
+    fn empty(state: PacketState) -> Rc<Self> {
         Rc::new(Self {
             draws: Vec::new(),
             pane_bars: BTreeMap::new(),
             pane_receivers: BTreeMap::new(),
-            deferred,
+            state,
             native_preview: None,
         })
     }
 
     pub(super) fn is_deferred(&self) -> bool {
-        self.deferred
+        !matches!(self.state, PacketState::Ready)
+    }
+
+    pub(super) fn preserves_repaint_request(&self) -> bool {
+        matches!(self.state, PacketState::Unmeasured)
     }
 
     #[cfg(test)]
@@ -194,7 +204,7 @@ struct PendingTabFocus {
 struct TabListFocus {
     surface: SurfaceId,
     bar: DockspaceVisualId,
-    row: DockspaceVisualId,
+    row: Option<DockspaceVisualId>,
     opener: FocusHandle,
     claim_revision: u64,
 }
@@ -497,7 +507,10 @@ impl DockspaceElement {
                         .map(|(surface, region)| {
                             (
                                 *surface,
-                                region.packet.clone().unwrap_or_else(|| Packet::empty(true)),
+                                region
+                                    .packet
+                                    .clone()
+                                    .unwrap_or_else(|| Packet::empty(PacketState::Waiting)),
                             )
                         })
                         .collect(),
@@ -518,7 +531,10 @@ impl DockspaceElement {
                         .map(|(surface, region)| {
                             (
                                 *surface,
-                                region.packet.clone().unwrap_or_else(|| Packet::empty(true)),
+                                region
+                                    .packet
+                                    .clone()
+                                    .unwrap_or_else(|| Packet::empty(PacketState::Waiting)),
                             )
                         })
                         .collect(),
@@ -596,7 +612,7 @@ impl DockspaceElement {
                                         region
                                             .packet
                                             .clone()
-                                            .unwrap_or_else(|| Packet::empty(true)),
+                                            .unwrap_or_else(|| Packet::empty(PacketState::Waiting)),
                                     )
                                 })
                                 .collect(),
@@ -1262,7 +1278,7 @@ impl DockspaceElement {
                 surface,
                 serial,
             );
-        let menu_row = control.menu_keys.is_some();
+        let menu_row = control.menu_row.is_some();
         let enabled = menu_row
             || control
                 .actions
@@ -1395,8 +1411,21 @@ impl DockspaceElement {
         }
         if enabled {
             let shared = self.host.clone();
+            let interaction = self.interaction.clone();
+            let control = control.clone();
             element = element.on_a11y_action(AccessibleAction::Focus, move |_, window, cx| {
-                if input::is_presented(
+                if let Some(row) = &control.menu_row {
+                    keyboard::focus_menu_row(
+                        &shared,
+                        &interaction,
+                        surface,
+                        serial,
+                        row,
+                        &focus,
+                        window,
+                        cx,
+                    );
+                } else if input::is_presented(
                     &shared.borrow(),
                     window.window_handle().window_id(),
                     surface,
@@ -1584,15 +1613,19 @@ impl DockspaceElement {
                     event,
                     window,
                 );
-                let focus = controls
-                    .iter()
-                    .rev()
-                    .find_map(|(_, focus, hitbox)| {
-                        (hitbox.window_point_target_rank(event.position, window) == Some(0))
-                            .then(|| focus.clone())
-                    })
-                    .unwrap_or_else(|| shared.borrow().mounts[&owner].focus.clone());
-                window.focus(&focus, cx);
+                let control = controls.iter().rev().find_map(|(control, focus, hitbox)| {
+                    (hitbox.window_point_target_rank(event.position, window) == Some(0))
+                        .then_some((control, focus))
+                });
+                if let Some((control, focus)) = control {
+                    window.focus(focus, cx);
+                    if let Some(bar) = control.opens_menu {
+                        keyboard::remember_menu_opener(&interaction, surface, bar, focus, window);
+                    }
+                } else {
+                    let focus = shared.borrow().mounts[&owner].focus.clone();
+                    window.focus(&focus, cx);
+                }
                 window.refresh();
                 if !managed {
                     cx.stop_propagation();
@@ -2040,6 +2073,14 @@ fn activate_action_with_continuation(
             version,
             claim_revision: window.focus_claim_revision(),
         });
+    } else if let Some((bar, opener)) = action.tab_list_opener {
+        let focus = interaction.focus.borrow().get(&opener).cloned();
+        if let Some(focus) = focus.filter(|focus| window.is_focus_handle_rendered(focus)) {
+            if !focus.is_focused(window) {
+                window.focus(&focus, cx);
+            }
+            keyboard::remember_menu_opener(interaction, surface, bar, &focus, window);
+        }
     }
     window.refresh();
     cx.refresh_windows();
@@ -2070,7 +2111,7 @@ fn apply_chrome_focus(
     window: &mut Window,
     cx: &mut App,
 ) {
-    if shared.borrow().ensure_application_admission().is_err() {
+    if !window.is_window_active() || shared.borrow().ensure_application_admission().is_err() {
         return;
     }
     let owner = window.window_handle().window_id();
@@ -2097,17 +2138,27 @@ fn apply_chrome_focus(
             }
         }
     }
-    let focused_row = controls.iter().find(|(surface, control, _)| {
-        presented(*surface) && control.focused && control.menu_owner.is_some()
+    if interaction
+        .keyboard
+        .borrow()
+        .as_ref()
+        .is_some_and(|prefix| prefix.owns_menu_focus(window))
+    {
+        return;
+    }
+    let focused_row = controls.iter().find_map(|(surface, control, focus)| {
+        let row = control.menu_row.as_ref()?;
+        (row.focused && presented(*surface)).then_some((surface, row, focus))
     });
-    if let Some((surface, control, focus)) = focused_row {
-        let Some(bar) = control.menu_owner else {
-            return;
-        };
+    if let Some((surface, row, focus)) = focused_row {
+        let bar = row.keys.bar;
+        let visual = row.id.visual_id();
         let mut previous = interaction.tab_list_focus.borrow_mut();
         if let Some(previous) = previous.as_ref() {
-            if previous.claim_revision != window.focus_claim_revision()
-                || (previous.bar == bar && previous.row == control.id && focus.is_focused(window))
+            if previous.surface != *surface
+                || previous.bar != bar
+                || previous.claim_revision != window.focus_claim_revision()
+                || (previous.row == Some(visual) && focus.is_focused(window))
             {
                 return;
             }
@@ -2130,7 +2181,7 @@ fn apply_chrome_focus(
             *previous = Some(TabListFocus {
                 surface: *surface,
                 bar,
-                row: control.id,
+                row: Some(visual),
                 opener,
                 claim_revision: window.focus_claim_revision(),
             });
@@ -2433,7 +2484,12 @@ fn encode_candidate(
                     .native_surface_bindings_for_window(binding)
                     .any(|binding| binding.surface() == surface)
             });
-            packets.insert(surface, Packet::empty(deferred));
+            let state = if deferred {
+                PacketState::Waiting
+            } else {
+                PacketState::Ready
+            };
+            packets.insert(surface, Packet::empty(state));
             continue;
         }
         if !presentation_surfaces.contains(&surface) {
@@ -2441,7 +2497,7 @@ fn encode_candidate(
             // The real child can draw before its Created/Prepared observations
             // admit it to the core's presentation roster. This staging packet
             // supplies no painted output or native content-readiness fact.
-            packets.insert(surface, Packet::empty(true));
+            packets.insert(surface, Packet::empty(PacketState::Waiting));
             continue;
         }
         let bounds = LogicalRect::new(
@@ -2505,7 +2561,7 @@ fn encode_candidate(
                 // An unmeasured region owns no output this pass. Commit its
                 // contribution alongside any ready sibling regions so core can
                 // settle local conditions such as insufficient popup space.
-                packets.insert(surface, Packet::empty(true));
+                packets.insert(surface, Packet::empty(PacketState::Unmeasured));
                 continue;
             }
         };

@@ -18,7 +18,7 @@ use dockspace::{
 };
 
 use super::{
-    Draw, Packet,
+    Draw, Packet, PacketState,
     chrome::{Control, ControlAction, ControlKind, GuideState, Icon, PresentationMenu},
     presentation_menu::{OpenMenu, Scope},
     tab_label::CustomTabLabel,
@@ -410,6 +410,12 @@ pub(super) fn record(
                                 ControlAction::Activate,
                                 plan.prepare_tab_strip_control_activation(control),
                             );
+                            if let Some(bar) = semantic.opens_menu
+                                && let Some(action) = semantic.slot(ControlAction::Activate)
+                                && let Some(action) = action.borrow_mut().as_mut()
+                            {
+                                action.tab_list_opener = Some((bar, semantic.id));
+                            }
                             let semantic = Rc::new(semantic);
                             if let Some(bar) = semantic.opens_menu {
                                 menu_openers.insert(bar, semantic.clone());
@@ -574,9 +580,11 @@ pub(super) fn record(
                             String::new(),
                             None,
                         );
-                        control.focused = true;
-                        control.menu_owner = Some(bar);
-                        control.menu_keys = Some(keys.clone());
+                        control.menu_row = Some(super::keyboard::MenuRow {
+                            id: row.input_id(),
+                            focused: true,
+                            keys: keys.clone(),
+                        });
                         draws.push(Draw::TabListMenuFocus {
                             menu: menu.visual_id(),
                             row: Rc::new(control),
@@ -607,9 +615,12 @@ pub(super) fn record(
                             row_receiver,
                         );
                         control.selected = Some(row.selected());
-                        control.focused = row.focused();
-                        control.menu_owner = Some(bar);
-                        control.menu_keys = menu_keys.clone();
+                        control.menu_row =
+                            menu_keys.as_ref().map(|keys| super::keyboard::MenuRow {
+                                id: row.input_id(),
+                                focused: row.focused(),
+                                keys: keys.clone(),
+                            });
                         draws.push(Draw::Control(Rc::new(control)));
                     }
                 }
@@ -629,7 +640,7 @@ pub(super) fn record(
             draws,
             pane_bars,
             pane_receivers,
-            deferred: false,
+            state: PacketState::Ready,
             native_preview,
         },
         receipt,

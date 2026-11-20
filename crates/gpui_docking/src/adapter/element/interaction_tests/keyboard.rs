@@ -496,6 +496,109 @@ fn core_tab_list_cancel_then_opener_down_preserves_the_reopen_order(cx: &mut Tes
 }
 
 #[open_gpui::test]
+fn core_tab_list_two_queued_opener_keys_toggle_after_dismissal(cx: &mut TestAppContext) {
+    let (dock, _, _, mut visual, _) = core_tab_list_fixture(cx);
+    visual.update(|window, cx| {
+        assert!(window.dispatch_keystroke(Keystroke::parse("down").unwrap(), cx));
+    });
+    visual.update(|window, cx| {
+        for key in ["escape", "down", "down"] {
+            assert!(window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx));
+        }
+    });
+    for _ in 0..4 {
+        frames(&mut visual, &dock);
+    }
+    assert_accessibility_focus(&visual, Role::Button, "Show all tabs");
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
+}
+
+#[open_gpui::test]
+fn core_tab_list_switch_back_restores_the_committed_row_without_replaying_enter(
+    cx: &mut TestAppContext,
+) {
+    for application_focus in [false, true] {
+        cx.defer_next_window_frame_requests();
+        let other_focus = cx.update(|cx| cx.focus_handle());
+        let other = cx.open_window(size(px(320.0), px(240.0)), |_, _| Pane {
+            focus: other_focus.clone(),
+        });
+        let items = (61..91).map(ItemId::new).collect::<Vec<_>>();
+        let (dock, _, _) = tab_fixture(cx, &items);
+        let focus = cx.update(|cx| cx.focus_handle());
+        let keys = Rc::new(RefCell::new(Vec::new()));
+        cx.defer_next_window_frame_requests();
+        let window = cx.open_window(size(px(640.0), px(600.0)), |_, _| ExternalFocusRoot {
+            dock: dock.clone(),
+            focus: focus.clone(),
+            keys: keys.clone(),
+        });
+        let mut visual = active_visual(window.into(), cx);
+        assert!(visual.activate_accessibility());
+        frames(&mut visual, &dock);
+        let button = tab_list_button_bounds(&dock, window.window_id());
+        visual.simulate_click(button.center(), Modifiers::none());
+        frames(&mut visual, &dock);
+        for key in ["end", "enter"] {
+            visual.update(|window, cx| {
+                assert!(window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx));
+            });
+        }
+        let _foreground = active_visual(other.into(), cx);
+        assert!(!visual.update(|window, _| window.is_window_active()));
+        if application_focus {
+            visual.update(|window, cx| window.focus(&focus, cx));
+        }
+        let mut visual = active_visual(window.into(), cx);
+        frames(&mut visual, &dock);
+        assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
+        if application_focus {
+            assert!(visual.update(|window, cx| focus.contains_focused(window, cx)));
+            visual.simulate_keystrokes("escape");
+            assert_eq!(&*keys.borrow(), &["escape"]);
+        } else {
+            assert_accessibility_focus(&visual, Role::MenuItem, "Pane 90");
+            visual.simulate_keystrokes("escape");
+            frames(&mut visual, &dock);
+            assert_accessibility_focus(&visual, Role::Button, "Show all tabs");
+        }
+    }
+}
+
+#[open_gpui::test]
+fn core_tab_list_opening_respects_a_newer_application_blur(cx: &mut TestAppContext) {
+    cx.defer_next_window_frame_requests();
+    let (dock, _, _) = tab_fixture(cx, &[FIRST, SECOND, ItemId::new(63)]);
+    let window = cx.open_window(size(px(160.0), px(600.0)), |_, _| Root {
+        dock: dock.clone(),
+    });
+    let mut visual = active_visual(window.into(), cx);
+    assert!(visual.activate_accessibility());
+    frames(&mut visual, &dock);
+    visual.simulate_click(
+        tab_list_button_bounds(&dock, window.window_id()).center(),
+        Modifiers::none(),
+    );
+    let claim = visual.update(|window, cx| {
+        window.blur(cx);
+        window.focus_claim_revision()
+    });
+    frames(&mut visual, &dock);
+    assert!(
+        visual
+            .latest_accessibility_tree_update()
+            .unwrap()
+            .nodes
+            .iter()
+            .any(|(_, node)| { node.role() == Role::MenuItem && node.label() == Some("Pane 61") })
+    );
+    assert_eq!(
+        visual.update(|window, cx| (window.focus_claim_revision(), window.focused(cx).is_some())),
+        (claim, false)
+    );
+}
+
+#[open_gpui::test]
 fn core_tab_list_pending_prefix_cannot_override_an_application_focus_claim(
     cx: &mut TestAppContext,
 ) {

@@ -284,9 +284,19 @@ fn a_custom_factory_renders_a_new_staging_surface_and_admits_the_original_pane(
     assert_eq!(original_callbacks.window_id(), Some(child.window_id()));
     let mut child_visual = VisualTestContext::from_window(child, cx);
     frames(&mut child_visual, &dock);
+    for _ in 0..6 {
+        if !child_visual.simulate_scheduled_frame() {
+            break;
+        }
+    }
+    assert!(
+        !child_visual.frame_scheduled(),
+        "staging must park until a native readiness observation arrives"
+    );
     {
         let host = dock.host.borrow();
         let region = &host.mounts[&child.window_id()].regions[&surface];
+        assert!(!region.dirty);
         assert!(region.packet.as_ref().unwrap().is_deferred());
         assert!(region.presented.is_none());
         assert!(host.session.presented_surface(surface).is_none());

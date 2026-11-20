@@ -28,13 +28,16 @@ fn key_pair(window: &mut Window, key: &'static str, cx: &mut App) {
 }
 
 fn opener_action(visual: &VisualTestContext, action: AccessibleAction) {
+    menu_button_action(visual, "Layout actions", action);
+}
+
+fn menu_button_action(visual: &VisualTestContext, label: &str, action: AccessibleAction) {
     let tree = visual.latest_accessibility_tree_update().unwrap();
     let target = tree
         .nodes
         .iter()
         .find_map(|(target, node)| {
-            (node.role() == Role::Button && node.label() == Some("Layout actions"))
-                .then_some(*target)
+            (node.role() == Role::Button && node.label() == Some(label)).then_some(*target)
         })
         .unwrap();
     assert!(
@@ -174,6 +177,72 @@ fn product_menu_focus_return_accepts_a_fresh_keyboard_request(cx: &mut TestAppCo
         frames(&mut visual, &dock);
         assert!(!presentation_menu_is_open(&visual));
         assert!(dock.pending_content_close_plans().unwrap().is_empty());
+    }
+}
+
+#[open_gpui::test]
+fn product_menu_deactivation_cancels_unpresented_group_and_layout_commands(
+    cx: &mut TestAppContext,
+) {
+    for managed in [false, true] {
+        for (label, keys) in [
+            ("Layout actions", &["down", "enter"][..]),
+            ("Tab group actions", &["down", "end", "enter"][..]),
+        ] {
+            cx.defer_next_window_frame_requests();
+            let other_focus = cx.update(|cx| cx.focus_handle());
+            let other = cx.open_window(size(px(320.0), px(240.0)), |_, _| Pane {
+                focus: other_focus.clone(),
+            });
+            let (dock, _) = fixture_with_mode(cx, false, managed);
+            cx.defer_next_window_frame_requests();
+            let window = cx.open_window(size(px(800.0), px(600.0)), |window, cx| {
+                if managed {
+                    dock.bind_native_root(SURFACE, true, window, cx).unwrap();
+                }
+                Root { dock: dock.clone() }
+            });
+            let mut visual = active_visual(window.into(), cx);
+            assert!(visual.activate_accessibility());
+            frames(&mut visual, &dock);
+            menu_button_action(&visual, label, AccessibleAction::Focus);
+            frames(&mut visual, &dock);
+            visual
+                .set_window_present_outcome(window.into(), PlatformWindowPresentOutcome::Deferred);
+            visual.update(|window, cx| {
+                for key in keys {
+                    assert!(window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx));
+                }
+            });
+
+            let mut foreground = active_visual(other.into(), cx);
+            assert!(foreground.simulate_frame(RequestFrameOptions {
+                require_presentation: true,
+                force_render: true,
+                ..Default::default()
+            }));
+            foreground.update(|window, cx| window.focus(&other_focus, cx));
+            assert!(!visual.update(|window, _| window.is_window_active()));
+            visual
+                .set_window_present_outcome(window.into(), PlatformWindowPresentOutcome::Submitted);
+            frames(&mut visual, &dock);
+            frames(&mut visual, &dock);
+            assert!(foreground.update(|window, cx| other_focus.contains_focused(window, cx)));
+
+            // Neither confirmation may appear in core while the other window
+            // is active or when the original window becomes active again.
+            let assert_unchanged = || {
+                assert!(dock.with_view(|view| view.item(FIRST).unwrap().contained().is_none()));
+                assert!(dock.pending_content_close_plans().unwrap().is_empty());
+            };
+            assert_unchanged();
+            let mut visual = active_visual(window.into(), cx);
+            frames(&mut visual, &dock);
+            assert_unchanged();
+            if managed {
+                shutdown(&dock, cx);
+            }
+        }
     }
 }
 
