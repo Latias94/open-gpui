@@ -128,6 +128,13 @@ impl Control {
         }
     }
 
+    pub(super) fn focus_id(&self) -> super::ControlFocusId {
+        match &self.menu_row {
+            Some(row) => super::ControlFocusId::MenuRow(row.id),
+            None => super::ControlFocusId::Visual(self.id),
+        }
+    }
+
     pub(super) fn action(&mut self, key: ControlAction, action: Option<PreparedSurfaceAction>) {
         if let Some(action) = action {
             let mut action = Action::from(action);

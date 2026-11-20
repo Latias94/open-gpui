@@ -1,7 +1,9 @@
 //! Independent key events may arrive before another retained packet is painted.
 
 use super::*;
-use open_gpui::Keystroke;
+use open_gpui::{
+    KeyUpEvent, Keystroke, PlatformInput, ScrollDelta, ScrollEvent, ScrollSource, TouchPhase, point,
+};
 
 fn focus_tab(item: ItemId, visual: &mut VisualTestContext) {
     let label = format!("Pane {}", item.get());
@@ -218,6 +220,14 @@ fn tab_fixture(
     cx: &mut TestAppContext,
     items: &[ItemId],
 ) -> (DockSurface, Vec<FocusHandle>, PaneKeys) {
+    tab_fixture_with_mode(cx, items, false)
+}
+
+fn tab_fixture_with_mode(
+    cx: &mut TestAppContext,
+    items: &[ItemId],
+    managed: bool,
+) -> (DockSurface, Vec<FocusHandle>, PaneKeys) {
     cx.update(|cx| {
         let keys = PaneKeys::default();
         let handles = items.iter().map(|_| cx.focus_handle()).collect::<Vec<_>>();
@@ -240,7 +250,12 @@ fn tab_fixture(
         )])
         .unwrap();
         let session = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
-        let dock = DockSurface::new(session, panes, GpuiDockspaceConfig::default(), cx).unwrap();
+        let dock = if managed {
+            DockSurface::new_managed(session, panes, GpuiDockspaceConfig::default(), cx)
+        } else {
+            DockSurface::new(session, panes, GpuiDockspaceConfig::default(), cx)
+        }
+        .unwrap();
         (dock, handles, keys)
     })
 }
@@ -269,6 +284,168 @@ fn core_tab_list_fixture(
     frames(&mut visual, &dock);
     assert_accessibility_focus(&visual, Role::MenuItem, "Pane 61");
     (dock, handles, keys, visual, interaction)
+}
+
+const LAST_MENU_ITEM: ItemId = ItemId::new(100);
+
+fn overflowing_tab_list(
+    cx: &mut TestAppContext,
+    managed: bool,
+) -> (DockSurface, Vec<FocusHandle>, VisualTestContext) {
+    cx.defer_next_window_frame_requests();
+    let items = (FIRST.get()..=LAST_MENU_ITEM.get())
+        .map(ItemId::new)
+        .collect::<Vec<_>>();
+    let (dock, handles, _) = tab_fixture_with_mode(cx, &items, managed);
+    let window = cx.open_window(size(px(620.0), px(600.0)), |window, cx| {
+        if managed {
+            dock.bind_native_root(SURFACE, true, window, cx).unwrap();
+        }
+        Root { dock: dock.clone() }
+    });
+    let mut visual = active_visual(window.into(), cx);
+    assert!(visual.activate_accessibility());
+    frames(&mut visual, &dock);
+    let opener = accessible_node(&visual, Role::Button, "Show all tabs");
+    dispatch_accessible(&visual, opener, AccessibleAction::Click);
+    frames(&mut visual, &dock);
+    assert_accessibility_focus(&visual, Role::MenuItem, "Pane 61");
+    (dock, handles, visual)
+}
+
+fn accessible_node(visual: &VisualTestContext, role: Role, label: &str) -> accesskit::NodeId {
+    visual
+        .latest_accessibility_tree_update()
+        .unwrap()
+        .nodes
+        .iter()
+        .find_map(|(id, node)| (node.role() == role && node.label() == Some(label)).then_some(*id))
+        .unwrap()
+}
+
+fn dispatch_accessible(
+    visual: &VisualTestContext,
+    target_node: accesskit::NodeId,
+    action: AccessibleAction,
+) {
+    assert!(
+        visual.dispatch_accessibility_action(accesskit::ActionRequest {
+            action,
+            target_tree: accesskit::TreeId::ROOT,
+            target_node,
+            data: None,
+        })
+    );
+}
+
+fn finish_tab_list_fixture(dock: &DockSurface, managed: bool, cx: &mut TestAppContext) {
+    if managed {
+        cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();
+        cx.run_until_parked();
+        assert!(dock.native_is_quiescent());
+    }
+}
+
+fn assert_pane_focus_settles(visual: &mut VisualTestContext, focus: &FocusHandle) {
+    let has_focus = |visual: &mut VisualTestContext| {
+        visual.update(|window, cx| focus.contains_focused(window, cx))
+    };
+    if !has_focus(visual) {
+        assert!(visual.simulate_scheduled_frame());
+    }
+    assert!(has_focus(visual));
+}
+
+#[open_gpui::test]
+fn core_tab_list_accessibility_row_expires_when_its_roster_changes(cx: &mut TestAppContext) {
+    let (dock, _, mut visual) = overflowing_tab_list(cx, false);
+    let old_row = accessible_node(&visual, Role::MenuItem, "Pane 62");
+    cx.update(|cx| {
+        dock.update(
+            |frame| Ok(frame.set_item_visibility_current(LAST_MENU_ITEM, false)?),
+            cx,
+        )
+        .unwrap();
+    });
+    frames(&mut visual, &dock);
+    let current_row = accessible_node(&visual, Role::MenuItem, "Pane 62");
+    dispatch_accessible(&visual, old_row, AccessibleAction::Click);
+    frames(&mut visual, &dock);
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
+    assert_ne!(current_row, old_row);
+    dispatch_accessible(&visual, current_row, AccessibleAction::Click);
+    frames(&mut visual, &dock);
+    assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_active()));
+}
+
+#[open_gpui::test]
+fn core_tab_list_accessibility_focus_routes_keys_before_its_new_frame(cx: &mut TestAppContext) {
+    for managed in [false, true] {
+        let (dock, handles, mut visual) = overflowing_tab_list(cx, managed);
+        let third = accessible_node(&visual, Role::MenuItem, "Pane 63");
+        dispatch_accessible(&visual, third, AccessibleAction::Focus);
+        for name in ["down", "enter"] {
+            visual.update(|window, cx| {
+                let keystroke = Keystroke::parse(name).unwrap();
+                let result = window.dispatch_event(
+                    PlatformInput::KeyDown(KeyDownEvent {
+                        keystroke: keystroke.clone(),
+                        is_held: false,
+                        prefer_character_input: false,
+                    }),
+                    cx,
+                );
+                window.dispatch_event(PlatformInput::KeyUp(KeyUpEvent { keystroke }), cx);
+                assert!(!result.propagate, "the focused menu must receive {name}");
+            });
+        }
+        frames(&mut visual, &dock);
+        assert!(dock.with_view(|view| view.item(ItemId::new(64)).unwrap().is_active()));
+        assert_pane_focus_settles(&mut visual, &handles[3]);
+        finish_tab_list_fixture(&dock, managed, cx);
+    }
+}
+
+#[open_gpui::test]
+fn core_tab_list_wheel_allows_a_key_with_invalidated_menu_authority_to_propagate(
+    cx: &mut TestAppContext,
+) {
+    for managed in [false, true] {
+        let (dock, handles, mut visual) = overflowing_tab_list(cx, managed);
+        visual.simulate_keystrokes("down");
+        frames(&mut visual, &dock);
+        assert_accessibility_focus(&visual, Role::MenuItem, "Pane 62");
+        let propagated = Rc::new(Cell::new(false));
+        let _observation = visual.update(|window, cx| {
+            let owner = window.window_handle().window_id();
+            let propagated = propagated.clone();
+            cx.observe_keystrokes(move |event, window, _| {
+                if window.window_handle().window_id() == owner && event.keystroke.key == "end" {
+                    propagated.set(true);
+                }
+            })
+        });
+        let owner = visual.update(|window, _| window.window_handle().window_id());
+        let position = super::wheel::target(&dock, owner, SURFACE, true).center();
+        visual.simulate_event(ScrollEvent {
+            position,
+            delta: ScrollDelta::Lines(point(0.0, -14.0)),
+            modifiers: Modifiers::none(),
+            touch_phase: TouchPhase::Moved,
+            source: ScrollSource::Pointer,
+        });
+        let handled = visual
+            .update(|window, cx| window.dispatch_keystroke(Keystroke::parse("end").unwrap(), cx));
+        assert!(!handled && propagated.get());
+
+        frames(&mut visual, &dock);
+        assert_accessibility_focus(&visual, Role::Menu, "Tab list");
+        visual.simulate_keystrokes("end enter");
+        frames(&mut visual, &dock);
+        assert!(dock.with_view(|view| view.item(LAST_MENU_ITEM).unwrap().is_active()));
+        assert_pane_focus_settles(&mut visual, handles.last().unwrap());
+        finish_tab_list_fixture(&dock, managed, cx);
+    }
 }
 
 #[open_gpui::test]

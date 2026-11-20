@@ -131,7 +131,7 @@ fn offsets(dock: &DockSurface, surface: SurfaceId) -> (f64, Option<f64>) {
     offsets
 }
 
-fn target(
+pub(super) fn target(
     dock: &DockSurface,
     window: open_gpui::WindowId,
     surface: SurfaceId,

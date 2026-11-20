@@ -419,7 +419,7 @@ impl DockspaceElement {
         cx: &mut App,
     ) {
         let rect = to_gpui(menu.bounds, bounds);
-        let focus = self.control_focus(menu.id, cx);
+        let focus = self.control_focus(ControlFocusId::Visual(menu.id), cx);
         let admitted = allow_input
             && input::is_presented(
                 &self.host.borrow(),

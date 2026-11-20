@@ -2,7 +2,7 @@
 
 use std::{
     cell::{Cell, RefCell},
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap, HashSet},
     rc::Rc,
 };
 
@@ -15,8 +15,8 @@ use dockspace::{
         DockspaceUpdate, DockspaceVisualId, HostFrameReport, PaneContentGeometry,
         SurfaceMeasurementAnswer as Answer, SurfaceMeasurementRequest as Request,
         SurfacePointerButton, SurfacePointerCancelReason, SurfacePointerEvent, SurfaceWork,
-        SurfaceWorkDeferred, TabListMenuMetrics, TabStripControlMetric, TabStripControlMetrics,
-        TabStripControlPlacement, TabStripMetrics,
+        SurfaceWorkDeferred, TabListMenuMetrics, TabListMenuRowId, TabStripControlMetric,
+        TabStripControlMetrics, TabStripControlPlacement, TabStripMetrics,
     },
 };
 use open_gpui::{
@@ -155,7 +155,7 @@ enum PreparedDraw {
 #[derive(Default)]
 struct InteractionState {
     hovered_tab: Rc<Cell<Option<TabKey>>>,
-    focus: RefCell<BTreeMap<DockspaceVisualId, FocusHandle>>,
+    focus: RefCell<HashMap<ControlFocusId, FocusHandle>>,
     menu: Cell<Option<presentation_menu::OpenMenu>>,
     menu_sequence: Cell<u64>,
     menu_input: RefCell<Option<presentation_menu::MenuInput>>,
@@ -169,6 +169,12 @@ struct InteractionState {
     splitter_press: RefCell<Option<splitter::Press>>,
     content_press: Cell<Option<SurfaceId>>,
     content_terminal: Cell<bool>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum ControlFocusId {
+    Visual(DockspaceVisualId),
+    MenuRow(TabListMenuRowId),
 }
 
 struct PaneFocusAttempt {
@@ -204,7 +210,7 @@ struct PendingTabFocus {
 struct TabListFocus {
     surface: SurfaceId,
     bar: DockspaceVisualId,
-    row: Option<DockspaceVisualId>,
+    row: Option<TabListMenuRowId>,
     opener: FocusHandle,
     claim_revision: u64,
 }
@@ -735,14 +741,15 @@ impl DockspaceElement {
                     .map(move |(control, focus)| (region.surface, control.clone(), focus.clone()))
             })
             .collect();
-        let retained_focus: std::collections::BTreeSet<_> = packets
+        let retained_focus: HashSet<_> = packets
             .values()
             .flat_map(|packet| packet.draws.iter())
             .filter_map(|draw| match draw {
-                Draw::Control(control) => Some(control.id),
-                Draw::TabList(_, id) => Some(*id),
-                Draw::TabListMenuFocus { menu, .. } => Some(*menu),
-                Draw::PresentationMenu(menu) => Some(menu.id),
+                Draw::Control(control) => Some(control.focus_id()),
+                Draw::TabList(_, id) | Draw::TabListMenuFocus { menu: id, .. } => {
+                    Some(ControlFocusId::Visual(*id))
+                }
+                Draw::PresentationMenu(menu) => Some(ControlFocusId::Visual(menu.id)),
                 _ => None,
             })
             .collect();
@@ -767,7 +774,7 @@ impl DockspaceElement {
                     .pending_tab_focus
                     .borrow()
                     .as_ref()
-                    .map(|focus| focus.visual);
+                    .map(|focus| ControlFocusId::Visual(focus.visual));
                 interaction
                     .focus
                     .borrow_mut()
@@ -930,7 +937,7 @@ impl DockspaceElement {
                         }
                         continue;
                     }
-                    let focus = self.control_focus(control.id, cx);
+                    let focus = self.control_focus(control.focus_id(), cx);
                     let (element, hitbox) = self.prepare_control(
                         control,
                         focus.clone(),
@@ -962,7 +969,7 @@ impl DockspaceElement {
                 Draw::Scroll(target) => scrolls.push(*target),
                 Draw::TabList(rect, id) => {
                     let rect = to_gpui(*rect, bounds);
-                    let identity = self.control_focus(*id, cx);
+                    let identity = self.control_focus(ControlFocusId::Visual(*id), cx);
                     let mut element = div()
                         .id(&identity)
                         .w(rect.size.width)
@@ -980,7 +987,7 @@ impl DockspaceElement {
                         continue;
                     }
                     let rect = to_gpui(row.bounds, bounds);
-                    let focus = self.control_focus(*menu, cx);
+                    let focus = self.control_focus(ControlFocusId::Visual(*menu), cx);
                     let shared = self.host.clone();
                     let interaction = self.interaction.clone();
                     let keyboard_row = row.clone();
@@ -1021,7 +1028,7 @@ impl DockspaceElement {
                         .get(&receiver.visual_id())
                         .filter(|control| control.receiver == Some(*receiver))
                     {
-                        let focus = self.control_focus(control.id, cx);
+                        let focus = self.control_focus(control.focus_id(), cx);
                         let (element, hitbox) = self.prepare_control(
                             control,
                             focus.clone(),
@@ -1251,7 +1258,7 @@ impl DockspaceElement {
         }
     }
 
-    fn control_focus(&self, id: DockspaceVisualId, cx: &mut App) -> FocusHandle {
+    fn control_focus(&self, id: ControlFocusId, cx: &mut App) -> FocusHandle {
         self.interaction
             .focus
             .borrow_mut()
@@ -1414,13 +1421,13 @@ impl DockspaceElement {
             let interaction = self.interaction.clone();
             let control = control.clone();
             element = element.on_a11y_action(AccessibleAction::Focus, move |_, window, cx| {
-                if let Some(row) = &control.menu_row {
+                if control.menu_row.is_some() {
                     keyboard::focus_menu_row(
                         &shared,
                         &interaction,
                         surface,
                         serial,
-                        row,
+                        &control,
                         &focus,
                         window,
                         cx,
@@ -2045,7 +2052,7 @@ fn activate_action_with_continuation(
                 interaction
                     .focus
                     .borrow_mut()
-                    .entry(visual)
+                    .entry(ControlFocusId::Visual(visual))
                     .or_insert_with(|| cx.focus_handle())
                     .clone(),
             )
@@ -2074,7 +2081,11 @@ fn activate_action_with_continuation(
             claim_revision: window.focus_claim_revision(),
         });
     } else if let Some((bar, opener)) = action.tab_list_opener {
-        let focus = interaction.focus.borrow().get(&opener).cloned();
+        let focus = interaction
+            .focus
+            .borrow()
+            .get(&ControlFocusId::Visual(opener))
+            .cloned();
         if let Some(focus) = focus.filter(|focus| window.is_focus_handle_rendered(focus)) {
             if !focus.is_focused(window) {
                 window.focus(&focus, cx);
@@ -2152,13 +2163,12 @@ fn apply_chrome_focus(
     });
     if let Some((surface, row, focus)) = focused_row {
         let bar = row.keys.bar;
-        let visual = row.id.visual_id();
         let mut previous = interaction.tab_list_focus.borrow_mut();
         if let Some(previous) = previous.as_ref() {
             if previous.surface != *surface
                 || previous.bar != bar
                 || previous.claim_revision != window.focus_claim_revision()
-                || (previous.row == Some(visual) && focus.is_focused(window))
+                || (previous.row == Some(row.id) && focus.is_focused(window))
             {
                 return;
             }
@@ -2181,7 +2191,7 @@ fn apply_chrome_focus(
             *previous = Some(TabListFocus {
                 surface: *surface,
                 bar,
-                row: Some(visual),
+                row: Some(row.id),
                 opener,
                 claim_revision: window.focus_claim_revision(),
             });

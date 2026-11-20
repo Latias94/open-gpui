@@ -203,8 +203,9 @@ fn pointer_accessibility_and_keyboard_float_only_the_captured_tab_group(cx: &mut
         let (menu, bounds) = anchor(&dock, &mut visual, Scope::Tabs, 0);
         assert!(menu.choices.is_empty());
         if input == "keyboard" {
-            let focus =
-                probe.interaction.borrow().as_ref().unwrap().focus.borrow()[&menu.id].clone();
+            let focus = probe.interaction.borrow().as_ref().unwrap().focus.borrow()
+                [&ControlFocusId::Visual(menu.id)]
+                .clone();
             visual.update(|window, cx| window.focus(&focus, cx));
             visual.simulate_keystrokes("down");
         } else if input == "accessibility" {
