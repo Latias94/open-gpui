@@ -246,6 +246,7 @@ pub(crate) struct PreparedRegion {
 }
 
 pub(crate) enum PreparedState {
+    StagedRoot,
     Frame(PreparedFrame),
     Failure(AnyElement),
 }
@@ -299,6 +300,9 @@ impl Element for DockspaceElement {
         window: &mut Window,
         cx: &mut App,
     ) -> PreparedState {
+        if host_native::stage_root_construction(&self.host.borrow(), window, cx) {
+            return PreparedState::StagedRoot;
+        }
         presentation::abandon_unaccepted(&mut self.host.borrow_mut(), window, cx);
         host_native::prepare_window(&self.host, window, cx);
         let mount = self
@@ -382,6 +386,7 @@ impl Element for DockspaceElement {
         let background = self.host.borrow().config.colors.background;
         window.paint_quad(fill(bounds, background));
         let prepared = match prepared {
+            PreparedState::StagedRoot => return,
             PreparedState::Frame(prepared) => prepared,
             PreparedState::Failure(error) => {
                 error.paint(window, cx);

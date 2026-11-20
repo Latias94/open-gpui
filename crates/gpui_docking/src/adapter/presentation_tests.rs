@@ -2,8 +2,9 @@
 
 use super::*;
 use open_gpui::{
-    PlatformFrameDeliveryMode, PlatformWindowCreationCapabilities, PlatformWindowPresentOutcome,
-    RequestFrameOptions, VisualTestContext,
+    AppContext as _, Context, IntoElement, PlatformFrameDeliveryMode,
+    PlatformWindowCreationCapabilities, PlatformWindowPresentOutcome, Render, RequestFrameOptions,
+    VisualTestContext, Window,
 };
 
 fn frames(visual: &mut VisualTestContext, dock: &DockSurface) {
@@ -57,6 +58,69 @@ fn deferred_construction_draw_allows_multiple_roots_in_one_update(cx: &mut TestA
                 "{surface:?} must present its original content after construction"
             );
         }
+    }
+    cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();
+    finish(cx, &dock);
+    assert!(dock.native_is_quiescent());
+}
+
+struct CustomRoot(DockSurface);
+
+impl Render for CustomRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.0.element(FIRST)
+    }
+}
+
+#[open_gpui::test]
+fn custom_and_builtin_deferred_roots_bind_and_present_in_the_same_update(cx: &mut TestAppContext) {
+    cx.set_platform_window_creation_capabilities(PlatformWindowCreationCapabilities::default());
+    let dock = cx.update(workspace);
+    let windows = cx.update(|app| {
+        cx.set_next_window_frame_delivery_mode(PlatformFrameDeliveryMode::Deferred);
+        cx.defer_next_window_frame_requests();
+        let custom = app
+            .open_window_detailed(WindowOptions::default(), |window, app| {
+                dock.bind_native_root(FIRST, true, window, app).unwrap();
+                app.new(|_| CustomRoot(dock.clone()))
+            })
+            .unwrap();
+        cx.set_next_window_frame_delivery_mode(PlatformFrameDeliveryMode::Deferred);
+        cx.defer_next_window_frame_requests();
+        let builtin = dock
+            .open_native_root(SECOND, false, WindowOptions::default(), app)
+            .unwrap();
+        assert!(!dock.is_update_pending());
+        [custom.into(), builtin]
+    });
+    assert_eq!(dock.inspection().unwrap().native_window_binding_count, 2);
+    let request = RequestFrameOptions {
+        require_presentation: true,
+        force_render: true,
+        ..Default::default()
+    };
+    for (window, surface) in windows.into_iter().zip([FIRST, SECOND]) {
+        let mut visual = VisualTestContext::from_window(window, cx);
+        for _ in 0..8 {
+            assert!(visual.simulate_frame(request));
+            if let Some(submission) = cx.pending_window_frame_submission(window) {
+                cx.update(|_| {
+                    assert!(submission.complete(PlatformWindowPresentOutcome::Submitted))
+                });
+                cx.run_until_parked();
+            }
+        }
+        let host = dock.host.borrow();
+        let region = &host.mounts[&window.window_id()].regions[&surface];
+        let (serial, _) = region
+            .presented
+            .expect("each root must present its own output");
+        assert!(crate::adapter::input::is_presented(
+            &host,
+            window.window_id(),
+            surface,
+            serial
+        ));
     }
     cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();
     finish(cx, &dock);

@@ -542,6 +542,8 @@ impl DockSurface {
     ///
     /// Register once per physical window. Additional logical regions in that
     /// window are declared atomically by the element's complete placement roster.
+    /// On deferred renderers, a docking element in the construction frame
+    /// paints its background and joins the workspace on a subsequent frame.
     pub fn bind_native_root(
         &self,
         surface: SurfaceId,
@@ -627,6 +629,9 @@ impl DockSurface {
             native.callbacks.insert(owner, callbacks);
             native.roots.insert(owner);
             native.registrations.remove(&owner);
+            if result.is_ok() && should_stage_root_construction(window, cx) {
+                window.defer(cx, |window, _| window.refresh());
+            }
         }
         result.map(|_| ())
     }
@@ -659,13 +664,10 @@ impl DockSurface {
                 *root_failure.borrow_mut() = Some(error);
                 window.remove_window(cx);
             }
-            let stage_construction_draw =
-                window.frame_delivery_mode() == PlatformFrameDeliveryMode::Deferred;
             cx.new(|_| NativeRoot {
                 dock,
                 surface,
                 provisional: None,
-                stage_construction_draw,
             })
         });
         let root_binding = failure.borrow_mut().take();
@@ -890,16 +892,10 @@ struct NativeRoot {
     dock: DockSurface,
     surface: SurfaceId,
     provisional: Option<Rc<RefCell<provisional::ProvisionalWindow>>>,
-    stage_construction_draw: bool,
 }
 
 impl Render for NativeRoot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if std::mem::take(&mut self.stage_construction_draw) {
-            window.defer(cx, |window, _| window.refresh());
-            let background = self.dock.host.borrow().config.colors.background;
-            return div().size_full().bg(background).into_any_element();
-        }
         if let Some(preview) = self
             .provisional
             .as_ref()
@@ -931,7 +927,6 @@ fn default_factory(
                 dock,
                 surface: request.binding.surface(),
                 provisional: None,
-                stage_construction_draw: false,
             })
         },
         cx,
@@ -996,6 +991,20 @@ pub(super) fn set_placements(
         frame.set_native_surface_placements(binding, &placements)?;
     }
     Ok(())
+}
+
+fn should_stage_root_construction(window: &Window, cx: &App) -> bool {
+    window.frame_delivery_mode() == PlatformFrameDeliveryMode::Deferred
+        // GPUI publishes the window profile only after its reservation commits.
+        && cx.window_profile(window.window_handle()).is_none()
+}
+
+pub(super) fn stage_root_construction(host: &HostState, window: &Window, cx: &App) -> bool {
+    should_stage_root_construction(window, cx)
+        && host
+            .native
+            .as_ref()
+            .is_some_and(|native| native.roots.contains(&window.window_handle().window_id()))
 }
 
 pub(super) fn prepare_window(shared: &SharedHost, window: &mut Window, cx: &mut App) {
