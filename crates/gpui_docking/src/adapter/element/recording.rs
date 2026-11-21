@@ -17,7 +17,7 @@ use dockspace::{
 };
 
 use super::{
-    ControlFocusId, Draw, Packet, PacketState,
+    ControlFocusId, Draw, Packet, PacketState, TabListPopup,
     chrome::{
         Control, ControlAction, ControlKind, GuideState, Icon, PresentationMenu, TabListOpener,
     },
@@ -36,6 +36,7 @@ pub(super) fn record(
     let mut pane_receivers = BTreeMap::new();
     let mut native_preview = None;
     let mut tab_list_dismiss = None;
+    let mut tab_list = None;
     let mut tab_strips = BTreeMap::new();
     let mut menu_openers = BTreeMap::new();
     let receiver = |draws: &mut Vec<Draw>, value: Option<DockspaceReceiverDescriptor>| {
@@ -565,6 +566,12 @@ pub(super) fn record(
                             menu_openers.get(&bar).cloned(),
                         ))
                     });
+                    if let (Some(keys), Some(dismiss)) = (&menu_keys, tab_list_dismiss.take()) {
+                        tab_list = Some(TabListPopup {
+                            keys: keys.clone(),
+                            dismiss,
+                        });
+                    }
                     draws.push(Draw::Fill(menu.bounds(), colors.selected_tab));
                     if let Some(keys) = &menu_keys
                         && let Some(row) = menu.rows().find(|row| row.focused())
@@ -641,7 +648,7 @@ pub(super) fn record(
             pane_receivers,
             state: PacketState::Ready,
             native_preview,
-            tab_list_dismiss,
+            tab_list,
         },
         receipt,
     ))

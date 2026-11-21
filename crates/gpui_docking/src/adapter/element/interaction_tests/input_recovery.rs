@@ -6,7 +6,10 @@ use crate::adapter::element::wheel::ScrollTarget;
 use dockspace::runtime::{SurfacePaintProgramOperation, SurfacePaintProgramStep};
 use open_gpui::{Point, PointerCapture};
 
-use super::*;
+use super::{
+    wheel::{SingleRegion, overflowing_surfaces},
+    *,
+};
 
 struct OverlayRoot {
     dock: DockSurface,
@@ -685,4 +688,94 @@ fn accepted_overlay_revokes_stationary_drop_preview_until_a_fresh_move(cx: &mut 
         Some(capture)
     );
     assert!(dock.has_active_gesture());
+}
+
+#[open_gpui::test]
+fn closing_a_window_returns_unaccepted_input_from_another_window(cx: &mut TestAppContext) {
+    let sibling = SurfaceId::new(52);
+    let (dock, _) = overflowing_surfaces(&[SURFACE, sibling], cx);
+    let [first, second] = [SURFACE, sibling].map(|surface| {
+        cx.defer_next_window_frame_requests();
+        cx.open_window(size(px(620.0), px(400.0)), |_, _| {
+            SingleRegion(dock.clone(), surface)
+        })
+    });
+    let mut source = active_visual(first.into(), cx);
+    let mut target = VisualTestContext::from_window(second.into(), cx);
+    frames(&mut source, &dock);
+    frames(&mut target, &dock);
+    assert!(dock.with_view(|view| view.item(ItemId::new(1)).unwrap().is_active()));
+    cx.set_platform_hovered_window(Some(first.into()));
+    let tab = source.debug_bounds("dockspace:tab:2").unwrap().center();
+    cx.set_window_frame_delivery_mode(
+        second.into(),
+        open_gpui::PlatformFrameDeliveryMode::Deferred,
+    );
+    source.update(|window, cx| {
+        window.dispatch_event(
+            open_gpui::PlatformInput::MouseDown(MouseDownEvent {
+                position: tab,
+                button: MouseButton::Left,
+                modifiers: Modifiers::none(),
+                click_count: 1,
+                first_mouse: false,
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            open_gpui::PlatformInput::MouseUp(MouseUpEvent {
+                position: tab,
+                button: MouseButton::Left,
+                modifiers: Modifiers::none(),
+                click_count: 1,
+            }),
+            cx,
+        );
+        assert_eq!(dock.host.borrow().inputs.len(), 2);
+        // Construct the sibling candidate before the input transaction's
+        // normal work can draw and commit the source window.
+        open_gpui::AnyWindowHandle::from(second)
+            .update(cx, |_, window, cx| {
+                let _ = window.draw(cx);
+            })
+            .unwrap();
+    });
+    assert!(target.simulate_frame(RequestFrameOptions {
+        require_presentation: true,
+        force_render: true,
+        ..Default::default()
+    }));
+    let pending = cx.pending_window_frame_submission(second.into()).unwrap();
+    assert!(dock.is_update_pending());
+    {
+        let host = dock.host.borrow();
+        assert!(host.inputs.is_empty());
+        let borrowed = &host.mounts[&second.window_id()]
+            .pending
+            .as_ref()
+            .unwrap()
+            .inputs;
+        assert_eq!(borrowed.len(), 2);
+        assert!(
+            borrowed
+                .iter()
+                .all(|input| input.owner() == first.window_id())
+        );
+    }
+    target.update(|window, cx| window.remove_window(cx));
+    assert_eq!(
+        pending.status(),
+        open_gpui::PlatformFrameSubmissionStatus::Cancelled
+    );
+    let mut ran = false;
+    for _ in 0..8 {
+        cx.run_until_parked();
+        if !cx.simulate_window_scheduled_frame(first.into()) {
+            break;
+        }
+        ran = true;
+    }
+    assert!(ran);
+    assert!(dock.with_view(|view| view.item(ItemId::new(2)).unwrap().is_active()));
+    assert!(dock.host.borrow().inputs.is_empty());
 }

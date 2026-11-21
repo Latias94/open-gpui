@@ -126,6 +126,13 @@ impl MenuKeys {
         }
     }
 
+    pub(super) fn can_continue_opening(
+        &self,
+        opener: &dockspace::runtime::RetainedTabListOpener,
+    ) -> bool {
+        self.retained.can_continue_opening(opener)
+    }
+
     pub(super) fn action(
         &self,
         row: TabListMenuRowId,
@@ -1043,6 +1050,7 @@ pub(super) fn install(
             && let Some((shared, interaction)) = weak_host.upgrade().zip(weak_interaction.upgrade())
         {
             super::presentation_menu::revoke(&shared, &interaction, window);
+            interaction.tab_list_press.borrow_mut().take();
             if let Some(focus) = interaction.tab_list_focus.borrow_mut().as_mut() {
                 focus.opening = None;
             }

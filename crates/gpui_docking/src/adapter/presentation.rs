@@ -583,10 +583,12 @@ fn wake_waiting(host: &mut HostState, cx: &mut App) {
 
 pub(super) fn close(host: &mut HostState, owner: WindowId, cx: &mut App) {
     if let Some(mut mount) = host.mounts.remove(&owner) {
-        if let Some(mut pending) = mount.pending.take() {
-            pending.inputs.clear();
+        if let Some(pending) = mount.pending.take() {
             retire_pending(host, owner, pending, SurfacePresentationResult::Dropped, cx);
         }
+        // A physical frame can borrow the entire session's prefix. Return it
+        // in order and discard only local events from the retired window.
+        host.inputs.retain(|input| input.owner() != owner);
         let mut surfaces = Vec::new();
         for surface in mount.regions.keys() {
             if host

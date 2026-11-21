@@ -18,10 +18,10 @@ impl Render for ScrollPane {
     }
 }
 
-struct RegionsRoot {
-    dock: DockSurface,
-    regions: Vec<DockRegion>,
-    scrolls: Rc<Cell<usize>>,
+pub(super) struct RegionsRoot {
+    pub(super) dock: DockSurface,
+    pub(super) regions: Vec<DockRegion>,
+    pub(super) scrolls: Rc<Cell<usize>>,
 }
 
 impl Render for RegionsRoot {
@@ -75,8 +75,16 @@ fn overflowing(cx: &mut TestAppContext) -> (DockSurface, Rc<Cell<usize>>) {
     overflowing_surfaces(&[SURFACE], cx)
 }
 
-fn overflowing_surfaces(
+pub(super) fn overflowing_surfaces(
     surfaces: &[SurfaceId],
+    cx: &mut TestAppContext,
+) -> (DockSurface, Rc<Cell<usize>>) {
+    overflowing_surfaces_with_mode(surfaces, false, cx)
+}
+
+pub(super) fn overflowing_surfaces_with_mode(
+    surfaces: &[SurfaceId],
+    managed: bool,
     cx: &mut TestAppContext,
 ) -> (DockSurface, Rc<Cell<usize>>) {
     cx.update(|cx| {
@@ -104,7 +112,12 @@ fn overflowing_surfaces(
         ))
         .unwrap();
         let session = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
-        let dock = DockSurface::new(session, panes, GpuiDockspaceConfig::default(), cx).unwrap();
+        let dock = if managed {
+            DockSurface::new_managed(session, panes, GpuiDockspaceConfig::default(), cx)
+        } else {
+            DockSurface::new(session, panes, GpuiDockspaceConfig::default(), cx)
+        }
+        .unwrap();
         (dock, scrolls)
     })
 }
@@ -309,7 +322,7 @@ fn single_short_tab_list_recovers_through_scheduled_frames(cx: &mut TestAppConte
     }
 }
 
-fn tab_list_accessible_action(
+pub(super) fn tab_list_accessible_action(
     visual: &VisualTestContext,
     role: Role,
     label: &str,
@@ -520,7 +533,7 @@ fn a_product_menu_outlives_a_list_accepted_in_an_earlier_input(cx: &mut TestAppC
     assert!(dock.with_view(|view| view.item(ItemId::new(1)).unwrap().contained().is_none()));
 }
 
-struct SingleRegion(DockSurface, SurfaceId);
+pub(super) struct SingleRegion(pub(super) DockSurface, pub(super) SurfaceId);
 
 impl Render for SingleRegion {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
