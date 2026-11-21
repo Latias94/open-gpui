@@ -170,7 +170,7 @@ struct InteractionState {
     content_terminal: Cell<bool>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 enum ControlFocusId {
     Visual(DockspaceVisualId),
     Control(DockspaceControlId),
@@ -771,7 +771,9 @@ impl DockspaceElement {
                     Some(control.focus_id())
                 }
                 Draw::TabList(_, id) => Some(ControlFocusId::Visual(*id)),
-                Draw::PresentationMenu(menu) => Some(ControlFocusId::Control(menu.input_id)),
+                Draw::PresentationMenu(menu) => {
+                    Some(ControlFocusId::Control(menu.input_id.clone()))
+                }
                 _ => None,
             })
             .collect();
@@ -779,7 +781,7 @@ impl DockspaceElement {
             publication,
             move |fence, window, cx| {
                 presentation::accept(&shared, serial, input_frames.clone(), fence, window, cx);
-                presentation_menu::accept(&shared, &interaction, window);
+                presentation_menu::accept(&shared, &interaction, serial, window, cx);
                 apply_chrome_focus(
                     &shared,
                     &interaction,
@@ -796,11 +798,12 @@ impl DockspaceElement {
                     .pending_tab_focus
                     .borrow()
                     .as_ref()
-                    .map(|focus| focus.target);
+                    .map(|focus| &focus.target)
+                    .cloned();
                 interaction
                     .focus
                     .borrow_mut()
-                    .retain(|id, _| retained_focus.contains(id) || pending == Some(*id));
+                    .retain(|id, _| retained_focus.contains(id) || pending.as_ref() == Some(id));
                 interaction
                     .pane_focus
                     .borrow_mut()
@@ -1676,6 +1679,7 @@ impl DockspaceElement {
                 if let Some((control, focus)) = control {
                     window.focus(focus, cx);
                     if let Some(bar) = control.opens_menu {
+                        presentation_menu::revoke(&shared, &interaction, window);
                         keyboard::remember_menu_opener(&interaction, surface, bar, focus, window);
                     }
                 } else {
@@ -2118,7 +2122,7 @@ fn activate_action_with_continuation(
         .map(|(input_id, _)| {
             let target = ControlFocusId::Control(input_id);
             (
-                target,
+                target.clone(),
                 interaction
                     .focus
                     .borrow_mut()
@@ -2168,7 +2172,7 @@ fn focus_tab_list_opener(
     window: &mut Window,
     cx: &mut App,
 ) {
-    presentation_menu::retire_for_tab_list(shared, interaction, window);
+    presentation_menu::revoke(shared, interaction, window);
     let focus = interaction
         .focus
         .borrow()
@@ -2222,6 +2226,9 @@ fn apply_chrome_focus(
     let presented = |surface| {
         admitted.contains(&surface) && input::is_presented(&shared.borrow(), owner, surface, serial)
     };
+    if presentation_menu::open(interaction).is_some() {
+        return;
+    }
     keyboard::restore(shared, interaction, serial, admitted, controls, window, cx);
     if keyboard::restore_menu_opening(
         shared,

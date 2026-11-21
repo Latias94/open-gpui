@@ -565,11 +565,17 @@ fn wake_waiting(host: &mut HostState, cx: &mut App) {
     if host.has_unaccepted_update() {
         return;
     }
+    let has_local_input = host.native.is_none() && !host.inputs.is_empty();
     for mount in host.mounts.values_mut() {
-        if std::mem::take(&mut mount.waiting_for_update) {
+        let waiting = std::mem::take(&mut mount.waiting_for_update);
+        if waiting || (has_local_input && mount.attached && mount.pending.is_none()) {
             let window = mount.window;
             cx.defer(move |cx| {
-                let _ = window.update(cx, |_, window, _| window.refresh());
+                let _ = window.update(cx, |_, window, _| {
+                    if waiting || window.is_visible() {
+                        window.refresh();
+                    }
+                });
             });
         }
     }

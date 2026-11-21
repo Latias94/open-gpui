@@ -148,7 +148,7 @@ impl Control {
     }
 
     pub(super) fn focus_id(&self) -> ControlFocusId {
-        self.identity
+        self.identity.clone()
     }
 
     pub(super) fn action(&mut self, key: ControlAction, action: Option<PreparedSurfaceAction>) {

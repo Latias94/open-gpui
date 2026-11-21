@@ -308,7 +308,7 @@ pub(super) fn record(
                     Operation::ContainedControls(contained) => {
                         receiver(&mut draws, plan.receiver_for_contained_title(contained));
                         for resize in contained.resize() {
-                            let descriptor = plan.receiver_for_contained_resize(contained, resize);
+                            let descriptor = plan.receiver_for_contained_resize(resize);
                             receiver(&mut draws, descriptor);
                             if !paint.is_source_gap()
                                 && let Some(descriptor) = descriptor

@@ -1036,12 +1036,13 @@ pub(super) fn install(
     if interaction.keyboard_subscription.borrow().is_some() {
         return;
     }
+    let weak_host = Rc::downgrade(shared);
     let weak_interaction = Rc::downgrade(interaction);
     let activation = window.observe_window_activation(move |window, _| {
         if !window.is_window_active()
-            && let Some(interaction) = weak_interaction.upgrade()
+            && let Some((shared, interaction)) = weak_host.upgrade().zip(weak_interaction.upgrade())
         {
-            super::presentation_menu::cancel_pending_keys(&interaction);
+            super::presentation_menu::revoke(&shared, &interaction, window);
             if let Some(focus) = interaction.tab_list_focus.borrow_mut().as_mut() {
                 focus.opening = None;
             }

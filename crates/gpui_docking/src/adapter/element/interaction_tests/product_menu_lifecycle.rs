@@ -247,6 +247,68 @@ fn product_menu_deactivation_cancels_unpresented_group_and_layout_commands(
 }
 
 #[open_gpui::test]
+fn product_menu_deactivation_revokes_accessible_commands(cx: &mut TestAppContext) {
+    for managed in [false, true] {
+        cx.defer_next_window_frame_requests();
+        let other_focus = cx.update(|cx| cx.focus_handle());
+        let other = cx.open_window(size(px(320.0), px(240.0)), |_, _| Pane {
+            focus: other_focus.clone(),
+        });
+        let (dock, _) = fixture_with_mode(cx, false, managed);
+        cx.defer_next_window_frame_requests();
+        let window = cx.open_window(size(px(800.0), px(600.0)), |window, cx| {
+            if managed {
+                dock.bind_native_root(SURFACE, true, window, cx).unwrap();
+            }
+            Root { dock: dock.clone() }
+        });
+        let mut visual = active_visual(window.into(), cx);
+        assert!(visual.activate_accessibility());
+        frames(&mut visual, &dock);
+        for (label, command) in [
+            ("Layout actions", "Float Layout"),
+            ("Tab group actions", "Close Tab Group"),
+        ] {
+            menu_button_action(&visual, label, AccessibleAction::Click);
+            frames(&mut visual, &dock);
+            let target = visual
+                .latest_accessibility_tree_update()
+                .unwrap()
+                .nodes
+                .iter()
+                .find_map(|(id, node)| {
+                    (node.role() == Role::MenuItem && node.label() == Some(command)).then_some(*id)
+                })
+                .unwrap();
+            let _foreground = active_visual(other.into(), cx);
+            assert!(!visual.update(|window, _| window.is_window_active()));
+            // Deliver the old accessibility action before the inactive window redraws.
+            visual.dispatch_accessibility_action(accesskit::ActionRequest {
+                action: AccessibleAction::Click,
+                target_tree: accesskit::TreeId::ROOT,
+                target_node: target,
+                data: None,
+            });
+            frames(&mut visual, &dock);
+            assert!(dock.with_view(|view| view.item(FIRST).unwrap().contained().is_none()));
+            assert!(dock.pending_content_close_plans().unwrap().is_empty());
+            assert!(!visual
+                .latest_accessibility_tree_update()
+                .unwrap()
+                .nodes
+                .iter()
+                .any(|(_, node)| node.role() == Role::MenuItem && node.label() == Some(command)));
+            visual = active_visual(window.into(), cx);
+            frames(&mut visual, &dock);
+        }
+        open_menu(&dock, &mut visual);
+        if managed {
+            shutdown(&dock, cx);
+        }
+    }
+}
+
+#[open_gpui::test]
 fn product_menu_real_key_up_cannot_cancel_confirmation_waiting_for_native_fifo(
     cx: &mut TestAppContext,
 ) {

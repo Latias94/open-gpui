@@ -445,6 +445,228 @@ fn opening_a_sibling_tab_list_moves_keyboard_focus_to_its_first_row(cx: &mut Tes
 }
 
 #[open_gpui::test]
+fn a_product_menu_outlives_a_list_accepted_in_an_earlier_input(cx: &mut TestAppContext) {
+    cx.defer_next_window_frame_requests();
+    let sibling = SurfaceId::new(52);
+    let (dock, _) = overflowing_surfaces(&[SURFACE, sibling], cx);
+    let window = cx.open_window(size(px(620.0), px(600.0)), |_, _| RegionsRoot {
+        dock: dock.clone(),
+        regions: vec![
+            DockRegion::new(SURFACE, LogicalRect::new(0.0, 0.0, 620.0, 290.0).unwrap()),
+            DockRegion::new(sibling, LogicalRect::new(0.0, 300.0, 620.0, 290.0).unwrap()),
+        ],
+        scrolls: Rc::default(),
+    });
+    let mut visual = active_visual(window.into(), cx);
+    assert!(visual.activate_accessibility());
+    frames(&mut visual, &dock);
+    let tree = visual.latest_accessibility_tree_update().unwrap();
+    let target = |label, last: bool| {
+        let mut controls = tree
+            .nodes
+            .iter()
+            .filter_map(|(id, node)| {
+                (node.role() == Role::Button && node.label() == Some(label))
+                    .then(|| (*id, node.bounds().unwrap().y0))
+            })
+            .collect::<Vec<_>>();
+        controls.sort_by(|a, b| a.1.total_cmp(&b.1));
+        controls[if last { controls.len() - 1 } else { 0 }].0
+    };
+    let owner = window.into();
+    visual.set_window_frame_delivery_mode(owner, open_gpui::PlatformFrameDeliveryMode::Deferred);
+    let open = |visual: &VisualTestContext, id| {
+        assert!(
+            visual.dispatch_accessibility_action(accesskit::ActionRequest {
+                action: AccessibleAction::Click,
+                target_tree: accesskit::TreeId::ROOT,
+                target_node: id,
+                data: None,
+            })
+        );
+    };
+    open(&visual, target("Show all tabs", false));
+    assert!(visual.simulate_frame(RequestFrameOptions {
+        require_presentation: true,
+        force_render: true,
+        ..Default::default()
+    }));
+    let pending = visual.pending_window_frame_submission(owner).unwrap();
+    let current = visual.latest_accessibility_tree_update().unwrap();
+    let layout_button = target("Layout actions", true);
+    assert!(
+        current
+            .nodes
+            .iter()
+            .any(|(id, node)| *id == layout_button && !node.is_disabled())
+    );
+    open(&visual, layout_button);
+    visual.update(|_, _| {
+        // The newer input can cancel the pending platform frame, in which
+        // case the adapter must still handle the already-accepted menu.
+        if pending.status() == open_gpui::PlatformFrameSubmissionStatus::Pending {
+            assert!(pending.complete(PlatformWindowPresentOutcome::Submitted));
+        }
+    });
+    visual.run_until_parked();
+    visual.set_window_frame_delivery_mode(owner, open_gpui::PlatformFrameDeliveryMode::Synchronous);
+    frames(&mut visual, &dock);
+    frames(&mut visual, &dock);
+    assert!(presentation_menu_is_open(&visual));
+    assert_eq!(offsets(&dock, SURFACE).1, None);
+    visual.simulate_keystrokes("enter");
+    frames(&mut visual, &dock);
+    assert!(dock.with_view(|view| view.item(ItemId::new(41)).unwrap().contained().is_some()));
+    assert!(dock.with_view(|view| view.item(ItemId::new(1)).unwrap().contained().is_none()));
+}
+
+struct SingleRegion(DockSurface, SurfaceId);
+
+impl Render for SingleRegion {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.0.element(self.1)
+    }
+}
+
+#[open_gpui::test]
+fn withdrawing_a_hidden_frame_wakes_an_idle_embedded_sibling(cx: &mut TestAppContext) {
+    let sibling = SurfaceId::new(52);
+    let (dock, _) = overflowing_surfaces(&[SURFACE, sibling], cx);
+    let [first, second] = [SURFACE, sibling].map(|surface| {
+        cx.defer_next_window_frame_requests();
+        cx.open_window(size(px(620.0), px(400.0)), |_, _| {
+            SingleRegion(dock.clone(), surface)
+        })
+    });
+    let mut source = active_visual(first.into(), cx);
+    let mut target = VisualTestContext::from_window(second.into(), cx);
+    frames(&mut source, &dock);
+    frames(&mut target, &dock);
+    for _ in 0..8 {
+        if !cx.simulate_window_scheduled_frame(first.into())
+            && !cx.simulate_window_scheduled_frame(second.into())
+        {
+            break;
+        }
+    }
+    assert!(!cx.window_frame_scheduled(second.into()));
+    cx.set_platform_hovered_window(Some(first.into()));
+    let tab = source.debug_bounds("dockspace:tab:2").unwrap().center();
+    cx.set_window_frame_delivery_mode(first.into(), open_gpui::PlatformFrameDeliveryMode::Deferred);
+    source.simulate_click(tab, Modifiers::none());
+    assert!(source.simulate_frame(RequestFrameOptions {
+        require_presentation: true,
+        force_render: true,
+        ..Default::default()
+    }));
+    let pending = cx.pending_window_frame_submission(first.into()).unwrap();
+    assert!(dock.is_update_pending());
+    assert!(!dock.host.borrow().mounts[&second.window_id()].waiting_for_update);
+    cx.simulate_window_visibility_change(first.into(), open_gpui::WindowVisibility::Hidden);
+    assert_eq!(
+        pending.status(),
+        open_gpui::PlatformFrameSubmissionStatus::Cancelled
+    );
+    for _ in 0..8 {
+        cx.run_until_parked();
+        if !cx.simulate_window_scheduled_frame(second.into()) {
+            break;
+        }
+    }
+    assert!(dock.with_view(|view| view.item(ItemId::new(2)).unwrap().is_active()));
+    assert!(dock.host.borrow().inputs.is_empty());
+}
+
+#[open_gpui::test]
+fn each_window_can_open_its_tab_list_on_the_first_activation(cx: &mut TestAppContext) {
+    #[derive(Clone, Copy, Debug)]
+    enum Activation {
+        Accessibility,
+        Keyboard,
+        Pointer,
+    }
+
+    for activation in [
+        Activation::Accessibility,
+        Activation::Keyboard,
+        Activation::Pointer,
+    ] {
+        let sibling = SurfaceId::new(52);
+        let (dock, _) = overflowing_surfaces(&[SURFACE, sibling], cx);
+        let [first, second] = [SURFACE, sibling].map(|surface| {
+            cx.defer_next_window_frame_requests();
+            cx.open_window(size(px(620.0), px(400.0)), |_, _| {
+                SingleRegion(dock.clone(), surface)
+            })
+        });
+        let mut source = active_visual(first.into(), cx);
+        let mut target = VisualTestContext::from_window(second.into(), cx);
+        assert!(source.activate_accessibility());
+        assert!(target.activate_accessibility());
+        frames(&mut source, &dock);
+        frames(&mut target, &dock);
+        tab_list_accessible_action(
+            &source,
+            Role::Button,
+            "Show all tabs",
+            AccessibleAction::Click,
+        );
+        frames(&mut source, &dock);
+        assert!(offsets(&dock, SURFACE).1.is_some());
+        let mut target = active_visual(second.into(), cx);
+        frames(&mut target, &dock);
+        match activation {
+            Activation::Accessibility => tab_list_accessible_action(
+                &target,
+                Role::Button,
+                "Show all tabs",
+                AccessibleAction::Click,
+            ),
+            Activation::Keyboard => {
+                tab_list_accessible_action(
+                    &target,
+                    Role::Button,
+                    "Show all tabs",
+                    AccessibleAction::Focus,
+                );
+                target.simulate_keystrokes("space");
+            }
+            Activation::Pointer => {
+                let bounds = target
+                    .latest_accessibility_tree_update()
+                    .unwrap()
+                    .nodes
+                    .iter()
+                    .find_map(|(_, node)| {
+                        (node.role() == Role::Button && node.label() == Some("Show all tabs"))
+                            .then(|| node.bounds().unwrap())
+                    })
+                    .unwrap();
+                let scale = target.update(|window, _| window.scale_factor());
+                target.simulate_click(
+                    point(
+                        px((bounds.x0 + bounds.x1) as f32 / (2.0 * scale)),
+                        px((bounds.y0 + bounds.y1) as f32 / (2.0 * scale)),
+                    ),
+                    Modifiers::none(),
+                );
+                frames(&mut target, &dock);
+                assert!(offsets(&dock, sibling).1.is_some());
+            }
+        }
+        // The sibling packet can predate the first window's menu. Its own
+        // successful open still owns keys arriving before the first new frame.
+        target.simulate_keystrokes("end enter");
+        frames(&mut target, &dock);
+        assert!(
+            dock.with_view(|view| view.item(ItemId::new(80)).unwrap().is_active()),
+            "{activation:?} must open once and own the next keys"
+        );
+        assert_eq!(offsets(&dock, sibling).1, None);
+    }
+}
+
+#[open_gpui::test]
 fn tab_list_yields_keyboard_input_to_an_application_focus_claim_while_its_row_is_hidden(
     cx: &mut TestAppContext,
 ) {

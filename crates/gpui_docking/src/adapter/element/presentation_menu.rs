@@ -20,6 +20,7 @@ pub(super) struct MenuState {
     version: dockspace::model::WorkspaceVersion,
     keys: std::collections::VecDeque<MenuKey>,
     row: usize,
+    tab_list_dismissal: Option<DeferredSurfaceAction>,
 }
 
 impl MenuState {
@@ -34,17 +35,7 @@ pub(super) fn open(interaction: &InteractionState) -> Option<OpenMenu> {
     interaction.menu.borrow().as_ref().map(|input| input.open)
 }
 
-pub(super) fn cancel_pending_keys(interaction: &InteractionState) {
-    if let Some(input) = interaction.menu.borrow_mut().as_mut() {
-        input.keys.clear();
-    }
-}
-
-pub(super) fn retire_for_tab_list(
-    shared: &SharedHost,
-    interaction: &InteractionState,
-    window: &mut Window,
-) {
+pub(super) fn revoke(shared: &SharedHost, interaction: &InteractionState, window: &mut Window) {
     if let Some(open) = retire(interaction) {
         refresh_menu(shared, open.surface, window);
     }
@@ -93,6 +84,9 @@ fn begin(
     window: &mut Window,
     cx: &mut App,
 ) -> bool {
+    if !window.is_window_active() {
+        return false;
+    }
     let Some(run) = interaction.menu_sequence.get().checked_add(1) else {
         return false;
     };
@@ -115,6 +109,7 @@ fn begin(
         version: shared.borrow().session.version(),
         keys: [MenuKey::First].into(),
         row: 0,
+        tab_list_dismissal: tab_list.map(|(_, action)| action.clone()),
     });
     refresh_menu(shared, key.surface, window);
     true
@@ -150,6 +145,9 @@ fn submit(
     window: &mut Window,
     cx: &mut App,
 ) -> bool {
+    if !window.is_window_active() {
+        return false;
+    }
     let mut host = shared.borrow_mut();
     let current = interaction
         .menu
@@ -397,12 +395,19 @@ impl OpenMenu {
 
 /// Called only when the candidate is installed; a discarded prepaint cannot
 /// dismiss a menu belonging to the artifact still on screen.
-pub(super) fn accept(shared: &SharedHost, interaction: &InteractionState, window: &mut Window) {
+pub(super) fn accept(
+    shared: &SharedHost,
+    interaction: &InteractionState,
+    serial: u64,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let Some(open) = open(interaction) else {
         return;
     };
     let host = shared.borrow();
-    let mount = host.mounts.get(&window.window_handle().window_id());
+    let owner = window.window_handle().window_id();
+    let mount = host.mounts.get(&owner);
     let installed = mount
         .and_then(|mount| mount.regions.get(&open.surface))
         .and_then(|region| region.packet.as_ref())
@@ -416,22 +421,6 @@ pub(super) fn accept(shared: &SharedHost, interaction: &InteractionState, window
                 _ => None,
             })
         });
-    if mount.is_some_and(|mount| {
-        mount.regions.values().any(|region| {
-            region
-                .packet
-                .as_ref()
-                .is_some_and(|packet| packet.tab_list_dismiss.is_some())
-        })
-    }) {
-        // An earlier packet can install before the queued dismissal reaches
-        // core. Only a packet encoded for this run can settle the switch.
-        if installed.is_some_and(|menu| menu.open == Some(open)) {
-            drop(host);
-            retire_for_tab_list(shared, interaction, window);
-        }
-        return;
-    }
     match installed {
         Some(menu) => {
             let mut current = interaction.menu.borrow_mut();
@@ -450,10 +439,46 @@ pub(super) fn accept(shared: &SharedHost, interaction: &InteractionState, window
                 window.refresh();
             }
         }
+        None if !input::is_presented(&host, owner, open.surface, serial) => {
+            return;
+        }
         None => {
             retire(interaction);
             window.refresh();
+            return;
         }
+    }
+    // A core menu can present after the user has already opened this product
+    // menu. Honor the newer input owner and dismiss that exact late menu.
+    let dismissal = mount.and_then(|mount| {
+        mount.regions.iter().find_map(|(&surface, region)| {
+            let action = region.packet.as_ref()?.tab_list_dismiss.as_ref()?;
+            input::is_presented(&host, owner, surface, serial).then(|| action.clone())
+        })
+    });
+    if let Some(action) = dismissal
+        && host.ensure_application_admission().is_ok()
+        && interaction
+            .menu
+            .borrow_mut()
+            .as_mut()
+            .is_some_and(|current| {
+                if !current.is_current(shared, window)
+                    || current
+                        .tab_list_dismissal
+                        .as_ref()
+                        .is_some_and(|previous| previous.same_intent(&action))
+                {
+                    return false;
+                }
+                current.tab_list_dismissal = Some(action.clone());
+                true
+            })
+    {
+        drop(host);
+        input::queue_action(&mut shared.borrow_mut(), action, cx);
+        window.refresh();
+        host_native::schedule(shared, cx);
     }
 }
 
@@ -492,7 +517,7 @@ impl DockspaceElement {
         cx: &mut App,
     ) {
         let rect = to_gpui(menu.bounds, bounds);
-        let focus = self.control_focus(ControlFocusId::Control(menu.input_id), cx);
+        let focus = self.control_focus(ControlFocusId::Control(menu.input_id.clone()), cx);
         let admitted = allow_input
             && input::is_presented(
                 &self.host.borrow(),
