@@ -9,8 +9,8 @@ use dockspace::{
     },
 };
 use open_gpui::{
-    AcceptedFrameFence, App, Window, WindowFrameSubmissionOutcome, WindowFrameSubmissionTicket,
-    WindowId,
+    AcceptedFrameFence, App, PlatformFrameDeliveryMode, Window, WindowFrameSubmissionOutcome,
+    WindowFrameSubmissionTicket, WindowId, WindowInitialPresentationStatus, WindowVisibility,
 };
 
 use super::{
@@ -93,6 +93,46 @@ pub(super) fn abandon_unaccepted(host: &mut HostState, window: &mut Window, cx: 
         .is_some_and(|pending| pending.update.is_some())
     {
         withdraw_pending(host, window, cx);
+    }
+}
+
+pub(super) fn pauses_new_updates(window: &Window) -> bool {
+    !window.is_visible()
+        && window.frame_delivery_mode() == PlatformFrameDeliveryMode::Deferred
+        && window.presentation_facts().initial_presentation
+            == WindowInitialPresentationStatus::Completed
+}
+
+pub(super) fn visibility_changed(
+    shared: &SharedHost,
+    visibility: WindowVisibility,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let mut host = shared.borrow_mut();
+    let owner = window.window_handle().window_id();
+    let Some(mount) = host.mounts.get(&owner).filter(|mount| mount.attached) else {
+        return;
+    };
+    if visibility.is_visible() {
+        if mount.regions.values().any(|region| region.dirty) {
+            window.refresh();
+        }
+        return;
+    }
+    let Some(ticket) = mount
+        .pending
+        .as_ref()
+        .filter(|pending| pending.update.is_some())
+        .map(|pending| pending.ticket.clone())
+    else {
+        return;
+    };
+    if window.withdraw_unaccepted_frame_submission(&ticket, cx) {
+        withdraw_pending(&mut host, window, cx);
+        wake_waiting(&mut host, cx);
+        drop(host);
+        host_native::schedule(shared, cx);
     }
 }
 
@@ -355,6 +395,9 @@ fn retire_pending(
     if pending.update.take().is_some() {
         pending.inputs.append(&mut host.inputs);
         host.inputs = pending.inputs;
+        // An unaccepted update has never published any affine outputs.
+        debug_assert!(pending.outputs.is_empty());
+        return;
     }
     let terminal = PendingPresentation::Submission {
         owner,

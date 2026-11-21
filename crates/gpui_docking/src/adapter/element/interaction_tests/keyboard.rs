@@ -687,6 +687,119 @@ fn opening_tab_list_cancels_a_product_menu_confirmation_waiting_for_presentation
     }
 }
 
+fn deferred_menu_frame(visual: &mut VisualTestContext) {
+    assert!(visual.simulate_frame(RequestFrameOptions {
+        require_presentation: true,
+        force_render: true,
+        ..Default::default()
+    }));
+}
+
+fn submit_deferred_menu_frames(visual: &mut VisualTestContext, dock: &DockSurface) {
+    let owner = visual.update(|window, _| window.window_handle());
+    for _ in 0..10 {
+        if let Some(token) = visual.pending_window_frame_submission(owner) {
+            visual.update(|_, _| assert!(token.complete(PlatformWindowPresentOutcome::Submitted)));
+            visual.run_until_parked();
+        }
+        deferred_menu_frame(visual);
+        assert!(dock.error().is_none(), "{:?}", dock.error());
+    }
+}
+
+fn dispatch_physical_key(visual: &mut VisualTestContext, key: &'static str) -> bool {
+    visual.update(|window, cx| {
+        let keystroke = Keystroke::parse(key).unwrap();
+        let result = window.dispatch_event(
+            PlatformInput::KeyDown(KeyDownEvent {
+                keystroke: keystroke.clone(),
+                is_held: false,
+                prefer_character_input: false,
+            }),
+            cx,
+        );
+        window.dispatch_event(PlatformInput::KeyUp(KeyUpEvent { keystroke }), cx);
+        !result.propagate
+    })
+}
+
+#[open_gpui::test]
+fn opening_layout_menu_revokes_a_tab_list_confirmation_waiting_for_presentation(
+    cx: &mut TestAppContext,
+) {
+    for managed in [false, true] {
+        let (dock, _, mut visual) = overflowing_tab_list(cx, managed);
+        let owner = visual.update(|window, _| window.window_handle());
+        let layout = accessible_node(&visual, Role::Button, "Layout actions");
+        let third = accessible_node(&visual, Role::MenuItem, "Pane 63");
+        visual.set_window_frame_delivery_mode(owner, PlatformFrameDeliveryMode::Deferred);
+        dispatch_accessible(&visual, third, AccessibleAction::Focus);
+        assert!(dispatch_physical_key(&mut visual, "down"));
+        assert!(dispatch_physical_key(&mut visual, "enter"));
+        deferred_menu_frame(&mut visual);
+        assert!(visual.pending_window_frame_submission(owner).is_some());
+        assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
+
+        dispatch_accessible(&visual, layout, AccessibleAction::Click);
+        submit_deferred_menu_frames(&mut visual, &dock);
+        assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
+        assert_accessibility_focus(&visual, Role::Button, "Layout actions");
+        let tree = visual.latest_accessibility_tree_update().unwrap();
+        assert!(tree.nodes.iter().any(|(_, node)| {
+            node.label() == Some("Layout actions") && node.is_expanded() == Some(true)
+        }));
+        assert!(!tree.nodes.iter().any(|(_, node)| {
+            node.label() == Some("Show all tabs") && node.is_expanded() == Some(true)
+        }));
+        finish_tab_list_fixture(&dock, managed, cx);
+    }
+}
+
+#[open_gpui::test]
+fn tab_list_opener_retains_navigation_and_confirmation_until_first_presentation(
+    cx: &mut TestAppContext,
+) {
+    for managed in [false, true] {
+        let (dock, handles, mut visual) = overflowing_tab_list(cx, managed);
+        visual.simulate_keystrokes("escape");
+        frames(&mut visual, &dock);
+        assert_accessibility_focus(&visual, Role::Button, "Show all tabs");
+        let owner = visual.update(|window, _| window.window_handle());
+        visual.set_window_frame_delivery_mode(owner, PlatformFrameDeliveryMode::Deferred);
+        assert!(dispatch_physical_key(&mut visual, "down"));
+        deferred_menu_frame(&mut visual);
+        assert!(visual.pending_window_frame_submission(owner).is_some());
+        let accepted = ["end", "enter"].map(|key| dispatch_physical_key(&mut visual, key));
+        assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
+
+        submit_deferred_menu_frames(&mut visual, &dock);
+        assert_eq!(accepted, [true, true]);
+        assert!(dock.with_view(|view| view.item(LAST_MENU_ITEM).unwrap().is_active()));
+        assert_pane_focus_settles(&mut visual, handles.last().unwrap());
+        finish_tab_list_fixture(&dock, managed, cx);
+    }
+}
+
+#[open_gpui::test]
+fn first_tab_list_presentation_does_not_reacquire_application_focus(cx: &mut TestAppContext) {
+    let (dock, _, mut visual) = overflowing_tab_list(cx, false);
+    visual.simulate_keystrokes("escape");
+    frames(&mut visual, &dock);
+    assert_accessibility_focus(&visual, Role::Button, "Show all tabs");
+    let owner = visual.update(|window, _| window.window_handle());
+    visual.set_window_frame_delivery_mode(owner, PlatformFrameDeliveryMode::Deferred);
+    assert!(dispatch_physical_key(&mut visual, "down"));
+    deferred_menu_frame(&mut visual);
+    assert!(visual.pending_window_frame_submission(owner).is_some());
+    assert!(dispatch_physical_key(&mut visual, "end"));
+    assert!(dispatch_physical_key(&mut visual, "enter"));
+    visual.update(|window, cx| window.blur(cx));
+
+    submit_deferred_menu_frames(&mut visual, &dock);
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
+    assert!(visual.update(|window, cx| window.focused(cx).is_none()));
+}
+
 #[open_gpui::test]
 fn core_tab_list_down_down_enter_preserves_the_same_update_prefix(cx: &mut TestAppContext) {
     let (dock, handles, keys, mut visual, _) = core_tab_list_fixture(cx);

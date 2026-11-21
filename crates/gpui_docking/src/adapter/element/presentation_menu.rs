@@ -59,30 +59,23 @@ fn retire(interaction: &InteractionState) -> Option<OpenMenu> {
 fn dismiss_tab_list(
     shared: &SharedHost,
     interaction: &InteractionState,
-    window: &mut Window,
+    shown: Option<&(SurfaceId, DeferredSurfaceAction)>,
+    serial: u64,
+    window: &Window,
     cx: &mut App,
 ) -> bool {
-    let shown = {
-        let host = shared.borrow();
-        let owner = window.window_handle().window_id();
-        let Some(mount) = host.mounts.get(&owner) else {
+    if let Some((surface, action)) = shown {
+        let mut host = shared.borrow_mut();
+        if host.ensure_application_admission().is_err()
+            || !input::is_presented(&host, window.window_handle().window_id(), *surface, serial)
+        {
             return false;
-        };
-        mount.regions.iter().find_map(|(&surface, region)| {
-            let action = region.packet.as_ref()?.tab_list_dismiss.as_ref()?;
-            Some((
-                surface,
-                mount.serial,
-                input::is_presented(&host, owner, surface, mount.serial),
-                action.clone(),
-            ))
-        })
-    };
-    if let Some((surface, serial, presented, action)) = shown
-        && !(presented
-            && activate_action(shared, interaction, surface, serial, &action, window, cx))
-    {
-        return false;
+        }
+        // Keep the dismissal from the displayed cohort behind earlier input,
+        // even while a later candidate owns the workspace update.
+        input::queue_action(&mut host, action.clone(), cx);
+        drop(host);
+        host_native::schedule(shared, cx);
     }
     interaction.tab_list_focus.borrow_mut().take();
     interaction.keyboard.borrow_mut().take();
@@ -95,13 +88,15 @@ fn begin(
     mut key: OpenMenu,
     focus: &FocusHandle,
     claim: &Rc<Cell<Option<u64>>>,
+    tab_list: Option<&(SurfaceId, DeferredSurfaceAction)>,
+    serial: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> bool {
     let Some(run) = interaction.menu_sequence.get().checked_add(1) else {
         return false;
     };
-    if !dismiss_tab_list(shared, interaction, window, cx) {
+    if !dismiss_tab_list(shared, interaction, tab_list, serial, window, cx) {
         return false;
     }
     interaction.menu_sequence.set(run);
@@ -408,18 +403,6 @@ pub(super) fn accept(shared: &SharedHost, interaction: &InteractionState, window
     };
     let host = shared.borrow();
     let mount = host.mounts.get(&window.window_handle().window_id());
-    if mount.is_some_and(|mount| {
-        mount.regions.values().any(|region| {
-            region
-                .packet
-                .as_ref()
-                .is_some_and(|packet| packet.tab_list_dismiss.is_some())
-        })
-    }) {
-        drop(host);
-        retire_for_tab_list(shared, interaction, window);
-        return;
-    }
     let installed = mount
         .and_then(|mount| mount.regions.get(&open.surface))
         .and_then(|region| region.packet.as_ref())
@@ -433,6 +416,22 @@ pub(super) fn accept(shared: &SharedHost, interaction: &InteractionState, window
                 _ => None,
             })
         });
+    if mount.is_some_and(|mount| {
+        mount.regions.values().any(|region| {
+            region
+                .packet
+                .as_ref()
+                .is_some_and(|packet| packet.tab_list_dismiss.is_some())
+        })
+    }) {
+        // An earlier packet can install before the queued dismissal reaches
+        // core. Only a packet encoded for this run can settle the switch.
+        if installed.is_some_and(|menu| menu.open == Some(open)) {
+            drop(host);
+            retire_for_tab_list(shared, interaction, window);
+        }
+        return;
+    }
     match installed {
         Some(menu) => {
             let mut current = interaction.menu.borrow_mut();
@@ -487,12 +486,13 @@ impl DockspaceElement {
         serial: u64,
         bounds: Bounds<Pixels>,
         allow_input: bool,
+        tab_list: Option<&(SurfaceId, DeferredSurfaceAction)>,
         draws: &mut Vec<PreparedDraw>,
         window: &mut Window,
         cx: &mut App,
     ) {
         let rect = to_gpui(menu.bounds, bounds);
-        let focus = self.control_focus(ControlFocusId::Visual(menu.id), cx);
+        let focus = self.control_focus(ControlFocusId::Control(menu.input_id), cx);
         let admitted = allow_input
             && input::is_presented(
                 &self.host.borrow(),
@@ -529,6 +529,7 @@ impl DockspaceElement {
             let focus = focus.clone();
             let focus_claim = focus_claim.clone();
             let close_menu = close_menu.clone();
+            let tab_list = tab_list.cloned();
             move |window: &mut Window, cx: &mut App| {
                 if !enabled
                     || !input::is_presented(
@@ -544,7 +545,17 @@ impl DockspaceElement {
                     close_menu(window, cx);
                     true
                 } else {
-                    begin(&shared, &interaction, key, &focus, &focus_claim, window, cx)
+                    begin(
+                        &shared,
+                        &interaction,
+                        key,
+                        &focus,
+                        &focus_claim,
+                        tab_list.as_ref(),
+                        serial,
+                        window,
+                        cx,
+                    )
                 }
             }
         };

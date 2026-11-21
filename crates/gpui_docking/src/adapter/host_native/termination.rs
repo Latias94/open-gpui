@@ -182,7 +182,7 @@ pub(super) fn pump_failed(shared: &SharedHost, cx: &mut App) {
     let failure = native.failed_shutdown.as_ref().unwrap().failure.clone();
     if terminated {
         for mount in host.mounts.values_mut() {
-            mount._close_observers.take();
+            mount._lifecycle_observers.take();
         }
     }
     drop(host);

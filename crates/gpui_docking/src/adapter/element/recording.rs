@@ -18,7 +18,9 @@ use dockspace::{
 
 use super::{
     ControlFocusId, Draw, Packet, PacketState,
-    chrome::{Control, ControlAction, ControlKind, GuideState, Icon, PresentationMenu},
+    chrome::{
+        Control, ControlAction, ControlKind, GuideState, Icon, PresentationMenu, TabListOpener,
+    },
     presentation_menu::{OpenMenu, Scope},
     tab_label::CustomTabLabel,
 };
@@ -125,6 +127,7 @@ pub(super) fn record(
                                 }
                                 draws.push(Draw::PresentationMenu(Rc::new(PresentationMenu {
                                     id: bar.visual_id(),
+                                    input_id: bar.group_menu_input_id(),
                                     workspace: plan.workspace_stamp(),
                                     open: open_menu
                                         .filter(|open| open.matches(bar.visual_id(), plan)),
@@ -172,12 +175,12 @@ pub(super) fn record(
                             let body = plan.receiver_for_tab_body(tab);
                             let mut control = Control::new(
                                 tab.visual_id(),
+                                ControlFocusId::Control(tab.input_id()),
                                 tab.visible_bounds(),
                                 ControlKind::Tab(tab.key()),
                                 title,
                                 body,
                             );
-                            control.identity = ControlFocusId::TabChrome(tab.input_id());
                             control.selected = Some(tab.selected());
                             control.tab_strip = tab_strips.get(&tab.tab_bar_visual_id()).cloned();
                             control.action(
@@ -194,12 +197,12 @@ pub(super) fn record(
                             if let Some(close) = close {
                                 let mut control = Control::new(
                                     close.visual_id(),
+                                    ControlFocusId::Control(tab.close_input_id()),
                                     close.bounds(),
                                     ControlKind::Button,
                                     format!("Close {}", tab_label(tab.label(), panels)),
                                     Some(close),
                                 );
-                                control.identity = ControlFocusId::TabClose(tab.input_id());
                                 control.action(
                                     ControlAction::Activate,
                                     plan.prepare_tab_close(tab.key()),
@@ -214,6 +217,7 @@ pub(super) fn record(
                             draws.push(Draw::Fill(splitter.draw_bounds(), colors.splitter));
                             let mut control = Control::new(
                                 splitter.visual_id(),
+                                ControlFocusId::Control(splitter.input_id()),
                                 splitter.hit_bounds(),
                                 ControlKind::Splitter(splitter.axis()),
                                 "Resize panes".into(),
@@ -261,6 +265,7 @@ pub(super) fn record(
                         if !paint.is_source_gap() {
                             let mut control = Control::new(
                                 junction.visual_id(),
+                                ControlFocusId::Control(junction.input_id()),
                                 junction.hit_bounds(),
                                 ControlKind::Junction,
                                 "Resize pane junction".into(),
@@ -322,6 +327,7 @@ pub(super) fn record(
                                 if let Some(axis) = axis {
                                     let mut control = Control::new(
                                         descriptor.visual_id(),
+                                        ControlFocusId::Control(resize.input_id()),
                                         descriptor.bounds(),
                                         ControlKind::Splitter(axis),
                                         "Resize floating pane".into(),
@@ -366,6 +372,7 @@ pub(super) fn record(
                             if let Some(close) = close {
                                 let mut control = Control::new(
                                     close.visual_id(),
+                                    ControlFocusId::Control(contained.close_input_id()),
                                     close.bounds(),
                                     ControlKind::Button,
                                     "Close floating layout".into(),
@@ -398,12 +405,12 @@ pub(super) fn record(
                             draws.push(Draw::Icon(control.bounds(), icon, control.enabled()));
                             let mut semantic = Control::new(
                                 control.visual_id(),
+                                ControlFocusId::Control(control.input_id()),
                                 control.hit_bounds(),
                                 ControlKind::Button,
                                 title.into(),
                                 plan.receiver_for_tab_strip_control(control),
                             );
-                            semantic.identity = ControlFocusId::TabChrome(control.input_id());
                             if control.kind() == TabStripControlKind::TabListMenu {
                                 semantic.expanded = Some(control.menu_open());
                                 semantic.opens_menu = Some(control.tab_bar_visual_id());
@@ -416,7 +423,11 @@ pub(super) fn record(
                                 && let Some(action) = semantic.slot(ControlAction::Activate)
                                 && let Some(action) = action.borrow_mut().as_mut()
                             {
-                                action.tab_list_opener = Some((bar, control.input_id()));
+                                action.tab_list_opener = Some(TabListOpener {
+                                    bar,
+                                    input_id: control.input_id(),
+                                    opening: plan.retain_tab_list_opener(control),
+                                });
                             }
                             let semantic = Rc::new(semantic);
                             if let Some(bar) = semantic.opens_menu {
@@ -467,6 +478,7 @@ pub(super) fn record(
                             }
                             draws.push(Draw::PresentationMenu(Rc::new(PresentationMenu {
                                 id: anchor.visual_id(),
+                                input_id: anchor.input_id(),
                                 workspace: plan.workspace_stamp(),
                                 open: open_menu
                                     .filter(|open| open.matches(anchor.visual_id(), plan)),
@@ -538,7 +550,7 @@ pub(super) fn record(
                 Step::PopupBackdrop(backdrop) => {
                     tab_list_dismiss = plan
                         .prepare_tab_list_menu_dismiss(backdrop)
-                        .map(|action| Rc::new(RefCell::new(Some(action.into()))));
+                        .map(|action| action.into_deferred());
                     receiver(
                         &mut draws,
                         plan.receiver_for_tab_list_menu_backdrop(backdrop),
@@ -562,6 +574,7 @@ pub(super) fn record(
                         // while the focused row is outside the viewport.
                         let mut control = Control::new(
                             row.visual_id(),
+                            ControlFocusId::Control(menu.input_id()),
                             menu.viewport(),
                             ControlKind::MenuRow,
                             String::new(),
@@ -572,10 +585,7 @@ pub(super) fn record(
                             focused: true,
                             keys: keys.clone(),
                         });
-                        draws.push(Draw::TabListMenuFocus {
-                            menu: menu.input_id(),
-                            row: Rc::new(control),
-                        });
+                        draws.push(Draw::TabListMenuFocus(Rc::new(control)));
                     }
                     if let Some(receiver) = plan.receiver_for_tab_list_menu_scroll(menu) {
                         draws.push(Draw::Scroll(super::wheel::ScrollTarget::Menu(receiver)));
@@ -596,6 +606,7 @@ pub(super) fn record(
                         });
                         let mut control = Control::new(
                             row.visual_id(),
+                            ControlFocusId::MenuRow(row.input_id()),
                             clip,
                             ControlKind::MenuRow,
                             title,

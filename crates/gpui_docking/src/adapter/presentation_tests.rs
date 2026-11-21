@@ -3,8 +3,9 @@
 use super::*;
 use open_gpui::{
     AppContext as _, Context, IntoElement, PlatformFrameDeliveryMode,
-    PlatformWindowCreationCapabilities, PlatformWindowPresentOutcome, Render, RequestFrameOptions,
-    VisualTestContext, Window,
+    PlatformFrameSubmissionStatus, PlatformWindowCreationCapabilities,
+    PlatformWindowPresentOutcome, Render, RequestFrameOptions, VisualTestContext, Window,
+    WindowFrameSubmissionOutcome, WindowVisibility, px, size,
 };
 
 fn frames(visual: &mut VisualTestContext, dock: &DockSurface) {
@@ -16,6 +17,145 @@ fn frames(visual: &mut VisualTestContext, dock: &DockSurface) {
         }));
         assert!(dock.error().is_none(), "{:?}", dock.error());
     }
+}
+
+#[open_gpui::test]
+fn occluded_deferred_root_releases_its_update_for_a_visible_sibling(cx: &mut TestAppContext) {
+    let dock = cx.update(workspace);
+    let [first, second] = [FIRST, SECOND].map(|surface| {
+        cx.defer_next_window_frame_requests();
+        cx.update(|cx| {
+            dock.open_native_root(surface, surface == FIRST, WindowOptions::default(), cx)
+        })
+        .unwrap()
+    });
+    let mut source = VisualTestContext::from_window(first, cx);
+    let mut sibling = VisualTestContext::from_window(second, cx);
+    frames(&mut source, &dock);
+    frames(&mut sibling, &dock);
+
+    cx.set_window_frame_delivery_mode(first, PlatformFrameDeliveryMode::Deferred);
+    cx.simulate_window_resize(first, size(px(965.0), px(727.0)));
+    assert!(source.simulate_frame(RequestFrameOptions {
+        require_presentation: true,
+        force_render: true,
+        ..Default::default()
+    }));
+    let original = cx.pending_window_frame_submission(first).unwrap();
+    assert!(dock.is_update_pending());
+    frames(&mut sibling, &dock);
+    assert!(dock.host.borrow().mounts[&second.window_id()].waiting_for_update);
+
+    cx.simulate_window_visibility_change(first, WindowVisibility::Hidden);
+    assert!(source.update(|window, _| window.presentation_facts().native_visible));
+    assert_eq!(original.status(), PlatformFrameSubmissionStatus::Cancelled);
+    assert!(!original.complete(PlatformWindowPresentOutcome::Submitted));
+    assert!(!dock.is_update_pending());
+    assert!(!dock.host.borrow().mounts[&second.window_id()].waiting_for_update);
+
+    // An explicit draw requested while occluded must not reacquire the lease.
+    source.update(|window, cx| {
+        window.refresh();
+        let _ = window.draw(cx);
+    });
+    assert!(!dock.is_update_pending());
+    frames(&mut sibling, &dock);
+    let host = dock.host.borrow();
+    let region = &host.mounts[&second.window_id()].regions[&SECOND];
+    let (serial, _) = region.presented.unwrap();
+    assert!(crate::adapter::input::is_presented(
+        &host,
+        second.window_id(),
+        SECOND,
+        serial
+    ));
+    drop(host);
+    let item = ItemId::new(SECOND.get());
+    for visible in [false, true] {
+        sibling
+            .update(|_, cx| {
+                dock.update(
+                    |frame| {
+                        frame.set_item_visibility_current(item, visible)?;
+                        Ok(())
+                    },
+                    cx,
+                )
+            })
+            .unwrap();
+        assert_eq!(
+            dock.with_view(|view| view.item(item).unwrap().is_visible()),
+            visible
+        );
+    }
+
+    cx.simulate_window_visibility_change(first, WindowVisibility::Visible);
+    cx.set_window_frame_delivery_mode(first, PlatformFrameDeliveryMode::Synchronous);
+    frames(&mut source, &dock);
+    assert!(!dock.is_update_pending());
+    let host = dock.host.borrow();
+    let (serial, _) = host.mounts[&first.window_id()].regions[&FIRST]
+        .presented
+        .unwrap();
+    assert!(crate::adapter::input::is_presented(
+        &host,
+        first.window_id(),
+        FIRST,
+        serial
+    ));
+    drop(host);
+    cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();
+    finish(cx, &dock);
+    assert!(dock.native_is_quiescent());
+}
+
+#[open_gpui::test]
+fn visibility_does_not_withdraw_a_renderer_terminal_awaiting_dispatch(cx: &mut TestAppContext) {
+    cx.defer_next_window_frame_requests();
+    let dock = cx.update(workspace);
+    let first = cx
+        .update(|cx| dock.open_native_root(FIRST, true, WindowOptions::default(), cx))
+        .unwrap();
+    let mut visual = VisualTestContext::from_window(first, cx);
+    frames(&mut visual, &dock);
+    cx.set_window_frame_delivery_mode(first, PlatformFrameDeliveryMode::Deferred);
+    cx.simulate_window_resize(first, size(px(965.0), px(727.0)));
+    assert!(visual.simulate_frame(RequestFrameOptions {
+        require_presentation: true,
+        force_render: true,
+        ..Default::default()
+    }));
+    let original = cx.pending_window_frame_submission(first).unwrap();
+    let ticket = dock.host.borrow().mounts[&first.window_id()]
+        .pending
+        .as_ref()
+        .unwrap()
+        .ticket
+        .clone();
+    visual.update(|window, cx| {
+        assert!(original.complete(PlatformWindowPresentOutcome::Submitted));
+        assert_eq!(
+            ticket.snapshot().outcome(),
+            WindowFrameSubmissionOutcome::Pending
+        );
+        crate::adapter::presentation::visibility_changed(
+            &dock.host,
+            WindowVisibility::Hidden,
+            window,
+            cx,
+        );
+        assert!(dock.is_update_pending());
+    });
+    visual.run_until_parked();
+    assert_eq!(
+        ticket.snapshot().outcome(),
+        WindowFrameSubmissionOutcome::Submitted
+    );
+    cx.simulate_window_visibility_change(first, WindowVisibility::Hidden);
+    assert!(!dock.is_update_pending());
+    cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();
+    finish(cx, &dock);
+    assert!(dock.native_is_quiescent());
 }
 
 #[open_gpui::test]
@@ -296,6 +436,19 @@ fn a_managed_submission_keeps_its_native_fifo_boundary(cx: &mut TestAppContext) 
         (ticket, recorded, transport, native.bridge.take().unwrap())
     };
     source.update(|_, cx| transport.device_removed(cx));
+    cx.simulate_window_visibility_change(windows[0], WindowVisibility::Hidden);
+    {
+        let host = dock.host.borrow();
+        let pending = host.mounts[&windows[0].window_id()]
+            .pending
+            .as_ref()
+            .expect("hiding a window preserves an accepted submission");
+        assert!(pending.ticket.same_authority(&ticket));
+        assert_eq!(
+            ticket.snapshot().outcome(),
+            WindowFrameSubmissionOutcome::Accepted
+        );
+    }
     source.set_window_present_outcome(windows[0], PlatformWindowPresentOutcome::Submitted);
     assert!(source.simulate_frame(RequestFrameOptions {
         require_presentation: true,

@@ -11,7 +11,8 @@ use super::{
 use crate::{
     App, AtlasTextureLeaseEpoch, EntityId, FocusId, Pixels, PlatformFrameSubmission,
     PlatformFrameSubmissionStatus, PlatformWindowPhysicalGeometry, PlatformWindowPresentOutcome,
-    Size, Subscription, WindowPresentAttemptFacts,
+    Size, Subscription, WindowFrameSubmissionOutcome, WindowFrameSubmissionTicket,
+    WindowPresentAttemptFacts,
 };
 use open_gpui_collections::FxHashSet;
 use std::{mem, rc::Rc, sync::atomic::Ordering::SeqCst};
@@ -483,6 +484,40 @@ impl Window {
         };
         self.discard_deferred_candidate(candidate, cx);
         true
+    }
+
+    /// Withdraws the original exact submission before its candidate is accepted.
+    /// Accepted frames retain their renderer terminal and output obligations.
+    #[doc(hidden)]
+    pub fn withdraw_unaccepted_frame_submission(
+        &mut self,
+        ticket: &WindowFrameSubmissionTicket,
+        cx: &mut App,
+    ) -> bool {
+        let snapshot = ticket.snapshot();
+        if snapshot.outcome() != WindowFrameSubmissionOutcome::Pending
+            || !self
+                .presentation_state
+                .frame_submission_ticket
+                .as_ref()
+                .is_some_and(|current| current.same_authority(ticket))
+        {
+            return false;
+        }
+        if let Some(candidate) = self.deferred_candidate.as_ref().filter(|candidate| {
+            candidate.submission.frame_generation() >= snapshot.minimum_frame_generation()
+        }) {
+            // The renderer can settle its token before the Window consumes the
+            // completion and advances the exact-frame ticket.
+            if candidate.submission.status() != PlatformFrameSubmissionStatus::Cancelled
+                && !candidate.submission.cancel()
+            {
+                return false;
+            }
+            let candidate = self.deferred_candidate.take().expect("matching candidate");
+            self.discard_deferred_candidate(candidate, cx);
+        }
+        self.retire_exact_frame_submission(ticket)
     }
 
     fn discard_deferred_candidate(&mut self, mut candidate: DeferredCandidateFrame, cx: &mut App) {

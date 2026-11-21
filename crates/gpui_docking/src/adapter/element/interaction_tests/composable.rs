@@ -2,7 +2,7 @@
 
 use std::num::NonZeroUsize;
 
-use dockspace::model::DockspaceGridShape;
+use dockspace::model::{DockAnchor, DockPlacement, DockspaceGridShape};
 use open_gpui::Entity;
 
 use super::*;
@@ -192,6 +192,71 @@ fn layout_header_close_requests_every_real_descendant_atomically(cx: &mut TestAp
             assert!(view.item(item).is_some());
         }
     });
+}
+
+#[open_gpui::test]
+fn layout_header_close_accessibility_expires_when_a_pane_joins(cx: &mut TestAppContext) {
+    cx.defer_next_window_frame_requests();
+    let (dock, _) = composed_fixture(
+        cx,
+        DockspaceNode::composed_tabs([
+            DockspaceNode::tabs([FIRST, SECOND]).named("Tools"),
+            DockspaceNode::pane(THIRD),
+        ]),
+    );
+    let window = cx.open_window(size(px(800.0), px(600.0)), |_, _| Root {
+        dock: dock.clone(),
+    });
+    let mut visual = active_visual(window.into(), cx);
+    assert!(visual.activate_accessibility());
+    frames(&mut visual, &dock);
+    let close_button = |visual: &VisualTestContext| {
+        visual
+            .latest_accessibility_tree_update()
+            .unwrap()
+            .nodes
+            .into_iter()
+            .find(|(_, node)| node.role() == Role::Button && node.label() == Some("Close Tools"))
+            .unwrap()
+            .0
+    };
+    let old = close_button(&visual);
+    visual.update(|_, cx| {
+        dock.update(
+            |frame| {
+                frame.open_item_current(FOURTH, DockPlacement::Center(DockAnchor::Item(FIRST)))?;
+                Ok(())
+            },
+            cx,
+        )
+        .unwrap();
+    });
+    frames(&mut visual, &dock);
+    let current = close_button(&visual);
+    assert_ne!(old, current);
+    for target in [old, current] {
+        visual.dispatch_accessibility_action(accesskit::ActionRequest {
+            action: AccessibleAction::Click,
+            target_tree: accesskit::TreeId::ROOT,
+            target_node: target,
+            data: None,
+        });
+        frames(&mut visual, &dock);
+        let plans = dock.pending_content_close_plans().unwrap();
+        if target == old {
+            assert!(plans.is_empty());
+        } else {
+            assert_eq!(plans.len(), 1);
+            assert_eq!(
+                plans[0]
+                    .items()
+                    .iter()
+                    .map(|item| item.item())
+                    .collect::<Vec<_>>(),
+                [FIRST, SECOND, FOURTH],
+            );
+        }
+    }
 }
 
 #[open_gpui::test]

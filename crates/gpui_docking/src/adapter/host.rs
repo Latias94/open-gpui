@@ -699,7 +699,7 @@ pub(super) struct HostState {
 
 pub(super) struct WindowMount {
     pub(super) window: AnyWindowHandle,
-    pub(super) _close_observers: Option<Subscription>,
+    pub(super) _lifecycle_observers: Option<Subscription>,
     pub(super) element: Option<GlobalElementId>,
     pub(super) regions: BTreeMap<SurfaceId, RegionState>,
     pub(super) pending: Option<presentation::PendingSubmission>,
@@ -883,7 +883,7 @@ impl HostState {
             owner,
             WindowMount {
                 window: handle,
-                _close_observers: None,
+                _lifecycle_observers: None,
                 element: id.cloned(),
                 regions,
                 pending: None,

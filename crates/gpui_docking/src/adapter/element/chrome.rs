@@ -9,9 +9,9 @@ use dockspace::{
     geometry::LogicalRect,
     model::{DockspaceAxis, TabKey},
     runtime::{
-        DeferredSurfaceAction, DockspaceDropDirection, DockspaceReceiverDescriptor,
-        DockspaceVisualId, DockspaceWorkspaceStamp, PreparedSurfaceAction, RetainedTabStrip,
-        TabChromeInputId,
+        DeferredSurfaceAction, DockspaceControlId, DockspaceDropDirection,
+        DockspaceReceiverDescriptor, DockspaceVisualId, DockspaceWorkspaceStamp,
+        PreparedSurfaceAction, RetainedTabStrip,
     },
 };
 use open_gpui::{
@@ -69,7 +69,14 @@ pub(super) enum ControlAction {
 pub(super) struct Action {
     pub(super) intent: DeferredSurfaceAction,
     pub(super) yields_content: bool,
-    pub(super) tab_list_opener: Option<(DockspaceVisualId, TabChromeInputId)>,
+    pub(super) tab_list_opener: Option<TabListOpener>,
+}
+
+#[derive(Clone)]
+pub(super) struct TabListOpener {
+    pub(super) bar: DockspaceVisualId,
+    pub(super) input_id: DockspaceControlId,
+    pub(super) opening: Option<dockspace::runtime::RetainedTabListOpener>,
 }
 
 impl Action {
@@ -100,7 +107,7 @@ impl From<DeferredSurfaceAction> for Action {
 
 pub(super) struct Control {
     pub(super) id: DockspaceVisualId,
-    pub(super) identity: ControlFocusId,
+    identity: ControlFocusId,
     pub(super) bounds: LogicalRect,
     pub(super) kind: ControlKind,
     pub(super) label: String,
@@ -117,6 +124,7 @@ pub(super) struct Control {
 impl Control {
     pub(super) fn new(
         id: DockspaceVisualId,
+        identity: ControlFocusId,
         bounds: LogicalRect,
         kind: ControlKind,
         label: String,
@@ -124,7 +132,7 @@ impl Control {
     ) -> Self {
         Self {
             id,
-            identity: ControlFocusId::Visual(id),
+            identity,
             bounds: receiver.map_or(bounds, |receiver| receiver.bounds()),
             kind,
             label,
@@ -140,10 +148,7 @@ impl Control {
     }
 
     pub(super) fn focus_id(&self) -> ControlFocusId {
-        match &self.menu_row {
-            Some(row) => ControlFocusId::MenuRow(row.id),
-            None => self.identity,
-        }
+        self.identity
     }
 
     pub(super) fn action(&mut self, key: ControlAction, action: Option<PreparedSurfaceAction>) {
@@ -188,12 +193,11 @@ impl Control {
         match (self.kind, key) {
             (_, "enter" | "space") => Some(Activate),
             (ControlKind::Button, "down" | "up") if self.opens_menu.is_some() => Some(Activate),
-            (ControlKind::Tab(_), "left") | (ControlKind::MenuRow, "up") => Some(Previous),
-            (ControlKind::Tab(_), "right") | (ControlKind::MenuRow, "down") => Some(Next),
-            (ControlKind::Tab(_) | ControlKind::MenuRow, "home") => Some(First),
-            (ControlKind::Tab(_) | ControlKind::MenuRow, "end") => Some(Last),
+            (ControlKind::Tab(_), "left") => Some(Previous),
+            (ControlKind::Tab(_), "right") => Some(Next),
+            (ControlKind::Tab(_), "home") => Some(First),
+            (ControlKind::Tab(_), "end") => Some(Last),
             (ControlKind::Tab(_), "delete" | "backspace") => Some(Close),
-            (ControlKind::MenuRow, "escape") => Some(Dismiss),
             (ControlKind::Splitter(DockspaceAxis::Horizontal) | ControlKind::Junction, "left")
             | (ControlKind::Splitter(DockspaceAxis::Vertical), "up") => Some(Decrement),
             (ControlKind::Splitter(DockspaceAxis::Horizontal) | ControlKind::Junction, "right")
@@ -209,6 +213,7 @@ impl Control {
 
 pub(super) struct PresentationMenu {
     pub(super) id: DockspaceVisualId,
+    pub(super) input_id: DockspaceControlId,
     pub(super) workspace: DockspaceWorkspaceStamp,
     pub(super) open: Option<super::presentation_menu::OpenMenu>,
     pub(super) scope: super::presentation_menu::Scope,

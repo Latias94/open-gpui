@@ -13,6 +13,9 @@ use open_gpui::Keystroke;
 
 use super::*;
 
+mod menu_opening;
+pub(super) use menu_opening::{MenuOpening, restore as restore_menu_opening};
+
 fn tab_input(key: ControlAction) -> Option<SurfaceTabInput> {
     let navigation = match key {
         ControlAction::Activate => return Some(SurfaceTabInput::Activate),
@@ -23,6 +26,25 @@ fn tab_input(key: ControlAction) -> Option<SurfaceTabInput> {
         _ => return None,
     };
     Some(SurfaceTabInput::Navigate(navigation))
+}
+
+fn menu_key(keystroke: &Keystroke) -> Option<ControlAction> {
+    if keystroke.modifiers != open_gpui::Modifiers::none() {
+        return None;
+    }
+    Some(match keystroke.key.as_str() {
+        "up" => ControlAction::Previous,
+        "down" => ControlAction::Next,
+        "home" => ControlAction::First,
+        "end" => ControlAction::Last,
+        "enter" | "space" => ControlAction::Activate,
+        "escape" => ControlAction::Dismiss,
+        _ => return None,
+    })
+}
+
+fn ends_menu(key: ControlAction) -> bool {
+    matches!(key, ControlAction::Activate | ControlAction::Dismiss)
 }
 
 fn resolve_tab_inputs(
@@ -161,6 +183,7 @@ pub(super) fn remember_menu_opener(
         row: None,
         opener: opener.clone(),
         claim_revision: window.focus_claim_revision(),
+        opening: None,
     });
 }
 
@@ -213,6 +236,7 @@ pub(super) fn focus_menu_row(
             row: Some(row.id),
             opener,
             claim_revision,
+            opening: None,
         });
     }
 }
@@ -635,10 +659,7 @@ fn handle_menu(
     window: &mut Window,
     cx: &mut App,
 ) -> bool {
-    if keystroke.modifiers != open_gpui::Modifiers::none() {
-        return false;
-    }
-    let Some(key) = control.key_action(&keystroke.key) else {
+    let Some(key) = menu_key(keystroke) else {
         return false;
     };
     let (previous, keys, start) = {
@@ -706,7 +727,7 @@ fn handle_menu(
     let Some((target, slot)) = keys.step(start, key) else {
         return false;
     };
-    let end = matches!(key, ControlAction::Activate | ControlAction::Dismiss).then_some(key);
+    let end = ends_menu(key).then_some(key);
     if end.is_some() && !submitted {
         if !activate_action_with_continuation(
             shared,
@@ -984,6 +1005,9 @@ fn flush(shared: &SharedHost, interaction: &InteractionState, window: &mut Windo
             if opener.inputs.is_empty() {
                 interaction.keyboard.borrow_mut().take();
             } else {
+                if let Some(focus) = interaction.tab_list_focus.borrow_mut().as_mut() {
+                    focus.opening = None;
+                }
                 let mut current = current;
                 current.opener = Some(opener);
                 current.phase = PrefixPhase::Committed;
@@ -1018,6 +1042,9 @@ pub(super) fn install(
             && let Some(interaction) = weak_interaction.upgrade()
         {
             super::presentation_menu::cancel_pending_keys(&interaction);
+            if let Some(focus) = interaction.tab_list_focus.borrow_mut().as_mut() {
+                focus.opening = None;
+            }
             let mut retained = interaction.keyboard.borrow_mut();
             if let Some(current) = retained
                 .as_mut()
@@ -1041,6 +1068,7 @@ pub(super) fn install(
             return;
         };
         if super::presentation_menu::intercept(&shared, &interaction, &event.keystroke, window, cx)
+            || menu_opening::retain_key(&shared, &interaction, &event.keystroke, window, cx)
         {
             cx.stop_propagation();
             return;
@@ -1369,6 +1397,7 @@ fn restore_opener(
         row: Some(row),
         opener: focus.clone(),
         claim_revision: window.focus_claim_revision(),
+        opening: None,
     });
     current.control = control.clone();
     current.serial = serial;
@@ -1448,6 +1477,7 @@ fn restore_menu(
                 row: Some(row.id),
                 opener,
                 claim_revision: current.claim_revision,
+                opening: None,
             });
         }
     }

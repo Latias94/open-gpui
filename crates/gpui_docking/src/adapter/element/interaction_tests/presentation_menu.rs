@@ -204,7 +204,7 @@ fn pointer_accessibility_and_keyboard_float_only_the_captured_tab_group(cx: &mut
         assert!(menu.choices.is_empty());
         if input == "keyboard" {
             let focus = probe.interaction.borrow().as_ref().unwrap().focus.borrow()
-                [&ControlFocusId::Visual(menu.id)]
+                [&ControlFocusId::Control(menu.input_id)]
                 .clone();
             visual.update(|window, cx| window.focus(&focus, cx));
             visual.simulate_keystrokes("down");
@@ -524,6 +524,52 @@ fn selection_and_topology_changes_invalidate_old_menu_targets_before_another_gro
                 expected
             );
         });
+    }
+}
+
+#[open_gpui::test]
+fn product_menu_openers_cannot_open_a_replacement_workspace(cx: &mut TestAppContext) {
+    let (dock, mut visual, _) = split_groups(cx);
+    let labels = ["Layout actions", "Tab group actions"];
+    let old = labels.map(|label| semantic_target(&visual, Role::Button, label));
+    let reset = dock
+        .host
+        .borrow()
+        .session
+        .prepare_layout_reset(dock.with_view(|view| view.to_layout()))
+        .unwrap();
+    visual.update(|_, cx| {
+        dock.update(
+            |frame| {
+                frame.submit_layout_reset(&reset)?;
+                Ok(())
+            },
+            cx,
+        )
+        .unwrap();
+    });
+    frames(&mut visual, &dock);
+
+    for (label, before) in labels.into_iter().zip(old) {
+        let after = semantic_target(&visual, Role::Button, label);
+        assert_ne!(before, after);
+        accessibility_action(&visual, before, AccessibleAction::Click);
+        frames(&mut visual, &dock);
+        assert!(!menu_is_open(&visual, label));
+        assert!(accessibility_action(
+            &visual,
+            after,
+            AccessibleAction::Click
+        ));
+        frames(&mut visual, &dock);
+        assert!(menu_is_open(&visual, label));
+        assert!(accessibility_action(
+            &visual,
+            after,
+            AccessibleAction::Click
+        ));
+        frames(&mut visual, &dock);
+        assert!(!menu_is_open(&visual, label));
     }
 }
 

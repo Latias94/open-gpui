@@ -11,12 +11,13 @@ use dockspace::{
     geometry::{LogicalRect, LogicalSize},
     model::{ItemId, SurfaceId, TabKey},
     runtime::{
-        DockspacePaneFocusObservation, DockspacePaneFocusRequest, DockspaceReceiverDescriptor,
-        DockspaceUpdate, DockspaceVisualId, HostFrameReport, PaneContentGeometry,
-        SurfaceMeasurementAnswer as Answer, SurfaceMeasurementRequest as Request,
-        SurfacePointerButton, SurfacePointerCancelReason, SurfacePointerEvent, SurfaceWork,
-        SurfaceWorkDeferred, TabChromeInputId, TabListMenuMetrics, TabListMenuRowId,
-        TabStripControlMetric, TabStripControlMetrics, TabStripControlPlacement, TabStripMetrics,
+        DeferredSurfaceAction, DockspaceControlId, DockspacePaneFocusObservation,
+        DockspacePaneFocusRequest, DockspaceReceiverDescriptor, DockspaceUpdate, DockspaceVisualId,
+        HostFrameReport, PaneContentGeometry, SurfaceMeasurementAnswer as Answer,
+        SurfaceMeasurementRequest as Request, SurfacePointerButton, SurfacePointerCancelReason,
+        SurfacePointerEvent, SurfaceWork, SurfaceWorkDeferred, TabListMenuMetrics,
+        TabListMenuRowId, TabStripControlMetric, TabStripControlMetrics, TabStripControlPlacement,
+        TabStripMetrics,
     },
 };
 use open_gpui::{
@@ -56,7 +57,7 @@ pub(super) struct Packet {
     pane_receivers: BTreeMap<ItemId, DockspaceReceiverDescriptor>,
     state: PacketState,
     pub(super) native_preview: Option<host_native::provisional::Preview>,
-    tab_list_dismiss: Option<chrome::ActionSlot>,
+    tab_list_dismiss: Option<DeferredSurfaceAction>,
 }
 
 enum PacketState {
@@ -136,10 +137,7 @@ enum Draw {
     Control(Rc<Control>),
     PresentationMenu(Rc<PresentationMenu>),
     TabList(LogicalRect, DockspaceVisualId),
-    TabListMenuFocus {
-        menu: TabChromeInputId,
-        row: Rc<Control>,
-    },
+    TabListMenuFocus(Rc<Control>),
     Scroll(wheel::ScrollTarget),
 }
 
@@ -175,8 +173,7 @@ struct InteractionState {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum ControlFocusId {
     Visual(DockspaceVisualId),
-    TabChrome(TabChromeInputId),
-    TabClose(TabChromeInputId),
+    Control(DockspaceControlId),
     MenuRow(TabListMenuRowId),
 }
 
@@ -216,6 +213,7 @@ struct TabListFocus {
     row: Option<TabListMenuRowId>,
     opener: FocusHandle,
     claim_revision: u64,
+    opening: Option<keyboard::MenuOpening>,
 }
 
 pub(crate) struct DockspaceElement {
@@ -316,6 +314,7 @@ impl Element for DockspaceElement {
             Ok(true) => {
                 let weak = Rc::downgrade(&self.host);
                 let terminal_host = weak.clone();
+                let visibility_host = weak.clone();
                 let owner = window.window_handle().window_id();
                 let closed = cx.on_window_closed(move |cx, closed| {
                     if closed == owner {
@@ -333,14 +332,22 @@ impl Element for DockspaceElement {
                         }
                     }
                 });
-                // Both application-wide subscriptions leave with their mount,
-                // including removal from inside either terminal callback.
+                let visibility = window.observe_window_visibility(move |visibility, window, cx| {
+                    if let Some(host) = visibility_host.upgrade() {
+                        presentation::visibility_changed(&host, visibility, window, cx);
+                    }
+                });
+                // Observations leave with their mount, including removal from
+                // inside either terminal callback.
                 self.host
                     .borrow_mut()
                     .mounts
                     .get_mut(&owner)
                     .unwrap()
-                    ._close_observers = Some(open_gpui::Subscription::join(closed, terminal));
+                    ._lifecycle_observers = Some(open_gpui::Subscription::join(
+                    visibility,
+                    open_gpui::Subscription::join(closed, terminal),
+                ));
             }
             Ok(false) => {}
             Err(error) => {
@@ -503,17 +510,17 @@ impl DockspaceElement {
             let mut host = self.host.borrow_mut();
             let mount = &host.mounts[&owner];
             let publication = mount.publication;
+            let paused = presentation::pauses_new_updates(window);
             if let Some(pending) = &mount.pending {
                 (pending.packets.clone(), pending.serial, publication, false)
-            } else if host.has_unaccepted_update() {
+            } else if paused || host.has_unaccepted_update() {
                 let mount = host.mounts.get_mut(&owner).expect("physical mount");
-                mount.waiting_for_update = true;
+                mount.waiting_for_update = !paused;
                 for region in mount.regions.values_mut() {
                     region.dirty = true;
                 }
-                // Another original Window still owns the affine candidate.
-                // Retain visual content without admitting new docking input.
-                // Its acceptance or withdrawal wakes this mount exactly once.
+                // Keep the last packet while hidden or waiting for another
+                // window's update to finish. Both paths wake this mount on progress.
                 (
                     mount
                         .regions
@@ -683,6 +690,12 @@ impl DockspaceElement {
         if schedule_host_work {
             host_native::schedule(&self.host, cx);
         }
+        let tab_list = packets.iter().find_map(|(surface, packet)| {
+            packet
+                .tab_list_dismiss
+                .as_ref()
+                .map(|action| (*surface, action.clone()))
+        });
         let mut regions = Vec::new();
         for (surface, packet) in &packets {
             let bounds = region_bounds[surface];
@@ -695,6 +708,7 @@ impl DockspaceElement {
                 background,
                 capture,
                 !waiting_for_update,
+                tab_list.as_ref(),
                 window,
                 cx,
             ));
@@ -753,10 +767,11 @@ impl DockspaceElement {
             .values()
             .flat_map(|packet| packet.draws.iter())
             .filter_map(|draw| match draw {
-                Draw::Control(control) => Some(control.focus_id()),
+                Draw::Control(control) | Draw::TabListMenuFocus(control) => {
+                    Some(control.focus_id())
+                }
                 Draw::TabList(_, id) => Some(ControlFocusId::Visual(*id)),
-                Draw::TabListMenuFocus { menu, .. } => Some(ControlFocusId::TabChrome(*menu)),
-                Draw::PresentationMenu(menu) => Some(ControlFocusId::Visual(menu.id)),
+                Draw::PresentationMenu(menu) => Some(ControlFocusId::Control(menu.input_id)),
                 _ => None,
             })
             .collect();
@@ -822,6 +837,7 @@ impl DockspaceElement {
         background: HitboxId,
         capture: PointerCaptureHandle,
         allow_input: bool,
+        tab_list: Option<&(SurfaceId, DeferredSurfaceAction)>,
         window: &mut Window,
         cx: &mut App,
     ) -> PreparedRegion {
@@ -1014,12 +1030,12 @@ impl DockspaceElement {
                     let clip = window.prepare_subtree_clip(&SubtreeClip::own_border_box(), rect);
                     draws.push(PreparedDraw::ClippedElement(element, clip));
                 }
-                Draw::TabListMenuFocus { menu, row } => {
+                Draw::TabListMenuFocus(row) => {
                     if !admitted {
                         continue;
                     }
                     let rect = to_gpui(row.bounds, bounds);
-                    let focus = self.control_focus(ControlFocusId::TabChrome(*menu), cx);
+                    let focus = self.control_focus(row.focus_id(), cx);
                     let shared = self.host.clone();
                     let interaction = self.interaction.clone();
                     let keyboard_row = row.clone();
@@ -1264,6 +1280,7 @@ impl DockspaceElement {
                 serial,
                 bounds,
                 allow_input,
+                tab_list,
                 &mut draws,
                 window,
                 cx,
@@ -2023,7 +2040,7 @@ fn activate_action_with_continuation(
         {
             input::queue_action(&mut host, action.intent, cx);
             drop(host);
-            focus_tab_list_opener(shared, interaction, surface, opener, window, cx);
+            focus_tab_list_opener(shared, interaction, surface, serial, opener, window, cx);
             window.refresh();
             host_native::schedule(shared, cx);
             return true;
@@ -2099,7 +2116,7 @@ fn activate_action_with_continuation(
         .filter(|_| !yields_content)
         .filter(|(_, key)| keyboard::tab_is_selected(host.session.view(), surface, *key))
         .map(|(input_id, _)| {
-            let target = ControlFocusId::TabChrome(input_id);
+            let target = ControlFocusId::Control(input_id);
             (
                 target,
                 interaction
@@ -2134,7 +2151,7 @@ fn activate_action_with_continuation(
             claim_revision: window.focus_claim_revision(),
         });
     } else if let Some(opener) = action.tab_list_opener {
-        focus_tab_list_opener(shared, interaction, surface, opener, window, cx);
+        focus_tab_list_opener(shared, interaction, surface, serial, opener, window, cx);
     }
     window.refresh();
     cx.refresh_windows();
@@ -2146,7 +2163,8 @@ fn focus_tab_list_opener(
     shared: &SharedHost,
     interaction: &InteractionState,
     surface: SurfaceId,
-    (bar, opener): (DockspaceVisualId, TabChromeInputId),
+    serial: u64,
+    opener: chrome::TabListOpener,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -2154,13 +2172,23 @@ fn focus_tab_list_opener(
     let focus = interaction
         .focus
         .borrow()
-        .get(&ControlFocusId::TabChrome(opener))
+        .get(&ControlFocusId::Control(opener.input_id))
         .cloned();
     if let Some(focus) = focus.filter(|focus| window.is_focus_handle_rendered(focus)) {
         if !focus.is_focused(window) {
             window.focus(&focus, cx);
         }
-        keyboard::remember_menu_opener(interaction, surface, bar, &focus, window);
+        let opening = opener.opening.map(|proof| {
+            keyboard::MenuOpening::new(proof, shared.borrow().session.version(), serial)
+        });
+        *interaction.tab_list_focus.borrow_mut() = Some(TabListFocus {
+            surface,
+            bar: opener.bar,
+            row: None,
+            opener: focus,
+            claim_revision: window.focus_claim_revision(),
+            opening,
+        });
     }
 }
 
@@ -2195,6 +2223,17 @@ fn apply_chrome_focus(
         admitted.contains(&surface) && input::is_presented(&shared.borrow(), owner, surface, serial)
     };
     keyboard::restore(shared, interaction, serial, admitted, controls, window, cx);
+    if keyboard::restore_menu_opening(
+        shared,
+        interaction,
+        serial,
+        controls,
+        &presented,
+        window,
+        cx,
+    ) {
+        return;
+    }
     let pending = interaction.pending_tab_focus.borrow_mut().take();
     if let Some(pending) = pending {
         if pending
@@ -2259,6 +2298,7 @@ fn apply_chrome_focus(
                 row: Some(row.id),
                 opener,
                 claim_revision: window.focus_claim_revision(),
+                opening: None,
             });
         }
     } else {
