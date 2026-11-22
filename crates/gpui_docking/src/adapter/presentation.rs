@@ -649,7 +649,12 @@ fn wake_waiting(host: &mut HostState, cx: &mut App) {
     }
 }
 
-pub(super) fn close(host: &mut HostState, owner: WindowId, cx: &mut App) {
+pub(super) fn close(shared: &SharedHost, owner: WindowId, cx: &mut App) {
+    retire_mount(&mut shared.borrow_mut(), owner, cx);
+    host_native::schedule(shared, cx);
+}
+
+pub(super) fn retire_mount(host: &mut HostState, owner: WindowId, cx: &mut App) {
     if let Some(mut mount) = host.mounts.remove(&owner) {
         if let Some(pending) = mount.pending.take() {
             retire_pending(host, owner, pending, SurfacePresentationResult::Dropped, cx);

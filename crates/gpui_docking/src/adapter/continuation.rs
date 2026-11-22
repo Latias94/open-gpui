@@ -108,7 +108,7 @@ fn wake(
         || !window.is_window_active()
         || !hovered
         || !frame.capture.is_captured(window)
-        || input::logical_point(position, frame.bounds) != Some(request.position())
+        || input::logical_point(position, frame.geometry) != Some(request.position())
         || !frame
             .hitboxes
             .iter()
@@ -123,7 +123,7 @@ fn wake(
         serial,
         request.event(),
         position,
-        frame.bounds,
+        frame.geometry,
         &frame.hitboxes,
         &frame.content_hitboxes,
         true,

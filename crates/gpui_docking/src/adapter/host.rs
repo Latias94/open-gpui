@@ -257,17 +257,8 @@ impl DockSurface {
                 "duplicate docking pane identity"
             );
         }
-        for surface in session.view().surfaces() {
-            let roots = surface
-                .main_root()
-                .into_iter()
-                .chain(surface.contained().filter_map(|contained| contained.root()));
-            for item in roots.flat_map(|root| root.items()) {
-                ensure!(
-                    panels.contains_key(&item),
-                    "open item {item:?} has no GPUI View"
-                );
-            }
+        if let Some(item) = missing_pane_view(session.view(), &panels) {
+            anyhow::bail!("open item {item:?} has no GPUI View");
         }
         if !managed {
             session.enable_host_pointer()?;
@@ -465,9 +456,13 @@ impl DockSurface {
             return Ok(());
         }
         let surface = frame.view().item(item).map(|item| item.surface());
-        if let Some(surface) = surface {
-            // Dirty GPUI packets alone do not revoke cached core measurements.
-            // A deferred contribution requires the next pass to measure again.
+        if let Some(surface) = surface
+            && metadata
+                .as_ref()
+                .is_some_and(|(_, sizing)| pane.sizing != *sizing)
+        {
+            // A sizing edit revokes the old layout constraints. Label changes
+            // remeasure in the next encoding pass and keep the presented editor live.
             frame.defer_surface(surface, SurfaceUnavailableReason::Deferred)?;
         }
         let report = frame.commit()?;
@@ -534,6 +529,8 @@ impl DockSurface {
     /// cannot manufacture a painted output or a submitted presentation.
     /// A still-prepared candidate owns the sole semantic update; callers may
     /// wait on [`Self::is_update_pending`] before issuing a new synchronous intent.
+    /// A new layout or restored document must have registered Views for every
+    /// open pane. A missing View rejects publication with [`DockPaneError::UnknownPane`].
     /// Native shutdown and a primary protocol failure reject new intent before
     /// invoking the callback. The latter returns [`DockHostAdmissionError`]
     /// with the retained original diagnostic. Renderer and native cleanup
@@ -592,10 +589,18 @@ impl DockSurface {
             session,
             mounts,
             native,
+            panels,
             ..
         } = &mut *host;
+        let version = session.version();
         let mut frame = host_native::begin_frame(session, mounts, native.as_ref(), None, cx)?;
         let value = update(&mut frame)?;
+        frame.complete_unpainted_surfaces(SurfaceUnavailableReason::Deferred)?;
+        if frame.version() != version
+            && let Some(item) = missing_pane_view(frame.view(), panels)
+        {
+            return Err(DockPaneError::UnknownPane(item).into());
+        }
         let report = frame.commit()?;
         let value =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| inspect(&report, value)));
@@ -724,6 +729,20 @@ pub(super) struct RegionState {
     pub(super) dirty: bool,
 }
 
+fn missing_pane_view(
+    view: DockspaceView<'_>,
+    panels: &BTreeMap<ItemId, DockPane>,
+) -> Option<ItemId> {
+    view.surfaces().find_map(|surface| {
+        surface
+            .main_root()
+            .into_iter()
+            .chain(surface.contained().filter_map(|contained| contained.root()))
+            .flat_map(|root| root.items())
+            .find(|item| !panels.contains_key(item))
+    })
+}
+
 impl HostState {
     pub(super) fn ensure_application_admission(&self) -> Result<()> {
         if let Some(failure) = self
@@ -812,7 +831,7 @@ impl HostState {
         id: Option<&GlobalElementId>,
         regions: &[DockRegion],
         window: &mut Window,
-        cx: &App,
+        cx: &mut App,
     ) -> Result<bool> {
         let handle = window.window_handle();
         let owner = handle.window_id();
@@ -839,6 +858,7 @@ impl HostState {
             mount.attached = true;
             return Ok(false);
         }
+        let mut previous_mounts = BTreeSet::new();
         for region in regions {
             let native_staging = self
                 .native
@@ -853,12 +873,23 @@ impl HostState {
                 self.session.view().surface(region.surface).is_some() || native_staging,
                 "unknown logical surface"
             );
-            ensure!(
-                self.owners
-                    .get(&region.surface)
-                    .is_none_or(|previous| *previous == owner),
-                "a logical surface is already mounted in another window"
-            );
+            if let Some(previous) = self.owners.get(&region.surface).copied()
+                && previous != owner
+            {
+                ensure!(
+                    self.native.is_none()
+                        && self
+                            .mounts
+                            .get(&previous)
+                            .is_some_and(|mount| !mount.attached),
+                    "a logical surface is already mounted in another window"
+                );
+                previous_mounts.insert(previous);
+            }
+        }
+        // Validate the entire roster before transferring any detached owner.
+        for previous in previous_mounts {
+            presentation::retire_mount(self, previous, cx);
         }
         for region in regions {
             self.owners.insert(region.surface, owner);

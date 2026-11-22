@@ -227,7 +227,10 @@ fn resolve_options(
         ));
     }
 
-    let requested = if let Some(window) = placement.and_then(|placement| placement.window_bounds) {
+    let requested = if let Some(window) = placement
+        .and_then(|placement| placement.window_bounds)
+        .filter(|window| window.bounds.is_window_restore_hint())
+    {
         let rect = window.bounds;
         let bounds = Bounds::new(
             point(px(rect.x), px(rect.y)),
@@ -408,6 +411,72 @@ mod tests {
         cx.update(|cx| dock.pump_native(cx));
         cx.run_until_parked();
         assert!(dock.error().is_none(), "{:?}", dock.error());
+    }
+
+    #[open_gpui::test]
+    fn degenerate_saved_window_hint_still_opens_both_roots(cx: &mut TestAppContext) {
+        let RestoredDockWorkspace { mut session, host } = document();
+        let encoded = DockWorkspaceDocument::capture(&mut session, host)
+            .unwrap()
+            .to_json()
+            .unwrap();
+        let mut legacy: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+        legacy["host"]["surfaces"][1]["logical_placement"]["window_bounds"]["bounds"]["width"] =
+            serde_json::json!(0);
+        let RestoredDockWorkspace { mut session, host } = DockWorkspaceDocument::restore_json(
+            &serde_json::to_vec(&legacy).unwrap(),
+            DockPolicy::default(),
+            |document, key| {
+                document == DOCUMENT && ["first", "second", "closed-history"].contains(&key)
+            },
+        )
+        .unwrap();
+
+        let (dock, windows) = cx.update(|cx| {
+            let panes = ["first", "second"].map(|key| {
+                DockPane::new(
+                    session.item_id_for_external_key(key).unwrap(),
+                    key,
+                    cx.new(|_| Empty),
+                )
+            });
+            let mut save_hints = host.clone();
+            save_hints.surfaces[1]
+                .logical_placement
+                .as_mut()
+                .unwrap()
+                .window_bounds = Some(DockLogicalWindowPlacement {
+                state: DockWindowPlacementState::Windowed,
+                bounds: DockLogicalPlacementRect {
+                    x: 40.0,
+                    y: 60.0,
+                    width: 0.0,
+                    height: 420.0,
+                },
+            });
+            let saved = DockWorkspaceDocument::capture(&mut session, save_hints).unwrap();
+            let dock = DockSurface::new_managed(session, panes, Default::default(), cx).unwrap();
+            let windows = dock
+                .open_restored_native_roots(&host, FIRST, |_, _| WindowOptions::default(), cx)
+                .unwrap();
+            assert!(
+                saved.host().surfaces[1]
+                    .logical_placement
+                    .as_ref()
+                    .unwrap()
+                    .window_bounds
+                    .is_none()
+            );
+            (dock, windows)
+        });
+        settle(cx, &dock);
+        assert_eq!(windows.len(), 2);
+        cx.update_window(windows[&SECOND], |_, window, _| {
+            assert!(window.window_bounds().get_bounds().size.width > px(0.0));
+        })
+        .unwrap();
+        cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();
+        settle(cx, &dock);
     }
 
     #[open_gpui::test]

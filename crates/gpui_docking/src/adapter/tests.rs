@@ -898,7 +898,7 @@ fn native_ingress_waits_for_the_original_unaccepted_candidate(cx: &mut TestAppCo
             };
             assert_eq!(retained.surface, SECOND);
             assert_eq!(retained.serial, original_input.serial);
-            assert_eq!(retained.bounds, original_input.bounds);
+            assert_eq!(retained.geometry, original_input.geometry);
             assert_eq!(retained.scale, original_input.scale);
             assert_eq!(retained.native_binding, original_input.native_binding);
         }

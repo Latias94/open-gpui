@@ -70,7 +70,7 @@ pub(super) fn resolve_in_window(
                     px((query.point().x() / frame.scale) as f32),
                     px((query.point().y() / frame.scale) as f32),
                 );
-                if !frame.bounds.contains(&point) {
+                if !frame.geometry.displayed_bounds().contains(&point) {
                     continue;
                 }
                 let exposed = frame

@@ -103,6 +103,14 @@ impl DockLogicalPlacementRect {
         )
         .map_err(|error| invalid(error.to_string()))
     }
+
+    pub(super) fn is_window_restore_hint(self) -> bool {
+        self.validate().is_ok()
+            && self.width > 0.0
+            && self.height > 0.0
+            && (self.x + self.width).is_finite()
+            && (self.y + self.height).is_finite()
+    }
 }
 
 /// A durable window presentation preference, not a live native state observation.
@@ -134,7 +142,7 @@ pub struct DockLogicalViewportPlacement {
     /// Historical display identifier, used only as a restore preference.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_id: Option<u64>,
-    /// Historical logical window geometry.
+    /// Historical logical window geometry. Zero-area hints fall back to the host's default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window_bounds: Option<DockLogicalWindowPlacement>,
     /// Historical logical host rectangle within its window.
@@ -303,6 +311,16 @@ pub struct DockHostDocument {
 }
 
 impl DockHostDocument {
+    fn omit_unusable_window_hints(&mut self) {
+        for binding in &mut self.surfaces {
+            if let Some(placement) = &mut binding.logical_placement {
+                placement.window_bounds = placement
+                    .window_bounds
+                    .filter(|window| window.bounds.is_window_restore_hint());
+            }
+        }
+    }
+
     fn validate(&self) -> Result<(), DockPersistenceError> {
         let mut keys = BTreeSet::new();
         let mut surfaces = BTreeSet::new();
@@ -452,9 +470,10 @@ impl DockWorkspaceDocument {
     /// Use [`super::DockSurface::capture_document`] after giving the session to the adapter.
     pub fn capture(
         session: &mut DockspaceSession,
-        host: DockHostDocument,
+        mut host: DockHostDocument,
     ) -> Result<Self, DockPersistenceError> {
         host.validate_session(session)?;
+        host.omit_unusable_window_hints();
         let document_json = String::from_utf8(session.save_document_json()?)
             .map_err(|_| invalid("dockspace emitted a document that is not UTF-8"))?;
         Ok(Self {
@@ -479,8 +498,9 @@ impl DockWorkspaceDocument {
                 found: version.version,
             });
         }
-        let wire: DocumentWire = serde_json::from_slice(bytes)?;
+        let mut wire: DocumentWire = serde_json::from_slice(bytes)?;
         wire.host.validate()?;
+        wire.host.omit_unusable_window_hints();
         Ok(Self {
             format: wire.format,
             version: wire.version,

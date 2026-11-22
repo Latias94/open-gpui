@@ -13008,6 +13008,19 @@ impl Window {
             .cloned()
     }
 
+    /// Returns the frontmost target at a displayed point in the committed frame.
+    ///
+    /// This query respects transforms, clips, and presentation state. It is
+    /// independent of pointer capture and the current input modality.
+    pub fn frontmost_hitbox_at(&self, point: Point<Pixels>) -> Option<HitboxId> {
+        self.rendered_frame
+            .hitboxes
+            .iter()
+            .rev()
+            .find(|hitbox| hitbox.is_window_point_target(point))
+            .map(|hitbox| hitbox.id)
+    }
+
     pub(crate) fn preparing_frame_generation(&self) -> u64 {
         self.next_frame.generation
     }

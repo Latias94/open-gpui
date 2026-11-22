@@ -2,14 +2,15 @@ use dockspace::{
     close::CloseDecision,
     model::{DockAnchor, DockPlacement},
 };
-use open_gpui::{Empty, WindowFrameSubmissionOutcome};
+use open_gpui::{
+    Empty, PlatformFrameDeliveryMode, PlatformInput, PointerCancelEvent, PointerCancelReason,
+    WindowFrameSubmissionOutcome,
+};
 
 use super::*;
 
 #[open_gpui::test]
 fn a_siblings_unaccepted_update_preserves_the_presented_editor(cx: &mut TestAppContext) {
-    use open_gpui::PlatformFrameDeliveryMode;
-
     let sibling_surface = SurfaceId::new(52);
     for managed in [false, true] {
         let (dock, editors) = content_fixture_regions(cx, managed, true);
@@ -78,6 +79,77 @@ fn a_siblings_unaccepted_update_preserves_the_presented_editor(cx: &mut TestAppC
         } else {
             sibling.update(|window, cx| window.remove_window(cx));
         }
+    }
+}
+
+#[open_gpui::test]
+fn a_siblings_unaccepted_update_preserves_captured_drag_terminals(cx: &mut TestAppContext) {
+    for cancel in [false, true] {
+        let (dock, _) = content_fixture_regions(cx, false, true);
+        cx.defer_next_window_frame_requests();
+        let mut source = open_content(cx, &dock, false);
+        let source_window = source.update(|window, _| window.window_handle());
+        cx.defer_next_window_frame_requests();
+        let sibling_window = cx.open_window(size(px(800.0), px(600.0)), |_, _| {
+            super::super::wheel::SingleRegion(dock.clone(), SurfaceId::new(52))
+        });
+        let mut sibling = VisualTestContext::from_window(sibling_window.into(), cx);
+        frames(&mut sibling, &dock);
+        let mut source = active_visual(source_window, cx);
+        cx.set_platform_hovered_window(Some(source_window));
+        frames(&mut source, &dock);
+        let capture = begin_drag(&dock, &mut source, FIRST);
+
+        cx.set_window_frame_delivery_mode(
+            sibling_window.into(),
+            PlatformFrameDeliveryMode::Deferred,
+        );
+        cx.simulate_window_resize(sibling_window.into(), size(px(760.0), px(510.0)));
+        assert!(sibling.simulate_frame(RequestFrameOptions {
+            require_presentation: true,
+            force_render: true,
+            ..Default::default()
+        }));
+        let pending = cx
+            .pending_window_frame_submission(sibling_window.into())
+            .unwrap();
+        frames(&mut source, &dock);
+        assert!(dock.host.borrow().mounts[&source_window.window_id()].waiting_for_update);
+        let position = source.update(|window, _| {
+            assert_eq!(window.captured_pointer(), Some(capture));
+            window.mouse_position()
+        });
+
+        if cancel {
+            source.update(|window, cx| {
+                window.dispatch_event(
+                    PlatformInput::PointerCanceled(PointerCancelEvent {
+                        reason: PointerCancelReason::CaptureRevoked,
+                    }),
+                    cx,
+                );
+            });
+        } else {
+            source.simulate_mouse_up(position, MouseButton::Left, Modifiers::none());
+        }
+        assert_eq!(dock.host.borrow().inputs.len(), 1, "cancel: {cancel}");
+        assert!(dock.has_active_gesture());
+        assert!(source.update(|window, _| window.captured_pointer().is_none()));
+        cx.update(|_| assert!(pending.complete(PlatformWindowPresentOutcome::Submitted)));
+        cx.set_window_frame_delivery_mode(
+            sibling_window.into(),
+            PlatformFrameDeliveryMode::Synchronous,
+        );
+        frames(&mut sibling, &dock);
+        frames(&mut source, &dock);
+        assert!(!dock.has_active_gesture());
+        assert!(dock.host.borrow().inputs.is_empty());
+        assert_eq!(
+            dock.with_view(|view| view.item(FIRST).unwrap().surface()),
+            SURFACE
+        );
+        sibling.update(|window, cx| window.remove_window(cx));
+        source.update(|window, cx| window.remove_window(cx));
     }
 }
 

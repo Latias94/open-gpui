@@ -180,6 +180,52 @@ fn assert_unmeasured(dock: &DockSurface, surface: SurfaceId) {
 }
 
 #[open_gpui::test]
+fn live_restore_rejects_an_open_pane_without_a_registered_view(cx: &mut TestAppContext) {
+    let Fixture { dock, items, views } = fixture(cx, false);
+    let missing = items[1];
+    cx.update(|cx| {
+        let saved = dock
+            .capture_document(DockHostDocument {
+                surfaces: [FIRST, SECOND]
+                    .map(|surface| DockSurfaceKeyBinding {
+                        space_key: format!("surface-{}", surface.get()),
+                        surface,
+                        logical_placement: None,
+                        central_policy: None,
+                    })
+                    .into(),
+                migration: None,
+            })
+            .unwrap();
+        close(&dock, missing, cx);
+        let pane = dock.take_closed_pane(missing).unwrap();
+        let prepared = dock
+            .host
+            .borrow()
+            .session
+            .prepare_document_restore_json(saved.document_json().as_bytes(), |document, key| {
+                document == DOCUMENT && KEYS.contains(&key)
+            })
+            .unwrap();
+        let before = dock.inspection().unwrap();
+        let version = dock.host.borrow().session.version();
+        assert_pane_error(
+            dock.update(|frame| Ok(frame.submit_document_restore(&prepared)?), cx),
+            DockPaneError::UnknownPane(missing),
+        );
+        assert_eq!(dock.inspection().unwrap(), before);
+        assert_eq!(dock.host.borrow().session.version(), version);
+        assert!(dock.with_view(|view| view.item(missing).is_none()));
+        dock.open_pane(pane, DockPlacement::Center(DockAnchor::Item(items[0])), cx)
+            .unwrap();
+        assert_eq!(
+            dock.host.borrow().panels[&missing].view.entity_id(),
+            views[1].entity_id()
+        );
+    });
+}
+
+#[open_gpui::test]
 fn metadata_remeasures_titles_and_minima_without_replacing_content(cx: &mut TestAppContext) {
     cx.defer_next_window_frame_requests();
     let Fixture { dock, views, items } = fixture(cx, false);
@@ -200,8 +246,15 @@ fn metadata_remeasures_titles_and_minima_without_replacing_content(cx: &mut Test
     let generation = dock.host.borrow().session.next_document_generation();
     visual.update(|_, cx| {
         dock.update_pane_metadata(item, title, minimum, cx).unwrap();
-        assert!(dock.host.borrow().mounts[&window.window_id()].regions[&FIRST].dirty);
-        assert_unmeasured(&dock, FIRST);
+        let host = dock.host.borrow();
+        let mount = &host.mounts[&window.window_id()];
+        assert!(mount.regions[&FIRST].dirty);
+        assert!(crate::adapter::input::is_presented(
+            &host,
+            window.window_id(),
+            FIRST,
+            mount.serial
+        ));
     });
     frames(&mut visual, &dock);
     assert!(visual.debug_bounds(&tab).unwrap().size.width > old_tab.size.width);
@@ -814,7 +867,7 @@ fn queued_pointer_input_retains_registration_until_its_original_frame_commits(
             frame.serial,
             dockspace::runtime::SurfacePointerEvent::Moved,
             tab.center(),
-            frame.bounds,
+            frame.geometry,
             &frame.hitboxes,
             &frame.content_hitboxes,
             false,

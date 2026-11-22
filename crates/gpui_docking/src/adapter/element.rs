@@ -21,11 +21,12 @@ use dockspace::{
     },
 };
 use open_gpui::{
-    AccessibleAction, AnyElement, App, AvailableSpace, Bounds, Element, ElementId, FocusHandle,
-    GlobalElementId, HitboxBehavior, HitboxId, Hsla, InspectorElementId, IntoElement, KeyDownEvent,
-    LayoutId, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    PointerCaptureHandle, PreparedSubtreeClip, Role, Style, SubtreeClip, SubtreePresentation,
-    SubtreePresentationExt, TextRun, Window, div, fill, point, prelude::*, px, relative, size,
+    AccessibleAction, AnyElement, App, AvailableSpace, Bounds, Element, ElementGeometry, ElementId,
+    FocusHandle, GlobalElementId, HitboxBehavior, HitboxId, Hsla, InspectorElementId, IntoElement,
+    KeyDownEvent, LayoutId, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, PointerCaptureHandle, PreparedSubtreeClip, Role, Style, SubtreeClip,
+    SubtreePresentation, SubtreePresentationExt, TextRun, Window, div, fill, point, prelude::*, px,
+    relative, size,
 };
 
 use crate::adapter::{
@@ -253,7 +254,7 @@ pub(crate) struct PreparedRegion {
     tabs: Vec<(TabKey, HitboxId)>,
     capture: PointerCaptureHandle,
     serial: u64,
-    bounds: Bounds<Pixels>,
+    geometry: ElementGeometry,
     receivers: Vec<(DockspaceReceiverDescriptor, HitboxId)>,
     controls: Vec<(Rc<Control>, FocusHandle, HitboxId)>,
     menu_focus: Option<(Rc<Control>, FocusHandle)>,
@@ -336,7 +337,7 @@ impl Element for DockspaceElement {
                 let closed = cx.on_window_closed(move |cx, closed| {
                     if closed == owner {
                         if let Some(host) = weak.upgrade() {
-                            presentation::close(&mut host.borrow_mut(), owner, cx);
+                            presentation::close(&host, owner, cx);
                         }
                     }
                 });
@@ -345,7 +346,7 @@ impl Element for DockspaceElement {
                 let terminal = cx.on_window_native_terminal(move |cx, closed| {
                     if closed == owner {
                         if let Some(host) = terminal_host.upgrade() {
-                            presentation::close(&mut host.borrow_mut(), owner, cx);
+                            presentation::close(&host, owner, cx);
                         }
                     }
                 });
@@ -365,6 +366,7 @@ impl Element for DockspaceElement {
                     visibility,
                     open_gpui::Subscription::join(closed, terminal),
                 ));
+                host_native::schedule(&self.host, cx);
             }
             Ok(false) => {}
             Err(error) => {
@@ -422,9 +424,25 @@ impl Element for DockspaceElement {
         };
         self.listen_content_terminals(window);
         if !prepared.waiting_for_update {
-            for region in &prepared.regions {
-                self.listen(region, window);
-            }
+            let tabs = prepared
+                .regions
+                .iter()
+                .flat_map(|region| region.tabs.iter().copied())
+                .collect::<Vec<_>>();
+            let hovered = self.interaction.hovered_tab.clone();
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, _| {
+                if phase.capture() {
+                    let current = hovered_tab_at(&tabs, event.position, window);
+                    if hovered.replace(current) != current {
+                        window.refresh();
+                    }
+                }
+            });
+        }
+        // Waiting on another window gates new actions. The current capture
+        // still needs to receive motion, release, and cancellation.
+        for region in &prepared.regions {
+            self.listen(region, !prepared.waiting_for_update, window);
         }
         let colors = self.host.borrow().config.colors.clone();
         // Keep the core order, including pane widgets between chrome and overlays.
@@ -716,13 +734,13 @@ impl DockspaceElement {
         let mut regions = Vec::new();
         for (surface, packet) in &packets {
             let bounds = region_bounds[surface];
-            let background = window.insert_hitbox(bounds, HitboxBehavior::Normal).id;
+            let background = window.insert_hitbox(bounds, HitboxBehavior::Normal);
             regions.push(self.prepare_region(
                 *surface,
                 packet,
                 serial,
-                bounds,
-                background,
+                background.geometry(),
+                background.id,
                 capture,
                 !waiting_for_update,
                 tab_list.as_ref(),
@@ -740,7 +758,6 @@ impl DockspaceElement {
         let input_frames: Vec<_> = {
             let host = self.host.borrow();
             let scale = f64::from(window.scale_factor());
-            let refresh_native_receivers = host.native.is_some() && window.is_visible();
             regions
                 .iter()
                 .filter(|region| {
@@ -748,19 +765,19 @@ impl DockspaceElement {
                     // artifact's receivers usable by the native ingress queue
                     // while the same geometry is still current.
                     !waiting_for_update
-                        || (refresh_native_receivers
+                        || (window.is_visible()
                             && input::is_presented(&host, owner, region.surface, serial)
                             && host.mounts[&owner].input_frames.iter().any(|previous| {
                                 previous.surface == region.surface
                                     && previous.serial == serial
-                                    && previous.bounds == region.bounds
+                                    && previous.geometry == region.geometry
                                     && previous.scale == scale
                             }))
                 })
                 .map(|region| InputFrame {
                     surface: region.surface,
                     serial,
-                    bounds: region.bounds,
+                    geometry: region.geometry,
                     hitboxes: region.hitboxes.clone(),
                     content_hitboxes: region.content_hitboxes.clone(),
                     panes: region.panes.clone(),
@@ -871,7 +888,7 @@ impl DockspaceElement {
         surface: SurfaceId,
         packet: &Packet,
         serial: u64,
-        bounds: Bounds<Pixels>,
+        geometry: ElementGeometry,
         background: HitboxId,
         capture: PointerCaptureHandle,
         allow_input: bool,
@@ -879,6 +896,7 @@ impl DockspaceElement {
         window: &mut Window,
         cx: &mut App,
     ) -> PreparedRegion {
+        let bounds = geometry.layout_bounds();
         let mut hitboxes = vec![background];
         let mut content_hitboxes = Vec::new();
         let mut panes = Vec::new();
@@ -1339,7 +1357,7 @@ impl DockspaceElement {
             tabs,
             capture,
             serial,
-            bounds,
+            geometry,
             receivers,
             controls,
             menu_focus,
@@ -1591,26 +1609,15 @@ impl DockspaceElement {
         });
     }
 
-    fn listen(&self, prepared: &PreparedRegion, window: &mut Window) {
-        wheel::listen(&self.host, &self.interaction, prepared, window);
+    fn listen(&self, prepared: &PreparedRegion, allow_new_input: bool, window: &mut Window) {
+        if allow_new_input {
+            wheel::listen(&self.host, &self.interaction, prepared, window);
+        }
         let surface = prepared.surface;
         let capture = prepared.capture;
         let serial = prepared.serial;
-        let bounds = prepared.bounds;
+        let geometry = prepared.geometry;
         let owner = window.window_handle().window_id();
-        let tabs = prepared.tabs.clone();
-        let hovered = self.interaction.hovered_tab.clone();
-        window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, _| {
-            if !phase.capture() {
-                return;
-            }
-            let current = hovered_tab_at(&tabs, event.position, window);
-            if hovered.replace(current) != current {
-                // Hover is visual state only: the retained packet and exact core
-                // output remain current, without adding a pointer edge.
-                window.refresh();
-            }
-        });
         let shared = self.host.clone();
         let hitboxes = prepared.hitboxes.clone();
         let content_hitboxes = prepared.content_hitboxes.clone();
@@ -1632,7 +1639,7 @@ impl DockspaceElement {
                     serial,
                     SurfacePointerEvent::Moved,
                     event.position,
-                    bounds,
+                    geometry,
                     &hitboxes,
                     &content_hitboxes,
                     true,
@@ -1649,6 +1656,9 @@ impl DockspaceElement {
         let controls = prepared.controls.clone();
         let interaction = self.interaction.clone();
         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+            if !allow_new_input {
+                return;
+            }
             if phase.capture() && event.button == MouseButton::Left {
                 interaction.splitter_press.borrow_mut().take();
                 interaction.tab_list_press.borrow_mut().take();
@@ -1663,7 +1673,7 @@ impl DockspaceElement {
                         serial,
                         SurfacePointerEvent::ButtonPressed(SurfacePointerButton::Primary),
                         event.position,
-                        bounds,
+                        geometry,
                         &hitboxes,
                         &content_hitboxes,
                         false,
@@ -1698,7 +1708,7 @@ impl DockspaceElement {
                 serial,
                 SurfacePointerEvent::ButtonPressed(SurfacePointerButton::Primary),
                 event.position,
-                bounds,
+                geometry,
                 &hitboxes,
                 &content_hitboxes,
                 !managed,
@@ -1763,7 +1773,7 @@ impl DockspaceElement {
                 serial,
                 SurfacePointerEvent::Moved,
                 event.position,
-                bounds,
+                geometry,
                 &hitboxes,
                 &content_hitboxes,
                 true,
@@ -1797,7 +1807,7 @@ impl DockspaceElement {
                 serial,
                 SurfacePointerEvent::ButtonReleased(SurfacePointerButton::Primary),
                 event.position,
-                bounds,
+                geometry,
                 &hitboxes,
                 &content_hitboxes,
                 capture.is_captured(window),
@@ -1864,7 +1874,7 @@ impl DockspaceElement {
                 serial,
                 SurfacePointerEvent::DockingEnabledChanged { enabled },
                 position,
-                bounds,
+                geometry,
                 &hitboxes,
                 &content_hitboxes,
                 true,
@@ -1879,7 +1889,7 @@ impl DockspaceElement {
         let controls = prepared.controls.clone();
         let pane_bars = prepared.pane_bars.clone();
         window.on_key_event(move |event: &KeyDownEvent, phase, window, cx| {
-            if !phase.bubble() || capture.is_captured(window) {
+            if !allow_new_input || !phase.bubble() || capture.is_captured(window) {
                 return;
             }
             if keyboard::document_cycle(&event.keystroke).is_none() {
@@ -1967,7 +1977,7 @@ impl DockspaceElement {
                     SurfacePointerCancelReason::ExplicitCancellation,
                 ),
                 window.mouse_position(),
-                bounds,
+                geometry,
                 &hitboxes,
                 &content_hitboxes,
                 true,
@@ -2011,7 +2021,7 @@ impl DockspaceElement {
                     SurfacePointerCancelReason::ExplicitPlatformCancellation,
                 ),
                 position,
-                bounds,
+                geometry,
                 &hitboxes,
                 &content_hitboxes,
                 false,
@@ -2054,7 +2064,7 @@ fn finish_content_press(
             frame.serial,
             event,
             position,
-            frame.bounds,
+            frame.geometry,
             &frame.hitboxes,
             &frame.content_hitboxes,
             false,
@@ -2625,9 +2635,9 @@ fn hovered_tab_at(
     {
         return None;
     }
-    tabs.iter().find_map(|(item, hitbox)| {
-        (hitbox.window_point_target_rank(position, window) == Some(0)).then_some(*item)
-    })
+    let target = window.frontmost_hitbox_at(position)?;
+    tabs.iter()
+        .find_map(|(item, hitbox)| (*hitbox == target).then_some(*item))
 }
 
 fn begin_candidate(
@@ -2870,15 +2880,15 @@ fn routes_to(
     let Some(mount) = host.mounts.get(&owner) else {
         return false;
     };
-    let target = mount
-        .regions
+    let frames = mount
+        .pending
+        .as_ref()
+        .and_then(presentation::PendingSubmission::accepted_input_frames)
+        .unwrap_or(&mount.input_frames);
+    let target = frames
         .iter()
-        .find_map(|(surface, region)| {
-            region
-                .bounds
-                .filter(|bounds| bounds.contains(&position))
-                .map(|_| *surface)
-        })
+        .find(|frame| frame.geometry.displayed_bounds().contains(&position))
+        .map(|frame| frame.surface)
         .or_else(|| {
             if host.native.is_some() {
                 return None;

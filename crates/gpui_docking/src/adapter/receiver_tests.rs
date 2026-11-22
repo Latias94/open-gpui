@@ -147,7 +147,10 @@ fn a_frontmost_drag_only_splitter_blocks_click_and_accepts_drag(cx: &mut TestApp
             bounds.y() + bounds.height() * 0.75,
         )
         .unwrap();
-        let position = frame.bounds.origin + point(px(logical.x() as f32), px(logical.y() as f32));
+        let position = frame
+            .geometry
+            .local_to_window_point(point(px(logical.x() as f32), px(logical.y() as f32)))
+            .unwrap();
         assert_eq!(hitbox.window_point_target_rank(position, window), Some(0));
         let semantic = host
             .session
@@ -248,7 +251,10 @@ fn an_exposed_rootless_background_clears_hover_without_inventing_a_drop_target(
             .find(|(descriptor, _)| descriptor.role() == DockspaceReceiverRole::TabBody)
             .unwrap();
         let center = descriptor.center();
-        let position = frame.bounds.origin + point(px(center.x() as f32), px(center.y() as f32));
+        let position = frame
+            .geometry
+            .local_to_window_point(point(px(center.x() as f32), px(center.y() as f32)))
+            .unwrap();
         assert_eq!(hitbox.window_point_target_rank(position, window), Some(0));
         position
     });

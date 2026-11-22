@@ -767,6 +767,125 @@ impl Render for OptionalDockMount {
     }
 }
 
+#[open_gpui::test]
+fn an_embedded_surface_can_mount_in_another_open_window_after_detaching(cx: &mut TestAppContext) {
+    let (dock, _) = overflowing_surfaces(&[SURFACE], cx);
+    let [(source, source_mounted), (destination, destination_mounted)] =
+        [true, false].map(|mounted| {
+            let mounted = Rc::new(Cell::new(mounted));
+            cx.defer_next_window_frame_requests();
+            let window = cx.open_window(size(px(620.0), px(400.0)), |_, _| OptionalDockMount {
+                dock: dock.clone(),
+                surface: SURFACE,
+                mounted: mounted.clone(),
+            });
+            (window, mounted)
+        });
+    let mut source_visual = active_visual(source.into(), cx);
+    let mut destination_visual = VisualTestContext::from_window(destination.into(), cx);
+    frames(&mut source_visual, &dock);
+    frames(&mut destination_visual, &dock);
+    assert!(source_visual.debug_bounds("dockspace:tab:2").is_some());
+
+    source_mounted.set(false);
+    frames(&mut source_visual, &dock);
+    assert!(
+        dock.inspection()
+            .unwrap()
+            .mounts
+            .iter()
+            .all(|mount| !mount.attached)
+    );
+    destination_mounted.set(true);
+    let mut destination_visual = active_visual(destination.into(), cx);
+    cx.set_platform_hovered_window(Some(destination.into()));
+    frames(&mut destination_visual, &dock);
+    assert!(
+        cx.windows()
+            .iter()
+            .any(|window| window.window_id() == source.window_id())
+    );
+    let tab = destination_visual
+        .debug_bounds("dockspace:tab:2")
+        .unwrap()
+        .center();
+    destination_visual.simulate_click(tab, Modifiers::none());
+    frames(&mut destination_visual, &dock);
+    assert!(dock.with_view(|view| view.item(ItemId::new(2)).unwrap().is_active()));
+}
+
+#[open_gpui::test]
+fn removing_a_sibling_with_an_unaccepted_update_resumes_close_delivery(cx: &mut TestAppContext) {
+    use dockspace::close::CloseDecision;
+    use open_gpui::PlatformFrameDeliveryMode;
+
+    let sibling = SurfaceId::new(52);
+    let (dock, _) = overflowing_surfaces(&[SURFACE, sibling], cx);
+    let [source, target] = [SURFACE, sibling].map(|surface| {
+        cx.defer_next_window_frame_requests();
+        cx.open_window(size(px(620.0), px(400.0)), |_, _| OptionalDockMount {
+            dock: dock.clone(),
+            surface,
+            mounted: Rc::new(Cell::new(true)),
+        })
+    });
+    frames(&mut active_visual(source.into(), cx), &dock);
+    let mut target_visual = VisualTestContext::from_window(target.into(), cx);
+    frames(&mut target_visual, &dock);
+    let item = ItemId::new(2);
+    cx.update(|cx| {
+        dock.update(
+            |frame| {
+                frame.request_close_item_current(item)?;
+                Ok(())
+            },
+            cx,
+        )
+    })
+    .unwrap();
+    let plan = dock.pending_content_close_plans().unwrap().pop().unwrap();
+    cx.set_window_frame_delivery_mode(target.into(), PlatformFrameDeliveryMode::Deferred);
+    cx.simulate_window_resize(target.into(), size(px(700.0), px(470.0)));
+    assert!(target_visual.simulate_frame(RequestFrameOptions {
+        require_presentation: true,
+        force_render: true,
+        ..Default::default()
+    }));
+    assert!(dock.is_update_pending());
+    let calls = Rc::new(Cell::new(0));
+    let observed = calls.clone();
+    cx.update(|cx| {
+        dock.set_close_handler(
+            move |dock, received, cx| {
+                assert_eq!(received.request(), plan.request());
+                observed.set(observed.get() + 1);
+                dock.update(
+                    |frame| {
+                        frame.resolve_close(
+                            received.request(),
+                            received.items()[0].token(),
+                            CloseDecision::Allow,
+                        )?;
+                        Ok(())
+                    },
+                    cx,
+                )
+                .unwrap();
+            },
+            cx,
+        )
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(calls.get(), 0);
+
+    target_visual.update(|window, cx| window.remove_window(cx));
+    cx.run_until_parked();
+    assert!(!dock.is_update_pending());
+    assert_eq!(calls.get(), 1);
+    assert!(dock.with_view(|view| view.item(item).is_none()));
+}
+
 fn retire_window_with_borrowed_input(cx: &mut TestAppContext, retirement: BorrowedInputRetirement) {
     use dockspace::runtime::DockspaceEventKind;
 

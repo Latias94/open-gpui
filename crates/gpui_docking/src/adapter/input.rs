@@ -10,7 +10,7 @@ use dockspace::{
     },
 };
 use open_gpui::{
-    Bounds, HitboxId, Modifiers, Pixels, Point, PointerCaptureHandle, Window, WindowId,
+    ElementGeometry, HitboxId, Modifiers, Pixels, Point, PointerCaptureHandle, Window, WindowId,
 };
 
 use super::HostState;
@@ -19,7 +19,7 @@ use super::HostState;
 pub(super) struct InputFrame {
     pub(super) surface: SurfaceId,
     pub(super) serial: u64,
-    pub(super) bounds: Bounds<Pixels>,
+    pub(super) geometry: ElementGeometry,
     pub(super) hitboxes: Vec<HitboxId>,
     pub(super) content_hitboxes: Vec<HitboxId>,
     pub(super) panes: Vec<(dockspace::model::ItemId, open_gpui::HitTestSnapshot)>,
@@ -127,13 +127,16 @@ pub(super) fn queue(
     serial: u64,
     event: SurfacePointerEvent,
     position: Point<Pixels>,
-    bounds: Bounds<Pixels>,
+    geometry: ElementGeometry,
     hitboxes: &[HitboxId],
     content_hitboxes: &[HitboxId],
     captured: bool,
     modifiers: Modifiers,
     window: &Window,
 ) -> bool {
+    let target = window.frontmost_hitbox_at(position);
+    let chrome_clear = target.is_some_and(|id| hitboxes.contains(&id));
+    let content_clear = target.is_some_and(|id| content_hitboxes.contains(&id));
     if host.native.is_some() {
         return super::host_native::queue_pointer(
             host,
@@ -141,27 +144,16 @@ pub(super) fn queue(
             serial,
             event,
             position,
-            bounds,
-            hitboxes,
-            content_hitboxes,
+            geometry,
+            chrome_clear || content_clear,
             captured,
             modifiers,
             window,
         );
     }
-    let Some(point) = logical_point(position, bounds) else {
-        return false;
-    };
     let owner = window.window_handle().window_id();
-    let chrome_clear = window.is_mouse_in_window()
-        && hitboxes
-            .iter()
-            .any(|hitbox| hitbox.window_point_target_rank(position, window) == Some(0));
-    let clear = chrome_clear
-        || (window.is_mouse_in_window()
-            && content_hitboxes
-                .iter()
-                .any(|hitbox| hitbox.window_point_target_rank(position, window) == Some(0)));
+    let chrome_clear = window.is_mouse_in_window() && chrome_clear;
+    let clear = chrome_clear || (window.is_mouse_in_window() && content_clear);
     let terminal = matches!(
         event,
         SurfacePointerEvent::StreamCancelled(_) | SurfacePointerEvent::ButtonReleased(_)
@@ -169,28 +161,25 @@ pub(super) fn queue(
     if !captured && !clear && !terminal {
         return false;
     }
-    let hit = is_presented(host, owner, surface_id, serial)
-        .then(|| {
+    let point = logical_point(position, geometry);
+    let displayed = host.mounts.get(&owner).and_then(|mount| {
+        mount.input_frames.iter().find(|frame| {
+            frame.surface == surface_id && frame.serial == serial && frame.geometry == geometry
+        })
+    });
+    let hit = point
+        .filter(|_| displayed.is_some() && is_presented(host, owner, surface_id, serial))
+        .and_then(|point| {
             host.session
                 .host_pointer_hit_for_device(surface_id, point, PointerDeviceKind::Mouse)
-        })
-        .flatten();
-    let content_receiver = host
-        .mounts
-        .get(&owner)
-        .and_then(|mount| {
-            mount
-                .input_frames
-                .iter()
-                .find(|frame| frame.surface == surface_id && frame.serial == serial)
-        })
-        .and_then(|frame| {
-            frame.receivers.iter().find(|(_, id)| {
-                content_hitboxes.contains(id)
-                    && id.window_point_target_rank(position, window) == Some(0)
-            })
-        })
-        .map(|(receiver, _)| *receiver);
+        });
+    let content_receiver = target.filter(|_| content_clear).and_then(|target| {
+        displayed?
+            .receivers
+            .iter()
+            .find(|(_, id)| *id == target)
+            .map(|(receiver, _)| *receiver)
+    });
     let delivery_clear = chrome_clear
         || content_receiver.is_some_and(|receiver| {
             hit.and_then(|hit| hit.delivery())
@@ -214,12 +203,12 @@ pub(super) fn queue(
         });
     let source_point = source.and_then(|source| {
         let mount = host.mounts.get(&owner)?;
-        let bounds = mount
+        let geometry = mount
             .input_frames
             .iter()
             .find(|frame| frame.surface == source.surface())?
-            .bounds;
-        logical_point(position, bounds)
+            .geometry;
+        logical_point(position, geometry)
     });
     if let Some(mount) = host.mounts.get_mut(&owner) {
         mount.wake = None;
@@ -232,9 +221,11 @@ pub(super) fn queue(
             .map_or(HostPointerRoute::Unknown, |(source, point)| {
                 HostPointerRoute::new(source, point)
             }),
-        hover: surface.map_or(HostPointerRoute::Unknown, |surface| {
-            HostPointerRoute::new(surface, point)
-        }),
+        hover: surface
+            .zip(point)
+            .map_or(HostPointerRoute::Unknown, |(surface, point)| {
+                HostPointerRoute::new(surface, point)
+            }),
         surface,
         delivery: clear.then(|| hit.and_then(|hit| hit.delivery())).flatten(),
         drag: clear
@@ -255,7 +246,7 @@ pub(super) fn queue(
         .get_mut(&owner)
         .and_then(|mount| mount.regions.get_mut(&surface_id))
     {
-        region.pointer = Some(point);
+        region.pointer = point;
         region.dirty = true;
     }
     true
@@ -308,7 +299,7 @@ pub(super) fn revoke_blocked_hover(shared: &super::SharedHost, window: &mut Wind
         blocked.into_iter().find(|frame| {
             probe
                 .host_pointer_hover_position(frame.surface)
-                .is_some_and(|(_, point)| logical_point(position, frame.bounds) == Some(point))
+                .is_some_and(|(_, point)| logical_point(position, frame.geometry) == Some(point))
         })
     };
     let Some(frame) = frame else {
@@ -324,7 +315,7 @@ pub(super) fn revoke_blocked_hover(shared: &super::SharedHost, window: &mut Wind
         frame.serial,
         SurfacePointerEvent::Moved,
         position,
-        frame.bounds,
+        frame.geometry,
         &frame.hitboxes,
         &frame.content_hitboxes,
         true,
@@ -337,13 +328,10 @@ pub(super) fn revoke_blocked_hover(shared: &super::SharedHost, window: &mut Wind
 
 pub(super) fn logical_point(
     position: Point<Pixels>,
-    bounds: Bounds<Pixels>,
+    geometry: ElementGeometry,
 ) -> Option<LogicalPoint> {
-    LogicalPoint::new(
-        f64::from(f32::from(position.x - bounds.origin.x)),
-        f64::from(f32::from(position.y - bounds.origin.y)),
-    )
-    .ok()
+    let local = geometry.window_to_local_point(position).ok()?;
+    LogicalPoint::new(f64::from(f32::from(local.x)), f64::from(f32::from(local.y))).ok()
 }
 
 pub(super) fn is_presented(

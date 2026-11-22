@@ -1111,9 +1111,8 @@ pub(super) fn queue_pointer(
     serial: u64,
     event: dockspace::runtime::SurfacePointerEvent,
     position: open_gpui::Point<Pixels>,
-    bounds: Bounds<Pixels>,
-    hitboxes: &[open_gpui::HitboxId],
-    content_hitboxes: &[open_gpui::HitboxId],
+    geometry: open_gpui::ElementGeometry,
+    clear: bool,
     captured: bool,
     modifiers: open_gpui::Modifiers,
     window: &Window,
@@ -1163,10 +1162,6 @@ pub(super) fn queue_pointer(
         }
         _ => return false,
     };
-    let clear = hitboxes
-        .iter()
-        .chain(content_hitboxes)
-        .any(|hitbox| hitbox.window_point_target_rank(position, window) == Some(0));
     if !captured && !clear && !terminal {
         return false;
     }
@@ -1195,7 +1190,7 @@ pub(super) fn queue_pointer(
     {
         // Pointer position feeds the retained drag ghost. The committed core
         // report drives paint program invalidation when interaction changes it.
-        region.pointer = super::input::logical_point(position, bounds);
+        region.pointer = super::input::logical_point(position, geometry);
     }
     true
 }
@@ -1438,7 +1433,7 @@ fn process_reports(host: &mut HostState, bridge: &mut NativeBridge, cx: &mut App
                             (callbacks.binding() == *binding).then_some(*owner)
                         })
                 {
-                    presentation::close(host, owner, cx);
+                    presentation::retire_mount(host, owner, cx);
                 }
             }
             NativeReport::NativeTerminal(binding) => {
