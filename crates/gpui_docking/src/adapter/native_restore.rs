@@ -59,9 +59,11 @@ impl DockSurface {
     ///
     /// The complete host mapping, explicit anchor and every window option are
     /// checked before opening any window. `options` supplies ordinary window
-    /// styling and fallback geometry; saved logical window/display hints take
-    /// precedence. Current work areas constrain restore bounds. Presentation
-    /// states remain requests to GPUI, never observed native placement proof.
+    /// styling and fallback geometry. Display selection prefers the saved
+    /// display if connected, then the host's display, then the primary display.
+    /// Current work areas constrain restore bounds. An unusable saved rectangle
+    /// falls back to the host's geometry while retaining the saved window state.
+    /// Presentation states remain requests to GPUI.
     /// Host-region and central-policy hints require the application's own policy;
     /// each root created here fills its window with the corresponding surface.
     ///
@@ -194,13 +196,16 @@ fn resolve_options(
     }
 
     let placement = binding.logical_placement.as_ref();
-    let preferred = placement
+    let saved_display = placement
         .and_then(|placement| placement.display_id)
-        .map(DisplayId::new)
-        .or(options.display_id);
-    let connected = preferred.and_then(|display| displays.find_display(display));
-    let missing_display = preferred.is_some() && connected.is_none();
-    let display = connected
+        .map(DisplayId::new);
+    let display = saved_display
+        .and_then(|display| displays.find_display(display))
+        .or_else(|| {
+            options
+                .display_id
+                .and_then(|display| displays.find_display(display))
+        })
         .or_else(|| {
             displays
                 .primary_display()
@@ -227,26 +232,22 @@ fn resolve_options(
         ));
     }
 
-    let requested = if let Some(window) = placement
-        .and_then(|placement| placement.window_bounds)
-        .filter(|window| window.bounds.is_window_restore_hint())
-    {
-        let rect = window.bounds;
-        let bounds = Bounds::new(
-            point(px(rect.x), px(rect.y)),
-            size(px(rect.width), px(rect.height)),
-        );
-        match window.state {
-            DockWindowPlacementState::Windowed => WindowBounds::Windowed(bounds),
-            DockWindowPlacementState::Maximized => WindowBounds::Maximized(bounds),
-            DockWindowPlacementState::Fullscreen => WindowBounds::Fullscreen(bounds),
-        }
-    } else {
-        options
-            .window_bounds
-            .unwrap_or_else(|| WindowBounds::Windowed(display.default_bounds()))
-    };
-    let mut bounds = requested.get_bounds();
+    let hint = placement.and_then(|placement| placement.window_bounds);
+    let saved_bounds = hint
+        .map(|hint| hint.bounds)
+        .filter(|bounds| bounds.is_window_restore_hint());
+    let fallback = options
+        .window_bounds
+        .unwrap_or_else(|| WindowBounds::Windowed(display.default_bounds()));
+    let mut bounds = saved_bounds.map_or_else(
+        || fallback.get_bounds(),
+        |rect| {
+            Bounds::new(
+                point(px(rect.x), px(rect.y)),
+                size(px(rect.width), px(rect.height)),
+            )
+        },
+    );
     validate_bounds(bounds)?;
     if let Some(minimum) = options.window_min_size {
         if minimum.width > work_area.size.width || minimum.height > work_area.size.height {
@@ -263,6 +264,8 @@ fn resolve_options(
         || bounds.left() >= work_area.right()
         || bounds.bottom() <= work_area.top()
         || bounds.top() >= work_area.bottom();
+    let geometry_display = saved_bounds.and(saved_display).or(options.display_id);
+    let missing_display = geometry_display.is_some_and(|id| displays.find_display(id).is_none());
     if missing_display || offscreen {
         let center = work_area.center();
         bounds.origin = point(
@@ -270,20 +273,28 @@ fn resolve_options(
             center.y - bounds.size.height / 2.0,
         );
     } else {
-        bounds.origin.x = bounds
-            .origin
-            .x
-            .clamp(work_area.left(), work_area.right() - bounds.size.width);
-        bounds.origin.y = bounds
-            .origin
-            .y
-            .clamp(work_area.top(), work_area.bottom() - bounds.size.height);
+        bounds.origin.x = bounds.origin.x.clamp(
+            work_area.left(),
+            (work_area.right() - bounds.size.width).max(work_area.left()),
+        );
+        bounds.origin.y = bounds.origin.y.clamp(
+            work_area.top(),
+            (work_area.bottom() - bounds.size.height).max(work_area.top()),
+        );
     }
     options.display_id = Some(display.id());
-    options.window_bounds = Some(match requested {
-        WindowBounds::Windowed(_) => WindowBounds::Windowed(bounds),
-        WindowBounds::Maximized(_) => WindowBounds::Maximized(bounds),
-        WindowBounds::Fullscreen(_) => WindowBounds::Fullscreen(bounds),
+    let state = hint.map_or_else(
+        || match fallback {
+            WindowBounds::Windowed(_) => DockWindowPlacementState::Windowed,
+            WindowBounds::Maximized(_) => DockWindowPlacementState::Maximized,
+            WindowBounds::Fullscreen(_) => DockWindowPlacementState::Fullscreen,
+        },
+        |hint| hint.state,
+    );
+    options.window_bounds = Some(match state {
+        DockWindowPlacementState::Windowed => WindowBounds::Windowed(bounds),
+        DockWindowPlacementState::Maximized => WindowBounds::Maximized(bounds),
+        DockWindowPlacementState::Fullscreen => WindowBounds::Fullscreen(bounds),
     });
     Ok(options)
 }
@@ -440,13 +451,13 @@ mod tests {
                     cx.new(|_| Empty),
                 )
             });
-            let mut save_hints = host.clone();
+            let mut save_hints = host;
             save_hints.surfaces[1]
                 .logical_placement
                 .as_mut()
                 .unwrap()
                 .window_bounds = Some(DockLogicalWindowPlacement {
-                state: DockWindowPlacementState::Windowed,
+                state: DockWindowPlacementState::Maximized,
                 bounds: DockLogicalPlacementRect {
                     x: 40.0,
                     y: 60.0,
@@ -455,24 +466,32 @@ mod tests {
                 },
             });
             let saved = DockWorkspaceDocument::capture(&mut session, save_hints).unwrap();
+            let decoded = DockWorkspaceDocument::decode_json(&saved.to_json().unwrap()).unwrap();
             let dock = DockSurface::new_managed(session, panes, Default::default(), cx).unwrap();
+            let fallback = Bounds::new(point(px(40.0), px(60.0)), size(px(640.0), px(480.0)));
             let windows = dock
-                .open_restored_native_roots(&host, FIRST, |_, _| WindowOptions::default(), cx)
+                .open_restored_native_roots(
+                    decoded.host(),
+                    FIRST,
+                    |_, _| WindowOptions {
+                        window_bounds: Some(WindowBounds::Windowed(fallback)),
+                        ..Default::default()
+                    },
+                    cx,
+                )
                 .unwrap();
-            assert!(
-                saved.host().surfaces[1]
-                    .logical_placement
-                    .as_ref()
-                    .unwrap()
-                    .window_bounds
-                    .is_none()
-            );
             (dock, windows)
         });
         settle(cx, &dock);
         assert_eq!(windows.len(), 2);
         cx.update_window(windows[&SECOND], |_, window, _| {
-            assert!(window.window_bounds().get_bounds().size.width > px(0.0));
+            assert_eq!(
+                window.window_bounds(),
+                WindowBounds::Maximized(Bounds::new(
+                    point(px(40.0), px(60.0)),
+                    size(px(640.0), px(480.0))
+                ))
+            );
         })
         .unwrap();
         cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();
@@ -521,6 +540,52 @@ mod tests {
             );
         }
         assert_eq!(dock.inspection().unwrap().native_window_binding_count, 2);
+        cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();
+        settle(cx, &dock);
+        assert!(dock.native_is_quiescent());
+    }
+
+    #[open_gpui::test]
+    fn vanished_display_uses_the_hosts_connected_display_before_the_primary(
+        cx: &mut TestAppContext,
+    ) {
+        let secondary = DisplayId::new(2);
+        cx.simulate_display_bounds_change(
+            DisplayId::new(1),
+            Bounds::new(point(px(0.0), px(0.0)), size(px(800.0), px(600.0))),
+        );
+        cx.simulate_display_added(secondary, None);
+        cx.simulate_display_bounds_change(
+            secondary,
+            Bounds::new(point(px(-1600.0), px(0.0)), size(px(1600.0), px(900.0))),
+        );
+        let (dock, mut host) = cx.update(workspace);
+        host.surfaces[0]
+            .logical_placement
+            .as_mut()
+            .unwrap()
+            .display_id = Some(999);
+        let windows = cx
+            .update(|cx| {
+                dock.open_restored_native_roots(
+                    &host,
+                    FIRST,
+                    |binding, _| WindowOptions {
+                        display_id: (binding.surface == FIRST).then_some(secondary),
+                        window_min_size: (binding.surface == FIRST)
+                            .then(|| size(px(1000.0), px(400.0))),
+                        ..Default::default()
+                    },
+                    cx,
+                )
+            })
+            .unwrap();
+        settle(cx, &dock);
+        cx.update_window(windows[&FIRST], |_, window, cx| {
+            assert_eq!(window.display(cx).unwrap().id(), secondary);
+            assert_eq!(window.window_bounds().get_bounds().size.width, px(1000.0));
+        })
+        .unwrap();
         cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();
         settle(cx, &dock);
         assert!(dock.native_is_quiescent());
