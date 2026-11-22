@@ -439,6 +439,8 @@ fn product_menu_confirmation_survives_a_late_wake_without_core_repaint(cx: &mut 
 fn releasing_the_list_opener_after_a_product_menu_takes_keyboard_ownership(
     cx: &mut TestAppContext,
 ) {
+    cx.update(|app| app.set_quit_mode(open_gpui::QuitMode::Explicit));
+
     #[derive(Clone, Copy, Debug)]
     enum Release {
         Opener,
@@ -554,6 +556,7 @@ fn releasing_the_list_opener_after_a_product_menu_takes_keyboard_ownership(
 fn rejected_list_release_cannot_revive_an_old_product_confirmation(cx: &mut TestAppContext) {
     use open_gpui::PlatformFrameDeliveryMode;
 
+    cx.update(|app| app.set_quit_mode(open_gpui::QuitMode::Explicit));
     for product in ["Layout actions", "Tab group actions"] {
         for return_to_product in [false, true] {
             let (dock, _) = overflowing_surfaces_with_mode(&[SURFACE], true, cx);

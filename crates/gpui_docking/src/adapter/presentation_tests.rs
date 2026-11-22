@@ -649,6 +649,7 @@ fn logical_window_removal_revokes_presented_authority_before_native_terminal(
 
 #[open_gpui::test]
 fn retiring_a_native_sibling_preserves_earlier_pointer_input(cx: &mut TestAppContext) {
+    cx.update(|app| app.set_quit_mode(open_gpui::QuitMode::Explicit));
     for redraw_source in [false, true] {
         for already_recorded in [false, true] {
             retire_native_sibling_with_pointer_input(cx, already_recorded, redraw_source);

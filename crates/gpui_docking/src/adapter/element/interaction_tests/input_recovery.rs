@@ -6,10 +6,7 @@ use crate::adapter::element::wheel::ScrollTarget;
 use dockspace::runtime::{SurfacePaintProgramOperation, SurfacePaintProgramStep};
 use open_gpui::{Point, PointerCapture};
 
-use super::{
-    wheel::{SingleRegion, overflowing_surfaces},
-    *,
-};
+use super::{wheel::overflowing_surfaces, *};
 
 struct OverlayRoot {
     dock: DockSurface,
