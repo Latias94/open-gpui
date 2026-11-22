@@ -26,6 +26,7 @@ pub(super) struct PendingSubmission {
     pub(super) packets: BTreeMap<SurfaceId, Rc<Packet>>,
     pub(super) update: Option<DockspaceUpdate>,
     pub(super) inputs: Vec<QueuedInput>,
+    input_revoked: bool,
     outputs: Vec<PaintedSurfaceOutput>,
     accepted_generation: Option<u64>,
     input_frames: Vec<InputFrame>,
@@ -77,10 +78,23 @@ impl PendingSubmission {
             packets,
             update: Some(update),
             inputs,
+            input_revoked: false,
             outputs: Vec::new(),
             accepted_generation: None,
             input_frames: Vec::new(),
         }
+    }
+
+    fn revoke_inputs_from(&mut self, owner: WindowId) -> bool {
+        if self.update.is_none() {
+            return false;
+        }
+        let count = self.inputs.len();
+        self.inputs.retain(|input| input.owner() != owner);
+        let revoked = self.inputs.len() != count;
+        // A remount can reuse the WindowId before the original receipt arrives.
+        self.input_revoked |= revoked;
+        revoked
     }
 }
 
@@ -234,12 +248,13 @@ pub(super) fn accept(
         return;
     };
     if pending.update.is_some()
-        && pending
-            .inputs
-            .iter()
-            .any(|input| !host.mounts.contains_key(&input.owner()))
+        && (pending.input_revoked
+            || pending
+                .inputs
+                .iter()
+                .any(|input| !has_live_source(&host, input)))
     {
-        // The renderer may already have finished when its input source exits.
+        // The renderer may already have finished when an input source retires.
         // The unaccepted core update still has no publication authority.
         window.retire_exact_frame_submission(&pending.ticket);
         for region in host.mounts.get_mut(&owner).unwrap().regions.values_mut() {
@@ -373,7 +388,6 @@ pub(super) fn accept_focus_stable(
 pub(super) fn discard(shared: &SharedHost, window: &mut Window, cx: &mut App) {
     let owner = window.window_handle().window_id();
     let mut host = shared.borrow_mut();
-    withdraw_pending(&mut host, window, cx);
     let Some(mount) = host.mounts.get_mut(&owner) else {
         return;
     };
@@ -386,6 +400,8 @@ pub(super) fn discard(shared: &SharedHost, window: &mut Window, cx: &mut App) {
         region.presented = None;
         region.presented_panes.clear();
     }
+    withdraw_pending(&mut host, window, cx);
+    retire_input_source(&mut host, owner, cx);
     if let Err(error) = settle_pending(&mut host, Some(window), cx) {
         host.fail(error.as_ref());
     }
@@ -393,6 +409,31 @@ pub(super) fn discard(shared: &SharedHost, window: &mut Window, cx: &mut App) {
     drop(host);
     let _ = window.release_pointer(&capture);
     host_native::schedule(shared, cx);
+}
+
+fn has_live_source(host: &HostState, input: &QueuedInput) -> bool {
+    host.mounts
+        .get(&input.owner())
+        .is_some_and(|mount| mount.attached)
+}
+
+fn retire_input_source(host: &mut HostState, owner: WindowId, cx: &mut App) {
+    host.inputs.retain(|input| input.owner() != owner);
+    // A surviving window can hold the unaccepted update that borrowed this
+    // mount's input. Withdraw it if possible and retain the other inputs in order.
+    let borrowed = host.mounts.values_mut().find_map(|mount| {
+        let pending = mount.pending.as_mut()?;
+        pending
+            .revoke_inputs_from(owner)
+            .then(|| (mount.window, pending.ticket.clone()))
+    });
+    if let Some((borrower, ticket)) = borrowed {
+        let _ = borrower.update(cx, |_, window, cx| {
+            if window.withdraw_unaccepted_frame_submission(&ticket, cx) {
+                withdraw_pending(host, window, cx);
+            }
+        });
+    }
 }
 
 fn withdraw_pending(host: &mut HostState, window: &mut Window, cx: &mut App) {
@@ -419,9 +460,7 @@ fn retire_pending(
     cx: &mut App,
 ) {
     if pending.update.take().is_some() {
-        pending
-            .inputs
-            .retain(|input| host.mounts.contains_key(&input.owner()));
+        pending.inputs.retain(|input| has_live_source(host, input));
         pending.inputs.append(&mut host.inputs);
         host.inputs = pending.inputs;
         // An unaccepted update has never published any affine outputs.
@@ -615,26 +654,7 @@ pub(super) fn close(host: &mut HostState, owner: WindowId, cx: &mut App) {
         if let Some(pending) = mount.pending.take() {
             retire_pending(host, owner, pending, SurfacePresentationResult::Dropped, cx);
         }
-        // A physical frame can borrow the entire session's prefix. Return it
-        // in order and discard only local events from the retired window.
-        host.inputs.retain(|input| input.owner() != owner);
-        // A surviving window can own the unaccepted update that borrowed
-        // this window's inputs. Withdraw that whole candidate, preserving its
-        // other sources in their original order.
-        let borrowed = host.mounts.values().find_map(|mount| {
-            let pending = mount.pending.as_ref().filter(|pending| {
-                pending.update.is_some()
-                    && pending.inputs.iter().any(|input| input.owner() == owner)
-            })?;
-            Some((mount.window, pending.ticket.clone()))
-        });
-        if let Some((borrower, ticket)) = borrowed {
-            let _ = borrower.update(cx, |_, window, cx| {
-                if window.withdraw_unaccepted_frame_submission(&ticket, cx) {
-                    withdraw_pending(host, window, cx);
-                }
-            });
-        }
+        retire_input_source(host, owner, cx);
         let mut surfaces = Vec::new();
         for surface in mount.regions.keys() {
             if host

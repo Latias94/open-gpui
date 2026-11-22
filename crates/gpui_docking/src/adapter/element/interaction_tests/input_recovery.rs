@@ -692,38 +692,113 @@ fn accepted_overlay_revokes_stationary_drop_preview_until_a_fresh_move(cx: &mut 
 
 #[open_gpui::test]
 fn closing_a_window_returns_unaccepted_input_from_another_window(cx: &mut TestAppContext) {
-    close_window_with_borrowed_input(cx, BorrowedInputClose::Borrower);
+    retire_window_with_borrowed_input(cx, BorrowedInputRetirement::CloseBorrower);
 }
 
 #[open_gpui::test]
 fn closing_the_input_source_withdraws_its_unaccepted_sibling_candidate(cx: &mut TestAppContext) {
-    close_window_with_borrowed_input(cx, BorrowedInputClose::Source);
+    retire_window_with_borrowed_input(
+        cx,
+        BorrowedInputRetirement::CloseSource {
+            renderer_submitted: false,
+        },
+    );
 }
 
 #[open_gpui::test]
 fn closing_the_input_source_before_delivering_the_renderer_receipt_rejects_its_input(
     cx: &mut TestAppContext,
 ) {
-    close_window_with_borrowed_input(cx, BorrowedInputClose::SourceAfterSubmission);
+    retire_window_with_borrowed_input(
+        cx,
+        BorrowedInputRetirement::CloseSource {
+            renderer_submitted: true,
+        },
+    );
 }
 
-#[derive(Clone, Copy)]
-enum BorrowedInputClose {
-    Borrower,
-    Source,
-    SourceAfterSubmission,
+#[open_gpui::test]
+fn unmounting_an_input_source_discards_its_click_and_preserves_other_input_order(
+    cx: &mut TestAppContext,
+) {
+    for renderer_submitted in [false, true] {
+        retire_window_with_borrowed_input(
+            cx,
+            BorrowedInputRetirement::UnmountSource {
+                renderer_submitted,
+                remount: false,
+            },
+        );
+    }
 }
 
-fn close_window_with_borrowed_input(cx: &mut TestAppContext, close: BorrowedInputClose) {
-    let close_source = !matches!(close, BorrowedInputClose::Borrower);
-    let renderer_submitted = matches!(close, BorrowedInputClose::SourceAfterSubmission);
+#[open_gpui::test]
+fn remounting_an_input_source_cannot_revive_its_click_before_the_renderer_receipt(
+    cx: &mut TestAppContext,
+) {
+    retire_window_with_borrowed_input(
+        cx,
+        BorrowedInputRetirement::UnmountSource {
+            renderer_submitted: true,
+            remount: true,
+        },
+    );
+}
+
+enum BorrowedInputRetirement {
+    CloseBorrower,
+    CloseSource {
+        renderer_submitted: bool,
+    },
+    UnmountSource {
+        renderer_submitted: bool,
+        remount: bool,
+    },
+}
+
+struct OptionalDockMount {
+    dock: DockSurface,
+    surface: SurfaceId,
+    mounted: Rc<Cell<bool>>,
+}
+
+impl Render for OptionalDockMount {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().when(self.mounted.get(), |root| {
+            root.child(self.dock.element(self.surface))
+        })
+    }
+}
+
+fn retire_window_with_borrowed_input(cx: &mut TestAppContext, retirement: BorrowedInputRetirement) {
+    use dockspace::runtime::DockspaceEventKind;
+
+    let retire_source = !matches!(retirement, BorrowedInputRetirement::CloseBorrower);
+    let remount = matches!(
+        retirement,
+        BorrowedInputRetirement::UnmountSource { remount: true, .. }
+    );
+    let unmount = matches!(retirement, BorrowedInputRetirement::UnmountSource { .. });
+    let renderer_submitted = matches!(
+        retirement,
+        BorrowedInputRetirement::CloseSource {
+            renderer_submitted: true
+        } | BorrowedInputRetirement::UnmountSource {
+            renderer_submitted: true,
+            ..
+        }
+    );
     let sibling = SurfaceId::new(52);
     let (dock, _) = overflowing_surfaces(&[SURFACE, sibling], cx);
-    let [first, second] = [SURFACE, sibling].map(|surface| {
+    let [(first, source_mounted), (second, _)] = [SURFACE, sibling].map(|surface| {
+        let mounted = Rc::new(Cell::new(true));
         cx.defer_next_window_frame_requests();
-        cx.open_window(size(px(620.0), px(400.0)), |_, _| {
-            SingleRegion(dock.clone(), surface)
-        })
+        let window = cx.open_window(size(px(620.0), px(400.0)), |_, _| OptionalDockMount {
+            dock: dock.clone(),
+            surface,
+            mounted: mounted.clone(),
+        });
+        (window, mounted)
     });
     let mut source = active_visual(first.into(), cx);
     let mut target = VisualTestContext::from_window(second.into(), cx);
@@ -732,7 +807,7 @@ fn close_window_with_borrowed_input(cx: &mut TestAppContext, close: BorrowedInpu
     assert!(dock.with_view(|view| view.item(ItemId::new(1)).unwrap().is_active()));
     cx.set_platform_hovered_window(Some(first.into()));
     let tab = source.debug_bounds("dockspace:tab:2").unwrap().center();
-    let sibling_action = {
+    let sibling_action = |item| {
         let host = dock.host.borrow();
         let packet = host.mounts[&second.window_id()].regions[&sibling]
             .packet
@@ -743,7 +818,7 @@ fn close_window_with_borrowed_input(cx: &mut TestAppContext, close: BorrowedInpu
             .iter()
             .find_map(|draw| match draw {
                 Draw::Control(control)
-                    if matches!(control.kind, ControlKind::Tab(tab) if tab == ItemId::new(42).into()) =>
+                    if matches!(control.kind, ControlKind::Tab(tab) if tab == ItemId::new(item).into()) =>
                 {
                     Some(control.slot(ControlAction::Activate)?.borrow().as_ref()?.intent.clone())
                 }
@@ -751,6 +826,28 @@ fn close_window_with_borrowed_input(cx: &mut TestAppContext, close: BorrowedInpu
             })
             .unwrap()
     };
+    let queued_selection = retire_source.then(|| sibling_action(42));
+    let later_selection = unmount.then(|| sibling_action(43));
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    if unmount {
+        let selections = selections.clone();
+        cx.update(|cx| {
+            dock.set_commit_handler(
+                move |_, commit, _| {
+                    selections.borrow_mut().extend(
+                        commit.notification().events().iter().filter_map(|event| {
+                            match event.kind() {
+                                DockspaceEventKind::SelectionCommitted { tab } => Some(*tab),
+                                _ => None,
+                            }
+                        }),
+                    );
+                },
+                cx,
+            )
+            .unwrap();
+        });
+    }
     cx.set_window_frame_delivery_mode(
         second.into(),
         open_gpui::PlatformFrameDeliveryMode::Deferred,
@@ -776,13 +873,8 @@ fn close_window_with_borrowed_input(cx: &mut TestAppContext, close: BorrowedInpu
             cx,
         );
         assert_eq!(dock.host.borrow().inputs.len(), 2);
-        if close_source {
-            input::queue_action(
-                &mut dock.host.borrow_mut(),
-                second.window_id(),
-                sibling_action,
-                cx,
-            );
+        if let Some(action) = queued_selection {
+            input::queue_action(&mut dock.host.borrow_mut(), second.window_id(), action, cx);
         }
         // Construct the sibling candidate before the input transaction's
         // normal work can draw and commit the source window.
@@ -807,22 +899,37 @@ fn close_window_with_borrowed_input(cx: &mut TestAppContext, close: BorrowedInpu
             .as_ref()
             .unwrap()
             .inputs;
-        assert_eq!(borrowed.len(), if close_source { 3 } else { 2 });
+        assert_eq!(borrowed.len(), if retire_source { 3 } else { 2 });
         assert!(
             borrowed[..2]
                 .iter()
                 .all(|input| input.owner() == first.window_id())
         );
     }
-    let surviving_window = if close_source {
+    let surviving_window = if retire_source {
         source.update(|window, cx| {
+            if let Some(action) = later_selection {
+                input::queue_action(&mut dock.host.borrow_mut(), second.window_id(), action, cx);
+            }
             if renderer_submitted {
                 assert!(pending.complete(PlatformWindowPresentOutcome::Submitted));
                 // The receipt is queued behind this update and the core candidate
                 // still belongs to the surviving window.
                 assert!(dock.is_update_pending());
             }
-            window.remove_window(cx);
+            if unmount {
+                source_mounted.set(false);
+                let _ = window.draw(cx);
+                assert!(!dock.host.borrow().mounts[&first.window_id()].attached);
+                if remount {
+                    source_mounted.set(true);
+                    let _ = window.draw(cx);
+                    assert!(dock.host.borrow().mounts[&first.window_id()].attached);
+                    assert!(dock.is_update_pending());
+                }
+            } else {
+                window.remove_window(cx);
+            }
         });
         cx.set_window_frame_delivery_mode(
             second.into(),
@@ -850,11 +957,28 @@ fn close_window_with_borrowed_input(cx: &mut TestAppContext, close: BorrowedInpu
         ran = true;
     }
     assert!(ran);
-    if close_source {
+    if retire_source {
         assert!(dock.with_view(|view| view.item(ItemId::new(1)).unwrap().is_active()));
-        assert!(dock.with_view(|view| view.item(ItemId::new(42)).unwrap().is_active()));
+        assert!(dock.with_view(|view| {
+            view.item(ItemId::new(if unmount { 43 } else { 42 }))
+                .unwrap()
+                .is_active()
+        }));
     } else {
         assert!(dock.with_view(|view| view.item(ItemId::new(2)).unwrap().is_active()));
     }
     assert!(dock.host.borrow().inputs.is_empty());
+    if unmount {
+        assert_eq!(
+            *selections.borrow(),
+            [ItemId::new(42).into(), ItemId::new(43).into()]
+        );
+    }
+    if remount {
+        frames(&mut source, &dock);
+        let tab = source.debug_bounds("dockspace:tab:2").unwrap().center();
+        source.simulate_click(tab, Modifiers::none());
+        frames(&mut source, &dock);
+        assert!(dock.with_view(|view| view.item(ItemId::new(2)).unwrap().is_active()));
+    }
 }
