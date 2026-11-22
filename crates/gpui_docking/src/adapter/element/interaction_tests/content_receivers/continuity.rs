@@ -7,6 +7,81 @@ use open_gpui::{Empty, WindowFrameSubmissionOutcome};
 use super::*;
 
 #[open_gpui::test]
+fn a_siblings_unaccepted_update_preserves_the_presented_editor(cx: &mut TestAppContext) {
+    use open_gpui::PlatformFrameDeliveryMode;
+
+    let sibling_surface = SurfaceId::new(52);
+    for managed in [false, true] {
+        let (dock, editors) = content_fixture_regions(cx, managed, true);
+        cx.defer_next_window_frame_requests();
+        let mut source = open_content(cx, &dock, managed);
+        let source_window = source.update(|window, _| window.window_handle());
+        cx.defer_next_window_frame_requests();
+        let sibling_window = if managed {
+            cx.update(|cx| dock.open_native_root(sibling_surface, false, Default::default(), cx))
+                .unwrap()
+        } else {
+            cx.open_window(size(px(800.0), px(600.0)), |_, _| {
+                super::super::wheel::SingleRegion(dock.clone(), sibling_surface)
+            })
+            .into()
+        };
+        let mut sibling = VisualTestContext::from_window(sibling_window, cx);
+        frames(&mut sibling, &dock);
+        let mut source = active_visual(source_window, cx);
+        frames(&mut source, &dock);
+        let editor = &editors[0];
+        let focus = editor.read_with(&source, |editor, _| editor.focus.clone());
+        let focus_claim = source.update(|window, cx| {
+            assert!(window.is_focus_handle_rendered(&focus));
+            window.focus(&focus, cx);
+            window.focus_claim_revision()
+        });
+        source.simulate_keystrokes("p");
+        assert_eq!(
+            editor.read_with(&source, |editor, _| editor.text.clone()),
+            "p"
+        );
+
+        cx.set_window_frame_delivery_mode(sibling_window, PlatformFrameDeliveryMode::Deferred);
+        cx.simulate_window_resize(sibling_window, size(px(760.0), px(510.0)));
+        assert!(sibling.simulate_frame(RequestFrameOptions {
+            require_presentation: true,
+            force_render: true,
+            ..Default::default()
+        }));
+        let original = cx.pending_window_frame_submission(sibling_window).unwrap();
+        assert!(dock.is_update_pending());
+        for key in ["x", "y"] {
+            frames(&mut source, &dock);
+            assert!(dock.host.borrow().mounts[&source_window.window_id()].waiting_for_update);
+            source.update(|window, _| {
+                assert!(window.is_focus_handle_rendered(&focus));
+                assert!(focus.is_focused(window));
+                assert_eq!(window.focus_claim_revision(), focus_claim);
+            });
+            source.simulate_keystrokes(key);
+        }
+        assert_eq!(
+            editor.read_with(&source, |editor, _| editor.text.clone()),
+            "pxy"
+        );
+        assert!(dock.is_update_pending());
+        if managed {
+            cx.update(|_| assert!(original.complete(PlatformWindowPresentOutcome::Submitted)));
+            cx.set_window_frame_delivery_mode(
+                sibling_window,
+                PlatformFrameDeliveryMode::Synchronous,
+            );
+            frames(&mut sibling, &dock);
+            shutdown(cx, &dock, true);
+        } else {
+            sibling.update(|window, cx| window.remove_window(cx));
+        }
+    }
+}
+
+#[open_gpui::test]
 fn reused_surface_root_and_item_wait_for_their_original_output_despite_identical_geometry(
     cx: &mut TestAppContext,
 ) {

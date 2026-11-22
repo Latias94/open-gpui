@@ -9,7 +9,8 @@ pub(in crate::adapter::element) struct MenuOpening {
     serial: u64,
     proof: RetainedTabListOpener,
     version: WorkspaceVersion,
-    keys: Vec<ControlAction>,
+    keys: Option<Vec<ControlAction>>,
+    product_fallback: Option<presentation_menu::OpenMenu>,
 }
 
 impl MenuOpening {
@@ -17,17 +18,30 @@ impl MenuOpening {
         proof: RetainedTabListOpener,
         version: WorkspaceVersion,
         serial: u64,
+        retains_keys: bool,
+        product_fallback: Option<presentation_menu::OpenMenu>,
     ) -> Self {
         Self {
             serial,
             proof,
             version,
-            keys: Vec::new(),
+            keys: retains_keys.then(Vec::new),
+            product_fallback,
         }
     }
 
     fn is_current(&self, host: &HostState) -> bool {
         self.version == host.session.version()
+    }
+
+    pub(in crate::adapter::element) fn replaces(&self, open: presentation_menu::OpenMenu) -> bool {
+        self.product_fallback == Some(open)
+    }
+
+    pub(in crate::adapter::element) fn into_witness(
+        self,
+    ) -> (WorkspaceVersion, RetainedTabListOpener) {
+        (self.version, self.proof)
     }
 }
 
@@ -59,15 +73,22 @@ pub(super) fn retain_key(
         || !opening.is_current(&host)
         || host.ensure_application_admission().is_err()
     {
-        focus.opening = None;
+        // Keep the witness for a later menu switch even when the application
+        // already owns keyboard focus.
+        opening.keys = None;
         return false;
     }
-    if window.focused(cx).is_some() && !focus.opener.is_focused(window)
-        || opening.keys.last().is_some_and(|key| ends_menu(*key))
+    let Some(keys) = opening.keys.as_mut() else {
+        return false;
+    };
+    if (opening.product_fallback.is_none()
+        && window.focused(cx).is_some()
+        && !focus.opener.is_focused(window))
+        || keys.last().is_some_and(|key| ends_menu(*key))
     {
         return false;
     }
-    opening.keys.push(key);
+    keys.push(key);
     window.refresh();
     true
 }
@@ -81,7 +102,7 @@ pub(in crate::adapter::element) fn restore(
     window: &mut Window,
     cx: &mut App,
 ) -> bool {
-    let (opening, surface, bar) = {
+    let (opening, surface, bar, owns_focus) = {
         let mut focus = interaction.tab_list_focus.borrow_mut();
         let Some(focus) = focus.as_mut() else {
             return false;
@@ -89,22 +110,24 @@ pub(in crate::adapter::element) fn restore(
         let Some(opening) = focus.opening.as_ref() else {
             return false;
         };
-        if focus.claim_revision != window.focus_claim_revision()
-            || !opening.is_current(&shared.borrow())
-        {
+        let owns_focus = focus.claim_revision == window.focus_claim_revision();
+        let host = shared.borrow();
+        if !opening.is_current(&host) || host.session.view().surface(focus.surface).is_none() {
             focus.opening = None;
             return false;
         }
+        drop(host);
         if serial == opening.serial || !presented(focus.surface) {
-            return true;
+            return owns_focus && opening.keys.is_some();
         }
         (
             focus.opening.take().expect("pending menu opening"),
             focus.surface,
             focus.bar,
+            owns_focus,
         )
     };
-    let Some((_, control, row_focus)) = controls.iter().find(|(owner, control, focus_handle)| {
+    let shown = controls.iter().find(|(owner, control, focus_handle)| {
         *owner == surface
             && window.is_focus_handle_rendered(focus_handle)
             && control.menu_row.as_ref().is_some_and(|row| {
@@ -112,7 +135,30 @@ pub(in crate::adapter::element) fn restore(
                     && row.keys.bar == bar
                     && row.keys.retained.can_continue_opening(&opening.proof)
             })
-    }) else {
+    });
+    if shown.is_none() {
+        interaction.tab_list_focus.borrow_mut().take();
+        if let Some(previous) = opening.product_fallback
+            && owns_focus
+            && let Some(keys) = opening.keys
+        {
+            presentation_menu::resume_after_rejected_list(
+                shared,
+                interaction,
+                previous,
+                keys,
+                window,
+                cx,
+            );
+        }
+        return false;
+    }
+    if let Some(previous) = opening.product_fallback
+        && presentation_menu::open(interaction) == Some(previous)
+    {
+        presentation_menu::revoke(shared, interaction, window);
+    }
+    let Some((_, control, row_focus)) = shown.filter(|_| owns_focus) else {
         return false;
     };
     let Some(row) = control.menu_row.as_ref() else {
@@ -121,7 +167,7 @@ pub(in crate::adapter::element) fn restore(
     let mut target = row.id;
     let mut action = None;
     let mut end = None;
-    for key in opening.keys {
+    for key in opening.keys.into_iter().flatten() {
         let Some((next, slot)) = row.keys.step(target, key) else {
             return false;
         };

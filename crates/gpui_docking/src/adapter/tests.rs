@@ -840,6 +840,18 @@ fn native_ingress_waits_for_the_original_unaccepted_candidate(cx: &mut TestAppCo
     }
     cx.run_until_parked();
     let transport = dock.native_transport().unwrap();
+    let sibling_owner = windows[1].window_id();
+    let (displayed, original_input) = {
+        let host = dock.host.borrow();
+        let sibling = &host.mounts[&sibling_owner];
+        let frame = sibling
+            .input_frames
+            .iter()
+            .find(|frame| frame.surface == SECOND)
+            .unwrap();
+        assert!(frame.native_binding.is_some());
+        (sibling.regions[&SECOND].presented.unwrap(), frame.clone())
+    };
     cx.update_window(windows[0], |_, window, cx| {
         let mut host = dock.host.borrow_mut();
         let owner = window.window_handle().window_id();
@@ -877,9 +889,18 @@ fn native_ingress_waits_for_the_original_unaccepted_candidate(cx: &mut TestAppCo
         }).unwrap();
         {
             let host = dock.host.borrow();
-            let sibling = &host.mounts[&windows[1].window_id()];
+            let sibling = &host.mounts[&sibling_owner];
             assert!(sibling.waiting_for_update);
-            assert!(sibling.input_frames.is_empty(), "a waiting frame supplies no new docking hit facts");
+            assert!(sibling.pending.is_none());
+            assert_eq!(sibling.regions[&SECOND].presented, Some(displayed));
+            let [retained] = sibling.input_frames.as_slice() else {
+                panic!("the redraw keeps the original native input frame");
+            };
+            assert_eq!(retained.surface, SECOND);
+            assert_eq!(retained.serial, original_input.serial);
+            assert_eq!(retained.bounds, original_input.bounds);
+            assert_eq!(retained.scale, original_input.scale);
+            assert_eq!(retained.native_binding, original_input.native_binding);
         }
         transport.focus(dockspace::runtime::NativeGlobalFocus::Foreign, cx);
         super::host_native::prepare_window(&dock.host, window, cx);

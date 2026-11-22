@@ -86,5 +86,5 @@ pub(super) fn released(
     {
         return;
     }
-    input::queue_action(host, press.action, cx);
+    input::queue_action(host, window.window_handle().window_id(), press.action, cx);
 }

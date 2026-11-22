@@ -57,7 +57,12 @@ pub(super) struct Packet {
     pane_receivers: BTreeMap<ItemId, DockspaceReceiverDescriptor>,
     state: PacketState,
     pub(super) native_preview: Option<host_native::provisional::Preview>,
-    tab_list_dismiss: Option<DeferredSurfaceAction>,
+    tab_list: Option<TabListPopup>,
+}
+
+struct TabListPopup {
+    keys: Rc<keyboard::MenuKeys>,
+    dismiss: DeferredSurfaceAction,
 }
 
 enum PacketState {
@@ -82,7 +87,7 @@ impl Packet {
             pane_receivers: BTreeMap::new(),
             state,
             native_preview: None,
-            tab_list_dismiss: None,
+            tab_list: None,
         })
     }
 
@@ -162,6 +167,8 @@ struct InteractionState {
     pane_focus: RefCell<BTreeMap<SurfaceId, PaneFocusAttempt>>,
     pending_tab_focus: RefCell<Option<PendingTabFocus>>,
     tab_list_focus: RefCell<Option<TabListFocus>>,
+    superseded_tab_list: RefCell<Option<presentation_menu::SupersededTabList>>,
+    tab_list_press: RefCell<Option<TabListPress>>,
     wheel_gesture: Cell<Option<wheel::WheelGesture>>,
     keyboard: RefCell<Option<keyboard::Continuation>>,
     keyboard_subscription: RefCell<Option<open_gpui::Subscription>>,
@@ -214,6 +221,16 @@ struct TabListFocus {
     opener: FocusHandle,
     claim_revision: u64,
     opening: Option<keyboard::MenuOpening>,
+}
+
+struct TabListPress {
+    surface: SurfaceId,
+    opener: chrome::TabListOpener,
+}
+
+enum TabListOpenSource {
+    Action,
+    PointerRelease,
 }
 
 pub(crate) struct DockspaceElement {
@@ -692,9 +709,9 @@ impl DockspaceElement {
         }
         let tab_list = packets.iter().find_map(|(surface, packet)| {
             packet
-                .tab_list_dismiss
+                .tab_list
                 .as_ref()
-                .map(|action| (*surface, action.clone()))
+                .map(|menu| (*surface, menu.dismiss.clone()))
         });
         let mut regions = Vec::new();
         for (surface, packet) in &packets {
@@ -720,22 +737,40 @@ impl DockspaceElement {
             .iter()
             .flat_map(|region| region.tabs.iter().copied())
             .collect();
-        let input_frames: Vec<_> = regions
-            .iter()
-            .filter(|_| !waiting_for_update)
-            .map(|region| InputFrame {
-                surface: region.surface,
-                serial,
-                bounds: region.bounds,
-                hitboxes: region.hitboxes.clone(),
-                content_hitboxes: region.content_hitboxes.clone(),
-                panes: region.panes.clone(),
-                capture,
-                receivers: region.receivers.clone(),
-                scale: f64::from(window.scale_factor()),
-                native_binding: None,
-            })
-            .collect();
+        let input_frames: Vec<_> = {
+            let host = self.host.borrow();
+            let scale = f64::from(window.scale_factor());
+            let refresh_native_receivers = host.native.is_some() && window.is_visible();
+            regions
+                .iter()
+                .filter(|region| {
+                    // GPUI replaces hitbox IDs on redraw. Keep the displayed
+                    // artifact's receivers usable by the native ingress queue
+                    // while the same geometry is still current.
+                    !waiting_for_update
+                        || (refresh_native_receivers
+                            && input::is_presented(&host, owner, region.surface, serial)
+                            && host.mounts[&owner].input_frames.iter().any(|previous| {
+                                previous.surface == region.surface
+                                    && previous.serial == serial
+                                    && previous.bounds == region.bounds
+                                    && previous.scale == scale
+                            }))
+                })
+                .map(|region| InputFrame {
+                    surface: region.surface,
+                    serial,
+                    bounds: region.bounds,
+                    hitboxes: region.hitboxes.clone(),
+                    content_hitboxes: region.content_hitboxes.clone(),
+                    panes: region.panes.clone(),
+                    capture,
+                    receivers: region.receivers.clone(),
+                    scale,
+                    native_binding: None,
+                })
+                .collect()
+        };
         let interaction = self.interaction.clone();
         let visible_panes: Vec<_> = regions
             .iter()
@@ -855,6 +890,14 @@ impl DockspaceElement {
         let mut visible_panes = Vec::new();
         let mut menus = Vec::new();
         let mut scrolls = Vec::new();
+        let allow_menu_row_input = allow_input
+            && !packet.tab_list.as_ref().is_some_and(|menu| {
+                self.interaction
+                    .superseded_tab_list
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|previous| previous.matches(surface, menu))
+            });
         let receiver_controls = packet
             .draws
             .iter()
@@ -866,13 +909,15 @@ impl DockspaceElement {
             })
             .collect::<BTreeMap<_, _>>();
         let mut prepared_controls = BTreeMap::new();
-        let (config, admitted, pointer) = {
+        let (config, admitted, pointer, keep_live_content) = {
             let host = self.host.borrow();
             let owner = window.window_handle().window_id();
+            let mount = &host.mounts[&owner];
             (
                 host.config.clone(),
                 allow_input && input::is_presented(&host, owner, surface, serial),
-                host.mounts[&owner].regions[&surface].pointer,
+                mount.regions[&surface].pointer,
+                allow_input || (mount.waiting_for_update && window.is_visible()),
             )
         };
         for draw in &packet.draws {
@@ -995,7 +1040,7 @@ impl DockspaceElement {
                         surface,
                         serial,
                         bounds,
-                        allow_input,
+                        allow_input && (control.menu_row.is_none() || allow_menu_row_input),
                         window,
                         cx,
                     );
@@ -1034,7 +1079,7 @@ impl DockspaceElement {
                     draws.push(PreparedDraw::ClippedElement(element, clip));
                 }
                 Draw::TabListMenuFocus(row) => {
-                    if !admitted {
+                    if !admitted || !allow_menu_row_input {
                         continue;
                     }
                     let rect = to_gpui(row.bounds, bounds);
@@ -1086,7 +1131,7 @@ impl DockspaceElement {
                             surface,
                             serial,
                             bounds,
-                            allow_input,
+                            allow_input && (control.menu_row.is_none() || allow_menu_row_input),
                             window,
                             cx,
                         );
@@ -1202,14 +1247,9 @@ impl DockspaceElement {
                         panes.push((*item, geometry));
                     }
                     let pane = self.host.borrow().panels.get(item).cloned();
-                    let presentation = if allow_input
-                        && (unchanged
-                            || input::is_presented(
-                                &self.host.borrow(),
-                                window.window_handle().window_id(),
-                                surface,
-                                serial,
-                            )) {
+                    // An unrelated pending update holds docking chrome. Live
+                    // application content keeps its own unchanged dispatch tree.
+                    let presentation = if admitted || (unchanged && keep_live_content) {
                         SubtreePresentation::Visible
                     } else {
                         SubtreePresentation::Inert
@@ -1611,6 +1651,7 @@ impl DockspaceElement {
         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
             if phase.capture() && event.button == MouseButton::Left {
                 interaction.splitter_press.borrow_mut().take();
+                interaction.tab_list_press.borrow_mut().take();
                 if !capture.is_captured(window)
                     && input::is_presented(&shared.borrow(), owner, surface, serial)
                     && content_hitboxes
@@ -1679,6 +1720,14 @@ impl DockspaceElement {
                 if let Some((control, focus)) = control {
                     window.focus(focus, cx);
                     if let Some(bar) = control.opens_menu {
+                        if let Some(opener) = control
+                            .slot(ControlAction::Activate)
+                            .and_then(|slot| slot.borrow().as_ref()?.tab_list_opener.clone())
+                            .filter(|opener| opener.opening.is_some())
+                        {
+                            *interaction.tab_list_press.borrow_mut() =
+                                Some(TabListPress { surface, opener });
+                        }
                         presentation_menu::revoke(&shared, &interaction, window);
                         keyboard::remember_menu_opener(&interaction, surface, bar, focus, window);
                     }
@@ -1728,6 +1777,7 @@ impl DockspaceElement {
         let hitboxes = prepared.hitboxes.clone();
         let content_hitboxes = prepared.content_hitboxes.clone();
         let receivers = prepared.receivers.clone();
+        let controls = prepared.controls.clone();
         let interaction = self.interaction.clone();
         window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
             if !phase.bubble()
@@ -1764,6 +1814,31 @@ impl DockspaceElement {
                     cx,
                 );
                 let _ = window.release_pointer(&capture);
+                let press = interaction.tab_list_press.borrow_mut().take();
+                if let Some(press) = press.filter(|press| press.surface == surface)
+                    && window.is_window_active()
+                    && input::is_presented(&shared.borrow(), owner, surface, serial)
+                    && controls.iter().any(|(control, _, hitbox)| {
+                        control.expanded == Some(false)
+                            && control.focus_id()
+                                == ControlFocusId::Control(press.opener.input_id.clone())
+                            && hitbox.window_point_target_rank(event.position, window) == Some(0)
+                    })
+                {
+                    // Hold the next keys until core presents the list opened by this
+                    // press witness. A rejected release leaves the product menu intact.
+                    begin_tab_list_opening(
+                        &shared,
+                        &interaction,
+                        surface,
+                        serial,
+                        press.opener,
+                        TabListOpenSource::PointerRelease,
+                        window,
+                        cx,
+                    );
+                    refresh_menu(&shared, surface, window);
+                }
                 window.refresh();
                 cx.stop_propagation();
             }
@@ -1883,6 +1958,7 @@ impl DockspaceElement {
                 return;
             }
             interaction.splitter_press.borrow_mut().take();
+            interaction.tab_list_press.borrow_mut().take();
             input::queue(
                 &mut shared.borrow_mut(),
                 surface,
@@ -1909,6 +1985,7 @@ impl DockspaceElement {
         window.on_pointer_cancel(move |_, phase, window, _| {
             if phase.capture() {
                 interaction.splitter_press.borrow_mut().take();
+                interaction.tab_list_press.borrow_mut().take();
             }
             if !phase.bubble() || interaction.content_terminal.get() {
                 return;
@@ -2031,6 +2108,9 @@ fn activate_action_with_continuation(
     let Some(action) = slot.borrow().clone() else {
         return false;
     };
+    if action.tab_list_opener.is_some() && !window.is_window_active() {
+        return false;
+    }
     if !keyboard::admits_action(&host, interaction, surface, serial, continuing, window) {
         // The displayed opener can replace a product menu even while the
         // renderer is settling a candidate. Retain its original action in the
@@ -2042,9 +2122,19 @@ fn activate_action_with_continuation(
             && host.ensure_application_admission().is_ok()
             && input::is_presented(&host, owner, surface, serial)
         {
-            input::queue_action(&mut host, action.intent, cx);
+            input::queue_action(&mut host, owner, action.intent, cx);
             drop(host);
-            focus_tab_list_opener(shared, interaction, surface, serial, opener, window, cx);
+            presentation_menu::revoke(shared, interaction, window);
+            begin_tab_list_opening(
+                shared,
+                interaction,
+                surface,
+                serial,
+                opener,
+                TabListOpenSource::Action,
+                window,
+                cx,
+            );
             window.refresh();
             host_native::schedule(shared, cx);
             return true;
@@ -2155,7 +2245,17 @@ fn activate_action_with_continuation(
             claim_revision: window.focus_claim_revision(),
         });
     } else if let Some(opener) = action.tab_list_opener {
-        focus_tab_list_opener(shared, interaction, surface, serial, opener, window, cx);
+        presentation_menu::revoke(shared, interaction, window);
+        begin_tab_list_opening(
+            shared,
+            interaction,
+            surface,
+            serial,
+            opener,
+            TabListOpenSource::Action,
+            window,
+            cx,
+        );
     }
     window.refresh();
     cx.refresh_windows();
@@ -2163,27 +2263,39 @@ fn activate_action_with_continuation(
     true
 }
 
-fn focus_tab_list_opener(
+fn begin_tab_list_opening(
     shared: &SharedHost,
     interaction: &InteractionState,
     surface: SurfaceId,
     serial: u64,
     opener: chrome::TabListOpener,
+    source: TabListOpenSource,
     window: &mut Window,
     cx: &mut App,
 ) {
-    presentation_menu::revoke(shared, interaction, window);
     let focus = interaction
         .focus
         .borrow()
         .get(&ControlFocusId::Control(opener.input_id))
         .cloned();
     if let Some(focus) = focus.filter(|focus| window.is_focus_handle_rendered(focus)) {
-        if !focus.is_focused(window) {
+        let direct = matches!(source, TabListOpenSource::Action);
+        if direct && !focus.is_focused(window) {
             window.focus(&focus, cx);
         }
+        // A pointer release may be rejected by core. Keep the current focus
+        // claim, and only hold keys from an opener or menu that already has it.
+        let retains_keys = direct
+            || focus.is_focused(window)
+            || presentation_menu::owns_keys(shared, interaction, window);
         let opening = opener.opening.map(|proof| {
-            keyboard::MenuOpening::new(proof, shared.borrow().session.version(), serial)
+            keyboard::MenuOpening::new(
+                proof,
+                shared.borrow().session.version(),
+                serial,
+                retains_keys,
+                presentation_menu::open(interaction),
+            )
         });
         *interaction.tab_list_focus.borrow_mut() = Some(TabListFocus {
             surface,
@@ -2226,10 +2338,9 @@ fn apply_chrome_focus(
     let presented = |surface| {
         admitted.contains(&surface) && input::is_presented(&shared.borrow(), owner, surface, serial)
     };
-    if presentation_menu::open(interaction).is_some() {
-        return;
+    if presentation_menu::open(interaction).is_none() {
+        keyboard::restore(shared, interaction, serial, admitted, controls, window, cx);
     }
-    keyboard::restore(shared, interaction, serial, admitted, controls, window, cx);
     if keyboard::restore_menu_opening(
         shared,
         interaction,
@@ -2238,7 +2349,8 @@ fn apply_chrome_focus(
         &presented,
         window,
         cx,
-    ) {
+    ) || presentation_menu::open(interaction).is_some()
+    {
         return;
     }
     let pending = interaction.pending_tab_focus.borrow_mut().take();

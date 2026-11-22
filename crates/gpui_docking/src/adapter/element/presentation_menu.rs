@@ -1,5 +1,7 @@
 //! Scoped product menus retain their original workspace and surface witnesses.
 
+use dockspace::{model::WorkspaceVersion, runtime::RetainedTabListOpener};
+
 use super::*;
 
 #[derive(Clone, Copy)]
@@ -17,10 +19,9 @@ pub(super) struct MenuState {
     open: OpenMenu,
     focus: FocusHandle,
     claim: Rc<Cell<Option<u64>>>,
-    version: dockspace::model::WorkspaceVersion,
+    version: WorkspaceVersion,
     keys: std::collections::VecDeque<MenuKey>,
     row: usize,
-    tab_list_dismissal: Option<DeferredSurfaceAction>,
 }
 
 impl MenuState {
@@ -28,6 +29,28 @@ impl MenuState {
         window.is_window_active()
             && self.claim.get() == Some(window.focus_claim_revision())
             && self.version == shared.borrow().session.version()
+    }
+
+    fn can_receive_keys(&self, shared: &SharedHost, window: &Window) -> bool {
+        self.is_current(shared, window)
+            || (self.version == shared.borrow().session.version()
+                && window.is_focus_handle_rendered(&self.focus)
+                && self.focus.is_focused(window))
+    }
+}
+
+/// An accepted list opener can still have a frame in flight when a product
+/// menu takes over. Its dismissal outlives the product menu and its focus.
+pub(super) struct SupersededTabList {
+    surface: SurfaceId,
+    version: WorkspaceVersion,
+    opener: RetainedTabListOpener,
+    submitted_on: Option<u64>,
+}
+
+impl SupersededTabList {
+    pub(super) fn matches(&self, surface: SurfaceId, menu: &TabListPopup) -> bool {
+        self.surface == surface && menu.keys.can_continue_opening(&self.opener)
     }
 }
 
@@ -39,6 +62,18 @@ pub(super) fn revoke(shared: &SharedHost, interaction: &InteractionState, window
     if let Some(open) = retire(interaction) {
         refresh_menu(shared, open.surface, window);
     }
+}
+
+pub(super) fn owns_keys(
+    shared: &SharedHost,
+    interaction: &InteractionState,
+    window: &Window,
+) -> bool {
+    interaction
+        .menu
+        .borrow()
+        .as_ref()
+        .is_some_and(|menu| menu.can_receive_keys(shared, window))
 }
 
 fn retire(interaction: &InteractionState) -> Option<OpenMenu> {
@@ -64,11 +99,26 @@ fn dismiss_tab_list(
         }
         // Keep the dismissal from the displayed cohort behind earlier input,
         // even while a later candidate owns the workspace update.
-        input::queue_action(&mut host, action.clone(), cx);
+        input::queue_action(
+            &mut host,
+            window.window_handle().window_id(),
+            action.clone(),
+            cx,
+        );
         drop(host);
         host_native::schedule(shared, cx);
     }
-    interaction.tab_list_focus.borrow_mut().take();
+    if let Some(previous) = interaction.tab_list_focus.borrow_mut().take()
+        && let Some(opening) = previous.opening
+    {
+        let (version, opener) = opening.into_witness();
+        *interaction.superseded_tab_list.borrow_mut() = Some(SupersededTabList {
+            surface: previous.surface,
+            version,
+            opener,
+            submitted_on: None,
+        });
+    }
     interaction.keyboard.borrow_mut().take();
     true
 }
@@ -109,7 +159,6 @@ fn begin(
         version: shared.borrow().session.version(),
         keys: [MenuKey::First].into(),
         row: 0,
-        tab_list_dismissal: tab_list.map(|(_, action)| action.clone()),
     });
     refresh_menu(shared, key.surface, window);
     true
@@ -168,7 +217,12 @@ fn submit(
     let Some(action) = action.borrow().clone() else {
         return false;
     };
-    input::queue_action(&mut host, action.intent, cx);
+    input::queue_action(
+        &mut host,
+        window.window_handle().window_id(),
+        action.intent,
+        cx,
+    );
     drop(host);
     window.refresh();
     host_native::schedule(shared, cx);
@@ -194,37 +248,65 @@ fn handle_key(
     window: &mut Window,
     cx: &mut App,
 ) -> bool {
-    if !window.is_window_active() || key.modifiers != open_gpui::Modifiers::none() {
+    let Some(input) = keyboard::menu_key(key) else {
+        return false;
+    };
+    handle_input(shared, interaction, input, window, cx)
+}
+
+pub(super) fn resume_after_rejected_list(
+    shared: &SharedHost,
+    interaction: &InteractionState,
+    expected: OpenMenu,
+    keys: Vec<ControlAction>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if open(interaction) == Some(expected) {
+        for key in keys {
+            if !handle_input(shared, interaction, key, window, cx) {
+                break;
+            }
+        }
+        window.refresh();
+    }
+}
+
+fn handle_input(
+    shared: &SharedHost,
+    interaction: &InteractionState,
+    key: ControlAction,
+    window: &mut Window,
+    cx: &mut App,
+) -> bool {
+    if !window.is_window_active() {
         return false;
     }
     let valid = {
         let mut input = interaction.menu.borrow_mut();
-        input.as_mut().is_some_and(|input| {
-            if !input.is_current(shared, window) {
-                // An explicit new key on the refocused opener starts a fresh
-                // prefix. Never revive commands queued under its old claim.
-                if input.version != shared.borrow().session.version()
-                    || !window.is_focus_handle_rendered(&input.focus)
-                    || !input.focus.is_focused(window)
-                {
-                    return false;
+        input
+            .as_mut()
+            .filter(|input| input.can_receive_keys(shared, window))
+            .is_some_and(|input| {
+                if !input.is_current(shared, window) {
+                    // An explicit new key on the refocused opener starts a fresh
+                    // prefix. Never revive commands queued under its old claim.
+                    input.keys.clear();
+                    input.claim.set(Some(window.focus_claim_revision()));
                 }
-                input.keys.clear();
-                input.claim.set(Some(window.focus_claim_revision()));
-            }
-            true
-        })
+                true
+            })
     };
     if !valid {
         return false;
     }
-    let key = match key.key.as_str() {
-        "down" => MenuKey::Next,
-        "up" => MenuKey::Previous,
-        "home" => MenuKey::First,
-        "end" => MenuKey::Last,
-        "enter" | "space" => MenuKey::Confirm,
-        "escape" => {
+    let key = match key {
+        ControlAction::Next => MenuKey::Next,
+        ControlAction::Previous => MenuKey::Previous,
+        ControlAction::First => MenuKey::First,
+        ControlAction::Last => MenuKey::Last,
+        ControlAction::Activate => MenuKey::Confirm,
+        ControlAction::Dismiss => {
             let terminal =
                 interaction.menu.borrow().as_ref().is_some_and(|input| {
                     input.keys.iter().any(|key| matches!(key, MenuKey::Confirm))
@@ -285,6 +367,16 @@ fn flush_keys(
     let Some(open) = open(interaction).filter(|open| Some(*open) == menu.open) else {
         return;
     };
+    if interaction
+        .tab_list_focus
+        .borrow()
+        .as_ref()
+        .and_then(|focus| focus.opening.as_ref())
+        .is_some_and(|opening| opening.replaces(open))
+    {
+        // The release still has to prove which menu owns its keyboard suffix.
+        return;
+    }
     if !input::is_presented(
         &shared.borrow(),
         window.window_handle().window_id(),
@@ -402,12 +494,20 @@ pub(super) fn accept(
     window: &mut Window,
     cx: &mut App,
 ) {
+    settle_superseded_tab_list(shared, interaction, serial, window, cx);
     let Some(open) = open(interaction) else {
         return;
     };
     let host = shared.borrow();
     let owner = window.window_handle().window_id();
     let mount = host.mounts.get(&owner);
+    // A vacant physical region never produces another interactive artifact.
+    // Retire its menu before the surviving regions resolve their focus.
+    if host.session.view().surface(open.surface).is_none() {
+        retire(interaction);
+        window.refresh();
+        return;
+    }
     let installed = mount
         .and_then(|mount| mount.regions.get(&open.surface))
         .and_then(|region| region.packet.as_ref())
@@ -448,38 +548,53 @@ pub(super) fn accept(
             return;
         }
     }
-    // A core menu can present after the user has already opened this product
-    // menu. Honor the newer input owner and dismiss that exact late menu.
-    let dismissal = mount.and_then(|mount| {
-        mount.regions.iter().find_map(|(&surface, region)| {
-            let action = region.packet.as_ref()?.tab_list_dismiss.as_ref()?;
-            input::is_presented(&host, owner, surface, serial).then(|| action.clone())
-        })
-    });
-    if let Some(action) = dismissal
-        && host.ensure_application_admission().is_ok()
-        && interaction
-            .menu
-            .borrow_mut()
-            .as_mut()
-            .is_some_and(|current| {
-                if !current.is_current(shared, window)
-                    || current
-                        .tab_list_dismissal
-                        .as_ref()
-                        .is_some_and(|previous| previous.same_intent(&action))
-                {
-                    return false;
-                }
-                current.tab_list_dismissal = Some(action.clone());
-                true
-            })
+}
+
+fn settle_superseded_tab_list(
+    shared: &SharedHost,
+    interaction: &InteractionState,
+    serial: u64,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let mut pending = interaction.superseded_tab_list.borrow_mut();
+    let Some(previous) = pending.as_mut() else {
+        return;
+    };
+    let mut host = shared.borrow_mut();
+    let owner = window.window_handle().window_id();
+    let surface = previous.surface;
+    if previous.version != host.session.version() || host.session.view().surface(surface).is_none()
     {
-        drop(host);
-        input::queue_action(&mut shared.borrow_mut(), action, cx);
-        window.refresh();
-        host_native::schedule(shared, cx);
+        pending.take();
+        return;
     }
+    let menu = host
+        .mounts
+        .get(&owner)
+        .filter(|mount| mount.serial == serial)
+        .and_then(|mount| mount.regions.get(&surface))
+        .and_then(|region| region.packet.as_ref())
+        .and_then(|packet| packet.tab_list.as_ref())
+        .filter(|menu| previous.matches(surface, menu));
+    let Some(menu) = menu else {
+        if previous.submitted_on.is_some() && input::is_presented(&host, owner, surface, serial) {
+            pending.take();
+        }
+        return;
+    };
+    if previous.submitted_on == Some(serial) || host.ensure_application_admission().is_err() {
+        return;
+    }
+    // The installed packet gives us a witness for the exact obsolete popup.
+    // Queue dismissal before that packet can admit a new pointer event.
+    let dismissal = menu.dismiss.clone();
+    previous.submitted_on = Some(serial);
+    input::queue_action(&mut host, owner, dismissal, cx);
+    drop(host);
+    drop(pending);
+    window.refresh();
+    host_native::schedule(shared, cx);
 }
 
 fn enabled_rows(menu: &PresentationMenu) -> impl DoubleEndedIterator<Item = usize> + '_ {
@@ -557,6 +672,7 @@ impl DockspaceElement {
             let tab_list = tab_list.cloned();
             move |window: &mut Window, cx: &mut App| {
                 if !enabled
+                    || !window.is_window_active()
                     || !input::is_presented(
                         &shared.borrow(),
                         window.window_handle().window_id(),
@@ -663,6 +779,7 @@ impl DockspaceElement {
         let accessible_focus = focus.clone();
         button = button.on_a11y_action(AccessibleAction::Focus, move |_, window, cx| {
             if enabled
+                && window.is_window_active()
                 && input::is_presented(
                     &shared.borrow(),
                     window.window_handle().window_id(),

@@ -144,6 +144,9 @@ dismiss when their original session or workspace revision changes, and each
 opening has its own callback lifetime. Up/Down, Home/End and Enter/Space navigate
 enabled actions; Escape dismisses. Ordered keys that open and confirm a menu
 wait for its exact interactive presentation before submitting the command.
+A menu switch follows the accepted opening input, including a mouse release.
+An older tab list is dismissed if it arrives after the switch, even if the
+newer menu has already closed.
 
 Application commands can use `capture_tabs_group(DockAnchor)` and pass the
 original capture to `frame.request_close_tabs_current` through `update` or

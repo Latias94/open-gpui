@@ -44,7 +44,24 @@ fn occluded_deferred_root_releases_its_update_for_a_visible_sibling(cx: &mut Tes
     let original = cx.pending_window_frame_submission(first).unwrap();
     assert!(dock.is_update_pending());
     frames(&mut sibling, &dock);
-    assert!(dock.host.borrow().mounts[&second.window_id()].waiting_for_update);
+    {
+        let host = dock.host.borrow();
+        let mount = &host.mounts[&second.window_id()];
+        assert!(mount.waiting_for_update);
+        assert!(!mount.input_frames.is_empty());
+    }
+
+    cx.simulate_window_scale_factor_change(second, 1.25);
+    frames(&mut sibling, &dock);
+    {
+        let host = dock.host.borrow();
+        let mount = &host.mounts[&second.window_id()];
+        assert!(mount.waiting_for_update);
+        assert!(
+            mount.input_frames.is_empty(),
+            "the new DPI needs its own presentation"
+        );
+    }
 
     cx.simulate_window_visibility_change(first, WindowVisibility::Hidden);
     assert!(source.update(|window, _| window.presentation_facts().native_visible));
@@ -625,6 +642,153 @@ fn logical_window_removal_revokes_presented_authority_before_native_terminal(
             .next()
             .is_none()
     );
+    cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();
+    finish(cx, &dock);
+    assert!(dock.native_is_quiescent());
+}
+
+#[open_gpui::test]
+fn retiring_a_native_sibling_preserves_earlier_pointer_input(cx: &mut TestAppContext) {
+    cx.update(|app| app.set_quit_mode(open_gpui::QuitMode::Explicit));
+    for redraw_source in [false, true] {
+        for already_recorded in [false, true] {
+            retire_native_sibling_with_pointer_input(cx, already_recorded, redraw_source);
+        }
+    }
+}
+
+fn retire_native_sibling_with_pointer_input(
+    cx: &mut TestAppContext,
+    already_recorded: bool,
+    redraw_source: bool,
+) {
+    use dockspace::model::{DockAnchor, DockPlacement};
+    use open_gpui::{Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, PlatformInput};
+
+    let dock = cx.update(workspace);
+    let first_item = ItemId::new(FIRST.get());
+    let other_tab = ItemId::new(3);
+    cx.update(|cx| {
+        dock.open_pane(
+            DockPane::new(other_tab, "Second tab", cx.new(|_| Empty)),
+            DockPlacement::Center(DockAnchor::Item(first_item)),
+            cx,
+        )
+        .unwrap();
+        dock.update(
+            |frame| {
+                frame.select_item_current(first_item)?;
+                Ok(())
+            },
+            cx,
+        )
+        .unwrap();
+    });
+    let [first, second] = [FIRST, SECOND].map(|surface| {
+        cx.defer_next_window_frame_requests();
+        cx.update(|cx| {
+            dock.open_native_root(surface, surface == FIRST, WindowOptions::default(), cx)
+        })
+        .unwrap()
+    });
+    let mut source = VisualTestContext::from_window(first, cx);
+    let mut target = VisualTestContext::from_window(second, cx);
+    source.update(|window, _| {
+        let _ = window.activate_window();
+    });
+    source.run_until_parked();
+    cx.set_platform_hovered_window(Some(first));
+    frames(&mut source, &dock);
+    frames(&mut target, &dock);
+    assert!(dock.with_view(|view| view.item(first_item).unwrap().is_active()));
+    let tab = source.debug_bounds("dockspace:tab:3").unwrap().center();
+    if !redraw_source {
+        cx.set_window_frame_delivery_mode(first, PlatformFrameDeliveryMode::Deferred);
+    }
+    cx.set_window_frame_delivery_mode(second, PlatformFrameDeliveryMode::Deferred);
+    cx.simulate_window_resize(second, size(px(965.0), px(727.0)));
+    assert!(target.simulate_frame(RequestFrameOptions {
+        require_presentation: true,
+        force_render: true,
+        ..Default::default()
+    }));
+    let pending = cx.pending_window_frame_submission(second).unwrap();
+    assert!(dock.is_update_pending());
+    let transport = dock.native_transport().unwrap();
+    let queued = transport.inspection().queued_record_count;
+    let recorded = dock.host.borrow().session.native_input_recorded_count();
+    source.update(|window, cx| {
+        window.dispatch_event(
+            PlatformInput::MouseDown(MouseDownEvent {
+                button: MouseButton::Left,
+                position: tab,
+                modifiers: Modifiers::none(),
+                click_count: 1,
+                first_mouse: false,
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            PlatformInput::MouseUp(MouseUpEvent {
+                button: MouseButton::Left,
+                position: tab,
+                modifiers: Modifiers::none(),
+                click_count: 1,
+            }),
+            cx,
+        );
+    });
+    if redraw_source {
+        frames(&mut source, &dock);
+        assert!(dock.host.borrow().mounts[&first.window_id()].waiting_for_update);
+    }
+    {
+        let host = dock.host.borrow();
+        assert_eq!(host.session.native_input_recorded_count(), recorded);
+        assert!(host.inputs.is_empty());
+        let mount = &host.mounts[&first.window_id()];
+        assert_eq!(mount.input_frames[0].surface, FIRST);
+        assert!(crate::adapter::input::is_presented(
+            &host,
+            first.window_id(),
+            FIRST,
+            mount.input_frames[0].serial,
+        ));
+        assert!(
+            host.mounts[&second.window_id()]
+                .pending
+                .as_ref()
+                .unwrap()
+                .inputs
+                .is_empty()
+        );
+        assert!(transport.inspection().queued_record_count >= queued + 2);
+    }
+    if already_recorded {
+        // Move the prefix across the recorder boundary without committing a
+        // host frame. Retiring the sibling must preserve either custody state.
+        let mut host = dock.host.borrow_mut();
+        let mut bridge = host.native.as_mut().unwrap().bridge.take().unwrap();
+        bridge.collect(&mut host.session).unwrap();
+        host.native.as_mut().unwrap().bridge = Some(bridge);
+        assert!(host.session.has_pending_native_input());
+        assert!(host.session.native_input_recorded_count() >= recorded + 2);
+        assert!(transport.is_empty());
+    }
+    let held = cx.hold_window_native_terminal(second);
+    target.update(|window, cx| window.remove_window(cx));
+    assert_eq!(pending.status(), PlatformFrameSubmissionStatus::Cancelled);
+    finish(cx, &dock);
+    assert!(
+        dock.with_view(|view| view.item(other_tab).unwrap().is_active()),
+        "closing the sibling preserves current input (recorded: {already_recorded}, redrawn: {redraw_source})",
+    );
+    assert!(dock.host.borrow().session.native_input_recorded_count() >= recorded + 2);
+    assert!(!dock.host.borrow().session.has_pending_native_input());
+    assert!(transport.is_empty());
+    assert!(held.release());
+    cx.set_window_frame_delivery_mode(first, PlatformFrameDeliveryMode::Synchronous);
+    finish(cx, &dock);
     cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();
     finish(cx, &dock);
     assert!(dock.native_is_quiescent());

@@ -33,14 +33,24 @@ pub(super) struct InputFrame {
 #[derive(Clone)]
 pub(super) enum QueuedInput {
     Pointer(QueuedPointer),
-    Action(DeferredSurfaceAction),
+    Action {
+        owner: WindowId,
+        action: DeferredSurfaceAction,
+    },
 }
 
 impl QueuedInput {
+    pub(super) fn owner(&self) -> WindowId {
+        match self {
+            Self::Pointer(pointer) => pointer.owner,
+            Self::Action { owner, .. } => *owner,
+        }
+    }
+
     pub(super) fn submit(&self, frame: &mut DockspaceHostFrame<'_>) -> anyhow::Result<()> {
         match self {
             Self::Pointer(pointer) => pointer.submit(frame),
-            Self::Action(action) => {
+            Self::Action { action, .. } => {
                 frame.submit_deferred_surface_action(action.clone())?;
                 Ok(())
             }
@@ -50,18 +60,20 @@ impl QueuedInput {
 
 pub(super) fn queue_action(
     host: &mut HostState,
+    owner: WindowId,
     action: DeferredSurfaceAction,
     cx: &mut open_gpui::App,
 ) {
     if let Some(native) = &host.native {
         native.transport.surface_action(action, cx);
     } else {
-        host.inputs.push(QueuedInput::Action(action));
+        host.inputs.push(QueuedInput::Action { owner, action });
     }
 }
 
 #[derive(Clone, Copy)]
 pub(super) struct QueuedPointer {
+    owner: WindowId,
     event: SurfacePointerEvent,
     manipulation: HostPointerRoute,
     hover: HostPointerRoute,
@@ -213,6 +225,7 @@ pub(super) fn queue(
         mount.wake = None;
     }
     host.inputs.push(QueuedInput::Pointer(QueuedPointer {
+        owner,
         event,
         manipulation: source
             .zip(source_point)
