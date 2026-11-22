@@ -28,7 +28,7 @@ fn tab_input(key: ControlAction) -> Option<SurfaceTabInput> {
     Some(SurfaceTabInput::Navigate(navigation))
 }
 
-fn menu_key(keystroke: &Keystroke) -> Option<ControlAction> {
+pub(super) fn menu_key(keystroke: &Keystroke) -> Option<ControlAction> {
     if keystroke.modifiers != open_gpui::Modifiers::none() {
         return None;
     }
@@ -1076,8 +1076,14 @@ pub(super) fn install(
         else {
             return;
         };
-        if super::presentation_menu::intercept(&shared, &interaction, &event.keystroke, window, cx)
-            || menu_opening::retain_key(&shared, &interaction, &event.keystroke, window, cx)
+        if menu_opening::retain_key(&shared, &interaction, &event.keystroke, window, cx)
+            || super::presentation_menu::intercept(
+                &shared,
+                &interaction,
+                &event.keystroke,
+                window,
+                cx,
+            )
         {
             cx.stop_propagation();
             return;

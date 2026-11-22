@@ -228,6 +228,11 @@ struct TabListPress {
     opener: chrome::TabListOpener,
 }
 
+enum TabListOpenSource {
+    Action,
+    PointerRelease,
+}
+
 pub(crate) struct DockspaceElement {
     host: SharedHost,
     interaction: Rc<InteractionState>,
@@ -904,13 +909,15 @@ impl DockspaceElement {
             })
             .collect::<BTreeMap<_, _>>();
         let mut prepared_controls = BTreeMap::new();
-        let (config, admitted, pointer) = {
+        let (config, admitted, pointer, keep_live_content) = {
             let host = self.host.borrow();
             let owner = window.window_handle().window_id();
+            let mount = &host.mounts[&owner];
             (
                 host.config.clone(),
                 allow_input && input::is_presented(&host, owner, surface, serial),
-                host.mounts[&owner].regions[&surface].pointer,
+                mount.regions[&surface].pointer,
+                allow_input || (mount.waiting_for_update && window.is_visible()),
             )
         };
         for draw in &packet.draws {
@@ -1240,14 +1247,9 @@ impl DockspaceElement {
                         panes.push((*item, geometry));
                     }
                     let pane = self.host.borrow().panels.get(item).cloned();
-                    let presentation = if allow_input
-                        && (unchanged
-                            || input::is_presented(
-                                &self.host.borrow(),
-                                window.window_handle().window_id(),
-                                surface,
-                                serial,
-                            )) {
+                    // An unrelated pending update holds docking chrome. Live
+                    // application content keeps its own unchanged dispatch tree.
+                    let presentation = if admitted || (unchanged && keep_live_content) {
                         SubtreePresentation::Visible
                     } else {
                         SubtreePresentation::Inert
@@ -1825,12 +1827,13 @@ impl DockspaceElement {
                 {
                     // Hold the next keys until core presents the list opened by this
                     // press witness. A rejected release leaves the product menu intact.
-                    focus_tab_list_opener(
+                    begin_tab_list_opening(
                         &shared,
                         &interaction,
                         surface,
                         serial,
                         press.opener,
+                        TabListOpenSource::PointerRelease,
                         window,
                         cx,
                     );
@@ -2122,7 +2125,16 @@ fn activate_action_with_continuation(
             input::queue_action(&mut host, owner, action.intent, cx);
             drop(host);
             presentation_menu::revoke(shared, interaction, window);
-            focus_tab_list_opener(shared, interaction, surface, serial, opener, window, cx);
+            begin_tab_list_opening(
+                shared,
+                interaction,
+                surface,
+                serial,
+                opener,
+                TabListOpenSource::Action,
+                window,
+                cx,
+            );
             window.refresh();
             host_native::schedule(shared, cx);
             return true;
@@ -2234,7 +2246,16 @@ fn activate_action_with_continuation(
         });
     } else if let Some(opener) = action.tab_list_opener {
         presentation_menu::revoke(shared, interaction, window);
-        focus_tab_list_opener(shared, interaction, surface, serial, opener, window, cx);
+        begin_tab_list_opening(
+            shared,
+            interaction,
+            surface,
+            serial,
+            opener,
+            TabListOpenSource::Action,
+            window,
+            cx,
+        );
     }
     window.refresh();
     cx.refresh_windows();
@@ -2242,12 +2263,13 @@ fn activate_action_with_continuation(
     true
 }
 
-fn focus_tab_list_opener(
+fn begin_tab_list_opening(
     shared: &SharedHost,
     interaction: &InteractionState,
     surface: SurfaceId,
     serial: u64,
     opener: chrome::TabListOpener,
+    source: TabListOpenSource,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -2257,14 +2279,21 @@ fn focus_tab_list_opener(
         .get(&ControlFocusId::Control(opener.input_id))
         .cloned();
     if let Some(focus) = focus.filter(|focus| window.is_focus_handle_rendered(focus)) {
-        if !focus.is_focused(window) {
+        let direct = matches!(source, TabListOpenSource::Action);
+        if direct && !focus.is_focused(window) {
             window.focus(&focus, cx);
         }
+        // A pointer release may be rejected by core. Keep the current focus
+        // claim, and only hold keys from an opener or menu that already has it.
+        let retains_keys = direct
+            || focus.is_focused(window)
+            || presentation_menu::owns_keys(shared, interaction, window);
         let opening = opener.opening.map(|proof| {
             keyboard::MenuOpening::new(
                 proof,
                 shared.borrow().session.version(),
                 serial,
+                retains_keys,
                 presentation_menu::open(interaction),
             )
         });

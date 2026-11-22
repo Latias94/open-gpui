@@ -251,10 +251,7 @@ pub(super) fn record(
                             ] {
                                 control.action(
                                     key,
-                                    plan.prepare_splitter_adjustment(
-                                        splitter.visual_id(),
-                                        adjustment,
-                                    ),
+                                    plan.prepare_splitter_adjustment(splitter, adjustment),
                                 );
                             }
                             draws.push(Draw::Control(Rc::new(control)));
@@ -297,9 +294,7 @@ pub(super) fn record(
                                 control.action(
                                     key,
                                     plan.prepare_splitter_junction_adjustment(
-                                        junction.visual_id(),
-                                        axis,
-                                        adjustment,
+                                        junction, axis, adjustment,
                                     ),
                                 );
                             }

@@ -30,6 +30,13 @@ impl MenuState {
             && self.claim.get() == Some(window.focus_claim_revision())
             && self.version == shared.borrow().session.version()
     }
+
+    fn can_receive_keys(&self, shared: &SharedHost, window: &Window) -> bool {
+        self.is_current(shared, window)
+            || (self.version == shared.borrow().session.version()
+                && window.is_focus_handle_rendered(&self.focus)
+                && self.focus.is_focused(window))
+    }
 }
 
 /// An accepted list opener can still have a frame in flight when a product
@@ -57,27 +64,16 @@ pub(super) fn revoke(shared: &SharedHost, interaction: &InteractionState, window
     }
 }
 
-pub(super) fn restore_rejected_handoff(
+pub(super) fn owns_keys(
     shared: &SharedHost,
     interaction: &InteractionState,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let restoration = interaction
+    window: &Window,
+) -> bool {
+    interaction
         .menu
         .borrow()
         .as_ref()
-        .filter(|menu| {
-            menu.version == shared.borrow().session.version()
-                && window.is_focus_handle_rendered(&menu.focus)
-        })
-        .map(|menu| (menu.focus.clone(), menu.claim.clone()));
-    let Some((focus, claim)) = restoration else {
-        return;
-    };
-    window.focus(&focus, cx);
-    claim.set(Some(window.focus_claim_revision()));
-    window.refresh();
+        .is_some_and(|menu| menu.can_receive_keys(shared, window))
 }
 
 fn retire(interaction: &InteractionState) -> Option<OpenMenu> {
@@ -252,37 +248,65 @@ fn handle_key(
     window: &mut Window,
     cx: &mut App,
 ) -> bool {
-    if !window.is_window_active() || key.modifiers != open_gpui::Modifiers::none() {
+    let Some(input) = keyboard::menu_key(key) else {
+        return false;
+    };
+    handle_input(shared, interaction, input, window, cx)
+}
+
+pub(super) fn resume_after_rejected_list(
+    shared: &SharedHost,
+    interaction: &InteractionState,
+    expected: OpenMenu,
+    keys: Vec<ControlAction>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if open(interaction) == Some(expected) {
+        for key in keys {
+            if !handle_input(shared, interaction, key, window, cx) {
+                break;
+            }
+        }
+        window.refresh();
+    }
+}
+
+fn handle_input(
+    shared: &SharedHost,
+    interaction: &InteractionState,
+    key: ControlAction,
+    window: &mut Window,
+    cx: &mut App,
+) -> bool {
+    if !window.is_window_active() {
         return false;
     }
     let valid = {
         let mut input = interaction.menu.borrow_mut();
-        input.as_mut().is_some_and(|input| {
-            if !input.is_current(shared, window) {
-                // An explicit new key on the refocused opener starts a fresh
-                // prefix. Never revive commands queued under its old claim.
-                if input.version != shared.borrow().session.version()
-                    || !window.is_focus_handle_rendered(&input.focus)
-                    || !input.focus.is_focused(window)
-                {
-                    return false;
+        input
+            .as_mut()
+            .filter(|input| input.can_receive_keys(shared, window))
+            .is_some_and(|input| {
+                if !input.is_current(shared, window) {
+                    // An explicit new key on the refocused opener starts a fresh
+                    // prefix. Never revive commands queued under its old claim.
+                    input.keys.clear();
+                    input.claim.set(Some(window.focus_claim_revision()));
                 }
-                input.keys.clear();
-                input.claim.set(Some(window.focus_claim_revision()));
-            }
-            true
-        })
+                true
+            })
     };
     if !valid {
         return false;
     }
-    let key = match key.key.as_str() {
-        "down" => MenuKey::Next,
-        "up" => MenuKey::Previous,
-        "home" => MenuKey::First,
-        "end" => MenuKey::Last,
-        "enter" | "space" => MenuKey::Confirm,
-        "escape" => {
+    let key = match key {
+        ControlAction::Next => MenuKey::Next,
+        ControlAction::Previous => MenuKey::Previous,
+        ControlAction::First => MenuKey::First,
+        ControlAction::Last => MenuKey::Last,
+        ControlAction::Activate => MenuKey::Confirm,
+        ControlAction::Dismiss => {
             let terminal =
                 interaction.menu.borrow().as_ref().is_some_and(|input| {
                     input.keys.iter().any(|key| matches!(key, MenuKey::Confirm))
@@ -343,6 +367,16 @@ fn flush_keys(
     let Some(open) = open(interaction).filter(|open| Some(*open) == menu.open) else {
         return;
     };
+    if interaction
+        .tab_list_focus
+        .borrow()
+        .as_ref()
+        .and_then(|focus| focus.opening.as_ref())
+        .is_some_and(|opening| opening.replaces(open))
+    {
+        // The release still has to prove which menu owns its keyboard suffix.
+        return;
+    }
     if !input::is_presented(
         &shared.borrow(),
         window.window_handle().window_id(),

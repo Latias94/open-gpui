@@ -233,6 +233,32 @@ pub(super) fn accept(
         continuation::schedule(shared, window, cx);
         return;
     };
+    if pending.update.is_some()
+        && pending
+            .inputs
+            .iter()
+            .any(|input| !host.mounts.contains_key(&input.owner()))
+    {
+        // The renderer may already have finished when its input source exits.
+        // The unaccepted core update still has no publication authority.
+        window.retire_exact_frame_submission(&pending.ticket);
+        for region in host.mounts.get_mut(&owner).unwrap().regions.values_mut() {
+            region.dirty = true;
+        }
+        retire_pending(
+            &mut host,
+            owner,
+            pending,
+            SurfacePresentationResult::Dropped,
+            cx,
+        );
+        if let Err(error) = settle_pending(&mut host, Some(window), cx) {
+            host.fail(error.as_ref());
+        }
+        wake_waiting(&mut host, cx);
+        window.refresh();
+        return;
+    }
     // A Deferred retry retains the same affine outputs and packet. Fresh GPUI
     // hitboxes must keep that packet's original native binding correlation.
     for frame in &mut input_frames {
@@ -393,6 +419,9 @@ fn retire_pending(
     cx: &mut App,
 ) {
     if pending.update.take().is_some() {
+        pending
+            .inputs
+            .retain(|input| host.mounts.contains_key(&input.owner()));
         pending.inputs.append(&mut host.inputs);
         host.inputs = pending.inputs;
         // An unaccepted update has never published any affine outputs.
@@ -589,6 +618,23 @@ pub(super) fn close(host: &mut HostState, owner: WindowId, cx: &mut App) {
         // A physical frame can borrow the entire session's prefix. Return it
         // in order and discard only local events from the retired window.
         host.inputs.retain(|input| input.owner() != owner);
+        // A surviving window can own the unaccepted update that borrowed
+        // this window's inputs. Withdraw that whole candidate, preserving its
+        // other sources in their original order.
+        let borrowed = host.mounts.values().find_map(|mount| {
+            let pending = mount.pending.as_ref().filter(|pending| {
+                pending.update.is_some()
+                    && pending.inputs.iter().any(|input| input.owner() == owner)
+            })?;
+            Some((mount.window, pending.ticket.clone()))
+        });
+        if let Some((borrower, ticket)) = borrowed {
+            let _ = borrower.update(cx, |_, window, cx| {
+                if window.withdraw_unaccepted_frame_submission(&ticket, cx) {
+                    withdraw_pending(host, window, cx);
+                }
+            });
+        }
         let mut surfaces = Vec::new();
         for surface in mount.regions.keys() {
             if host

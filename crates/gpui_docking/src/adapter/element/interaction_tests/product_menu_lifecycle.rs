@@ -445,6 +445,7 @@ fn releasing_the_list_opener_after_a_product_menu_takes_keyboard_ownership(
         OpenerBeforePresentation,
         Elsewhere,
         OpenerAfterResize,
+        OpenerAfterResizeThen(&'static str),
     }
 
     for (product, release) in [
@@ -452,6 +453,8 @@ fn releasing_the_list_opener_after_a_product_menu_takes_keyboard_ownership(
         ("Layout actions", Release::OpenerBeforePresentation),
         ("Layout actions", Release::Elsewhere),
         ("Layout actions", Release::OpenerAfterResize),
+        ("Layout actions", Release::OpenerAfterResizeThen("enter")),
+        ("Layout actions", Release::OpenerAfterResizeThen("escape")),
         ("Tab group actions", Release::Opener),
     ] {
         let (dock, _) = overflowing_surfaces_with_mode(&[SURFACE], true, cx);
@@ -476,7 +479,10 @@ fn releasing_the_list_opener_after_a_product_menu_takes_keyboard_ownership(
                 .any(|(_, node)| node.role() == Role::Menu && node.label() == Some(product)),
             "{product} must be interactive before {release:?}"
         );
-        let rejected_release = matches!(release, Release::Elsewhere | Release::OpenerAfterResize);
+        let rejected_release = matches!(
+            release,
+            Release::Elsewhere | Release::OpenerAfterResize | Release::OpenerAfterResizeThen(_)
+        );
         if rejected_release {
             visual.simulate_keystrokes("end");
             frames(&mut visual, &dock);
@@ -495,7 +501,7 @@ fn releasing_the_list_opener_after_a_product_menu_takes_keyboard_ownership(
         let release_point = match release {
             Release::Opener | Release::OpenerBeforePresentation => opener,
             Release::Elsewhere => point(px(4.0), px(280.0)),
-            Release::OpenerAfterResize => {
+            Release::OpenerAfterResize | Release::OpenerAfterResizeThen(_) => {
                 cx.simulate_window_resize(window.into(), size(px(800.0), px(600.0)));
                 frames(&mut visual, &dock);
                 assert!(presentation_menu_is_open(&visual));
@@ -505,13 +511,13 @@ fn releasing_the_list_opener_after_a_product_menu_takes_keyboard_ownership(
             }
         };
         visual.simulate_mouse_up(release_point, MouseButton::Left, Modifiers::none());
-        if !defer_list {
+        if !defer_list && !matches!(release, Release::OpenerAfterResizeThen(_)) {
             frames(&mut visual, &dock);
         }
-        visual.simulate_keystrokes(if rejected_release {
-            "enter"
-        } else {
-            "end enter"
+        visual.simulate_keystrokes(match release {
+            Release::OpenerAfterResizeThen(key) => key,
+            _ if rejected_release => "enter",
+            _ => "end enter",
         });
         if defer_list {
             visual.set_window_frame_delivery_mode(
@@ -527,6 +533,9 @@ fn releasing_the_list_opener_after_a_product_menu_takes_keyboard_ownership(
                 "the list's confirmation must never close the layout"
             );
             assert!(dock.with_view(|view| view.item(ItemId::new(40)).unwrap().is_active()));
+        } else if matches!(release, Release::OpenerAfterResizeThen("escape")) {
+            assert!(plans.is_empty());
+            assert!(!presentation_menu_is_open(&visual));
         } else {
             assert_eq!(
                 plans.len(),
@@ -542,7 +551,106 @@ fn releasing_the_list_opener_after_a_product_menu_takes_keyboard_ownership(
 }
 
 #[open_gpui::test]
+fn rejected_list_release_cannot_revive_an_old_product_confirmation(cx: &mut TestAppContext) {
+    use open_gpui::PlatformFrameDeliveryMode;
+
+    for product in ["Layout actions", "Tab group actions"] {
+        for return_to_product in [false, true] {
+            let (dock, _) = overflowing_surfaces_with_mode(&[SURFACE], true, cx);
+            let application_focus = cx.update(|cx| cx.focus_handle());
+            let keys = Rc::new(RefCell::new(Vec::new()));
+            cx.defer_next_window_frame_requests();
+            let window = cx.open_window(size(px(620.0), px(600.0)), |window, cx| {
+                dock.bind_native_root(SURFACE, true, window, cx).unwrap();
+                ExternalFocusRoot {
+                    dock: dock.clone(),
+                    focus: application_focus.clone(),
+                    keys: keys.clone(),
+                }
+            });
+            let owner = window.into();
+            let mut visual = active_visual(owner, cx);
+            assert!(visual.activate_accessibility());
+            frames(&mut visual, &dock);
+            let opener = tab_list_button_bounds(&dock, window.window_id()).center();
+            visual.simulate_mouse_down(opener, MouseButton::Left, Modifiers::none());
+            frames(&mut visual, &dock);
+            cx.simulate_window_resize(owner, size(px(800.0), px(600.0)));
+            frames(&mut visual, &dock);
+            let moved_opener = tab_list_button_bounds(&dock, window.window_id()).center();
+            assert_ne!(moved_opener, opener);
+            menu_button_action(&visual, product, AccessibleAction::Focus);
+            frames(&mut visual, &dock);
+            assert_accessibility_focus(&visual, Role::Button, product);
+            let product_focus = visual.update(|window, cx| window.focused(cx).unwrap());
+
+            visual.set_window_frame_delivery_mode(owner, PlatformFrameDeliveryMode::Deferred);
+            visual.update(|window, cx| {
+                for key in ["down", "end", "enter"] {
+                    key_pair(window, key, cx);
+                }
+            });
+            assert!(visual.simulate_frame(RequestFrameOptions {
+                require_presentation: true,
+                force_render: true,
+                ..Default::default()
+            }));
+            assert!(visual.pending_window_frame_submission(owner).is_some());
+            assert!(dock.pending_content_close_plans().unwrap().is_empty());
+
+            let claim = visual.update(|window, cx| {
+                window.focus(&application_focus, cx);
+                key_pair(window, "p", cx);
+                if return_to_product {
+                    window.focus(&product_focus, cx);
+                }
+                window.focus_claim_revision()
+            });
+            assert_eq!(&*keys.borrow(), &["p"]);
+            visual.simulate_mouse_up(moved_opener, MouseButton::Left, Modifiers::none());
+            assert_eq!(
+                visual.update(|window, _| window.focus_claim_revision()),
+                claim
+            );
+            visual.set_window_frame_delivery_mode(owner, PlatformFrameDeliveryMode::Synchronous);
+            frames(&mut visual, &dock);
+            assert!(dock.pending_content_close_plans().unwrap().is_empty());
+            assert!(
+                visual
+                    .latest_accessibility_tree_update()
+                    .unwrap()
+                    .nodes
+                    .iter()
+                    .any(|(_, node)| {
+                        node.role() == Role::Menu && node.label() == Some(product)
+                    })
+            );
+            if !return_to_product {
+                visual.update(|window, cx| {
+                    assert!(application_focus.is_focused(window));
+                    assert_eq!(window.focus_claim_revision(), claim);
+                    key_pair(window, "x", cx);
+                    key_pair(window, "enter", cx);
+                });
+                assert_eq!(&*keys.borrow(), &["p", "x", "enter"]);
+                assert!(dock.pending_content_close_plans().unwrap().is_empty());
+            }
+            shutdown(&dock, cx);
+        }
+    }
+}
+
+#[open_gpui::test]
 fn product_menu_retires_an_earlier_list_after_focus_leaves(cx: &mut TestAppContext) {
+    use open_gpui::PlatformFrameDeliveryMode;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Handoff {
+        Escape,
+        AppFocusAfterSwitch,
+        AppFocusBeforeSwitch,
+    }
+
     struct Workspace {
         regions: open_gpui::Entity<RegionsRoot>,
         application_input: open_gpui::Entity<InputPane>,
@@ -563,7 +671,11 @@ fn product_menu_retires_an_earlier_list_after_focus_leaves(cx: &mut TestAppConte
 
     let sibling = SurfaceId::new(52);
     for list_already_presented in [false, true] {
-        for escape in [false, true] {
+        for handoff in [
+            Handoff::Escape,
+            Handoff::AppFocusAfterSwitch,
+            Handoff::AppFocusBeforeSwitch,
+        ] {
             let (dock, _) = overflowing_surfaces_with_mode(&[SURFACE, sibling], false, cx);
             let keys = Rc::new(RefCell::new(Vec::new()));
             let application_focus = cx.update(|cx| cx.focus_handle());
@@ -589,32 +701,48 @@ fn product_menu_retires_an_earlier_list_after_focus_leaves(cx: &mut TestAppConte
             let mut visual = active_visual(owner, cx);
             assert!(visual.activate_accessibility());
             frames(&mut visual, &dock);
-            tab_list_accessible_action(
-                &visual,
-                Role::Button,
-                "Show all tabs",
-                AccessibleAction::Focus,
+            let tree = visual.latest_accessibility_tree_update().unwrap();
+            let button_in_region = |label, in_sibling| {
+                tree.nodes
+                    .iter()
+                    .find_map(|(id, node)| {
+                        (node.role() == Role::Button
+                            && node.label() == Some(label)
+                            && node
+                                .bounds()
+                                .is_some_and(|bounds| (bounds.y0 >= 300.0) == in_sibling))
+                        .then_some(*id)
+                    })
+                    .unwrap()
+            };
+            let list_opener = button_in_region("Show all tabs", false);
+            let target = button_in_region("Tab group actions", true);
+            assert!(
+                visual.dispatch_accessibility_action(accesskit::ActionRequest {
+                    action: AccessibleAction::Focus,
+                    target_tree: accesskit::TreeId::ROOT,
+                    target_node: list_opener,
+                    data: None,
+                })
             );
             frames(&mut visual, &dock);
-            let target = visual
-                .latest_accessibility_tree_update()
-                .unwrap()
-                .nodes
-                .into_iter()
-                .find_map(|(id, node)| {
-                    (node.label() == Some("Tab group actions")
-                        && node.bounds().is_some_and(|bounds| bounds.y0 >= 300.0))
-                    .then_some(id)
-                })
-                .unwrap();
+            assert_eq!(
+                visual.latest_accessibility_tree_update().unwrap().focus,
+                list_opener
+            );
             if !list_already_presented {
-                visual.set_window_frame_delivery_mode(
-                    owner,
-                    open_gpui::PlatformFrameDeliveryMode::Deferred,
-                );
+                visual.set_window_frame_delivery_mode(owner, PlatformFrameDeliveryMode::Deferred);
             }
             visual.update(|window, cx| key_pair(window, "down", cx));
-            frames(&mut visual, &dock);
+            if list_already_presented {
+                frames(&mut visual, &dock);
+            } else {
+                assert!(visual.simulate_frame(RequestFrameOptions {
+                    require_presentation: true,
+                    force_render: true,
+                    ..Default::default()
+                }));
+            }
             let row = |visual: &VisualTestContext| {
                 visual
                     .latest_accessibility_tree_update()
@@ -633,6 +761,13 @@ fn product_menu_retires_an_earlier_list_after_focus_leaves(cx: &mut TestAppConte
                 list_already_presented,
             );
 
+            if handoff == Handoff::AppFocusBeforeSwitch {
+                visual.update(|window, cx| {
+                    window.focus(&application_focus, cx);
+                    key_pair(window, "home", cx);
+                });
+                assert_eq!(&*keys.borrow(), &["home"]);
+            }
             assert!(
                 visual.dispatch_accessibility_action(accesskit::ActionRequest {
                     action: AccessibleAction::Click,
@@ -641,14 +776,16 @@ fn product_menu_retires_an_earlier_list_after_focus_leaves(cx: &mut TestAppConte
                     data: None,
                 })
             );
-            let focus_claim = visual.update(|window, cx| {
-                if escape {
+            let focus_claim = visual.update(|window, cx| match handoff {
+                Handoff::Escape => {
                     key_pair(window, "escape", cx);
                     None
-                } else {
+                }
+                Handoff::AppFocusAfterSwitch => {
                     window.focus(&application_focus, cx);
                     Some(window.focus_claim_revision())
                 }
+                Handoff::AppFocusBeforeSwitch => None,
             });
             for _ in 0..8 {
                 if let Some(id) = old_row.or_else(|| row(&visual)) {
@@ -666,10 +803,27 @@ fn product_menu_retires_an_earlier_list_after_focus_leaves(cx: &mut TestAppConte
                     });
                     visual.run_until_parked();
                 }
-                frames(&mut visual, &dock);
+                assert!(visual.simulate_frame(RequestFrameOptions {
+                    require_presentation: true,
+                    force_render: true,
+                    ..Default::default()
+                }));
+                assert!(dock.error().is_none(), "{:?}", dock.error());
                 assert!(dock.with_view(|view| view.item(ItemId::new(1)).unwrap().is_active()));
             }
-            assert!(row(&visual).is_none(), "the superseded list must retire");
+            if let Some(token) = visual.pending_window_frame_submission(owner) {
+                visual.update(|_, _| {
+                    assert!(token.complete(PlatformWindowPresentOutcome::Submitted));
+                });
+                visual.run_until_parked();
+            }
+            visual.set_window_frame_delivery_mode(owner, PlatformFrameDeliveryMode::Synchronous);
+            frames(&mut visual, &dock);
+            assert!(dock.with_view(|view| view.item(ItemId::new(1)).unwrap().is_active()));
+            assert!(
+                row(&visual).is_none(),
+                "the superseded list must retire ({handoff:?}, presented: {list_already_presented})"
+            );
             assert_eq!(
                 visual
                     .latest_accessibility_tree_update()
@@ -678,8 +832,12 @@ fn product_menu_retires_an_earlier_list_after_focus_leaves(cx: &mut TestAppConte
                     .iter()
                     .any(|(_, node)| node.role() == Role::Menu
                         && node.label() == Some("Tab group actions")),
-                !escape,
+                handoff != Handoff::Escape,
+                "{handoff:?}, earlier list presented: {list_already_presented}"
             );
+            if handoff == Handoff::AppFocusBeforeSwitch {
+                assert_accessibility_focus(&visual, Role::Button, "Tab group actions");
+            }
             if let Some(revision) = focus_claim {
                 visual.update(|window, cx| {
                     assert!(application_focus.is_focused(window));

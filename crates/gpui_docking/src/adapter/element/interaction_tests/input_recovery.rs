@@ -692,6 +692,31 @@ fn accepted_overlay_revokes_stationary_drop_preview_until_a_fresh_move(cx: &mut 
 
 #[open_gpui::test]
 fn closing_a_window_returns_unaccepted_input_from_another_window(cx: &mut TestAppContext) {
+    close_window_with_borrowed_input(cx, BorrowedInputClose::Borrower);
+}
+
+#[open_gpui::test]
+fn closing_the_input_source_withdraws_its_unaccepted_sibling_candidate(cx: &mut TestAppContext) {
+    close_window_with_borrowed_input(cx, BorrowedInputClose::Source);
+}
+
+#[open_gpui::test]
+fn closing_the_input_source_before_delivering_the_renderer_receipt_rejects_its_input(
+    cx: &mut TestAppContext,
+) {
+    close_window_with_borrowed_input(cx, BorrowedInputClose::SourceAfterSubmission);
+}
+
+#[derive(Clone, Copy)]
+enum BorrowedInputClose {
+    Borrower,
+    Source,
+    SourceAfterSubmission,
+}
+
+fn close_window_with_borrowed_input(cx: &mut TestAppContext, close: BorrowedInputClose) {
+    let close_source = !matches!(close, BorrowedInputClose::Borrower);
+    let renderer_submitted = matches!(close, BorrowedInputClose::SourceAfterSubmission);
     let sibling = SurfaceId::new(52);
     let (dock, _) = overflowing_surfaces(&[SURFACE, sibling], cx);
     let [first, second] = [SURFACE, sibling].map(|surface| {
@@ -707,6 +732,25 @@ fn closing_a_window_returns_unaccepted_input_from_another_window(cx: &mut TestAp
     assert!(dock.with_view(|view| view.item(ItemId::new(1)).unwrap().is_active()));
     cx.set_platform_hovered_window(Some(first.into()));
     let tab = source.debug_bounds("dockspace:tab:2").unwrap().center();
+    let sibling_action = {
+        let host = dock.host.borrow();
+        let packet = host.mounts[&second.window_id()].regions[&sibling]
+            .packet
+            .as_ref()
+            .unwrap();
+        packet
+            .draws
+            .iter()
+            .find_map(|draw| match draw {
+                Draw::Control(control)
+                    if matches!(control.kind, ControlKind::Tab(tab) if tab == ItemId::new(42).into()) =>
+                {
+                    Some(control.slot(ControlAction::Activate)?.borrow().as_ref()?.intent.clone())
+                }
+                _ => None,
+            })
+            .unwrap()
+    };
     cx.set_window_frame_delivery_mode(
         second.into(),
         open_gpui::PlatformFrameDeliveryMode::Deferred,
@@ -732,6 +776,14 @@ fn closing_a_window_returns_unaccepted_input_from_another_window(cx: &mut TestAp
             cx,
         );
         assert_eq!(dock.host.borrow().inputs.len(), 2);
+        if close_source {
+            input::queue_action(
+                &mut dock.host.borrow_mut(),
+                second.window_id(),
+                sibling_action,
+                cx,
+            );
+        }
         // Construct the sibling candidate before the input transaction's
         // normal work can draw and commit the source window.
         open_gpui::AnyWindowHandle::from(second)
@@ -755,27 +807,54 @@ fn closing_a_window_returns_unaccepted_input_from_another_window(cx: &mut TestAp
             .as_ref()
             .unwrap()
             .inputs;
-        assert_eq!(borrowed.len(), 2);
+        assert_eq!(borrowed.len(), if close_source { 3 } else { 2 });
         assert!(
-            borrowed
+            borrowed[..2]
                 .iter()
                 .all(|input| input.owner() == first.window_id())
         );
     }
-    target.update(|window, cx| window.remove_window(cx));
+    let surviving_window = if close_source {
+        source.update(|window, cx| {
+            if renderer_submitted {
+                assert!(pending.complete(PlatformWindowPresentOutcome::Submitted));
+                // The receipt is queued behind this update and the core candidate
+                // still belongs to the surviving window.
+                assert!(dock.is_update_pending());
+            }
+            window.remove_window(cx);
+        });
+        cx.set_window_frame_delivery_mode(
+            second.into(),
+            open_gpui::PlatformFrameDeliveryMode::Synchronous,
+        );
+        second
+    } else {
+        target.update(|window, cx| window.remove_window(cx));
+        first
+    };
     assert_eq!(
         pending.status(),
-        open_gpui::PlatformFrameSubmissionStatus::Cancelled
+        if renderer_submitted {
+            open_gpui::PlatformFrameSubmissionStatus::Submitted
+        } else {
+            open_gpui::PlatformFrameSubmissionStatus::Cancelled
+        }
     );
     let mut ran = false;
     for _ in 0..8 {
         cx.run_until_parked();
-        if !cx.simulate_window_scheduled_frame(first.into()) {
+        if !cx.simulate_window_scheduled_frame(surviving_window.into()) {
             break;
         }
         ran = true;
     }
     assert!(ran);
-    assert!(dock.with_view(|view| view.item(ItemId::new(2)).unwrap().is_active()));
+    if close_source {
+        assert!(dock.with_view(|view| view.item(ItemId::new(1)).unwrap().is_active()));
+        assert!(dock.with_view(|view| view.item(ItemId::new(42)).unwrap().is_active()));
+    } else {
+        assert!(dock.with_view(|view| view.item(ItemId::new(2)).unwrap().is_active()));
+    }
     assert!(dock.host.borrow().inputs.is_empty());
 }
