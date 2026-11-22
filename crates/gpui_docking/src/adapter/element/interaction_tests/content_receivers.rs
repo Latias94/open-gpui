@@ -344,7 +344,7 @@ fn edit_and_dock(cx: &mut TestAppContext, managed: bool) {
                     if guide.direction == dockspace::runtime::DockspaceDropDirection::Center
                         && guide.eligible =>
                 {
-                    Some(to_gpui(*bounds, region.bounds.unwrap()).center())
+                    Some(to_gpui(*bounds, region.layout_bounds().unwrap()).center())
                 }
                 _ => None,
             })

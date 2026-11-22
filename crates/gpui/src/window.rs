@@ -1841,6 +1841,7 @@ struct CandidateFrameTransaction {
     replayed_retained_visuals: FxHashSet<retained_visual::TicketIdentity>,
     focus_completion_ids: FxHashSet<u64>,
     prepaint_commit_plan: Option<Rc<CandidatePrepaintCommitPlan>>,
+    abandoned_publications: Vec<(PrepaintPublicationId, Box<dyn FnOnce(&mut App)>)>,
 }
 
 impl CandidateFrameTransaction {
@@ -1852,6 +1853,7 @@ impl CandidateFrameTransaction {
             replayed_retained_visuals: FxHashSet::default(),
             focus_completion_ids: FxHashSet::default(),
             prepaint_commit_plan: None,
+            abandoned_publications: Vec::new(),
         }
     }
 
@@ -1912,6 +1914,19 @@ impl CandidateFrameTransaction {
 
     fn is_accepted(&self) -> bool {
         self.phase == CandidateFrameTransactionPhase::Accepted
+    }
+
+    fn schedule_abandoned_publications(&mut self, cx: &mut App) {
+        for (publication, callback) in self.abandoned_publications.drain(..) {
+            let committed = self.prepaint_commit_plan.as_ref().is_some_and(|plan| {
+                plan.current_commits.iter().any(|output| {
+                    output.value.publication == Some(publication) && output.is_valid()
+                })
+            });
+            if !committed {
+                cx.defer(callback);
+            }
+        }
     }
 }
 
@@ -8030,7 +8045,7 @@ impl Window {
     ) -> CandidateFrameTransaction {
         self.candidate_text_notifications.set((None, 0));
         self.candidate_virtual_keyboard_request.set(None);
-        let rejected_attempt = self
+        let mut rejected_attempt = self
             .candidate_frame_transaction
             .take()
             .expect("a rejected candidate must own a frame transaction");
@@ -8066,6 +8081,7 @@ impl Window {
         self.rendered_frame
             .input_handlers
             .truncate(rendered_input_handlers_len);
+        rejected_attempt.schedule_abandoned_publications(cx);
         rejected_attempt
     }
 
@@ -8527,12 +8543,13 @@ impl Window {
         self.sealed_focus_retry_rejection = None;
         let accepted_generation = self.rendered_frame.generation;
         self.discard_resolved_candidate_focus_claim(accepted_generation);
-        let accepted_candidate = self
+        let mut accepted_candidate = self
             .candidate_frame_transaction
             .take()
             .expect("an accepted candidate must own a frame transaction");
         debug_assert!(accepted_candidate.is_accepted());
         debug_assert_eq!(accepted_candidate.frame_generation, accepted_generation);
+        accepted_candidate.schedule_abandoned_publications(cx);
         retain_first_window_cleanup_panic(
             &mut completion_panic,
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.next_frame.clear())),
@@ -12797,6 +12814,26 @@ impl Window {
             },
             self.subtree_geometry_validity(),
         ));
+    }
+
+    /// Schedules cleanup if this candidate does not publish the given prepaint transaction.
+    ///
+    /// The callback runs outside the window borrow after frame rejection, or
+    /// after an accepted frame in which the publication was invalid or rolled
+    /// back. This is for work leased during this attempt. Use the transaction's
+    /// discard callback to retire a previously accepted publication.
+    #[doc(hidden)]
+    pub fn on_prepaint_publication_abandoned(
+        &mut self,
+        publication: PrepaintPublicationId,
+        callback: impl FnOnce(&mut App) + 'static,
+    ) {
+        self.invalidator.debug_assert_prepaint();
+        if let Some(transaction) = self.candidate_frame_transaction.as_mut() {
+            transaction
+                .abandoned_publications
+                .push((publication, Box::new(callback)));
+        }
     }
 
     pub(crate) fn record_autoscroll_commit(

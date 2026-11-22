@@ -18,9 +18,8 @@ use dockspace::{
     },
 };
 use open_gpui::{
-    AnyWindowHandle, App, AppContext as _, Bounds, Context, IntoElement, Pixels,
-    PlatformFrameDeliveryMode, Render, Subscription, Window, WindowId, WindowOptions, div,
-    prelude::*,
+    AnyWindowHandle, App, AppContext as _, Context, IntoElement, Pixels, PlatformFrameDeliveryMode,
+    Render, Subscription, Window, WindowId, WindowOptions, div, prelude::*,
 };
 
 use super::{
@@ -955,8 +954,7 @@ pub(super) fn set_placements(
     frame: &mut DockspaceHostFrame<'_>,
     native: Option<&ManagedHost>,
     owner: WindowId,
-    regions: &BTreeMap<SurfaceId, Bounds<Pixels>>,
-    window: &Window,
+    regions: &BTreeMap<SurfaceId, super::input::RegionGeometry>,
 ) -> Result<()> {
     let Some(native) = native.filter(|native| native.roots.contains(&owner)) else {
         return Ok(());
@@ -966,21 +964,28 @@ pub(super) fn set_placements(
         .get(&owner)
         .ok_or_else(|| anyhow!("native root has no callback route"))?
         .binding();
-    let scale = ScaleFactor::new(f64::from(window.scale_factor()))?;
     let placements: Result<Vec<_>> = regions
         .iter()
         .filter(|(surface, _)| frame.view().surface(**surface).is_some())
-        .map(|(surface, bounds)| {
-            let x = f64::from(f32::from(bounds.origin.x)) * scale.get();
-            let y = f64::from(f32::from(bounds.origin.y)) * scale.get();
-            let width = f64::from(f32::from(bounds.size.width));
-            let height = f64::from(f32::from(bounds.size.height));
+        .map(|(surface, geometry)| {
+            let layout = geometry.element.layout_bounds();
+            let displayed = geometry.element.displayed_bounds();
+            let scale = geometry.device_scale;
+            let physical = |pixels: Pixels| f64::from(f32::from(pixels)) * scale;
             Ok(NativeSurfacePlacement::new(
                 *surface,
-                LogicalSize::new(width, height)?,
-                PhysicalPoint::new(x, y)?,
-                scale,
-                PhysicalRect::new(x, y, width * scale.get(), height * scale.get())?,
+                LogicalSize::new(
+                    f64::from(f32::from(layout.size.width)),
+                    f64::from(f32::from(layout.size.height)),
+                )?,
+                PhysicalPoint::new(physical(displayed.origin.x), physical(displayed.origin.y))?,
+                ScaleFactor::new(scale * f64::from(geometry.element.window_scale().width))?,
+                PhysicalRect::new(
+                    physical(geometry.clip.origin.x),
+                    physical(geometry.clip.origin.y),
+                    physical(geometry.clip.size.width),
+                    physical(geometry.clip.size.height),
+                )?,
             ))
         })
         .collect();
@@ -1103,6 +1108,53 @@ pub(super) fn schedule(shared: &SharedHost, cx: &mut App) {
             pump(&shared, cx);
         }
     });
+}
+
+pub(super) fn queue_content_terminal(
+    host: &HostState,
+    owner: WindowId,
+    binding: NativeWindowBinding,
+    event: dockspace::runtime::SurfacePointerEvent,
+    metadata: dockspace::runtime::PointerEventMetadata,
+) {
+    use dockspace::runtime::{
+        NativeLocalPointerLocation, NativePointerButton, NativePointerCancelReason,
+        NativePointerEvent, NativePointerId, NativePointerInput, NativePointerOwner,
+        SurfacePointerEvent,
+    };
+    let Some(native) = host
+        .native
+        .as_ref()
+        .filter(|native| !native.transport.is_frozen())
+    else {
+        return;
+    };
+    if native
+        .callbacks
+        .get(&owner)
+        .is_none_or(|callbacks| callbacks.binding() != binding)
+    {
+        return;
+    }
+    let event = match event {
+        SurfacePointerEvent::ButtonReleased(_) => {
+            NativePointerEvent::ButtonReleased(NativePointerButton::Primary)
+        }
+        SurfacePointerEvent::StreamCancelled(_) => NativePointerEvent::StreamCancelled(
+            NativePointerCancelReason::ExplicitPlatformCancellation,
+        ),
+        _ => return,
+    };
+    native.transport.pointer_in_window(
+        NativePointerInput::new_local(
+            NativePointerId::new(1),
+            event,
+            NativeLocalPointerLocation::Unknown,
+            NativePointerOwner::Native(binding),
+            NativePointerOwner::Unknown,
+        )
+        .with_metadata(metadata),
+    );
 }
 
 pub(super) fn queue_pointer(

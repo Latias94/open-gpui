@@ -33,7 +33,7 @@ use crate::adapter::{
     GpuiDockspaceConfig, HostState, SharedHost,
     host::DockRegion,
     host_native,
-    input::{self, InputFrame},
+    input::{self, InputFrame, RegionGeometry},
     presentation,
 };
 
@@ -174,7 +174,6 @@ struct InteractionState {
     keyboard: RefCell<Option<keyboard::Continuation>>,
     keyboard_subscription: RefCell<Option<open_gpui::Subscription>>,
     splitter_press: RefCell<Option<splitter::Press>>,
-    content_press: Cell<Option<SurfaceId>>,
     content_terminal: Cell<bool>,
 }
 
@@ -322,7 +321,17 @@ impl Element for DockspaceElement {
         if host_native::stage_root_construction(&self.host.borrow(), window, cx) {
             return PreparedState::StagedRoot;
         }
-        presentation::abandon_unaccepted(&mut self.host.borrow_mut(), window, cx);
+        if self.host.borrow().native.is_some()
+            && let Ok(geometry) = window.try_element_geometry(bounds)
+            && geometry.window_scale().width != geometry.window_scale().height
+        {
+            return self.failure(
+                "native docking regions require uniform scale",
+                bounds,
+                window,
+                cx,
+            );
+        }
         host_native::prepare_window(&self.host, window, cx);
         let mount = self
             .host
@@ -384,6 +393,7 @@ impl Element for DockspaceElement {
         }) {
             return self.failure(error, bounds, window, cx);
         }
+        presentation::abandon_unaccepted(&mut self.host.borrow_mut(), window, cx);
         if let Some(id) = id {
             self.interaction =
                 window.with_element_state::<Rc<InteractionState>, _>(id, |state, _| {
@@ -540,6 +550,10 @@ impl DockspaceElement {
             }
             region_bounds.insert(region.surface, rect);
         }
+        let region_geometry = region_bounds
+            .iter()
+            .map(|(&surface, &bounds)| Ok((surface, RegionGeometry::new(bounds, window)?)))
+            .collect::<Result<BTreeMap<_, _>>>()?;
         let mut schedule_host_work = false;
         let (packets, serial, publication, waiting_for_update) = {
             let mut host = self.host.borrow_mut();
@@ -576,7 +590,7 @@ impl DockspaceElement {
                 )
             } else if host.inputs.is_empty()
                 && mount.regions.iter().all(|(surface, region)| {
-                    region.bounds == region_bounds.get(surface).copied()
+                    region.geometry == region_geometry.get(surface).copied()
                         && (mount.capacity_blocked || (!region.dirty && region.packet.is_some()))
                 })
             {
@@ -601,7 +615,7 @@ impl DockspaceElement {
             } else {
                 let inputs = std::mem::take(&mut host.inputs);
                 let candidate =
-                    match begin_candidate(&mut host, &inputs, &region_bounds, window, cx) {
+                    match begin_candidate(&mut host, &inputs, &region_geometry, window, cx) {
                         Ok((update, height, labels)) => {
                             let widths = if labels.is_empty() {
                                 BTreeMap::new()
@@ -704,9 +718,9 @@ impl DockspaceElement {
                             .checked_add(1)
                             .context("frame serial exhausted")?;
                         let serial = mount.serial;
-                        for (surface, bounds) in &region_bounds {
+                        for (surface, geometry) in &region_geometry {
                             let region = mount.regions.get_mut(surface).expect("mounted region");
-                            region.bounds = Some(*bounds);
+                            region.geometry = Some(*geometry);
                             region.dirty = false;
                         }
                         mount.pending = Some(presentation::PendingSubmission::new(
@@ -716,7 +730,7 @@ impl DockspaceElement {
                             update,
                             inputs,
                         ));
-                        presentation::observe(&self.host, &ticket, serial, window);
+                        presentation::observe(&self.host, &ticket, serial, publication, window);
                         (packets, serial, publication, false)
                     }
                 }
@@ -767,6 +781,8 @@ impl DockspaceElement {
                     !waiting_for_update
                         || (window.is_visible()
                             && input::is_presented(&host, owner, region.surface, serial)
+                            && host.mounts[&owner].regions[&region.surface].geometry
+                                == region_geometry.get(&region.surface).copied()
                             && host.mounts[&owner].input_frames.iter().any(|previous| {
                                 previous.surface == region.surface
                                     && previous.serial == serial
@@ -777,6 +793,7 @@ impl DockspaceElement {
                 .map(|region| InputFrame {
                     surface: region.surface,
                     serial,
+                    version: host.session.version(),
                     geometry: region.geometry,
                     hitboxes: region.hitboxes.clone(),
                     content_hitboxes: region.content_hitboxes.clone(),
@@ -935,7 +952,12 @@ impl DockspaceElement {
                 host.config.clone(),
                 allow_input && input::is_presented(&host, owner, surface, serial),
                 mount.regions[&surface].pointer,
-                allow_input || (mount.waiting_for_update && window.is_visible()),
+                window.is_visible()
+                    && (allow_input || mount.waiting_for_update)
+                    && host
+                        .native
+                        .as_ref()
+                        .is_none_or(|native| !native.is_failed()),
             )
         };
         for draw in &packet.draws {
@@ -1247,27 +1269,31 @@ impl DockspaceElement {
                     );
                     let geometry = window
                         .with_prepared_subtree_clip(&clip, |window| window.hit_test_snapshot(rect));
-                    let unchanged = geometry.as_ref().is_some_and(|geometry| {
-                        let host = self.host.borrow();
-                        let owner = window.window_handle().window_id();
-                        host.mounts[&owner]
-                            .regions
-                            .get(&surface)
-                            .filter(|region| {
-                                region.presented.is_some_and(|(serial, _)| {
-                                    input::is_presented(&host, owner, surface, serial)
+                    let unchanged = !admitted
+                        && keep_live_content
+                        && geometry.as_ref().is_some_and(|geometry| {
+                            let host = self.host.borrow();
+                            let owner = window.window_handle().window_id();
+                            host.mounts[&owner]
+                                .regions
+                                .get(&surface)
+                                .and_then(|region| region.presented_panes.as_ref())
+                                .filter(|panes| {
+                                    panes.version.is_same_epoch(host.session.version())
+                                        && host.session.view().item(*item).is_some_and(|pane| {
+                                            pane.surface() == surface && pane.is_active()
+                                        })
                                 })
-                            })
-                            .and_then(|region| region.presented_panes.get(item))
-                            == Some(geometry)
-                    });
+                                .and_then(|panes| panes.geometry.get(item))
+                                == Some(geometry)
+                        });
                     if let Some(geometry) = geometry {
                         panes.push((*item, geometry));
                     }
                     let pane = self.host.borrow().panels.get(item).cloned();
-                    // An unrelated pending update holds docking chrome. Live
-                    // application content keeps its own unchanged dispatch tree.
-                    let presentation = if admitted || (unchanged && keep_live_content) {
+                    // A scene update can revoke docking hit regions while the
+                    // same displayed editor continues to own its focus.
+                    let presentation = if admitted || unchanged {
                         SubtreePresentation::Visible
                     } else {
                         SubtreePresentation::Inert
@@ -1580,14 +1606,14 @@ impl DockspaceElement {
             if phase.capture() {
                 interaction.content_terminal.set(false);
                 if event.button == MouseButton::Left {
-                    interaction.content_terminal.set(finish_content_press(
-                        &shared,
-                        &interaction,
-                        SurfacePointerEvent::ButtonReleased(SurfacePointerButton::Primary),
-                        event.position,
-                        event.modifiers,
-                        window,
-                    ));
+                    interaction
+                        .content_terminal
+                        .set(input::finish_content_press(
+                            &mut shared.borrow_mut(),
+                            SurfacePointerEvent::ButtonReleased(SurfacePointerButton::Primary),
+                            event.modifiers,
+                            window,
+                        ));
                 }
             }
         });
@@ -1595,16 +1621,16 @@ impl DockspaceElement {
         let interaction = self.interaction.clone();
         window.on_pointer_cancel(move |_, phase, window, _| {
             if phase.capture() {
-                interaction.content_terminal.set(finish_content_press(
-                    &shared,
-                    &interaction,
-                    SurfacePointerEvent::StreamCancelled(
-                        SurfacePointerCancelReason::ExplicitPlatformCancellation,
-                    ),
-                    window.mouse_position(),
-                    window.modifiers(),
-                    window,
-                ));
+                interaction
+                    .content_terminal
+                    .set(input::finish_content_press(
+                        &mut shared.borrow_mut(),
+                        SurfacePointerEvent::StreamCancelled(
+                            SurfacePointerCancelReason::ExplicitPlatformCancellation,
+                        ),
+                        window.modifiers(),
+                        window,
+                    ));
             }
         });
     }
@@ -1682,7 +1708,7 @@ impl DockspaceElement {
                     )
                 {
                     // Observe pane activation without capturing or consuming the widget's input.
-                    interaction.content_press.set(Some(surface));
+                    input::remember_content_press(&mut shared.borrow_mut(), owner, surface);
                     window.refresh();
                 }
             }
@@ -2031,51 +2057,6 @@ impl DockspaceElement {
             window.refresh();
         });
     }
-}
-
-/// One physical terminal belongs to the original content press, even across logical regions.
-fn finish_content_press(
-    shared: &SharedHost,
-    interaction: &InteractionState,
-    event: SurfacePointerEvent,
-    position: open_gpui::Point<Pixels>,
-    modifiers: open_gpui::Modifiers,
-    window: &mut Window,
-) -> bool {
-    let Some(surface) = interaction.content_press.get() else {
-        return false;
-    };
-    let owner = window.window_handle().window_id();
-    let mut host = shared.borrow_mut();
-    if let Some(frame) = host
-        .mounts
-        .get(&owner)
-        .and_then(|mount| {
-            mount
-                .input_frames
-                .iter()
-                .find(|frame| frame.surface == surface)
-        })
-        .cloned()
-    {
-        if input::queue(
-            &mut host,
-            surface,
-            frame.serial,
-            event,
-            position,
-            frame.geometry,
-            &frame.hitboxes,
-            &frame.content_hitboxes,
-            false,
-            modifiers,
-            window,
-        ) {
-            interaction.content_press.set(None);
-            window.refresh();
-        }
-    }
-    true
 }
 
 fn activate_action(
@@ -2643,7 +2624,7 @@ fn hovered_tab_at(
 fn begin_candidate(
     host: &mut HostState,
     inputs: &[input::QueuedInput],
-    regions: &BTreeMap<SurfaceId, Bounds<Pixels>>,
+    regions: &BTreeMap<SurfaceId, RegionGeometry>,
     window: &Window,
     cx: &mut App,
 ) -> Result<(DockspaceUpdate, Pixels, BTreeMap<ItemId, CustomTabLabel>)> {
@@ -2656,7 +2637,7 @@ fn begin_candidate(
     )
     .context("beginning retained docking candidate")?;
     let owner = window.window_handle().window_id();
-    host_native::set_placements(&mut frame, host.native.as_ref(), owner, regions, window)?;
+    host_native::set_placements(&mut frame, host.native.as_ref(), owner, regions)?;
     for input in inputs {
         input.submit(&mut frame)?;
     }

@@ -219,7 +219,7 @@ fn receiver_bounds(
                 _ => None,
             })
             .unwrap();
-        to_gpui(receiver.bounds(), region.bounds.unwrap())
+        to_gpui(receiver.bounds(), region.layout_bounds().unwrap())
     })
 }
 
@@ -237,7 +237,7 @@ fn tab_list_button_bounds(dock: &DockSurface, window: open_gpui::WindowId) -> Bo
             _ => None,
         })
         .unwrap();
-    to_gpui(control.bounds, region.bounds.unwrap())
+    to_gpui(control.bounds, region.layout_bounds().unwrap())
 }
 
 fn assert_accessibility_focus(visual: &VisualTestContext, role: Role, label: &str) {
@@ -482,7 +482,7 @@ fn presentation_menu_activates_the_frozen_core_float_command(cx: &mut TestAppCon
             menu.choices.is_empty(),
             "closed menus must not prepare product commands each frame"
         );
-        to_gpui(menu.bounds, region.bounds.unwrap())
+        to_gpui(menu.bounds, region.layout_bounds().unwrap())
     };
     visual.simulate_click(anchor.center(), Modifiers::none());
     frames(&mut visual, &dock);
@@ -642,7 +642,7 @@ fn presentation_menu_with_content_focus(
                 _ => None,
             })
             .unwrap();
-        to_gpui(menu.bounds, region.bounds.unwrap())
+        to_gpui(menu.bounds, region.layout_bounds().unwrap())
     });
     (dock, handles[0].clone(), visual, anchor)
 }

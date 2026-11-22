@@ -563,6 +563,10 @@ impl Window {
         self.schedule_focus_claim_resolution_dispatch(cx);
         self.mouse_hit_test = self.rendered_frame.hit_test(self.mouse_position);
         self.needs_present.set(false);
+        candidate
+            .prepared
+            .transaction
+            .schedule_abandoned_publications(cx);
         self.refresh();
         drop(candidate.observers);
         self.schedule_pending_frame();

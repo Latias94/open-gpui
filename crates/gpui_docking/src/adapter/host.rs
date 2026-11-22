@@ -10,14 +10,14 @@ use std::{
 use anyhow::{Result, ensure};
 use dockspace::{
     geometry::{LogicalPoint, LogicalRect, LogicalSize, PaneSizing},
-    model::{DockPlacement, DockspaceView, ItemId, SurfaceId},
+    model::{DockPlacement, DockspaceView, ItemId, SurfaceId, WorkspaceVersion},
     runtime::{
         DockspaceHostFrame, DockspaceSession, HostFrameReport, HostInputOutcome,
         NativeEffectRequest, SurfacePresentationArtifact, SurfaceUnavailableReason,
     },
 };
 use open_gpui::{
-    AnyElement, AnyView, AnyWindowHandle, App, Bounds, FocusHandle, GlobalElementId, HitboxTag,
+    AnyElement, AnyView, AnyWindowHandle, App, FocusHandle, GlobalElementId, HitboxTag,
     IntoElement, Pixels, SharedString, Subscription, Window, WindowId,
 };
 use web_time::Instant;
@@ -302,6 +302,13 @@ impl DockSurface {
     }
 
     /// Renders disjoint logical regions sharing a physical window and frame ticket.
+    ///
+    /// An embedded region can move to a different open window after an accepted
+    /// frame removes its original docking element. The destination acquires the
+    /// region when its docking publication is accepted. `inspection()` reports
+    /// whether each mount is attached or waiting for a frame.
+    ///
+    /// Managed native regions support ancestor translation and uniform scaling.
     pub fn regions<I: IntoIterator<Item = DockRegion>>(
         &self,
         regions: I,
@@ -457,12 +464,17 @@ impl DockSurface {
         }
         let surface = frame.view().item(item).map(|item| item.surface());
         if let Some(surface) = surface
-            && metadata
-                .as_ref()
-                .is_some_and(|(_, sizing)| pane.sizing != *sizing)
+            && metadata.as_ref().is_some_and(|(_, sizing)| {
+                [
+                    (pane.sizing.width(), sizing.width()),
+                    (pane.sizing.height(), sizing.height()),
+                ]
+                .into_iter()
+                .any(|(old, new)| old.minimum() != new.minimum() || old.maximum() != new.maximum())
+            })
         {
-            // A sizing edit revokes the old layout constraints. Label changes
-            // remeasure in the next encoding pass and keep the presented editor live.
+            // Min/max changes invalidate the previous layout constraints.
+            // Preferred sizes are used only when resetting a splitter.
             frame.defer_surface(surface, SurfaceUnavailableReason::Deferred)?;
         }
         let report = frame.commit()?;
@@ -713,6 +725,7 @@ pub(super) struct WindowMount {
     pub(super) capture: open_gpui::PointerCaptureHandle,
     pub(super) focus: FocusHandle,
     pub(super) input_frames: Vec<input::InputFrame>,
+    pub(super) content_press: Option<input::ContentPress>,
     pub(super) wake: Option<continuation::Wake>,
     pub(super) attached: bool,
     pub(super) waiting_for_update: bool,
@@ -721,12 +734,38 @@ pub(super) struct WindowMount {
 }
 
 pub(super) struct RegionState {
-    pub(super) bounds: Option<Bounds<Pixels>>,
+    pub(super) geometry: Option<input::RegionGeometry>,
     pub(super) pointer: Option<LogicalPoint>,
     pub(super) packet: Option<Rc<element::Packet>>,
     pub(super) presented: Option<(u64, SurfacePresentationArtifact)>,
-    pub(super) presented_panes: BTreeMap<ItemId, open_gpui::HitTestSnapshot>,
+    pub(super) presented_panes: Option<PresentedPanes>,
     pub(super) dirty: bool,
+}
+
+pub(super) struct PresentedPanes {
+    pub(super) version: WorkspaceVersion,
+    pub(super) geometry: BTreeMap<ItemId, open_gpui::HitTestSnapshot>,
+}
+
+impl Default for RegionState {
+    fn default() -> Self {
+        Self {
+            geometry: None,
+            pointer: None,
+            packet: None,
+            presented: None,
+            presented_panes: None,
+            dirty: true,
+        }
+    }
+}
+
+#[cfg(test)]
+impl RegionState {
+    pub(super) fn layout_bounds(&self) -> Option<open_gpui::Bounds<Pixels>> {
+        self.geometry
+            .map(|geometry| geometry.element.layout_bounds())
+    }
 }
 
 fn missing_pane_view(
@@ -844,7 +883,9 @@ impl HostState {
             unique.len() == regions.len(),
             "duplicate logical surface mount"
         );
-        if let Some(mount) = self.mounts.get_mut(&owner) {
+        if let Some(mount) = self.mounts.get(&owner)
+            && (mount.attached || mount.pending.is_some() || self.native.is_some())
+        {
             ensure!(
                 mount.element.as_ref() == id,
                 "combine this window's surfaces in one docking element"
@@ -855,10 +896,8 @@ impl HostState {
             );
             // Moving the last ordinary root prunes its logical surface. The
             // physical region remains a vacant slot until its mount retires.
-            mount.attached = true;
             return Ok(false);
         }
-        let mut previous_mounts = BTreeSet::new();
         for region in regions {
             let native_staging = self
                 .native
@@ -873,42 +912,31 @@ impl HostState {
                 self.session.view().surface(region.surface).is_some() || native_staging,
                 "unknown logical surface"
             );
-            if let Some(previous) = self.owners.get(&region.surface).copied()
-                && previous != owner
-            {
-                ensure!(
-                    self.native.is_none()
-                        && self
-                            .mounts
-                            .get(&previous)
-                            .is_some_and(|mount| !mount.attached),
-                    "a logical surface is already mounted in another window"
-                );
-                previous_mounts.insert(previous);
+            ensure!(
+                self.owners
+                    .get(&region.surface)
+                    .is_none_or(|current| *current == owner)
+                    && !self.mounts.iter().any(|(current, mount)| {
+                        *current != owner
+                            && mount.pending.is_some()
+                            && mount.regions.contains_key(&region.surface)
+                    }),
+                "a logical surface is already mounted in another window"
+            );
+        }
+        if let Some(mount) = self.mounts.get_mut(&owner) {
+            // An accepted detach has released these regions. The new element can
+            // reclaim any subset without depending on another window's paint order.
+            mount.element = id.cloned();
+            mount.regions.retain(|surface, _| unique.contains(surface));
+            for surface in unique {
+                mount.regions.entry(surface).or_default();
             }
+            return Ok(false);
         }
-        // Validate the entire roster before transferring any detached owner.
-        for previous in previous_mounts {
-            presentation::retire_mount(self, previous, cx);
-        }
-        for region in regions {
-            self.owners.insert(region.surface, owner);
-        }
-        let regions = regions
-            .iter()
-            .map(|region| {
-                (
-                    region.surface,
-                    RegionState {
-                        bounds: None,
-                        pointer: None,
-                        packet: None,
-                        presented: None,
-                        presented_panes: BTreeMap::new(),
-                        dirty: true,
-                    },
-                )
-            })
+        let regions = unique
+            .into_iter()
+            .map(|surface| (surface, RegionState::default()))
             .collect();
         self.mounts.insert(
             owner,
@@ -923,13 +951,30 @@ impl HostState {
                 capture: window.new_pointer_capture_handle(),
                 focus: cx.focus_handle(),
                 input_frames: Vec::new(),
+                content_press: None,
                 wake: None,
-                attached: true,
+                attached: false,
                 waiting_for_update: false,
                 capacity_blocked: false,
             },
         );
         Ok(true)
+    }
+
+    pub(super) fn accept_mount(&mut self, owner: WindowId) {
+        let mount = self
+            .mounts
+            .get_mut(&owner)
+            .expect("accepted mount still exists");
+        if mount.attached {
+            return;
+        }
+        mount.attached = true;
+        for surface in mount.regions.keys() {
+            let previous = self.owners.insert(*surface, owner);
+            debug_assert!(previous.is_none_or(|previous| previous == owner));
+            self.unavailable_surfaces.remove(surface);
+        }
     }
 
     pub(super) fn apply_report(&mut self, mut report: HostFrameReport) {

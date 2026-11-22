@@ -16,6 +16,7 @@ use open_gpui::{
 use super::{
     HostState, SharedHost, continuation,
     element::Packet,
+    host::PresentedPanes,
     host_native,
     input::{InputFrame, QueuedInput},
 };
@@ -125,7 +126,7 @@ pub(super) fn visibility_changed(
 ) {
     let mut host = shared.borrow_mut();
     let owner = window.window_handle().window_id();
-    let Some(mount) = host.mounts.get(&owner).filter(|mount| mount.attached) else {
+    let Some(mount) = host.mounts.get(&owner) else {
         return;
     };
     if visibility.is_visible() {
@@ -154,9 +155,51 @@ pub(super) fn observe(
     shared: &SharedHost,
     ticket: &WindowFrameSubmissionTicket,
     serial: u64,
+    publication: open_gpui::PrepaintPublicationId,
     window: &mut Window,
 ) {
     let weak = Rc::downgrade(shared);
+    let handle = window.window_handle();
+    let original = ticket.clone();
+    window.on_prepaint_publication_abandoned(publication, move |cx| {
+        let Some(shared) = weak.upgrade() else {
+            return;
+        };
+        let _ = handle.update(cx, |_, window, cx| {
+            let owner = handle.window_id();
+            let mut host = shared.borrow_mut();
+            if !host
+                .mounts
+                .get(&owner)
+                .and_then(|mount| mount.pending.as_ref())
+                .is_some_and(|pending| {
+                    pending.update.is_some()
+                        && pending.serial == serial
+                        && pending.ticket.same_authority(&original)
+                })
+            {
+                return;
+            }
+            withdraw_pending(&mut host, window, cx);
+            if let Err(error) = settle_pending(&mut host, Some(window), cx) {
+                host.fail(error.as_ref());
+            }
+            wake_waiting(&mut host, cx);
+            drop(host);
+            host_native::schedule(&shared, cx);
+        });
+    });
+    observe_presented(shared, ticket, serial, window);
+}
+
+pub(super) fn observe_presented(
+    shared: &SharedHost,
+    ticket: &WindowFrameSubmissionTicket,
+    serial: u64,
+    window: &mut Window,
+) {
+    let weak = Rc::downgrade(shared);
+    let original = ticket.clone();
     window.on_exact_frame_submission_presented(ticket, move |snapshot, window, cx| {
         let Some(shared) = weak.upgrade() else {
             return;
@@ -166,11 +209,9 @@ pub(super) fn observe(
         let Some(mount) = host.mounts.get_mut(&owner) else {
             return;
         };
-        if !mount
-            .pending
-            .as_ref()
-            .is_some_and(|pending| pending.serial == serial)
-        {
+        if !mount.pending.as_ref().is_some_and(|pending| {
+            pending.serial == serial && pending.ticket.same_authority(&original)
+        }) {
             return;
         }
         let pending = mount.pending.take().expect("matching pending submission");
@@ -183,12 +224,16 @@ pub(super) fn observe(
             SurfacePresentationResult::Dropped
         };
         window.retire_exact_frame_submission(&pending.ticket);
+        let abandoned = pending.update.is_some();
         let reported_outputs = !pending.outputs.is_empty();
         retire_pending(&mut host, owner, pending, result, cx);
-        if host.native.is_none() && reported_outputs {
+        if host.native.is_none() && (abandoned || reported_outputs) {
             if let Err(error) = settle_pending(&mut host, Some(window), cx) {
                 host.fail(error.as_ref());
             }
+        }
+        if abandoned {
+            wake_waiting(&mut host, cx);
         }
         // The submitted packet was prepainted inert until this original
         // terminal observation. Replay it once to admit its content channels.
@@ -235,6 +280,9 @@ pub(super) fn accept(
         .take()
         .filter(|pending| pending.serial == serial)
     else {
+        if !mount.attached {
+            return;
+        }
         for frame in &mut input_frames {
             frame.native_binding = mount
                 .input_frames
@@ -277,11 +325,14 @@ pub(super) fn accept(
     // A Deferred retry retains the same affine outputs and packet. Fresh GPUI
     // hitboxes must keep that packet's original native binding correlation.
     for frame in &mut input_frames {
-        frame.native_binding = pending
+        if let Some(previous) = pending
             .input_frames
             .iter()
             .find(|previous| previous.surface == frame.surface && previous.serial == serial)
-            .and_then(|previous| previous.native_binding);
+        {
+            frame.native_binding = previous.native_binding;
+            frame.version = previous.version;
+        }
     }
     pending.input_frames = input_frames;
     if let Some(update) = pending.update.take() {
@@ -292,6 +343,10 @@ pub(super) fn accept(
         {
             Ok(mut report) => {
                 pending.outputs = report.take_painted_outputs();
+                let version = host.session.version();
+                for frame in &mut pending.input_frames {
+                    frame.version = version;
+                }
                 let released_capacity = !report.surface_presentation_commits().is_empty();
                 if released_capacity {
                     wake_capacity_blocked(&mut host, cx);
@@ -307,6 +362,7 @@ pub(super) fn accept(
                         }
                     }
                 }
+                host.accept_mount(owner);
                 host.apply_report(report);
                 host_native::provisional::accept_preview(&mut host, owner, &pending.packets);
                 pending.inputs.clear();
@@ -395,13 +451,14 @@ pub(super) fn discard(shared: &SharedHost, window: &mut Window, cx: &mut App) {
     mount.attached = false;
     mount.wake = None;
     mount.input_frames.clear();
+    mount.content_press = None;
     for region in mount.regions.values_mut() {
-        region.dirty = true;
-        region.presented = None;
-        region.presented_panes.clear();
+        *region = Default::default();
     }
+    let surfaces = mount.regions.keys().copied().collect::<Vec<_>>();
     withdraw_pending(&mut host, window, cx);
     retire_input_source(&mut host, owner, cx);
+    release_surfaces(&mut host, owner, surfaces, cx);
     if let Err(error) = settle_pending(&mut host, Some(window), cx) {
         host.fail(error.as_ref());
     }
@@ -505,10 +562,6 @@ fn apply_presentation(host: &mut HostState, terminal: PendingPresentation) {
             result,
         } => (owner, serial, outputs, input_frames, result),
     };
-    let mut panes: BTreeMap<_, _> = input_frames
-        .iter()
-        .map(|frame| (frame.surface, frame.panes.clone()))
-        .collect();
     if result == SurfacePresentationResult::Presented
         && let Some(mount) = host
             .mounts
@@ -519,7 +572,7 @@ fn apply_presentation(host: &mut HostState, terminal: PendingPresentation) {
             if frame.panes.is_empty()
                 && let Some(region) = mount.regions.get_mut(&frame.surface)
             {
-                region.presented_panes.clear();
+                region.presented_panes = None;
             }
         }
         mount.input_frames = input_frames;
@@ -530,19 +583,22 @@ fn apply_presentation(host: &mut HostState, terminal: PendingPresentation) {
         let artifact = output.presentation_artifact();
         match host.session.report_surface_presentation(output, result) {
             Ok(()) => {
-                if let Some(region) = host
+                if let Some(mount) = host
                     .mounts
                     .get_mut(&owner)
                     .filter(|mount| mount.serial == serial)
-                    .and_then(|mount| mount.regions.get_mut(&surface))
+                    && let Some(region) = mount.regions.get_mut(&surface)
                 {
                     if result == SurfacePresentationResult::Presented {
                         region.presented = Some((serial, artifact));
-                        region.presented_panes = panes
-                            .remove(&surface)
-                            .unwrap_or_default()
-                            .into_iter()
-                            .collect();
+                        region.presented_panes = mount
+                            .input_frames
+                            .iter()
+                            .find(|frame| frame.surface == surface && !frame.panes.is_empty())
+                            .map(|frame| PresentedPanes {
+                                version: frame.version,
+                                geometry: frame.panes.iter().cloned().collect(),
+                            });
                     } else {
                         region.dirty = true;
                     }
@@ -660,28 +716,36 @@ pub(super) fn retire_mount(host: &mut HostState, owner: WindowId, cx: &mut App) 
             retire_pending(host, owner, pending, SurfacePresentationResult::Dropped, cx);
         }
         retire_input_source(host, owner, cx);
-        let mut surfaces = Vec::new();
-        for surface in mount.regions.keys() {
-            if host
-                .owners
-                .get(surface)
-                .is_none_or(|current| *current == owner)
-            {
-                host.owners.remove(surface);
-                surfaces.push(*surface);
-            }
-        }
-        let removed = PendingPresentation::MountRemoved { owner, surfaces };
-        if let Some(native) = &host.native {
-            // Keep actual mount loss behind the same original native prefix as
-            // renderer terminals. A rejected head cannot be bypassed by cleanup.
-            native.transport.presentation(removed, cx);
-        } else {
-            apply_presentation(host, removed);
-        }
+        release_surfaces(host, owner, mount.regions.into_keys().collect(), cx);
     }
     if let Err(error) = settle_pending(host, None, cx) {
         host.fail(error.as_ref());
     }
     wake_waiting(host, cx);
+}
+
+fn release_surfaces(
+    host: &mut HostState,
+    owner: WindowId,
+    mut surfaces: Vec<SurfaceId>,
+    cx: &mut App,
+) {
+    surfaces.retain(|surface| {
+        if host.owners.get(surface) == Some(&owner) {
+            host.owners.remove(surface);
+            true
+        } else {
+            false
+        }
+    });
+    if surfaces.is_empty() {
+        return;
+    }
+    let removed = PendingPresentation::MountRemoved { owner, surfaces };
+    if let Some(native) = &host.native {
+        // Mount loss shares the original prefix with renderer terminals.
+        native.transport.presentation(removed, cx);
+    } else {
+        apply_presentation(host, removed);
+    }
 }

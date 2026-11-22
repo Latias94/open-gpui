@@ -2,23 +2,44 @@
 
 use dockspace::{
     geometry::LogicalPoint,
-    model::SurfaceId,
+    model::{SurfaceId, WorkspaceVersion},
     runtime::{
         DeferredSurfaceAction, DockspaceHostFrame, HostPointerInput, HostPointerRoute,
-        PointerDeviceKind, PointerEventMetadata, PresentedDockReceiver, PresentedDockspaceSurface,
-        SurfacePointerCapture, SurfacePointerEvent, SurfacePointerId, SurfacePointerReceiverFacts,
+        NativeWindowBinding, PointerDeviceKind, PointerEventMetadata, PresentedDockReceiver,
+        PresentedDockspaceSurface, SurfacePointerCapture, SurfacePointerEvent, SurfacePointerId,
+        SurfacePointerReceiverFacts,
     },
 };
 use open_gpui::{
-    ElementGeometry, HitboxId, Modifiers, Pixels, Point, PointerCaptureHandle, Window, WindowId,
+    Bounds, ElementGeometry, HitboxId, Modifiers, Pixels, Point, PointerCaptureHandle, Window,
+    WindowId,
 };
 
 use super::HostState;
+
+#[derive(Clone, Copy, PartialEq)]
+pub(super) struct RegionGeometry {
+    pub(super) element: ElementGeometry,
+    pub(super) clip: Bounds<Pixels>,
+    pub(super) device_scale: f64,
+}
+
+impl RegionGeometry {
+    pub(super) fn new(bounds: Bounds<Pixels>, window: &Window) -> anyhow::Result<Self> {
+        let element = window.try_element_geometry(bounds)?;
+        Ok(Self {
+            element,
+            clip: element.displayed_bounds().intersect(&window.clip_bounds()),
+            device_scale: f64::from(window.scale_factor()),
+        })
+    }
+}
 
 #[derive(Clone)]
 pub(super) struct InputFrame {
     pub(super) surface: SurfaceId,
     pub(super) serial: u64,
+    pub(super) version: WorkspaceVersion,
     pub(super) geometry: ElementGeometry,
     pub(super) hitboxes: Vec<HitboxId>,
     pub(super) content_hitboxes: Vec<HitboxId>,
@@ -27,6 +48,65 @@ pub(super) struct InputFrame {
     pub(super) receivers: Vec<(dockspace::runtime::DockspaceReceiverDescriptor, HitboxId)>,
     pub(super) scale: f64,
     pub(super) native_binding: Option<dockspace::runtime::NativeSurfaceBinding>,
+}
+
+pub(super) struct ContentPress {
+    surface: SurfaceId,
+    native: Option<NativeWindowBinding>,
+}
+
+pub(super) fn remember_content_press(host: &mut HostState, owner: WindowId, surface: SurfaceId) {
+    let native = host.native.as_ref().and_then(|native| {
+        native
+            .callbacks
+            .get(&owner)
+            .map(|callbacks| callbacks.binding())
+    });
+    if let Some(mount) = host.mounts.get_mut(&owner) {
+        mount.content_press = Some(ContentPress { surface, native });
+    }
+}
+
+pub(super) fn finish_content_press(
+    host: &mut HostState,
+    event: SurfacePointerEvent,
+    modifiers: Modifiers,
+    window: &mut Window,
+) -> bool {
+    let owner = window.window_handle().window_id();
+    let Some(mount) = host.mounts.get_mut(&owner) else {
+        return false;
+    };
+    let Some(press) = mount.content_press.take() else {
+        return false;
+    };
+    mount.wake = None;
+    if let Some(region) = mount.regions.get_mut(&press.surface) {
+        region.dirty = true;
+    }
+    let metadata = PointerEventMetadata::new(PointerDeviceKind::Mouse, host.observed_at())
+        .with_docking_enabled(host.config.input.docking_enabled(modifiers));
+    // The press was observed for bookkeeping and pane activation. Its terminal
+    // does not need a new hit test, even when the original region was resized.
+    if let Some(binding) = press.native {
+        super::host_native::queue_content_terminal(host, owner, binding, event, metadata);
+    } else {
+        host.inputs.push(QueuedInput::Pointer(QueuedPointer {
+            owner,
+            event,
+            manipulation: HostPointerRoute::Unknown,
+            hover: HostPointerRoute::Unknown,
+            surface: None,
+            delivery: None,
+            drag: None,
+            clear: false,
+            delivery_clear: false,
+            capture: SurfacePointerCapture::None,
+            metadata,
+        }));
+    }
+    window.refresh();
+    true
 }
 
 /// Semantic pointer consequences share the original input's rollback custody.

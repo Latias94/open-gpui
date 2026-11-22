@@ -84,7 +84,7 @@ pub(super) fn pane_center(
                 _ => None,
             })
             .unwrap();
-        to_gpui(bounds, region.bounds.unwrap()).center()
+        to_gpui(bounds, region.layout_bounds().unwrap()).center()
     })
 }
 
@@ -112,7 +112,7 @@ fn assert_tab_ink(
                 _ => None,
             })
             .expect("the observed tab must remain inactive");
-        let bounds = to_gpui(bounds, region.bounds.unwrap()).scale(window.scale_factor());
+        let bounds = to_gpui(bounds, region.layout_bounds().unwrap()).scale(window.scale_factor());
         let quads = window.painted_quads();
         let background = quads
             .iter()
@@ -552,7 +552,7 @@ fn accepted_overlay_revokes_stationary_edge_scroll_until_a_full_new_interval(
             .iter()
             .find_map(|draw| match draw {
                 Draw::Control(control) if control.label == "Scroll tabs forward" => {
-                    Some(to_gpui(control.bounds, region.bounds.unwrap()))
+                    Some(to_gpui(control.bounds, region.layout_bounds().unwrap()))
                 }
                 _ => None,
             })
@@ -565,7 +565,7 @@ fn accepted_overlay_revokes_stationary_edge_scroll_until_a_full_new_interval(
         let region = &host.mounts[&window.window_handle().window_id()].regions[&SURFACE];
         assert!(region.packet.as_ref().unwrap().draws.iter().any(|draw| {
             matches!(draw, Draw::Scroll(ScrollTarget::Strip(receiver))
-                if to_gpui(receiver.bounds(), region.bounds.unwrap()).contains(&position))
+                if to_gpui(receiver.bounds(), region.layout_bounds().unwrap()).contains(&position))
         }));
     });
     let before = strip_offset(&dock);
@@ -815,6 +815,183 @@ fn an_embedded_surface_can_mount_in_another_open_window_after_detaching(cx: &mut
 }
 
 #[open_gpui::test]
+fn handing_off_one_of_two_regions_works_in_either_paint_order(cx: &mut TestAppContext) {
+    struct Regions {
+        dock: DockSurface,
+        regions: Rc<RefCell<Vec<DockRegion>>>,
+    }
+
+    impl Render for Regions {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let regions = self.regions.borrow();
+            div().size_full().when(!regions.is_empty(), |root| {
+                root.child(self.dock.regions(regions.iter().copied()))
+            })
+        }
+    }
+
+    cx.update(|cx| cx.set_quit_mode(open_gpui::QuitMode::Explicit));
+    let sibling = SurfaceId::new(52);
+    let region =
+        |surface, y| DockRegion::new(surface, LogicalRect::new(0.0, y, 620.0, 190.0).unwrap());
+    for source_first in [true, false] {
+        let (dock, _) = overflowing_surfaces(&[SURFACE, sibling], cx);
+        let [(source, source_regions), (target, target_regions)] = [
+            vec![region(SURFACE, 0.0), region(sibling, 200.0)],
+            Vec::new(),
+        ]
+        .map(|regions| {
+            let regions = Rc::new(RefCell::new(regions));
+            cx.defer_next_window_frame_requests();
+            let window = cx.open_window(size(px(620.0), px(400.0)), |_, _| Regions {
+                dock: dock.clone(),
+                regions: regions.clone(),
+            });
+            (window, regions)
+        });
+        let mut source_visual = VisualTestContext::from_window(source.into(), cx);
+        let mut target_visual = VisualTestContext::from_window(target.into(), cx);
+        frames(&mut source_visual, &dock);
+        frames(&mut target_visual, &dock);
+        source_regions.borrow_mut().clear();
+        frames(&mut source_visual, &dock);
+
+        *source_regions.borrow_mut() = vec![region(sibling, 0.0)];
+        *target_regions.borrow_mut() = vec![region(SURFACE, 0.0)];
+        let [first, second] = if source_first {
+            [&mut source_visual, &mut target_visual]
+        } else {
+            [&mut target_visual, &mut source_visual]
+        };
+        frames(first, &dock);
+        frames(second, &dock);
+        assert!(source_visual.debug_bounds("dockspace:tab:42").is_some());
+        assert!(target_visual.debug_bounds("dockspace:tab:2").is_some());
+        assert_eq!(dock.host.borrow().owners[&sibling], source.window_id());
+        assert_eq!(dock.host.borrow().owners[&SURFACE], target.window_id());
+        source_visual.update(|window, cx| window.remove_window(cx));
+        target_visual.update(|window, cx| window.remove_window(cx));
+    }
+}
+
+#[open_gpui::test]
+fn settling_an_abandoned_destination_frame_unblocks_other_windows(cx: &mut TestAppContext) {
+    use dockspace::close::CloseDecision;
+    use open_gpui::PlatformFrameDeliveryMode;
+
+    cx.update(|cx| cx.set_quit_mode(open_gpui::QuitMode::Explicit));
+    let sibling_surface = SurfaceId::new(52);
+    for outcome in [
+        PlatformWindowPresentOutcome::Rejected,
+        PlatformWindowPresentOutcome::RepaintRequired,
+        PlatformWindowPresentOutcome::Submitted,
+    ] {
+        let (dock, _) = overflowing_surfaces(&[SURFACE, sibling_surface], cx);
+        let [
+            (source, source_mounted),
+            (target, target_mounted),
+            (sibling, _),
+        ] = [(SURFACE, true), (SURFACE, false), (sibling_surface, true)].map(
+            |(surface, mounted)| {
+                let mounted = Rc::new(Cell::new(mounted));
+                cx.defer_next_window_frame_requests();
+                let window = cx.open_window(size(px(620.0), px(400.0)), |_, _| OptionalDockMount {
+                    dock: dock.clone(),
+                    surface,
+                    mounted: mounted.clone(),
+                });
+                (window, mounted)
+            },
+        );
+        let mut source_visual = VisualTestContext::from_window(source.into(), cx);
+        let mut target_visual = VisualTestContext::from_window(target.into(), cx);
+        let mut sibling_visual = active_visual(sibling.into(), cx);
+        cx.set_platform_hovered_window(Some(sibling.into()));
+        frames(&mut source_visual, &dock);
+        frames(&mut target_visual, &dock);
+        frames(&mut sibling_visual, &dock);
+
+        let item = ItemId::new(2);
+        cx.update(|cx| {
+            dock.update(
+                |frame| {
+                    frame.request_close_item_current(item)?;
+                    Ok(())
+                },
+                cx,
+            )
+            .unwrap();
+        });
+        let request = dock.pending_content_close_plans().unwrap()[0].request();
+        source_mounted.set(false);
+        frames(&mut source_visual, &dock);
+        assert!(!dock.host.borrow().owners.contains_key(&SURFACE));
+        target_mounted.set(true);
+        cx.set_window_frame_delivery_mode(target.into(), PlatformFrameDeliveryMode::Deferred);
+        assert!(target_visual.simulate_frame(RequestFrameOptions {
+            require_presentation: true,
+            force_render: true,
+            ..Default::default()
+        }));
+        let original = cx.pending_window_frame_submission(target.into()).unwrap();
+        assert!(dock.is_update_pending());
+        assert!(!dock.host.borrow().owners.contains_key(&SURFACE));
+
+        let calls = Rc::new(Cell::new(0));
+        let observed = calls.clone();
+        cx.update(|cx| {
+            dock.set_close_handler(
+                move |dock, received, cx| {
+                    assert_eq!(received.request(), request);
+                    observed.set(observed.get() + 1);
+                    dock.update(
+                        |frame| {
+                            frame.resolve_close(
+                                request,
+                                received.items()[0].token(),
+                                CloseDecision::Allow,
+                            )?;
+                            Ok(())
+                        },
+                        cx,
+                    )
+                    .unwrap();
+                },
+                cx,
+            )
+            .unwrap();
+        });
+        cx.run_until_parked();
+        assert_eq!(calls.get(), 0);
+
+        target_mounted.set(false);
+        target_visual.update(|window, _| window.refresh());
+        cx.update(|_| assert!(original.complete(outcome)));
+        cx.run_until_parked();
+        assert!(!dock.is_update_pending(), "{outcome:?}");
+        assert_eq!(calls.get(), 1, "{outcome:?}");
+        assert!(dock.with_view(|view| view.item(item).is_none()));
+        cx.set_window_frame_delivery_mode(target.into(), PlatformFrameDeliveryMode::Synchronous);
+        frames(&mut target_visual, &dock);
+        assert!(!dock.host.borrow().owners.contains_key(&SURFACE));
+        assert!(!dock.host.borrow().mounts[&target.window_id()].attached);
+
+        frames(&mut sibling_visual, &dock);
+        let tab = sibling_visual
+            .debug_bounds("dockspace:tab:42")
+            .unwrap()
+            .center();
+        sibling_visual.simulate_click(tab, Modifiers::none());
+        frames(&mut sibling_visual, &dock);
+        assert!(dock.with_view(|view| view.item(ItemId::new(42)).unwrap().is_active()));
+        assert_eq!(calls.get(), 1);
+        sibling_visual.update(|window, cx| window.remove_window(cx));
+        source_visual.update(|window, cx| window.remove_window(cx));
+        target_visual.update(|window, cx| window.remove_window(cx));
+    }
+}
+
+#[open_gpui::test]
 fn removing_a_sibling_with_an_unaccepted_update_resumes_close_delivery(cx: &mut TestAppContext) {
     use dockspace::close::CloseDecision;
     use open_gpui::PlatformFrameDeliveryMode;
@@ -1040,7 +1217,10 @@ fn retire_window_with_borrowed_input(cx: &mut TestAppContext, retirement: Borrow
                 if remount {
                     source_mounted.set(true);
                     let _ = window.draw(cx);
-                    assert!(dock.host.borrow().mounts[&first.window_id()].attached);
+                    let host = dock.host.borrow();
+                    assert!(host.mounts[&first.window_id()].waiting_for_update);
+                    assert!(!host.owners.contains_key(&SURFACE));
+                    drop(host);
                     assert!(dock.is_update_pending());
                 }
             } else {
@@ -1092,6 +1272,7 @@ fn retire_window_with_borrowed_input(cx: &mut TestAppContext, retirement: Borrow
     }
     if remount {
         frames(&mut source, &dock);
+        assert_eq!(dock.host.borrow().owners[&SURFACE], first.window_id());
         let tab = source.debug_bounds("dockspace:tab:2").unwrap().center();
         source.simulate_click(tab, Modifiers::none());
         frames(&mut source, &dock);

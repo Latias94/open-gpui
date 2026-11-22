@@ -115,7 +115,7 @@ fn anchor(
             .nth(ordinal)
             .expect("the requested scoped menu must be painted")
             .clone();
-        let bounds = to_gpui(menu.bounds, region.bounds.unwrap());
+        let bounds = to_gpui(menu.bounds, region.layout_bounds().unwrap());
         (menu, bounds)
     })
 }
@@ -661,7 +661,7 @@ fn narrow_strips_keep_group_root_list_and_grip_hits_inside_their_visible_chrome(
             let host = dock.host.borrow();
             let mount = &host.mounts[&window.window_handle().window_id()];
             let region = &mount.regions[&SURFACE];
-            let bounds = region.bounds.unwrap();
+            let bounds = region.layout_bounds().unwrap();
             let packet = region.packet.as_ref().unwrap();
             let mut chrome = Vec::new();
             let mut menus = Vec::new();
@@ -812,7 +812,7 @@ fn narrow_strips_keep_group_root_list_and_grip_hits_inside_their_visible_chrome(
                             if matches!(control.kind, ControlKind::Tab(key) if key == item.into())
                                 && control.slot(ControlAction::Activate).is_some() =>
                         {
-                            Some(to_gpui(control.bounds, region.bounds.unwrap()))
+                            Some(to_gpui(control.bounds, region.layout_bounds().unwrap()))
                         }
                         _ => None,
                     }

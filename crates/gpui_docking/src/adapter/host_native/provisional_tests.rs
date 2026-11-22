@@ -819,7 +819,7 @@ fn adoption_shares_the_original_semantics_submission_and_waits_for_first_live(
         assert!(resumed.same_authority(&ticket));
         super::super::watch_submission(&dock.host.borrow(), &resumed, window).unwrap();
         let serial = dock.host.borrow().mounts[&shell.window_id()].serial;
-        crate::adapter::presentation::observe(&dock.host, &resumed, serial, window);
+        crate::adapter::presentation::observe_presented(&dock.host, &resumed, serial, window);
     })
     .unwrap();
     frame(&mut visual, &dock);
