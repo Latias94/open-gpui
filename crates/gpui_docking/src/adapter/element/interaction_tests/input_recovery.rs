@@ -818,7 +818,7 @@ fn retiring_content_source_keeps_its_committed_pointer_terminal_in_order(cx: &mu
         assert!(source.update(|window, _| window.captured_pointer().is_none()));
         assert!(
             dock.host.borrow().mounts[&source_window.window_id()]
-                .content_press
+                .primary_press
                 .is_some()
         );
         assert!(dock.host.borrow().inputs.is_empty());
@@ -843,7 +843,7 @@ fn retiring_content_source_keeps_its_committed_pointer_terminal_in_order(cx: &mu
                         .borrow()
                         .inputs
                         .iter()
-                        .any(|input| input.is_required_content_terminal()),
+                        .any(|input| input.is_required_pointer_terminal()),
                     "terminal={terminal:?}",
                 );
                 target_window
@@ -870,7 +870,7 @@ fn retiring_content_source_keeps_its_committed_pointer_terminal_in_order(cx: &mu
                     .unwrap()
                     .inputs
                     .iter()
-                    .any(|input| input.is_required_content_terminal())
+                    .any(|input| input.is_required_pointer_terminal())
             );
         } else if let Some(cancel) = terminal {
             if cancel {
@@ -885,7 +885,7 @@ fn retiring_content_source_keeps_its_committed_pointer_terminal_in_order(cx: &mu
                     .borrow()
                     .inputs
                     .iter()
-                    .any(|input| input.is_required_content_terminal())
+                    .any(|input| input.is_required_pointer_terminal())
             );
         }
         source.update(|window, cx| {

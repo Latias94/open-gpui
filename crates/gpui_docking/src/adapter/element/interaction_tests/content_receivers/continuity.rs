@@ -337,7 +337,7 @@ fn resized_editor_finishes_its_original_press_while_a_sibling_waits(cx: &mut Tes
             frames(&mut source, &dock);
             assert!(
                 dock.host.borrow().mounts[&source_window.window_id()]
-                    .content_press
+                    .primary_press
                     .is_some()
             );
 
@@ -370,7 +370,7 @@ fn resized_editor_finishes_its_original_press_while_a_sibling_waits(cx: &mut Tes
             }
             assert!(
                 dock.host.borrow().mounts[&source_window.window_id()]
-                    .content_press
+                    .primary_press
                     .is_none()
             );
             cx.update(|_| assert!(pending.complete(PlatformWindowPresentOutcome::Submitted)));
@@ -449,7 +449,7 @@ fn native_content_terminals_follow_a_continued_root_across_layout_reset(cx: &mut
             let original = dock.native_binding_for_window(owner).unwrap();
             let roots = {
                 let host = dock.host.borrow();
-                assert!(host.mounts[&owner].content_press.is_some());
+                assert!(host.mounts[&owner].primary_press.is_some());
                 host.session
                     .native_surface_bindings_for_window(original)
                     .map(|binding| (binding, binding.surface()))

@@ -9,9 +9,9 @@ use dockspace::{
     },
 };
 use open_gpui::{
-    AcceptedFrameFence, App, PlatformFrameDeliveryMode, PrepaintPublicationAttempt, Window,
-    WindowFrameSubmissionOutcome, WindowFrameSubmissionTicket, WindowId,
-    WindowInitialPresentationStatus, WindowVisibility,
+    AcceptedFrameFence, App, GlobalElementId, PlatformFrameDeliveryMode,
+    PrepaintPublicationAttempt, Window, WindowFrameSubmissionOutcome, WindowFrameSubmissionTicket,
+    WindowId, WindowInitialPresentationStatus, WindowVisibility,
 };
 
 use super::{
@@ -25,6 +25,7 @@ use super::{
 pub(super) struct PendingSubmission {
     pub(super) serial: u64,
     pub(super) ticket: WindowFrameSubmissionTicket,
+    pub(super) element: Option<GlobalElementId>,
     pub(super) packets: BTreeMap<SurfaceId, Rc<Packet>>,
     pub(super) update: Option<DockspaceUpdate>,
     pub(super) inputs: Vec<QueuedInput>,
@@ -78,6 +79,7 @@ impl PendingSubmission {
         Self {
             serial,
             ticket,
+            element: None,
             packets,
             update: Some(update),
             inputs,
@@ -95,7 +97,7 @@ impl PendingSubmission {
         }
         let count = self.inputs.len();
         self.inputs
-            .retain(|input| input.owner() != owner || input.is_required_content_terminal());
+            .retain(|input| input.owner() != owner || input.is_required_pointer_terminal());
         let revoked = self.inputs.len() != count;
         // A remount can reuse the WindowId before the original receipt arrives.
         self.input_revoked |= revoked;
@@ -368,6 +370,7 @@ pub(super) fn accept(
                 if released_capacity {
                     wake_capacity_blocked(&mut host, cx);
                 }
+                host.accept_mount(owner, pending.element.take(), &pending.packets);
                 if let Some(mount) = host.mounts.get_mut(&owner) {
                     mount.serial = serial;
                     for (surface, geometry) in region_geometry {
@@ -387,7 +390,6 @@ pub(super) fn accept(
                         }
                     }
                 }
-                host.accept_mount(owner, &pending.packets);
                 host.apply_report(report);
                 host_native::provisional::accept_preview(&mut host, owner, &pending.packets);
                 for input in &pending.inputs {
@@ -483,14 +485,14 @@ pub(super) fn discard(shared: &SharedHost, window: &mut Window, cx: &mut App) {
     mount.capacity_blocked = false;
     mount.wake = None;
     mount.input_frames.clear();
-    let content_press = mount.content_press.take();
+    let primary_press = mount.primary_press.take();
     for region in mount.regions.values_mut() {
         region.clear_presentation();
     }
     let surfaces = mount.regions.keys().copied().collect::<Vec<_>>();
     withdraw_pending(&mut host, window, cx);
-    if let Some(press) = content_press {
-        input::retire_content_press(&mut host, owner, press);
+    if let Some(press) = primary_press {
+        input::retire_primary_press(&mut host, owner, press);
     }
     retire_input_source(&mut host, owner, cx);
     release_surfaces(&mut host, owner, surfaces, cx);
@@ -504,7 +506,7 @@ pub(super) fn discard(shared: &SharedHost, window: &mut Window, cx: &mut App) {
 }
 
 fn has_live_source(host: &HostState, input: &QueuedInput) -> bool {
-    input.is_required_content_terminal()
+    input.is_required_pointer_terminal()
         || host
             .mounts
             .get(&input.owner())
@@ -513,7 +515,7 @@ fn has_live_source(host: &HostState, input: &QueuedInput) -> bool {
 
 fn retire_input_source(host: &mut HostState, owner: WindowId, cx: &mut App) {
     host.inputs
-        .retain(|input| input.owner() != owner || input.is_required_content_terminal());
+        .retain(|input| input.owner() != owner || input.is_required_pointer_terminal());
     // A surviving window can hold the unaccepted update that borrowed this
     // mount's input. Withdraw it if possible and retain the other inputs in order.
     let borrowed = host.mounts.values_mut().find_map(|mount| {
@@ -662,9 +664,23 @@ pub(super) fn settle_pending(
     window: Option<&Window>,
     cx: &mut App,
 ) -> anyhow::Result<()> {
-    if (!host.presentation_pending && host.unavailable_surfaces.is_empty())
-        || host.has_unaccepted_update()
+    if host.has_unaccepted_update() {
+        return Ok(());
+    }
+    // Retiring the last local mount may leave the terminal edge of a
+    // committed press in the FIFO. Settle it even when no window can paint.
+    let terminal_count = if host.native.is_none()
+        && !host.inputs.is_empty()
+        && !host.mounts.values().any(|mount| mount.attached)
     {
+        host.inputs
+            .iter()
+            .take_while(|input| input.is_required_pointer_terminal())
+            .count()
+    } else {
+        0
+    };
+    if !host.presentation_pending && host.unavailable_surfaces.is_empty() && terminal_count == 0 {
         return Ok(());
     }
     let unavailable: Vec<_> = host
@@ -686,6 +702,9 @@ pub(super) fn settle_pending(
         window,
         cx,
     )?;
+    for terminal in &host.inputs[..terminal_count] {
+        terminal.submit(&mut frame)?;
+    }
     let roster = frame.surfaces();
     for surface in unavailable {
         if roster.contains(&surface) {
@@ -696,6 +715,7 @@ pub(super) fn settle_pending(
         }
     }
     let report = frame.commit()?;
+    drop(host.inputs.drain(..terminal_count));
     let released_capacity = !report.surface_presentation_commits().is_empty();
     if released_capacity {
         wake_capacity_blocked(host, cx);
@@ -752,8 +772,8 @@ pub(super) fn retire_mount(host: &mut HostState, owner: WindowId, cx: &mut App) 
         if let Some(pending) = mount.pending.take() {
             retire_pending(host, owner, pending, SurfacePresentationResult::Dropped, cx);
         }
-        if let Some(press) = mount.content_press.take() {
-            input::retire_content_press(host, owner, press);
+        if let Some(press) = mount.primary_press.take() {
+            input::retire_primary_press(host, owner, press);
         }
         retire_input_source(host, owner, cx);
         release_surfaces(host, owner, mount.regions.into_keys().collect(), cx);

@@ -31,7 +31,7 @@ use open_gpui::{
 
 use crate::adapter::{
     GpuiDockspaceConfig, HostState, SharedHost,
-    host::{DockRegion, PaneFocusClaim},
+    host::{DockRegion, PaneFocusClaim, WindowMount},
     host_native,
     input::{self, InputFrame, PanePlacement, PanePresentation, RegionGeometry},
     presentation,
@@ -411,7 +411,7 @@ impl Element for DockspaceElement {
         }
         keyboard::install(&self.host, &self.interaction, window, cx);
         window.set_focus_handle(&self.host.borrow().mounts[&owner].focus, cx);
-        match self.prepare(bounds, capture, window, cx) {
+        match self.prepare(id, bounds, capture, window, cx) {
             Ok(prepared) => PreparedState::Frame(prepared),
             Err(error) => {
                 self.host.borrow_mut().fail(error.as_ref());
@@ -528,6 +528,7 @@ impl DockspaceElement {
 
     fn prepare(
         &mut self,
+        id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         capture: PointerCaptureHandle,
         window: &mut Window,
@@ -562,6 +563,21 @@ impl DockspaceElement {
             .iter()
             .map(|(&surface, &bounds)| Ok((surface, RegionGeometry::new(bounds, window)?)))
             .collect::<Result<BTreeMap<_, _>>>()?;
+        let retained_packets = |mount: &WindowMount| {
+            region_bounds
+                .keys()
+                .map(|surface| {
+                    let packet = mount
+                        .regions
+                        .get(surface)
+                        .and_then(|region| region.packet.clone());
+                    (
+                        *surface,
+                        packet.unwrap_or_else(|| Packet::empty(PacketState::Waiting)),
+                    )
+                })
+                .collect()
+        };
         let mut schedule_host_work = false;
         let (packets, serial, publication, publication_attempt, waiting_for_update) = {
             let mut host = self.host.borrow_mut();
@@ -589,44 +605,21 @@ impl DockspaceElement {
                 // Keep the last packet while hidden or waiting for another
                 // window's update to finish. Both paths wake this mount on progress.
                 (
-                    mount
-                        .regions
-                        .iter()
-                        .map(|(surface, region)| {
-                            (
-                                *surface,
-                                region
-                                    .packet
-                                    .clone()
-                                    .unwrap_or_else(|| Packet::empty(PacketState::Waiting)),
-                            )
-                        })
-                        .collect(),
+                    retained_packets(mount),
                     mount.serial,
                     publication,
                     None,
                     true,
                 )
-            } else if host.inputs.is_empty()
+            } else if mount.attached
+                && host.inputs.is_empty()
                 && mount.regions.iter().all(|(surface, region)| {
                     region.geometry == region_geometry.get(surface).copied()
                         && (mount.capacity_blocked || (!region.dirty && region.packet.is_some()))
                 })
             {
                 (
-                    mount
-                        .regions
-                        .iter()
-                        .map(|(surface, region)| {
-                            (
-                                *surface,
-                                region
-                                    .packet
-                                    .clone()
-                                    .unwrap_or_else(|| Packet::empty(PacketState::Waiting)),
-                            )
-                        })
-                        .collect(),
+                    retained_packets(mount),
                     mount.serial,
                     publication,
                     None,
@@ -696,19 +689,7 @@ impl DockspaceElement {
                             region.dirty = true;
                         }
                         (
-                            mount
-                                .regions
-                                .iter()
-                                .map(|(surface, region)| {
-                                    (
-                                        *surface,
-                                        region
-                                            .packet
-                                            .clone()
-                                            .unwrap_or_else(|| Packet::empty(PacketState::Waiting)),
-                                    )
-                                })
-                                .collect(),
+                            retained_packets(mount),
                             mount.serial,
                             publication,
                             None,
@@ -755,6 +736,7 @@ impl DockspaceElement {
                             update,
                             inputs,
                         );
+                        pending.element = id.cloned();
                         pending.publication_attempt = Some(attempt.clone());
                         mount.pending = Some(pending);
                         (packets, serial, publication, Some(attempt), false)
@@ -993,7 +975,10 @@ impl DockspaceElement {
             (
                 host.config.clone(),
                 allow_input && input::is_presented(&host, owner, surface, serial),
-                mount.regions[&surface].pointer,
+                mount
+                    .regions
+                    .get(&surface)
+                    .and_then(|region| region.pointer),
                 window.is_visible()
                     && (allow_input || mount.waiting_for_update)
                     && host
@@ -1320,9 +1305,10 @@ impl DockspaceElement {
                                 && pane.is_active()
                                 && Some(PanePlacement::of(pane)) == placement
                         });
-                        let previous = host.mounts[&owner].regions[&surface]
-                            .presented_panes
-                            .as_ref()
+                        let previous = host.mounts[&owner]
+                            .regions
+                            .get(&surface)
+                            .and_then(|region| region.presented_panes.as_ref())
                             .filter(|panes| panes.version.is_same_epoch(host.session.version()))
                             .and_then(|panes| panes.panes.get(item))
                             .filter(|pane| Some(pane.placement) == placement);

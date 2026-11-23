@@ -741,7 +741,7 @@ pub(super) struct WindowMount {
     pub(super) capture: open_gpui::PointerCaptureHandle,
     pub(super) focus: FocusHandle,
     pub(super) input_frames: Vec<input::InputFrame>,
-    pub(super) content_press: Option<input::ContentPress>,
+    pub(super) primary_press: Option<input::PrimaryPress>,
     pub(super) wake: Option<continuation::Wake>,
     pub(super) attached: bool,
     pub(super) waiting_for_update: bool,
@@ -944,16 +944,28 @@ impl HostState {
             "duplicate logical surface mount"
         );
         let current_mount = self.mounts.get(&owner);
-        let locked = current_mount.is_some_and(|mount| {
-            mount.attached || mount.pending.is_some() || self.native.is_some()
+        let locked = current_mount.and_then(|mount| {
+            if mount.attached || self.native.is_some() {
+                Some((
+                    mount.element.as_ref(),
+                    mount.regions.keys().copied().eq(unique.iter().copied()),
+                ))
+            } else {
+                mount.pending.as_ref().map(|pending| {
+                    (
+                        pending.element.as_ref(),
+                        pending.packets.keys().copied().eq(unique.iter().copied()),
+                    )
+                })
+            }
         });
-        if let Some(mount) = current_mount.filter(|_| locked) {
+        if let Some((element, same_roster)) = locked {
             ensure!(
-                mount.element.as_ref() == id,
+                element == id,
                 "combine this window's surfaces in one docking element"
             );
             ensure!(
-                mount.regions.keys().copied().collect::<BTreeSet<_>>() == unique,
+                same_roster,
                 "a live docking mount cannot silently replace its logical surfaces"
             );
         }
@@ -983,16 +995,7 @@ impl HostState {
                 "a logical surface is already mounted in another window"
             );
         }
-        if let Some(mount) = self.mounts.get_mut(&owner) {
-            // An accepted detach has released these regions. The new element can
-            // reclaim any subset without depending on another window's paint order.
-            if !locked {
-                mount.element = id.cloned();
-                mount.regions.retain(|surface, _| unique.contains(surface));
-                for surface in unique {
-                    mount.regions.entry(surface).or_default();
-                }
-            }
+        if current_mount.is_some() {
             return Ok(false);
         }
         let regions = unique
@@ -1013,7 +1016,7 @@ impl HostState {
                 capture: window.new_pointer_capture_handle(),
                 focus: cx.focus_handle(),
                 input_frames: Vec::new(),
-                content_press: None,
+                primary_press: None,
                 wake: None,
                 attached: false,
                 waiting_for_update: false,
@@ -1026,18 +1029,24 @@ impl HostState {
     pub(super) fn accept_mount(
         &mut self,
         owner: WindowId,
+        element: Option<GlobalElementId>,
         packets: &BTreeMap<SurfaceId, Rc<element::Packet>>,
     ) {
         let mount = self
             .mounts
             .get_mut(&owner)
             .expect("accepted mount still exists");
+        if !mount.attached {
+            // An accepted detach opens the roster to a replacement. Retain
+            // vacant slot identities until that replacement actually publishes.
+            mount.element = element;
+            mount
+                .regions
+                .retain(|surface, _| packets.contains_key(surface));
+        }
         mount.attached = true;
         for (surface, packet) in packets {
-            let region = mount
-                .regions
-                .get_mut(surface)
-                .expect("accepted region still exists");
+            let region = mount.regions.entry(*surface).or_default();
             region.previously_mounted = true;
             if packet.is_vacant() {
                 if self.owners.get(surface) == Some(&owner) {

@@ -73,13 +73,16 @@ pub(super) struct PanePresentation {
     pub(super) geometry: open_gpui::HitTestSnapshot,
 }
 
-pub(super) struct ContentPress {
+pub(super) struct PrimaryPress {
     surface: SurfaceId,
-    source: ContentPressSource,
+    source: PrimaryPressSource,
 }
 
-enum ContentPressSource {
-    Local(Rc<Cell<bool>>),
+enum PrimaryPressSource {
+    Local {
+        committed: Rc<Cell<bool>>,
+        captured: bool,
+    },
     Native(CallbackCustody),
 }
 
@@ -93,7 +96,12 @@ pub(super) fn finish_content_press(
     let Some(mount) = host.mounts.get_mut(&owner) else {
         return false;
     };
-    let Some(press) = mount.content_press.take() else {
+    let Some(press) = mount.primary_press.take_if(|press| {
+        !matches!(
+            press.source,
+            PrimaryPressSource::Local { captured: true, .. }
+        )
+    }) else {
         return false;
     };
     mount.wake = None;
@@ -105,12 +113,12 @@ pub(super) fn finish_content_press(
     // The press was observed for bookkeeping and pane activation. Its terminal
     // does not need a new hit test, even when the original region was resized.
     match press.source {
-        ContentPressSource::Local(committed) => {
-            host.inputs.push(QueuedInput::content_terminal(
+        PrimaryPressSource::Local { committed, .. } => {
+            host.inputs.push(QueuedInput::unrouted_terminal(
                 owner, event, committed, metadata,
             ));
         }
-        ContentPressSource::Native(custody) => {
+        PrimaryPressSource::Native(custody) => {
             super::host_native::queue_content_terminal(host, owner, &custody, event, metadata);
         }
     }
@@ -118,11 +126,11 @@ pub(super) fn finish_content_press(
     true
 }
 
-pub(super) fn retire_content_press(host: &mut HostState, owner: WindowId, press: ContentPress) {
-    if let ContentPressSource::Local(committed) = press.source
+pub(super) fn retire_primary_press(host: &mut HostState, owner: WindowId, press: PrimaryPress) {
+    if let PrimaryPressSource::Local { committed, .. } = press.source
         && committed.get()
     {
-        host.inputs.push(QueuedInput::content_terminal(
+        host.inputs.push(QueuedInput::unrouted_terminal(
             owner,
             SurfacePointerEvent::StreamCancelled(SurfacePointerCancelReason::BindingRetired),
             committed,
@@ -142,7 +150,7 @@ pub(super) enum QueuedInput {
 }
 
 impl QueuedInput {
-    fn content_terminal(
+    fn unrouted_terminal(
         owner: WindowId,
         event: SurfacePointerEvent,
         committed: Rc<Cell<bool>>,
@@ -160,7 +168,7 @@ impl QueuedInput {
             delivery_clear: false,
             capture: SurfacePointerCapture::None,
             metadata,
-            content_press: Some(committed),
+            press_commit: Some(committed),
         })
     }
 
@@ -171,16 +179,16 @@ impl QueuedInput {
         }
     }
 
-    pub(super) fn is_required_content_terminal(&self) -> bool {
+    pub(super) fn is_required_pointer_terminal(&self) -> bool {
         matches!(self, Self::Pointer(pointer)
-            if !pointer.is_press()
-                && pointer.content_press.as_ref().is_some_and(|committed| committed.get()))
+            if is_primary_terminal(pointer.event)
+                && pointer.press_commit.as_ref().is_some_and(|committed| committed.get()))
     }
 
     pub(super) fn mark_committed(&self) {
         if let Self::Pointer(pointer) = self
-            && pointer.is_press()
-            && let Some(committed) = &pointer.content_press
+            && is_primary_press(pointer.event)
+            && let Some(committed) = &pointer.press_commit
         {
             committed.set(true);
         }
@@ -223,14 +231,22 @@ pub(super) struct QueuedPointer {
     delivery_clear: bool,
     capture: SurfacePointerCapture,
     metadata: PointerEventMetadata,
-    content_press: Option<Rc<Cell<bool>>>,
+    press_commit: Option<Rc<Cell<bool>>>,
+}
+
+fn is_primary_press(event: SurfacePointerEvent) -> bool {
+    event == SurfacePointerEvent::ButtonPressed(SurfacePointerButton::Primary)
+}
+
+fn is_primary_terminal(event: SurfacePointerEvent) -> bool {
+    matches!(
+        event,
+        SurfacePointerEvent::StreamCancelled(_)
+            | SurfacePointerEvent::ButtonReleased(SurfacePointerButton::Primary)
+    )
 }
 
 impl QueuedPointer {
-    fn is_press(&self) -> bool {
-        self.event == SurfacePointerEvent::ButtonPressed(SurfacePointerButton::Primary)
-    }
-
     pub(super) fn submit(&self, frame: &mut DockspaceHostFrame<'_>) -> anyhow::Result<()> {
         let mut facts = SurfacePointerReceiverFacts::unknown();
         if let Some(surface) = &self.surface {
@@ -282,10 +298,6 @@ pub(super) fn queue(
     let chrome_clear = target.is_some_and(|id| hitboxes.contains(&id));
     let content_clear = target.is_some_and(|id| content_hitboxes.contains(&id));
     let owner = window.window_handle().window_id();
-    let content_press = !captured
-        && !chrome_clear
-        && content_clear
-        && event == SurfacePointerEvent::ButtonPressed(SurfacePointerButton::Primary);
     if host.native.is_some() {
         let queued = super::host_native::queue_pointer(
             host,
@@ -300,7 +312,10 @@ pub(super) fn queue(
             window,
         );
         if queued
-            && content_press
+            && !captured
+            && !chrome_clear
+            && content_clear
+            && is_primary_press(event)
             && let Some(custody) = host
                 .native
                 .as_ref()
@@ -308,19 +323,16 @@ pub(super) fn queue(
                 .map(|callbacks| callbacks.callback_custody())
             && let Some(mount) = host.mounts.get_mut(&owner)
         {
-            mount.content_press = Some(ContentPress {
+            mount.primary_press = Some(PrimaryPress {
                 surface: surface_id,
-                source: ContentPressSource::Native(custody),
+                source: PrimaryPressSource::Native(custody),
             });
         }
         return queued;
     }
     let chrome_clear = window.is_mouse_in_window() && chrome_clear;
     let clear = chrome_clear || (window.is_mouse_in_window() && content_clear);
-    let terminal = matches!(
-        event,
-        SurfacePointerEvent::StreamCancelled(_) | SurfacePointerEvent::ButtonReleased(_)
-    );
+    let terminal = is_primary_terminal(event);
     if !captured && !clear && !terminal {
         return false;
     }
@@ -373,14 +385,28 @@ pub(super) fn queue(
             .geometry;
         logical_point(position, geometry)
     });
-    let content_press = content_press.then(|| Rc::new(Cell::new(false)));
+    let mut press_commit = None;
     if let Some(mount) = host.mounts.get_mut(&owner) {
         mount.wake = None;
-        if let Some(committed) = &content_press {
-            mount.content_press = Some(ContentPress {
+        if is_primary_press(event) {
+            let committed = Rc::new(Cell::new(false));
+            mount.primary_press = Some(PrimaryPress {
                 surface: surface_id,
-                source: ContentPressSource::Local(committed.clone()),
+                source: PrimaryPressSource::Local {
+                    committed: committed.clone(),
+                    captured,
+                },
             });
+            press_commit = Some(committed);
+        } else if terminal
+            && let Some(PrimaryPress {
+                source: PrimaryPressSource::Local { committed, .. },
+                ..
+            }) = mount.primary_press.take()
+        {
+            // Keep the original release route while making the terminal survive
+            // the loss of the window that supplied the press.
+            press_commit = Some(committed);
         }
     }
     host.inputs.push(QueuedInput::Pointer(QueuedPointer {
@@ -410,7 +436,7 @@ pub(super) fn queue(
         },
         metadata: PointerEventMetadata::new(PointerDeviceKind::Mouse, host.observed_at())
             .with_docking_enabled(host.config.input.docking_enabled(modifiers)),
-        content_press,
+        press_commit,
     }));
     if let Some(region) = host
         .mounts

@@ -127,36 +127,66 @@ fn capacity_workspace(cx: &mut TestAppContext, capacity: usize) -> DockSurface {
 struct MutableMount {
     handle: AnyWindowHandle,
     regions: Rc<Cell<&'static [SurfaceId]>>,
+    trial: Rc<Cell<Option<&'static [SurfaceId]>>>,
     visual: VisualTestContext,
 }
 
 struct MutableMountRoot {
     dock: DockSurface,
     regions: Rc<Cell<&'static [SurfaceId]>>,
+    trial: Rc<Cell<Option<&'static [SurfaceId]>>>,
 }
 
 impl Render for MutableMountRoot {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let surfaces = self.regions.get();
-        div().size_full().when(!surfaces.is_empty(), |root| {
-            root.child(self.dock.regions(regions(surfaces, None)))
-        })
+        let trial = self.trial.take();
+        div()
+            .size_full()
+            .when_some(trial, |root, trial| {
+                let dock = self.dock.clone();
+                root.child(
+                    canvas(
+                        move |bounds, window, cx| {
+                            let mut element = dock.regions(regions(trial, None)).into_any_element();
+                            let space = size(
+                                AvailableSpace::Definite(px(800.0)),
+                                AvailableSpace::Definite(px(600.0)),
+                            );
+                            let result = window.transact(|window| {
+                                element.prepaint_as_root(bounds.origin, space, window, cx);
+                                assert!(dock.is_update_pending());
+                                Err::<(), _>(())
+                            });
+                            assert_eq!(result, Err(()));
+                        },
+                        |_, (), _, _| {},
+                    )
+                    .size(px(0.0)),
+                )
+            })
+            .when(!surfaces.is_empty(), |root| {
+                root.child(self.dock.regions(regions(surfaces, None)))
+            })
     }
 }
 
 impl MutableMount {
     fn open(cx: &mut TestAppContext, dock: &DockSurface, regions: &'static [SurfaceId]) -> Self {
         let regions = Rc::new(Cell::new(regions));
+        let trial = Rc::new(Cell::new(None));
         cx.defer_next_window_frame_requests();
         let handle = cx
             .open_window(size(px(800.0), px(600.0)), |_, _| MutableMountRoot {
                 dock: dock.clone(),
                 regions: regions.clone(),
+                trial: trial.clone(),
             })
             .into();
         Self {
             handle,
             regions,
+            trial,
             visual: VisualTestContext::from_window(handle, cx),
         }
     }
@@ -276,6 +306,23 @@ fn a_rejected_first_mount_wakes_a_waiting_cohort(cx: &mut TestAppContext) {
 
 #[open_gpui::test]
 fn a_pruned_region_can_remount_with_a_live_sibling(cx: &mut TestAppContext) {
+    check_pruned_region_remount(cx, None);
+}
+
+#[derive(Clone, Copy, Debug)]
+enum RejectedSubset {
+    Rollback,
+    Renderer,
+}
+
+#[open_gpui::test]
+fn an_unaccepted_subset_cannot_erase_a_remountable_pruned_region(cx: &mut TestAppContext) {
+    for subset in [RejectedSubset::Rollback, RejectedSubset::Renderer] {
+        check_pruned_region_remount(cx, Some(subset));
+    }
+}
+
+fn check_pruned_region_remount(cx: &mut TestAppContext, subset: Option<RejectedSubset>) {
     let dock = capacity_workspace(cx, 8);
     dock.host
         .borrow_mut()
@@ -301,6 +348,34 @@ fn a_pruned_region_can_remount_with_a_live_sibling(cx: &mut TestAppContext) {
     assert!(dock.with_view(|view| view.surface(FIRST).is_none()));
     mount.regions.set(&[]);
     frames(&mut mount.visual, &dock);
+    assert!(!dock.host.borrow().mounts[&mount.handle.window_id()].attached);
+    match subset {
+        Some(RejectedSubset::Rollback) => mount.trial.set(Some(&[SECOND])),
+        Some(RejectedSubset::Renderer) => {
+            cx.set_window_frame_delivery_mode(mount.handle, PlatformFrameDeliveryMode::Deferred);
+            mount.regions.set(&[SECOND]);
+            assert!(mount.visual.simulate_frame(RequestFrameOptions {
+                require_presentation: true,
+                force_render: true,
+                ..Default::default()
+            }));
+            let receipt = cx.pending_window_frame_submission(mount.handle).unwrap();
+            assert!(dock.is_update_pending());
+            assert_eq!(
+                dock.host.borrow().mounts[&mount.handle.window_id()]
+                    .regions
+                    .keys()
+                    .copied()
+                    .collect::<Vec<_>>(),
+                [FIRST, SECOND],
+            );
+            mount.regions.set(&[FIRST, SECOND]);
+            assert!(receipt.complete(PlatformWindowPresentOutcome::Rejected));
+            cx.run_until_parked();
+            cx.set_window_frame_delivery_mode(mount.handle, PlatformFrameDeliveryMode::Synchronous);
+        }
+        None => {}
+    }
     mount.regions.set(&[FIRST, SECOND]);
     frames(&mut mount.visual, &dock);
     assert_painted_pane(&dock, mount.handle, SECOND, B);
