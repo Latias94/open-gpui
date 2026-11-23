@@ -847,11 +847,21 @@ fn managed_source_callback_releases_a_primary_press_from_either_ingress(cx: &mut
     cx.update(|cx| cx.set_quit_mode(open_gpui::QuitMode::Explicit));
     let sibling_surface = SurfaceId::new(52);
     let sibling_item = ItemId::new(63);
+    let sibling_tab = ItemId::new(64);
 
-    for (raw_press, outside, flush_press) in [
-        (true, false, true),
-        (true, true, false),
-        (false, true, true),
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Release {
+        WindowOnly,
+        NativeFirst,
+        WindowFirst,
+    }
+
+    for (raw_press, outside, flush_press, release) in [
+        (true, false, true, Release::WindowOnly),
+        (true, true, false, Release::WindowOnly),
+        (false, true, true, Release::WindowOnly),
+        (true, false, true, Release::NativeFirst),
+        (true, false, true, Release::WindowFirst),
     ] {
         let (dock, _) = super::content_receivers::content_fixture_layout(
             cx,
@@ -863,10 +873,13 @@ fn managed_source_callback_releases_a_primary_press_from_either_ingress(cx: &mut
                 ),
                 DockspaceSurfaceLayout::new(
                     sibling_surface,
-                    DockspaceRootLayout::new(RootId::new(72), DockspaceNode::tabs([sibling_item])),
+                    DockspaceRootLayout::new(
+                        RootId::new(72),
+                        DockspaceNode::tabs([sibling_item, sibling_tab]),
+                    ),
                 ),
             ],
-            &[FIRST, SECOND, sibling_item],
+            &[FIRST, SECOND, sibling_item, sibling_tab],
         );
         let window = cx.open_window(size(px(620.0), px(400.0)), |window, cx| {
             dock.bind_native_root(SURFACE, true, window, cx).unwrap();
@@ -897,11 +910,31 @@ fn managed_source_callback_releases_a_primary_press_from_either_ingress(cx: &mut
         super::content_receivers::prepare_native_input(&mut visual);
         frames(&mut visual, &dock);
         let point = receiver_bounds(&dock, &mut visual, DockspaceReceiverRole::TabClose).center();
+        let binding = dock.native_binding_for_window(handle.window_id()).unwrap();
+        let geometry =
+            visual.update(|window, _| window.platform_facts().physical_geometry.unwrap());
+        let global = geometry.local_to_global(point).unwrap();
+        let transport = dock.native_transport().unwrap();
+        let raw_edge = |event| {
+            NativePointerInput::new(
+                dockspace::runtime::NativePointerId::new(1),
+                event,
+                NativeDesktopPointerLocation::new(
+                    NativeDesktopPosition::Exact(
+                        PhysicalPoint::new(f64::from(global.x.0), f64::from(global.y.0)).unwrap(),
+                    ),
+                    NativePointerHover::Dock(binding),
+                    None,
+                ),
+                NativePointerOwner::Native(binding),
+                NativePointerOwner::Unknown,
+            )
+            .with_metadata(PointerEventMetadata::new(
+                PointerDeviceKind::Mouse,
+                dock.host.borrow().observed_at(),
+            ))
+        };
         if raw_press {
-            let binding = dock.native_binding_for_window(handle.window_id()).unwrap();
-            let geometry =
-                visual.update(|window, _| window.platform_facts().physical_geometry.unwrap());
-            let global = geometry.local_to_global(point).unwrap();
             cx.set_platform_window_hit_stack(
                 PlatformWindowHitStack::try_available(
                     global,
@@ -914,25 +947,12 @@ fn managed_source_callback_releases_a_primary_press_from_either_ingress(cx: &mut
                 )
                 .unwrap(),
             );
-            let transport = dock.native_transport().unwrap();
             cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(true));
             cx.update(|cx| {
                 transport.pointer(
-                    NativePointerInput::new(
-                        dockspace::runtime::NativePointerId::new(1),
-                        NativePointerEvent::ButtonPressed(NativePointerButton::Primary),
-                        NativeDesktopPointerLocation::new(
-                            NativeDesktopPosition::Exact(
-                                PhysicalPoint::new(f64::from(global.x.0), f64::from(global.y.0))
-                                    .unwrap(),
-                            ),
-                            NativePointerHover::Dock(binding),
-                            None,
-                        ),
-                        NativePointerOwner::Native(binding),
-                        NativePointerOwner::Unknown,
-                    )
-                    .with_metadata(PointerEventMetadata::untimed(PointerDeviceKind::Mouse)),
+                    raw_edge(NativePointerEvent::ButtonPressed(
+                        NativePointerButton::Primary,
+                    )),
                     cx,
                 )
             });
@@ -952,6 +972,9 @@ fn managed_source_callback_releases_a_primary_press_from_either_ingress(cx: &mut
             );
         }
         cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
+        let raw_release = raw_edge(NativePointerEvent::ButtonReleased(
+            NativePointerButton::Primary,
+        ));
         if outside {
             let source_geometry =
                 visual.update(|window, _| window.platform_facts().physical_geometry.unwrap());
@@ -991,7 +1014,17 @@ fn managed_source_callback_releases_a_primary_press_from_either_ingress(cx: &mut
                 Some(physical),
             );
         } else {
+            if release == Release::NativeFirst {
+                cx.update(|cx| transport.pointer(raw_release, cx));
+            }
+            if release != Release::WindowOnly {
+                cx.background_executor
+                    .advance_clock(Duration::from_millis(1));
+            }
             visual.simulate_mouse_up(point, MouseButton::Left, Modifiers::none());
+            if release == Release::WindowFirst {
+                cx.update(|cx| transport.pointer(raw_release, cx));
+            }
         }
         frames(&mut visual, &dock);
         assert!(
@@ -999,15 +1032,45 @@ fn managed_source_callback_releases_a_primary_press_from_either_ingress(cx: &mut
             "raw_press={raw_press}, outside={outside}"
         );
         let requested = dock.pending_content_close_plans().unwrap().len();
-        assert_eq!(requested, usize::from(!outside), "raw_press={raw_press}");
+        assert_eq!(requested, usize::from(!outside), "release={release:?}");
+        cx.update(|cx| dock.refresh_tab_content(sibling_item, cx))
+            .unwrap();
         cx.set_platform_hovered_window(Some(handle));
         let second = visual
             .debug_bounds(&format!("dockspace:tab:{}", SECOND.get()))
             .unwrap()
             .center();
-        visual.simulate_click(second, Modifiers::none());
+        visual.simulate_mouse_down(second, MouseButton::Left, Modifiers::none());
+        if release == Release::WindowFirst {
+            frames(&mut visual, &dock);
+            assert!(dock.has_active_gesture());
+            cx.update(|cx| transport.pointer(raw_release, cx));
+            frames(&mut visual, &dock);
+            assert!(dock.has_active_gesture());
+        }
+        visual.simulate_mouse_up(second, MouseButton::Left, Modifiers::none());
         frames(&mut visual, &dock);
         assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_active()));
+        if release == Release::WindowFirst {
+            let mut sibling_visual = active_visual(sibling, cx);
+            cx.set_platform_hovered_window(Some(sibling));
+            super::content_receivers::prepare_native_input(&mut sibling_visual);
+            frames(&mut sibling_visual, &dock);
+            let point = sibling_visual
+                .debug_bounds(&format!("dockspace:tab:{}", sibling_tab.get()))
+                .unwrap()
+                .center();
+            sibling_visual.simulate_mouse_down(point, MouseButton::Left, Modifiers::none());
+            frames(&mut sibling_visual, &dock);
+            assert!(dock.has_active_gesture());
+            cx.update(|cx| transport.pointer(raw_release, cx));
+            frames(&mut sibling_visual, &dock);
+            assert!(dock.has_active_gesture());
+            sibling_visual.simulate_mouse_up(point, MouseButton::Left, Modifiers::none());
+            frames(&mut sibling_visual, &dock);
+            assert!(!dock.has_active_gesture());
+            assert!(dock.with_view(|view| view.item(sibling_tab).unwrap().is_active()));
+        }
         cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();
         cx.run_until_parked();
         assert!(dock.native_is_quiescent());

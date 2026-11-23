@@ -270,7 +270,7 @@ mod inspection_tests {
 pub(super) fn enroll(shared: &SharedHost, cx: &mut App) -> Result<()> {
     install_router(cx);
     let weak = Rc::downgrade(shared);
-    let transport = NativeTransport::new(move |cx| {
+    let transport = NativeTransport::for_managed_host(move |cx| {
         if let Some(shared) = weak.upgrade() {
             pump(&shared, cx);
         }
@@ -1205,9 +1205,12 @@ pub(super) fn queue_mouse_terminal(
             NativePointerOwner::Unknown,
         )
     };
-    native
+    if !native
         .transport
-        .pointer_in_window(input.with_metadata(metadata), false);
+        .pointer_in_window(input.with_metadata(metadata), false)
+    {
+        return false;
+    }
     native.blocked_continuation = None;
     true
 }
@@ -1310,10 +1313,12 @@ pub(super) fn queue_pointer(
             NativePointerOwner::Unknown,
         )
     };
-    native.transport.pointer_in_window(
+    if !native.transport.pointer_in_window(
         packet.with_metadata(metadata),
         !captured && !chrome_clear && content_clear,
-    );
+    ) {
+        return false;
+    }
     native.blocked_continuation = None;
     if let Some(region) = host
         .mounts

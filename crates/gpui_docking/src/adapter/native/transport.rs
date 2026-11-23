@@ -2,6 +2,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
     rc::Rc,
+    time::Duration,
 };
 
 use dockspace::runtime::{
@@ -37,6 +38,15 @@ pub(in crate::adapter) enum MousePressLane {
 struct MousePress {
     binding: NativeWindowBinding,
     lane: MousePressLane,
+    observed_at: Option<Duration>,
+}
+
+#[derive(Clone, Copy, Default)]
+enum MousePrimary {
+    #[default]
+    Unobserved,
+    Pressed(MousePress),
+    Settled(NativeWindowBinding),
 }
 
 struct TransportState {
@@ -46,7 +56,7 @@ struct TransportState {
     scheduled: Cell<bool>,
     frozen: Cell<bool>,
     pending_callbacks: Cell<usize>,
-    mouse_press: Cell<Option<MousePress>>,
+    mouse_primary: Option<Cell<MousePrimary>>,
 }
 
 /// UI-thread FIFO shared by native callbacks and the application's one host owner.
@@ -73,6 +83,14 @@ pub struct NativeTransportInspection {
 impl NativeTransport {
     /// Creates a callback queue with an application-owned wakeup.
     pub fn new(wake: impl Fn(&mut App) + 'static) -> Self {
+        Self::with_mouse_tracking(wake, false)
+    }
+
+    pub(in crate::adapter) fn for_managed_host(wake: impl Fn(&mut App) + 'static) -> Self {
+        Self::with_mouse_tracking(wake, true)
+    }
+
+    fn with_mouse_tracking(wake: impl Fn(&mut App) + 'static, managed: bool) -> Self {
         Self(Rc::new(TransportState {
             queue: RefCell::new(VecDeque::new()),
             rejection: RefCell::new(None),
@@ -80,32 +98,42 @@ impl NativeTransport {
             scheduled: Cell::new(false),
             frozen: Cell::new(false),
             pending_callbacks: Cell::new(0),
-            mouse_press: Cell::new(None),
+            mouse_primary: managed.then(Cell::default),
         }))
     }
 
     /// Records an already captured native pointer packet without changing its lane.
     /// In a managed GPUI host, pointer ID 1 is the framework mouse. Its primary
-    /// press can also end through the originating window's GPUI callback.
+    /// press can also end through the originating window's GPUI callback. When
+    /// using both routes, report the source delivery binding and preserve the
+    /// original observation time. This lets the transport discard a second
+    /// release and recognize one that predates a newer press in the same window.
     pub fn pointer(&self, input: NativePointerInput, cx: &mut App) {
-        self.observe_pointer(input, false);
-        self.push(Inbound::Pointer(input), cx);
+        if self.admit_pointer(input, false) {
+            self.push(Inbound::Pointer(input), cx);
+        }
     }
 
-    pub(in crate::adapter) fn pointer_in_window(&self, input: NativePointerInput, content: bool) {
-        self.observe_pointer(input, content);
+    pub(in crate::adapter) fn pointer_in_window(
+        &self,
+        input: NativePointerInput,
+        content: bool,
+    ) -> bool {
+        if !self.admit_pointer(input, content) {
+            return false;
+        }
         self.0.queue.borrow_mut().push_back(Inbound::Pointer(input));
+        true
     }
 
     pub(in crate::adapter) fn mouse_press_lane(
         &self,
         binding: NativeWindowBinding,
     ) -> Option<MousePressLane> {
-        self.0
-            .mouse_press
-            .get()
-            .filter(|press| press.binding == binding)
-            .map(|press| press.lane)
+        match self.0.mouse_primary.as_ref()?.get() {
+            MousePrimary::Pressed(press) if press.binding == binding => Some(press.lane),
+            _ => None,
+        }
     }
 
     pub(super) fn continue_mouse_press(
@@ -113,13 +141,11 @@ impl NativeTransport {
         before: NativeWindowBinding,
         after: NativeWindowBinding,
     ) {
-        if let Some(press) = self
-            .0
-            .mouse_press
-            .get()
-            .filter(|press| press.binding == before)
+        if let Some(mouse) = &self.0.mouse_primary
+            && let MousePrimary::Pressed(press) = mouse.get()
+            && press.binding == before
         {
-            self.0.mouse_press.set(Some(MousePress {
+            mouse.set(MousePrimary::Pressed(MousePress {
                 binding: after,
                 ..press
             }));
@@ -251,40 +277,75 @@ impl NativeTransport {
         }
     }
 
-    fn observe_pointer(&self, input: NativePointerInput, content: bool) {
-        // Both raw native ingress and GPUI callbacks see the same ordered press,
-        // even while a frame still owns unaccepted input.
+    fn admit_pointer(&self, input: NativePointerInput, content: bool) -> bool {
+        let Some(mouse) = &self.0.mouse_primary else {
+            return true;
+        };
         if input.pointer() != GPUI_MOUSE_POINTER
             || !matches!(
                 input.metadata().device(),
                 PointerDeviceKind::Mouse | PointerDeviceKind::Unknown
             )
         {
-            return;
+            return true;
         }
-        match (input.event(), input.delivery()) {
-            (
-                NativePointerEvent::ButtonPressed(NativePointerButton::Primary),
-                NativePointerOwner::Native(binding),
-            ) => {
-                let lane = if matches!(input.location(), NativePointerLocation::Desktop(_)) {
-                    MousePressLane::Desktop
-                } else if content {
-                    MousePressLane::Content
-                } else {
-                    MousePressLane::Local
-                };
-                self.0.mouse_press.set(Some(MousePress { binding, lane }));
-            }
-            (
-                NativePointerEvent::ButtonReleased(NativePointerButton::Primary)
+        let event = input.event();
+        let release = matches!(
+            event,
+            NativePointerEvent::ButtonReleased(NativePointerButton::Primary)
                 | NativePointerEvent::ContactEnded(NativePointerButton::Primary)
-                | NativePointerEvent::StreamCancelled(_)
-                | NativePointerEvent::StreamEnded,
-                _,
-            ) => self.0.mouse_press.set(None),
+        );
+        let observed_at = input.metadata().observed_at();
+        let delivery = input.delivery();
+        // Settle at ingress so both routes agree even while a frame owns an
+        // uncommitted prefix. The admitted packet keeps its original facts.
+        match (event, mouse.get()) {
+            (NativePointerEvent::ButtonPressed(NativePointerButton::Primary), state)
+                if !matches!(state, MousePrimary::Pressed(_)) =>
+            {
+                mouse.set(match delivery {
+                    NativePointerOwner::Native(binding) => {
+                        let lane = if matches!(input.location(), NativePointerLocation::Desktop(_))
+                        {
+                            MousePressLane::Desktop
+                        } else if content {
+                            MousePressLane::Content
+                        } else {
+                            MousePressLane::Local
+                        };
+                        MousePrimary::Pressed(MousePress {
+                            binding,
+                            lane,
+                            observed_at,
+                        })
+                    }
+                    _ => MousePrimary::Unobserved,
+                });
+            }
+            (event, MousePrimary::Pressed(press))
+                if release
+                    || matches!(
+                        event,
+                        NativePointerEvent::StreamCancelled(_) | NativePointerEvent::StreamEnded
+                    ) =>
+            {
+                if matches!(delivery, NativePointerOwner::Native(binding) if binding != press.binding)
+                    || observed_at
+                        .zip(press.observed_at)
+                        .is_some_and(|(end, start)| end < start)
+                {
+                    return false;
+                }
+                mouse.set(MousePrimary::Settled(press.binding));
+            }
+            (_, MousePrimary::Settled(binding))
+                if release && delivery == NativePointerOwner::Native(binding) =>
+            {
+                return false;
+            }
             _ => {}
         }
+        true
     }
 
     pub(super) fn push(&self, record: Inbound, cx: &mut App) {
@@ -292,7 +353,11 @@ impl NativeTransport {
             Inbound::LogicalClosed(binding) | Inbound::NativeTerminal(binding, _) => {
                 self.retire_mouse_press(*binding);
             }
-            Inbound::DeviceRemoved => self.0.mouse_press.set(None),
+            Inbound::DeviceRemoved => {
+                if let Some(mouse) = &self.0.mouse_primary {
+                    mouse.set(MousePrimary::Unobserved);
+                }
+            }
             _ => {}
         }
         self.0.queue.borrow_mut().push_back(record);
@@ -308,8 +373,10 @@ impl NativeTransport {
     }
 
     pub(in crate::adapter) fn retire_mouse_press(&self, binding: NativeWindowBinding) {
-        if self.mouse_press_lane(binding).is_some() {
-            self.0.mouse_press.set(None);
+        if let Some(mouse) = &self.0.mouse_primary
+            && self.mouse_press_lane(binding).is_some()
+        {
+            mouse.set(MousePrimary::Settled(binding));
         }
     }
 
