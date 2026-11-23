@@ -2058,6 +2058,10 @@ impl DockspaceElement {
                 return;
             }
             let mut host = shared.borrow_mut();
+            if host.native.is_none() {
+                // The window-level listener already settled its own press.
+                return;
+            }
             let pending_input = host
                 .mounts
                 .get(&owner)
@@ -2933,7 +2937,7 @@ fn routes_to(
                 return None;
             }
             host.session
-                .host_pointer_manipulation_surface(dockspace::runtime::SurfacePointerId::new(1))
+                .host_pointer_manipulation_surface(input::local_pointer(owner))
                 .map(|source| source.surface())
         });
     target == Some(surface)

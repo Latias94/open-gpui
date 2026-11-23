@@ -149,7 +149,9 @@ pub(super) fn visibility_changed(
         return;
     };
     if visibility.is_visible() {
-        if mount.regions.values().any(|region| region.dirty) {
+        if mount.regions.values().any(|region| region.dirty)
+            || (host.native.is_none() && !host.inputs.is_empty())
+        {
             window.refresh();
         }
         return;
@@ -164,6 +166,9 @@ pub(super) fn visibility_changed(
     };
     if window.withdraw_unaccepted_frame_submission(&ticket, cx) {
         withdraw_pending(&mut host, window, cx);
+        if let Err(error) = settle_pending(&mut host, Some(window), cx) {
+            host.fail(error.as_ref());
+        }
         wake_waiting(&mut host, cx);
         drop(host);
         host_native::schedule(shared, cx);
@@ -480,7 +485,7 @@ pub(super) fn discard(shared: &SharedHost, window: &mut Window, cx: &mut App) {
         return;
     };
     let capture = mount.capture;
-    mount.attached = false;
+    let was_attached = std::mem::take(&mut mount.attached);
     mount.waiting_for_update = false;
     mount.capacity_blocked = false;
     mount.wake = None;
@@ -491,8 +496,8 @@ pub(super) fn discard(shared: &SharedHost, window: &mut Window, cx: &mut App) {
     }
     let surfaces = mount.regions.keys().copied().collect::<Vec<_>>();
     withdraw_pending(&mut host, window, cx);
-    if let Some(press) = primary_press {
-        input::retire_primary_press(&mut host, owner, press);
+    if was_attached || primary_press.is_some() {
+        input::retire_local_pointer(&mut host, owner, primary_press);
     }
     retire_input_source(&mut host, owner, cx);
     release_surfaces(&mut host, owner, surfaces, cx);
@@ -667,12 +672,9 @@ pub(super) fn settle_pending(
     if host.has_unaccepted_update() {
         return Ok(());
     }
-    // Retiring the last local mount may leave the terminal edge of a
-    // committed press in the FIFO. Settle it even when no window can paint.
-    let terminal_count = if host.native.is_none()
-        && !host.inputs.is_empty()
-        && !host.mounts.values().any(|mount| mount.attached)
-    {
+    // Terminals of committed presses can settle without new layout or an
+    // available renderer. Leave ordinary inputs in their original FIFO order.
+    let terminal_count = if host.native.is_none() {
         host.inputs
             .iter()
             .take_while(|input| input.is_required_pointer_terminal())
@@ -772,8 +774,9 @@ pub(super) fn retire_mount(host: &mut HostState, owner: WindowId, cx: &mut App) 
         if let Some(pending) = mount.pending.take() {
             retire_pending(host, owner, pending, SurfacePresentationResult::Dropped, cx);
         }
-        if let Some(press) = mount.primary_press.take() {
-            input::retire_primary_press(host, owner, press);
+        let primary_press = mount.primary_press.take();
+        if mount.attached || primary_press.is_some() {
+            input::retire_local_pointer(host, owner, primary_press);
         }
         retire_input_source(host, owner, cx);
         release_surfaces(host, owner, mount.regions.into_keys().collect(), cx);

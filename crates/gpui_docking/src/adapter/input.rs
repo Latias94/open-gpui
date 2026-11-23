@@ -97,10 +97,11 @@ pub(super) fn finish_content_press(
         return false;
     };
     let Some(press) = mount.primary_press.take_if(|press| {
-        !matches!(
-            press.source,
-            PrimaryPressSource::Local { captured: true, .. }
-        )
+        matches!(event, SurfacePointerEvent::StreamCancelled(_))
+            || !matches!(
+                press.source,
+                PrimaryPressSource::Local { captured: true, .. }
+            )
     }) else {
         return false;
     };
@@ -115,7 +116,10 @@ pub(super) fn finish_content_press(
     match press.source {
         PrimaryPressSource::Local { committed, .. } => {
             host.inputs.push(QueuedInput::unrouted_terminal(
-                owner, event, committed, metadata,
+                owner,
+                event,
+                Some(committed),
+                metadata,
             ));
         }
         PrimaryPressSource::Native(custody) => {
@@ -126,14 +130,22 @@ pub(super) fn finish_content_press(
     true
 }
 
-pub(super) fn retire_primary_press(host: &mut HostState, owner: WindowId, press: PrimaryPress) {
-    if let PrimaryPressSource::Local { committed, .. } = press.source
+pub(super) fn retire_local_pointer(
+    host: &mut HostState,
+    owner: WindowId,
+    press: Option<PrimaryPress>,
+) {
+    if host.native.is_none()
+        && let Some(PrimaryPress {
+            source: PrimaryPressSource::Local { committed, .. },
+            ..
+        }) = press
         && committed.get()
     {
         host.inputs.push(QueuedInput::unrouted_terminal(
             owner,
             SurfacePointerEvent::StreamCancelled(SurfacePointerCancelReason::BindingRetired),
-            committed,
+            None,
             PointerEventMetadata::new(PointerDeviceKind::Mouse, host.observed_at()),
         ));
     }
@@ -153,7 +165,7 @@ impl QueuedInput {
     fn unrouted_terminal(
         owner: WindowId,
         event: SurfacePointerEvent,
-        committed: Rc<Cell<bool>>,
+        press_commit: Option<Rc<Cell<bool>>>,
         metadata: PointerEventMetadata,
     ) -> Self {
         Self::Pointer(QueuedPointer {
@@ -168,7 +180,7 @@ impl QueuedInput {
             delivery_clear: false,
             capture: SurfacePointerCapture::None,
             metadata,
-            press_commit: Some(committed),
+            press_commit,
         })
     }
 
@@ -181,8 +193,10 @@ impl QueuedInput {
 
     pub(super) fn is_required_pointer_terminal(&self) -> bool {
         matches!(self, Self::Pointer(pointer)
-            if is_primary_terminal(pointer.event)
-                && pointer.press_commit.as_ref().is_some_and(|committed| committed.get()))
+            if pointer.event
+                == SurfacePointerEvent::StreamCancelled(SurfacePointerCancelReason::BindingRetired)
+                || (is_primary_terminal(pointer.event)
+                    && pointer.press_commit.as_ref().is_some_and(|committed| committed.get())))
     }
 
     pub(super) fn mark_committed(&self) {
@@ -246,6 +260,13 @@ fn is_primary_terminal(event: SurfacePointerEvent) -> bool {
     )
 }
 
+pub(super) fn local_pointer(owner: WindowId) -> SurfacePointerId {
+    // Each physical window is an independent local pointer provider. Reusing
+    // one stream number lets a retired window's terminal edge terminate a
+    // newer gesture owned by a sibling window.
+    SurfacePointerId::new(owner.as_u64())
+}
+
 impl QueuedPointer {
     pub(super) fn submit(&self, frame: &mut DockspaceHostFrame<'_>) -> anyhow::Result<()> {
         let mut facts = SurfacePointerReceiverFacts::unknown();
@@ -269,7 +290,7 @@ impl QueuedPointer {
             };
         }
         frame.submit_host_pointer_batch([HostPointerInput::new(
-            SurfacePointerId::new(1),
+            local_pointer(self.owner),
             self.event,
             self.manipulation,
             self.hover,
@@ -367,7 +388,7 @@ pub(super) fn queue(
     let source = captured
         .then(|| {
             host.session
-                .host_pointer_manipulation_surface(SurfacePointerId::new(1))
+                .host_pointer_manipulation_surface(local_pointer(owner))
         })
         .flatten()
         .or(surface)
@@ -385,30 +406,37 @@ pub(super) fn queue(
             .geometry;
         logical_point(position, geometry)
     });
-    let mut press_commit = None;
-    if let Some(mount) = host.mounts.get_mut(&owner) {
-        mount.wake = None;
-        if is_primary_press(event) {
-            let committed = Rc::new(Cell::new(false));
-            mount.primary_press = Some(PrimaryPress {
-                surface: surface_id,
-                source: PrimaryPressSource::Local {
-                    committed: committed.clone(),
-                    captured,
-                },
-            });
-            press_commit = Some(committed);
-        } else if terminal
-            && let Some(PrimaryPress {
-                source: PrimaryPressSource::Local { committed, .. },
-                ..
-            }) = mount.primary_press.take()
-        {
-            // Keep the original release route while making the terminal survive
-            // the loss of the window that supplied the press.
-            press_commit = Some(committed);
+    let Some(mount) = host.mounts.get_mut(&owner) else {
+        return false;
+    };
+    let press_commit = if is_primary_press(event) {
+        if mount.primary_press.is_some() {
+            return false;
         }
-    }
+        let committed = Rc::new(Cell::new(false));
+        mount.primary_press = Some(PrimaryPress {
+            surface: surface_id,
+            source: PrimaryPressSource::Local {
+                committed: committed.clone(),
+                captured,
+            },
+        });
+        Some(committed)
+    } else if terminal {
+        let Some(PrimaryPress {
+            source: PrimaryPressSource::Local { committed, .. },
+            ..
+        }) = mount.primary_press.take()
+        else {
+            return false;
+        };
+        // Keep the original release route while making the terminal survive
+        // the loss of the window that supplied the press.
+        Some(committed)
+    } else {
+        None
+    };
+    mount.wake = None;
     host.inputs.push(QueuedInput::Pointer(QueuedPointer {
         owner,
         event,
