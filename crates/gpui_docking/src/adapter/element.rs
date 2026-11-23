@@ -21,19 +21,19 @@ use dockspace::{
     },
 };
 use open_gpui::{
-    AccessibleAction, AnyElement, App, AvailableSpace, Bounds, Element, ElementGeometry, ElementId,
-    FocusHandle, GlobalElementId, HitboxBehavior, HitboxId, Hsla, InspectorElementId, IntoElement,
-    KeyDownEvent, LayoutId, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, PointerCaptureHandle, PreparedSubtreeClip, Role, Style, SubtreeClip,
-    SubtreePresentation, SubtreePresentationExt, TextRun, Window, div, fill, point, prelude::*, px,
-    relative, size,
+    AcceptedFrameFence, AccessibleAction, AnyElement, App, AvailableSpace, Bounds, Element,
+    ElementGeometry, ElementId, FocusHandle, GlobalElementId, HitboxBehavior, HitboxId, Hsla,
+    InspectorElementId, IntoElement, KeyDownEvent, LayoutId, MouseButton, MouseDownEvent,
+    MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels, PointerCaptureHandle,
+    PreparedSubtreeClip, Role, Style, SubtreeClip, SubtreePresentation, SubtreePresentationExt,
+    TextRun, Window, div, fill, point, prelude::*, px, relative, size,
 };
 
 use crate::adapter::{
     GpuiDockspaceConfig, HostState, SharedHost,
-    host::DockRegion,
+    host::{DockRegion, PaneFocusClaim},
     host_native,
-    input::{self, InputFrame, RegionGeometry},
+    input::{self, InputFrame, PanePlacement, PanePresentation, RegionGeometry},
     presentation,
 };
 
@@ -55,6 +55,7 @@ mod interaction_tests;
 pub(super) struct Packet {
     draws: Vec<Draw>,
     pane_bars: BTreeMap<ItemId, Option<DockspaceVisualId>>,
+    pane_placements: BTreeMap<ItemId, PanePlacement>,
     pane_receivers: BTreeMap<ItemId, DockspaceReceiverDescriptor>,
     state: PacketState,
     pub(super) native_preview: Option<host_native::provisional::Preview>,
@@ -70,6 +71,7 @@ enum PacketState {
     Ready,
     Waiting,
     Unmeasured,
+    Vacant,
 }
 
 enum Candidate {
@@ -85,6 +87,7 @@ impl Packet {
         Rc::new(Self {
             draws: Vec::new(),
             pane_bars: BTreeMap::new(),
+            pane_placements: BTreeMap::new(),
             pane_receivers: BTreeMap::new(),
             state,
             native_preview: None,
@@ -93,7 +96,11 @@ impl Packet {
     }
 
     pub(super) fn is_deferred(&self) -> bool {
-        !matches!(self.state, PacketState::Ready)
+        matches!(self.state, PacketState::Waiting | PacketState::Unmeasured)
+    }
+
+    pub(super) fn is_vacant(&self) -> bool {
+        matches!(self.state, PacketState::Vacant)
     }
 
     pub(super) fn preserves_repaint_request(&self) -> bool {
@@ -186,24 +193,26 @@ enum ControlFocusId {
 
 struct PaneFocusAttempt {
     request: DockspacePaneFocusRequest,
-    claim_revision: Option<u64>,
+    claim: Option<PaneFocusClaim>,
     applied: bool,
     observation: Option<DockspacePaneFocusObservation>,
 }
 
 impl PaneFocusAttempt {
-    fn new(request: DockspacePaneFocusRequest) -> Self {
+    fn new(request: DockspacePaneFocusRequest, claim: Option<PaneFocusClaim>) -> Self {
         Self {
             request,
-            claim_revision: None,
+            claim,
             applied: false,
             observation: None,
         }
     }
 
     fn owns_focus_claim(&self, window: &Window) -> bool {
-        self.claim_revision
-            .is_none_or(|claim| claim == window.focus_claim_revision())
+        self.claim.is_none_or(|claim| {
+            claim.owner == window.window_handle().window_id()
+                && claim.revision == window.focus_claim_revision()
+        })
     }
 }
 
@@ -249,7 +258,7 @@ pub(crate) struct PreparedRegion {
     draws: Vec<PreparedDraw>,
     hitboxes: Vec<HitboxId>,
     content_hitboxes: Vec<HitboxId>,
-    panes: Vec<(ItemId, open_gpui::HitTestSnapshot)>,
+    panes: BTreeMap<ItemId, PanePresentation>,
     tabs: Vec<(TabKey, HitboxId)>,
     capture: PointerCaptureHandle,
     serial: u64,
@@ -333,10 +342,11 @@ impl Element for DockspaceElement {
             );
         }
         host_native::prepare_window(&self.host, window, cx);
-        let mount = self
-            .host
-            .borrow_mut()
-            .ensure_mount(id, &self.regions, window, cx);
+        let mount = {
+            let mut host = self.host.borrow_mut();
+            presentation::abandon_unaccepted(&mut host, window, cx);
+            host.ensure_mount(id, &self.regions, window, cx)
+        };
         match mount {
             Ok(true) => {
                 let weak = Rc::downgrade(&self.host);
@@ -385,15 +395,13 @@ impl Element for DockspaceElement {
         }
         let owner = window.window_handle().window_id();
         let capture = self.host.borrow().mounts[&owner].capture;
-        // Claim the framework's once-per-frame capture binding before touching
-        // a pending core candidate. Failed duplicate mounts retract their hitbox.
+        // Failed duplicate mounts retract their hitbox and keep the existing capture binding.
         if let Err(error) = window.transact(|window| {
             let background = window.insert_hitbox(bounds, HitboxBehavior::Normal);
             window.bind_pointer_capture(&capture, background.id)
         }) {
             return self.failure(error, bounds, window, cx);
         }
-        presentation::abandon_unaccepted(&mut self.host.borrow_mut(), window, cx);
         if let Some(id) = id {
             self.interaction =
                 window.with_element_state::<Rc<InteractionState>, _>(id, |state, _| {
@@ -555,13 +563,23 @@ impl DockspaceElement {
             .map(|(&surface, &bounds)| Ok((surface, RegionGeometry::new(bounds, window)?)))
             .collect::<Result<BTreeMap<_, _>>>()?;
         let mut schedule_host_work = false;
-        let (packets, serial, publication, waiting_for_update) = {
+        let (packets, serial, publication, publication_attempt, waiting_for_update) = {
             let mut host = self.host.borrow_mut();
             let mount = &host.mounts[&owner];
             let publication = mount.publication;
             let paused = presentation::pauses_new_updates(window);
-            if let Some(pending) = &mount.pending {
-                (pending.packets.clone(), pending.serial, publication, false)
+            if let Some(pending) = mount
+                .pending
+                .as_ref()
+                .filter(|pending| pending.update.is_none())
+            {
+                (
+                    pending.packets.clone(),
+                    pending.serial,
+                    publication,
+                    None,
+                    false,
+                )
             } else if paused || host.has_unaccepted_update() {
                 let mount = host.mounts.get_mut(&owner).expect("physical mount");
                 mount.waiting_for_update = !paused;
@@ -586,6 +604,7 @@ impl DockspaceElement {
                         .collect(),
                     mount.serial,
                     publication,
+                    None,
                     true,
                 )
             } else if host.inputs.is_empty()
@@ -610,6 +629,7 @@ impl DockspaceElement {
                         .collect(),
                     mount.serial,
                     publication,
+                    None,
                     false,
                 )
             } else {
@@ -666,6 +686,9 @@ impl DockspaceElement {
                         if released_capacity {
                             presentation::wake_capacity_blocked(&mut host, cx);
                         }
+                        for input in &inputs {
+                            input.mark_committed();
+                        }
                         host.apply_report(report);
                         let mount = host.mounts.get_mut(&owner).expect("physical mount");
                         mount.capacity_blocked = true;
@@ -688,50 +711,53 @@ impl DockspaceElement {
                                 .collect(),
                             mount.serial,
                             publication,
+                            None,
                             false,
                         )
                     }
                     Candidate::Painted { packets, update } => {
-                        let ticket =
-                            match host_native::provisional::begin_submission(&host, window, cx) {
-                                Ok(ticket) => ticket,
-                                Err(error) => {
-                                    drop(update);
-                                    let mut inputs = inputs;
-                                    inputs.append(&mut host.inputs);
-                                    host.inputs = inputs;
-                                    return Err(error);
-                                }
-                            };
-                        if let Err(error) = host_native::watch_submission(&host, &ticket, window) {
-                            window.retire_exact_frame_submission(&ticket);
-                            drop(update);
-                            let mut inputs = inputs;
-                            inputs.append(&mut host.inputs);
-                            host.inputs = inputs;
-                            return Err(error);
-                        }
+                        let submission = (|| {
+                            let mount = &host.mounts[&owner];
+                            let serial = mount
+                                .last_attempt_serial
+                                .max(mount.serial)
+                                .checked_add(1)
+                                .context("frame serial exhausted")?;
+                            let ticket =
+                                host_native::provisional::begin_submission(&host, window, cx)?;
+                            if let Err(error) =
+                                host_native::watch_submission(&host, &ticket, window)
+                            {
+                                window.retire_exact_frame_submission(&ticket);
+                                return Err(error);
+                            }
+                            Ok((serial, ticket))
+                        })();
+                        let (serial, ticket) = match submission {
+                            Ok(submission) => submission,
+                            Err(error) => {
+                                drop(update);
+                                let mut inputs = inputs;
+                                inputs.append(&mut host.inputs);
+                                host.inputs = inputs;
+                                return Err(error);
+                            }
+                        };
+                        let attempt =
+                            presentation::observe(&self.host, &ticket, serial, publication, window);
                         let mount = host.mounts.get_mut(&owner).expect("physical mount");
                         mount.capacity_blocked = false;
-                        mount.serial = mount
-                            .serial
-                            .checked_add(1)
-                            .context("frame serial exhausted")?;
-                        let serial = mount.serial;
-                        for (surface, geometry) in &region_geometry {
-                            let region = mount.regions.get_mut(surface).expect("mounted region");
-                            region.geometry = Some(*geometry);
-                            region.dirty = false;
-                        }
-                        mount.pending = Some(presentation::PendingSubmission::new(
+                        mount.last_attempt_serial = serial;
+                        let mut pending = presentation::PendingSubmission::new(
                             serial,
-                            ticket.clone(),
+                            ticket,
                             packets.clone(),
                             update,
                             inputs,
-                        ));
-                        presentation::observe(&self.host, &ticket, serial, publication, window);
-                        (packets, serial, publication, false)
+                        );
+                        pending.publication_attempt = Some(attempt.clone());
+                        mount.pending = Some(pending);
+                        (packets, serial, publication, Some(attempt), false)
                     }
                 }
             }
@@ -747,6 +773,9 @@ impl DockspaceElement {
         });
         let mut regions = Vec::new();
         for (surface, packet) in &packets {
+            if packet.is_vacant() {
+                continue;
+            }
             let bounds = region_bounds[surface];
             let background = window.insert_hitbox(bounds, HitboxBehavior::Normal);
             regions.push(self.prepare_region(
@@ -846,48 +875,61 @@ impl DockspaceElement {
                 _ => None,
             })
             .collect();
-        window.record_prepaint_window_transaction(
-            publication,
-            move |fence, window, cx| {
-                presentation::accept(&shared, serial, input_frames.clone(), fence, window, cx);
-                presentation_menu::accept(&shared, &interaction, serial, window, cx);
-                apply_chrome_focus(
-                    &shared,
-                    &interaction,
-                    serial,
-                    &admitted_surfaces,
-                    &focus_controls,
-                    window,
-                    cx,
-                );
-                apply_pane_focus(&shared, &interaction, serial, &applied_panes, window, cx);
-                // Old prepared elements retain their own handles until actual
-                // retirement; the identity cache need not pin closed controls.
-                let pending = interaction
-                    .pending_tab_focus
-                    .borrow()
-                    .as_ref()
-                    .map(|focus| &focus.target)
-                    .cloned();
-                interaction
-                    .focus
-                    .borrow_mut()
-                    .retain(|id, _| retained_focus.contains(id) || pending.as_ref() == Some(id));
-                interaction
-                    .pane_focus
-                    .borrow_mut()
-                    .retain(|surface, attempt| {
-                        shared.borrow().session.pane_focus_request(*surface)
-                            == Some(attempt.request)
-                    });
-                let current = hovered_tab_at(&accepted_tabs, window.mouse_position(), window);
-                if hovered_tab.replace(current) != current {
-                    window.refresh();
-                }
-                input::revoke_blocked_hover(&shared, window);
-            },
-            move |_, window, cx| presentation::discard(&discard, window, cx),
-        );
+        let commit = move |fence: AcceptedFrameFence, window: &mut Window, cx: &mut App| {
+            if !presentation::accept(
+                &shared,
+                serial,
+                input_frames.clone(),
+                &region_geometry,
+                fence,
+                window,
+                cx,
+            ) {
+                return;
+            }
+            presentation_menu::accept(&shared, &interaction, serial, window, cx);
+            apply_chrome_focus(
+                &shared,
+                &interaction,
+                serial,
+                &admitted_surfaces,
+                &focus_controls,
+                window,
+                cx,
+            );
+            apply_pane_focus(&shared, &interaction, serial, &applied_panes, window, cx);
+            // Old prepared elements retain their own handles until actual
+            // retirement; the identity cache need not pin closed controls.
+            let pending = interaction
+                .pending_tab_focus
+                .borrow()
+                .as_ref()
+                .map(|focus| &focus.target)
+                .cloned();
+            interaction
+                .focus
+                .borrow_mut()
+                .retain(|id, _| retained_focus.contains(id) || pending.as_ref() == Some(id));
+            interaction
+                .pane_focus
+                .borrow_mut()
+                .retain(|surface, attempt| {
+                    shared.borrow().session.pane_focus_request(*surface) == Some(attempt.request)
+                });
+            let current = hovered_tab_at(&accepted_tabs, window.mouse_position(), window);
+            if hovered_tab.replace(current) != current {
+                window.refresh();
+            }
+            input::revoke_blocked_hover(&shared, window);
+        };
+        let discard = move |_, window: &mut Window, cx: &mut App| {
+            presentation::discard(&discard, window, cx);
+        };
+        if let Some(attempt) = publication_attempt {
+            window.record_prepaint_window_transaction_for_attempt(attempt, commit, discard);
+        } else {
+            window.record_prepaint_window_transaction(publication, commit, discard);
+        }
         let shared = self.host.clone();
         let interaction = self.interaction.clone();
         window.record_prepaint_focus_stable_commit(move |_, window, cx| {
@@ -916,7 +958,7 @@ impl DockspaceElement {
         let bounds = geometry.layout_bounds();
         let mut hitboxes = vec![background];
         let mut content_hitboxes = Vec::new();
-        let mut panes = Vec::new();
+        let mut panes = BTreeMap::new();
         let mut draws = Vec::new();
         let mut tabs = Vec::new();
         let mut receivers = Vec::new();
@@ -1269,31 +1311,40 @@ impl DockspaceElement {
                     );
                     let geometry = window
                         .with_prepared_subtree_clip(&clip, |window| window.hit_test_snapshot(rect));
-                    let unchanged = !admitted
-                        && keep_live_content
-                        && geometry.as_ref().is_some_and(|geometry| {
-                            let host = self.host.borrow();
-                            let owner = window.window_handle().window_id();
-                            host.mounts[&owner]
-                                .regions
-                                .get(&surface)
-                                .and_then(|region| region.presented_panes.as_ref())
-                                .filter(|panes| {
-                                    panes.version.is_same_epoch(host.session.version())
-                                        && host.session.view().item(*item).is_some_and(|pane| {
-                                            pane.surface() == surface && pane.is_active()
-                                        })
-                                })
-                                .and_then(|panes| panes.geometry.get(item))
-                                == Some(geometry)
+                    let placement = packet.pane_placements.get(item).copied();
+                    let (pane, live, pointer) = {
+                        let host = self.host.borrow();
+                        let owner = window.window_handle().window_id();
+                        let current = host.session.view().item(*item).is_some_and(|pane| {
+                            pane.surface() == surface
+                                && pane.is_active()
+                                && Some(PanePlacement::of(pane)) == placement
                         });
-                    if let Some(geometry) = geometry {
-                        panes.push((*item, geometry));
+                        let previous = host.mounts[&owner].regions[&surface]
+                            .presented_panes
+                            .as_ref()
+                            .filter(|panes| panes.version.is_same_epoch(host.session.version()))
+                            .and_then(|panes| panes.panes.get(item))
+                            .filter(|pane| Some(pane.placement) == placement);
+                        let continuing = current && keep_live_content && previous.is_some();
+                        (
+                            host.panels.get(item).cloned(),
+                            (current && admitted) || continuing,
+                            (current && admitted)
+                                || (continuing
+                                    && previous.map(|pane| &pane.geometry) == geometry.as_ref()),
+                        )
+                    };
+                    if let Some((placement, geometry)) = placement.zip(geometry) {
+                        panes.insert(
+                            *item,
+                            PanePresentation {
+                                placement,
+                                geometry,
+                            },
+                        );
                     }
-                    let pane = self.host.borrow().panels.get(item).cloned();
-                    // A scene update can revoke docking hit regions while the
-                    // same displayed editor continues to own its focus.
-                    let presentation = if admitted || unchanged {
+                    let presentation = if live {
                         SubtreePresentation::Visible
                     } else {
                         SubtreePresentation::Inert
@@ -1301,12 +1352,6 @@ impl DockspaceElement {
                     if presentation == SubtreePresentation::Visible {
                         visible_panes.push(*item);
                     }
-                    let label = self
-                        .host
-                        .borrow()
-                        .panels
-                        .get(item)
-                        .map(|pane| pane.title.clone());
                     let mut element = match pane.as_ref() {
                         Some(pane) => div()
                             .id(format!("pane-{}", item.get()))
@@ -1314,7 +1359,7 @@ impl DockspaceElement {
                             .h(rect.size.height)
                             .overflow_hidden()
                             .role(Role::TabPanel)
-                            .aria_label(label.unwrap_or_else(|| "Pane".into()))
+                            .aria_label(pane.title.clone())
                             .aria_actions([])
                             .child(pane.view.clone())
                             .with_subtree_presentation(presentation)
@@ -1327,7 +1372,8 @@ impl DockspaceElement {
                     };
                     if window
                         .with_prepared_subtree_clip(&clip, |window| {
-                            if let Some(pane) = &pane
+                            if pointer
+                                && let Some(pane) = &pane
                                 && !pane.content_receivers.is_empty()
                                 && let Some(receiver) = packet.pane_receivers.get(item)
                             {
@@ -1350,6 +1396,9 @@ impl DockspaceElement {
                                 }
                             } else {
                                 element.prepaint_as_root(rect.origin, definite(rect), window, cx);
+                            }
+                            if live && !pointer {
+                                window.insert_hitbox(rect, HitboxBehavior::BlockMouse);
                             }
                         })
                         .is_some()
@@ -1682,17 +1731,16 @@ impl DockspaceElement {
         let controls = prepared.controls.clone();
         let interaction = self.interaction.clone();
         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
-            if !allow_new_input {
+            if !allow_new_input || event.button != MouseButton::Left {
                 return;
             }
-            if phase.capture() && event.button == MouseButton::Left {
+            let target = window.frontmost_hitbox_at(event.position);
+            if phase.capture() {
                 interaction.splitter_press.borrow_mut().take();
                 interaction.tab_list_press.borrow_mut().take();
                 if !capture.is_captured(window)
                     && input::is_presented(&shared.borrow(), owner, surface, serial)
-                    && content_hitboxes
-                        .iter()
-                        .any(|id| id.window_point_target_rank(event.position, window) == Some(0))
+                    && target.is_some_and(|id| content_hitboxes.contains(&id))
                     && input::queue(
                         &mut shared.borrow_mut(),
                         surface,
@@ -1708,20 +1756,16 @@ impl DockspaceElement {
                     )
                 {
                     // Observe pane activation without capturing or consuming the widget's input.
-                    input::remember_content_press(&mut shared.borrow_mut(), owner, surface);
                     window.refresh();
                 }
             }
-            if !phase.bubble() || event.button != MouseButton::Left {
+            if !phase.bubble() {
                 return;
             }
-            let clear = hitboxes
-                .iter()
-                .any(|id| id.window_point_target_rank(event.position, window) == Some(0));
+            let Some(target) = target.filter(|id| hitboxes.contains(id)) else {
+                return;
+            };
             if !input::is_presented(&shared.borrow(), owner, surface, serial) {
-                return;
-            }
-            if !clear {
                 return;
             }
             let managed = shared.borrow().native.is_some();
@@ -1741,19 +1785,18 @@ impl DockspaceElement {
                 event.modifiers,
                 window,
             ) {
+                let control = controls
+                    .iter()
+                    .rev()
+                    .find(|(_, _, hitbox)| *hitbox == target);
                 splitter::pressed(
                     &shared.borrow(),
                     &interaction,
                     surface,
-                    &controls,
+                    control.map(|(control, _, _)| control.as_ref()),
                     event,
-                    window,
                 );
-                let control = controls.iter().rev().find_map(|(control, focus, hitbox)| {
-                    (hitbox.window_point_target_rank(event.position, window) == Some(0))
-                        .then_some((control, focus))
-                });
-                if let Some((control, focus)) = control {
+                if let Some((control, focus, _)) = control {
                     window.focus(focus, cx);
                     if let Some(bar) = control.opens_menu {
                         if let Some(opener) = control
@@ -1840,11 +1883,13 @@ impl DockspaceElement {
                 event.modifiers,
                 window,
             ) {
+                let target = window.frontmost_hitbox_at(event.position);
                 splitter::released(
                     &mut shared.borrow_mut(),
                     &interaction,
                     surface,
                     &receivers,
+                    target,
                     event,
                     window,
                     cx,
@@ -1858,7 +1903,7 @@ impl DockspaceElement {
                         control.expanded == Some(false)
                             && control.focus_id()
                                 == ControlFocusId::Control(press.opener.input_id.clone())
-                            && hitbox.window_point_target_rank(event.position, window) == Some(0)
+                            && Some(*hitbox) == target
                     })
                 {
                     // Hold the next keys until core presents the list opened by this
@@ -2223,8 +2268,13 @@ fn activate_action_with_continuation(
             window.focus(&focus, cx);
         }
         if let Some(request) = request {
-            let mut attempt = PaneFocusAttempt::new(request);
-            attempt.claim_revision = Some(window.focus_claim_revision());
+            let attempt = PaneFocusAttempt::new(
+                request,
+                Some(PaneFocusClaim {
+                    owner,
+                    revision: window.focus_claim_revision(),
+                }),
+            );
             interaction.pane_focus.borrow_mut().insert(surface, attempt);
         }
     } else if let Some((target, focus)) = focus {
@@ -2399,6 +2449,9 @@ fn apply_chrome_focus(
             })
             .map(|(_, _, focus)| focus.clone());
         if let Some(opener) = opener
+            && previous
+                .as_ref()
+                .is_none_or(|previous| previous.opener == opener)
             && window.is_focus_handle_rendered(focus)
         {
             window.focus(focus, cx);
@@ -2438,7 +2491,12 @@ fn pane_focus_requests(
     serial: u64,
     visible_panes: &[(SurfaceId, Vec<ItemId>)],
     window: &Window,
-) -> Vec<(DockspacePaneFocusRequest, Option<FocusHandle>, FocusHandle)> {
+) -> Vec<(
+    DockspacePaneFocusRequest,
+    Option<PaneFocusClaim>,
+    Option<FocusHandle>,
+    FocusHandle,
+)> {
     let owner = window.window_handle().window_id();
     let host = shared.borrow();
     if host.has_unaccepted_update()
@@ -2468,7 +2526,12 @@ fn pane_focus_requests(
                 }
                 None => Some(host.mounts[&owner].focus.clone()),
             };
-            Some((request, focus, host.mounts[&owner].focus.clone()))
+            Some((
+                request,
+                host.application_pane_focus_claim(request),
+                focus,
+                host.mounts[&owner].focus.clone(),
+            ))
         })
         .collect()
 }
@@ -2483,13 +2546,15 @@ fn apply_pane_focus(
     window: &mut Window,
     cx: &mut App,
 ) {
-    for (request, target, scope) in pane_focus_requests(shared, serial, visible_panes, window) {
+    for (request, claim, target, scope) in
+        pane_focus_requests(shared, serial, visible_panes, window)
+    {
         let mut attempts = interaction.pane_focus.borrow_mut();
         let attempt = attempts
             .entry(request.surface())
-            .or_insert_with(|| PaneFocusAttempt::new(request));
+            .or_insert_with(|| PaneFocusAttempt::new(request, claim));
         if attempt.request != request {
-            *attempt = PaneFocusAttempt::new(request);
+            *attempt = PaneFocusAttempt::new(request, claim);
         }
         if !attempt.applied {
             attempt.applied = true;
@@ -2499,8 +2564,8 @@ fn apply_pane_focus(
                 && (scope.contains_focused(window, cx) || window.focused(cx).is_none())
             {
                 window.focus(&target, cx);
-                if attempt.claim_revision.is_some() {
-                    attempt.claim_revision = Some(window.focus_claim_revision());
+                if let Some(claim) = &mut attempt.claim {
+                    claim.revision = window.focus_claim_revision();
                 }
             }
         }
@@ -2516,13 +2581,13 @@ fn observe_pane_focus(
     cx: &mut App,
 ) {
     let mut observations = Vec::new();
-    for (request, target, _) in pane_focus_requests(shared, serial, visible_panes, window) {
+    for (request, claim, target, _) in pane_focus_requests(shared, serial, visible_panes, window) {
         let mut attempts = interaction.pane_focus.borrow_mut();
         let attempt = attempts
             .entry(request.surface())
-            .or_insert_with(|| PaneFocusAttempt::new(request));
+            .or_insert_with(|| PaneFocusAttempt::new(request, claim));
         if attempt.request != request {
-            *attempt = PaneFocusAttempt::new(request);
+            *attempt = PaneFocusAttempt::new(request, claim);
         }
         let observation = match target.filter(|target| window.is_focus_handle_rendered(target)) {
             Some(target) if target.contains_focused(window, cx) => {
@@ -2645,7 +2710,8 @@ fn begin_candidate(
     let height = px(frame.presentation_config().tab_bar_height() as f32);
     let mut labels = BTreeMap::new();
     if host.panels.values().any(|pane| pane.tab_content.is_some()) {
-        for &surface in regions.keys() {
+        let roster = frame.surfaces();
+        for &surface in regions.keys().filter(|surface| roster.contains(surface)) {
             for item in frame.tab_measurement_items(surface)? {
                 if let Some(label) = host.panels.get(&item).and_then(CustomTabLabel::new) {
                     labels.insert(item, label);
@@ -2707,7 +2773,7 @@ fn encode_candidate(
             let state = if deferred {
                 PacketState::Waiting
             } else {
-                PacketState::Ready
+                PacketState::Vacant
             };
             packets.insert(surface, Packet::empty(state));
             continue;
@@ -2785,7 +2851,13 @@ fn encode_candidate(
                 continue;
             }
         };
-        let (packet, receipt) = record(plan, panels, &config.colors, open_menu)?;
+        let (mut packet, receipt) = record(plan, panels, &config.colors, open_menu)?;
+        let view = frame.view();
+        packet.pane_placements = packet
+            .pane_bars
+            .keys()
+            .filter_map(|&item| view.item(item).map(|pane| (item, PanePlacement::of(pane))))
+            .collect();
         frame.confirm_surface_painted(receipt)?;
         packets.insert(surface, Rc::new(packet));
     }

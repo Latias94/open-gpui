@@ -3,7 +3,10 @@
 use std::{convert::Infallible, num::NonZeroUsize, time::Duration};
 
 use dockspace::runtime::{PaintedSurfaceOutput, SurfacePresentationResult};
-use open_gpui::{AnyWindowHandle, WindowFrameSubmissionOutcome, WindowFrameSubmissionTicket};
+use open_gpui::{
+    AnyWindowHandle, AvailableSpace, PlatformFrameDeliveryMode, StyleRefinement,
+    WindowFrameSubmissionOutcome, WindowFrameSubmissionTicket, canvas,
+};
 
 use super::*;
 use crate::adapter::{HostState, host_native, input};
@@ -20,23 +23,29 @@ struct CapacityRoot {
 
 impl Render for CapacityRoot {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let regions = if let Some(bounds) = self.bounds.get() {
-            vec![DockRegion::new(self.surfaces[0], bounds)]
-        } else if self.surfaces.len() == 1 {
-            vec![DockRegion::fill(self.surfaces[0])]
-        } else {
-            self.surfaces
-                .iter()
-                .enumerate()
-                .map(|(index, surface)| {
-                    DockRegion::new(
-                        *surface,
-                        LogicalRect::new(index as f64 * 400.0, 0.0, 400.0, 600.0).unwrap(),
-                    )
-                })
-                .collect()
-        };
-        div().size_full().child(self.dock.regions(regions))
+        div().size_full().child(
+            self.dock
+                .regions(regions(&self.surfaces, self.bounds.get())),
+        )
+    }
+}
+
+fn regions(surfaces: &[SurfaceId], bounds: Option<LogicalRect>) -> Vec<DockRegion> {
+    if let Some(bounds) = bounds {
+        vec![DockRegion::new(surfaces[0], bounds)]
+    } else if surfaces.len() == 1 {
+        vec![DockRegion::fill(surfaces[0])]
+    } else {
+        surfaces
+            .iter()
+            .enumerate()
+            .map(|(index, surface)| {
+                DockRegion::new(
+                    *surface,
+                    LogicalRect::new(index as f64 * 400.0, 0.0, 400.0, 600.0).unwrap(),
+                )
+            })
+            .collect()
     }
 }
 
@@ -49,36 +58,7 @@ fn fixture_with_bounds(
     cohort: bool,
     bounds: Rc<Cell<Option<LogicalRect>>>,
 ) -> (DockSurface, [AnyWindowHandle; 2]) {
-    let dock = cx.update(|cx| {
-        let document = Rc::new(RefCell::new(Document {
-            text: "shared".into(),
-        }));
-        let panes = [A, B, C, D].map(|item| {
-            let view = cx.new(|_| View {
-                document: document.clone(),
-                item,
-                clicks: 0,
-            });
-            DockPane::new(item, format!("View {}", item.get()), view)
-        });
-        let layout = DockspaceLayout::new(
-            [(FIRST, vec![A, C]), (SECOND, vec![B]), (THIRD, vec![D])].map(|(surface, items)| {
-                DockspaceSurfaceLayout::new(
-                    surface,
-                    DockspaceRootLayout::new(
-                        RootId::new(surface.get()),
-                        DockspaceNode::tabs(items),
-                    ),
-                )
-            }),
-        )
-        .unwrap();
-        let mut session = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
-        session
-            .configure_output_capacity(NonZeroUsize::new(if cohort { 3 } else { 2 }).unwrap())
-            .unwrap();
-        DockSurface::new(session, panes, GpuiDockspaceConfig::default(), cx).unwrap()
-    });
+    let dock = capacity_workspace(cx, if cohort { 3 } else { 2 });
     cx.defer_next_window_frame_requests();
     let target = cx.open_window(size(px(800.0), px(600.0)), |_, _| CapacityRoot {
         dock: dock.clone(),
@@ -109,6 +89,420 @@ fn fixture_with_bounds(
         "local docking pointer capture needs the target window to be active"
     );
     (dock, windows)
+}
+
+fn capacity_workspace(cx: &mut TestAppContext, capacity: usize) -> DockSurface {
+    cx.update(|cx| {
+        let document = Rc::new(RefCell::new(Document {
+            text: "shared".into(),
+        }));
+        let panes = [A, B, C, D].map(|item| {
+            let view = cx.new(|_| View {
+                document: document.clone(),
+                item,
+                clicks: 0,
+            });
+            DockPane::new(item, format!("View {}", item.get()), view)
+        });
+        let layout = DockspaceLayout::new(
+            [(FIRST, vec![A, C]), (SECOND, vec![B]), (THIRD, vec![D])].map(|(surface, items)| {
+                DockspaceSurfaceLayout::new(
+                    surface,
+                    DockspaceRootLayout::new(
+                        RootId::new(surface.get()),
+                        DockspaceNode::tabs(items),
+                    ),
+                )
+            }),
+        )
+        .unwrap();
+        let mut session = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
+        session
+            .configure_output_capacity(NonZeroUsize::new(capacity).unwrap())
+            .unwrap();
+        DockSurface::new(session, panes, GpuiDockspaceConfig::default(), cx).unwrap()
+    })
+}
+
+struct MutableMount {
+    handle: AnyWindowHandle,
+    regions: Rc<Cell<&'static [SurfaceId]>>,
+    visual: VisualTestContext,
+}
+
+struct MutableMountRoot {
+    dock: DockSurface,
+    regions: Rc<Cell<&'static [SurfaceId]>>,
+}
+
+impl Render for MutableMountRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let surfaces = self.regions.get();
+        div().size_full().when(!surfaces.is_empty(), |root| {
+            root.child(self.dock.regions(regions(surfaces, None)))
+        })
+    }
+}
+
+impl MutableMount {
+    fn open(cx: &mut TestAppContext, dock: &DockSurface, regions: &'static [SurfaceId]) -> Self {
+        let regions = Rc::new(Cell::new(regions));
+        cx.defer_next_window_frame_requests();
+        let handle = cx
+            .open_window(size(px(800.0), px(600.0)), |_, _| MutableMountRoot {
+                dock: dock.clone(),
+                regions: regions.clone(),
+            })
+            .into();
+        Self {
+            handle,
+            regions,
+            visual: VisualTestContext::from_window(handle, cx),
+        }
+    }
+
+    fn drain(&mut self) {
+        for _ in 0..16 {
+            self.visual
+                .background_executor
+                .advance_clock(Duration::from_millis(512));
+            let requested = self
+                .visual
+                .cx
+                .step_deferred_window_frame_request(self.handle);
+            let scheduled = self.visual.simulate_scheduled_frame();
+            if !requested && !scheduled {
+                return;
+            }
+        }
+        panic!("the physical mount did not reach an idle frame schedule");
+    }
+}
+
+#[open_gpui::test]
+fn output_capacity_release_wakes_a_first_mount(cx: &mut TestAppContext) {
+    let dock = capacity_workspace(cx, 1);
+    let mut source = MutableMount::open(cx, &dock, &[FIRST]);
+    let mut target = MutableMount::open(cx, &dock, &[]);
+    frames(&mut source.visual, &dock);
+    frames(&mut target.visual, &dock);
+    cx.set_window_present_outcome(source.handle, PlatformWindowPresentOutcome::Deferred);
+    cx.simulate_window_resize(source.handle, size(px(780.0), px(580.0)));
+    frames(&mut source.visual, &dock);
+    let ticket = dock.host.borrow().mounts[&source.handle.window_id()]
+        .pending
+        .as_ref()
+        .unwrap()
+        .ticket
+        .clone();
+    assert_eq!(
+        ticket.snapshot().outcome(),
+        WindowFrameSubmissionOutcome::Accepted
+    );
+    cx.update(|app| {
+        dock.update(
+            |frame| {
+                for item in [A, C] {
+                    frame.dock_item_current(item, DockPlacement::Center(DockAnchor::Item(B)))?;
+                }
+                frame.select_item_current(B)?;
+                Ok(())
+            },
+            app,
+        )
+        .unwrap();
+    });
+
+    target.regions.set(&[SECOND]);
+    frames(&mut target.visual, &dock);
+    target.drain();
+    {
+        let host = dock.host.borrow();
+        let mount = &host.mounts[&target.handle.window_id()];
+        assert!(!mount.attached);
+        assert!(mount.capacity_blocked);
+        assert!(mount.pending.is_none());
+    }
+
+    cx.set_window_present_outcome(source.handle, PlatformWindowPresentOutcome::Submitted);
+    frames(&mut source.visual, &dock);
+    assert_eq!(
+        ticket.snapshot().outcome(),
+        WindowFrameSubmissionOutcome::Submitted
+    );
+    target.drain();
+    assert_painted_pane(&dock, target.handle, SECOND, B);
+}
+
+#[open_gpui::test]
+fn a_rejected_first_mount_wakes_a_waiting_cohort(cx: &mut TestAppContext) {
+    let dock = capacity_workspace(cx, 8);
+    let mut claimant = MutableMount::open(cx, &dock, &[FIRST, SECOND]);
+    let mut trial = MutableMount::open(cx, &dock, &[]);
+    frames(&mut claimant.visual, &dock);
+    frames(&mut trial.visual, &dock);
+    claimant.regions.set(&[]);
+    frames(&mut claimant.visual, &dock);
+
+    cx.set_window_frame_delivery_mode(trial.handle, PlatformFrameDeliveryMode::Deferred);
+    trial.regions.set(&[FIRST]);
+    assert!(trial.visual.simulate_frame(RequestFrameOptions {
+        require_presentation: true,
+        force_render: true,
+        ..Default::default()
+    }));
+    let receipt = cx.pending_window_frame_submission(trial.handle).unwrap();
+    assert!(dock.is_update_pending());
+    claimant.regions.set(&[FIRST, SECOND]);
+    frames(&mut claimant.visual, &dock);
+    claimant.drain();
+    {
+        let host = dock.host.borrow();
+        let mount = &host.mounts[&claimant.handle.window_id()];
+        assert!(!mount.attached);
+        assert!(mount.waiting_for_update);
+        assert!(host.owners.is_empty());
+    }
+
+    trial.regions.set(&[]);
+    assert!(receipt.complete(PlatformWindowPresentOutcome::Rejected));
+    cx.run_until_parked();
+    cx.set_window_frame_delivery_mode(trial.handle, PlatformFrameDeliveryMode::Synchronous);
+    frames(&mut trial.visual, &dock);
+    claimant.drain();
+    assert_painted_pane(&dock, claimant.handle, FIRST, A);
+    assert_painted_pane(&dock, claimant.handle, SECOND, B);
+}
+
+#[open_gpui::test]
+fn a_pruned_region_can_remount_with_a_live_sibling(cx: &mut TestAppContext) {
+    let dock = capacity_workspace(cx, 8);
+    dock.host
+        .borrow_mut()
+        .panels
+        .get_mut(&B)
+        .unwrap()
+        .tab_content = Some(Rc::new(|_, _| div().w(px(60.0)).into_any_element()));
+    let mut mount = MutableMount::open(cx, &dock, &[FIRST, SECOND]);
+    frames(&mut mount.visual, &dock);
+    cx.update(|app| {
+        dock.update(
+            |frame| {
+                for item in [A, C] {
+                    frame.dock_item_current(item, DockPlacement::Center(DockAnchor::Item(B)))?;
+                }
+                frame.select_item_current(B)?;
+                Ok(())
+            },
+            app,
+        )
+        .unwrap();
+    });
+    assert!(dock.with_view(|view| view.surface(FIRST).is_none()));
+    mount.regions.set(&[]);
+    frames(&mut mount.visual, &dock);
+    mount.regions.set(&[FIRST, SECOND]);
+    frames(&mut mount.visual, &dock);
+    assert_painted_pane(&dock, mount.handle, SECOND, B);
+    let host = dock.host.borrow();
+    assert!(!host.owners.contains_key(&FIRST));
+    let mount = &host.mounts[&mount.handle.window_id()];
+    assert!(
+        mount
+            .input_frames
+            .iter()
+            .all(|frame| frame.surface != FIRST)
+    );
+    assert_eq!(
+        mount.regions[&SECOND].layout_bounds().unwrap().origin.x,
+        px(400.0)
+    );
+}
+
+struct RetriedMount {
+    dock: DockSurface,
+    show: Rc<Cell<bool>>,
+    trial: bool,
+    chosen: SurfaceId,
+}
+
+impl Render for RetriedMount {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let dock = self.dock.clone();
+        let show = self.show.get();
+        let trial = show && std::mem::take(&mut self.trial);
+        let chosen = self.chosen;
+        canvas(
+            move |bounds, window, cx| {
+                if !show {
+                    return None;
+                }
+                let space = size(
+                    AvailableSpace::Definite(bounds.size.width),
+                    AvailableSpace::Definite(bounds.size.height),
+                );
+                if trial {
+                    let mut rejected = dock.element(FIRST).into_any_element();
+                    let result = window.transact(|window| {
+                        rejected.prepaint_as_root(bounds.origin, space, window, cx);
+                        assert!(dock.is_update_pending());
+                        Err::<(), _>(())
+                    });
+                    assert_eq!(result, Err(()));
+                }
+                let mut accepted = dock.element(chosen).into_any_element();
+                accepted.prepaint_as_root(bounds.origin, space, window, cx);
+                Some(accepted)
+            },
+            |_, accepted, window, cx| {
+                if let Some(mut accepted) = accepted {
+                    accepted.paint(window, cx);
+                }
+            },
+        )
+        .size_full()
+    }
+}
+
+#[open_gpui::test]
+fn a_rolled_back_first_mount_allows_a_same_frame_retry(cx: &mut TestAppContext) {
+    for (surface, item) in [(FIRST, A), (SECOND, B)] {
+        let dock = capacity_workspace(cx, 8);
+        let show = Rc::new(Cell::new(false));
+        cx.defer_next_window_frame_requests();
+        let window = cx.open_window(size(px(800.0), px(600.0)), |_, _| RetriedMount {
+            dock: dock.clone(),
+            show: show.clone(),
+            trial: true,
+            chosen: surface,
+        });
+        let mut visual = VisualTestContext::from_window(window.into(), cx);
+        frames(&mut visual, &dock);
+        show.set(true);
+        assert!(visual.simulate_frame(RequestFrameOptions {
+            require_presentation: true,
+            force_render: true,
+            ..Default::default()
+        }));
+        assert!(dock.error().is_none(), "{:?}", dock.error());
+        assert!(!dock.is_update_pending());
+        assert_painted_pane(&dock, window.into(), surface, item);
+        assert_eq!(dock.host.borrow().owners.len(), 1);
+    }
+}
+
+struct CachedMountRoot {
+    dock: DockSurface,
+    child: Entity<CountedRoot>,
+    trial: bool,
+    recorded: Rc<Cell<bool>>,
+}
+
+impl Render for CachedMountRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let trial = std::mem::take(&mut self.trial);
+        let child = self.child.clone();
+        let dock = self.dock.clone();
+        let recorded = self.recorded.clone();
+        div()
+            .size_full()
+            .child(
+                canvas(
+                    move |_, window, cx| {
+                        if trial {
+                            let mut measured = child.into_any_element();
+                            let result = window.transact(|window| {
+                                measured.prepaint_as_root(
+                                    Default::default(),
+                                    size(
+                                        AvailableSpace::Definite(px(360.0)),
+                                        AvailableSpace::Definite(px(210.0)),
+                                    ),
+                                    window,
+                                    cx,
+                                );
+                                recorded.set(dock.is_update_pending());
+                                Err::<(), _>(())
+                            });
+                            assert_eq!(result, Err(()));
+                        }
+                    },
+                    |_, (), _, _| {},
+                )
+                .size(px(4.0)),
+            )
+            .child(
+                self.child
+                    .clone()
+                    .cached(StyleRefinement::default().w(px(610.0)).h(px(360.0))),
+            )
+    }
+}
+
+#[open_gpui::test]
+fn a_cached_docking_frame_releases_the_rolled_back_update(cx: &mut TestAppContext) {
+    let dock = capacity_workspace(cx, 8);
+    let renders = Rc::new(Cell::new(0));
+    let recorded = Rc::new(Cell::new(false));
+    let child = cx.new(|_| CountedRoot {
+        dock: dock.clone(),
+        surface: FIRST,
+        renders: renders.clone(),
+    });
+    cx.defer_next_window_frame_requests();
+    let window = cx.open_window(size(px(800.0), px(600.0)), |_, _| CachedMountRoot {
+        dock: dock.clone(),
+        child,
+        trial: false,
+        recorded: recorded.clone(),
+    });
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    frames(&mut visual, &dock);
+    drain_scheduled(&mut visual, &dock, "cached baseline");
+    let handle = AnyWindowHandle::from(window);
+    cx.update(|app| {
+        window
+            .update(app, |root, window, cx| {
+                let mut host = dock.host.borrow_mut();
+                let action = {
+                    let mut frame = host.session.begin_host_frame().unwrap();
+                    frame
+                        .paint_plan(FIRST)
+                        .unwrap()
+                        .unwrap()
+                        .prepare_tab_focus(C)
+                        .unwrap()
+                        .into_deferred()
+                };
+                input::queue_action(&mut host, window.window_handle().window_id(), action, cx);
+                root.trial = true;
+                cx.notify();
+            })
+            .unwrap();
+        handle
+            .update(app, |_, window, cx| {
+                let baseline_renders = renders.get();
+                let revision = window.rendered_frame_revision();
+                window.draw(cx).clear(cx);
+                assert_eq!(window.rendered_frame_revision(), revision + 1);
+                assert!(recorded.get(), "the trial must suspend a real update");
+                assert_eq!(
+                    renders.get(),
+                    baseline_renders + 1,
+                    "only the trial renders"
+                );
+                assert_painted_pane(&dock, handle, FIRST, A);
+            })
+            .unwrap();
+        let dock = dock.clone();
+        app.defer(move |_| {
+            assert!(!dock.is_update_pending());
+            assert_eq!(dock.inspection().unwrap().queued_input_count, 1);
+        });
+    });
+    frames(&mut visual, &dock);
+    assert_eq!(dock.inspection().unwrap().queued_input_count, 0);
+    assert_painted_pane(&dock, handle, FIRST, C);
 }
 
 #[open_gpui::test]

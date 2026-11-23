@@ -640,6 +640,7 @@ pub(super) fn record(
         Packet {
             draws,
             pane_bars,
+            pane_placements: BTreeMap::new(),
             pane_receivers,
             state: PacketState::Ready,
             native_preview,

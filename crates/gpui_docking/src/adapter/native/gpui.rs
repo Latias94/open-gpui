@@ -164,7 +164,7 @@ struct CallbackState {
 #[derive(Clone)]
 pub struct NativeCallbacks(Rc<CallbackState>);
 
-pub(super) struct CallbackCustody(Weak<CallbackState>);
+pub(in crate::adapter) struct CallbackCustody(Weak<CallbackState>);
 
 impl NativeCallbacks {
     pub(super) fn new(
@@ -443,7 +443,10 @@ impl NativeCallbacks {
     pub fn binding(&self) -> NativeWindowBinding {
         self.0.binding.get()
     }
-    pub(super) fn has_callback_custody(&self, original: &CallbackCustody) -> bool {
+    pub(in crate::adapter) fn callback_custody(&self) -> CallbackCustody {
+        CallbackCustody(Rc::downgrade(&self.0))
+    }
+    pub(in crate::adapter) fn has_callback_custody(&self, original: &CallbackCustody) -> bool {
         Rc::downgrade(&self.0).ptr_eq(&original.0)
     }
     /// Returns the full GPUI window id reserved during root construction.

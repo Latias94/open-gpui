@@ -14,7 +14,7 @@ use dockspace::{
     runtime::{
         DockspaceHostFrame, DockspaceSession, HostFrameReport, HostWindowToken,
         NativeHostCapability, NativeHostErrorKind, NativeSurfaceBinding, NativeSurfaceCloseAction,
-        NativeSurfaceCloseRequest, NativeSurfacePlacement, NativeWindowBinding,
+        NativeSurfaceCloseRequest, NativeSurfacePlacement, NativeSurfaceRole, NativeWindowBinding,
     },
 };
 use open_gpui::{
@@ -764,6 +764,9 @@ impl DockSurface {
     /// Open through [`NativeCallbacks::open`] or install the supplied callbacks during
     /// root construction. The managed host routes that exact lifetime before staged
     /// surface painting; the factory must not register a second application root.
+    /// Mount the requested surface with [`Self::element`] inside the custom window.
+    /// Its displayed bounds and clip define the docking region, so application
+    /// chrome can occupy the rest of the client area.
     pub fn set_native_window_factory(
         &self,
         factory: impl Fn(
@@ -956,38 +959,33 @@ pub(super) fn set_placements(
     owner: WindowId,
     regions: &BTreeMap<SurfaceId, super::input::RegionGeometry>,
 ) -> Result<()> {
-    let Some(native) = native.filter(|native| native.roots.contains(&owner)) else {
+    let Some(native) = native else {
         return Ok(());
     };
-    let binding = native
-        .callbacks
-        .get(&owner)
-        .ok_or_else(|| anyhow!("native root has no callback route"))?
-        .binding();
+    let is_root = native.roots.contains(&owner);
+    let Some(callbacks) = native.callbacks.get(&owner) else {
+        anyhow::ensure!(!is_root, "native root has no callback route");
+        return Ok(());
+    };
+    let binding = callbacks.binding();
+    if !is_root {
+        if let Some(request) = callbacks
+            .create_request()
+            .filter(|request| request.role == NativeSurfaceRole::Child)
+            && let Some(current) = frame.native_surface_placement(request.binding)
+            && let Some(geometry) = regions.get(&current.surface())
+        {
+            let placement = surface_placement(current.surface(), geometry)?;
+            if current != placement {
+                frame.set_native_surface_placements(binding, &[placement])?;
+            }
+        }
+        return Ok(());
+    }
     let placements: Result<Vec<_>> = regions
         .iter()
         .filter(|(surface, _)| frame.view().surface(**surface).is_some())
-        .map(|(surface, geometry)| {
-            let layout = geometry.element.layout_bounds();
-            let displayed = geometry.element.displayed_bounds();
-            let scale = geometry.device_scale;
-            let physical = |pixels: Pixels| f64::from(f32::from(pixels)) * scale;
-            Ok(NativeSurfacePlacement::new(
-                *surface,
-                LogicalSize::new(
-                    f64::from(f32::from(layout.size.width)),
-                    f64::from(f32::from(layout.size.height)),
-                )?,
-                PhysicalPoint::new(physical(displayed.origin.x), physical(displayed.origin.y))?,
-                ScaleFactor::new(scale * f64::from(geometry.element.window_scale().width))?,
-                PhysicalRect::new(
-                    physical(geometry.clip.origin.x),
-                    physical(geometry.clip.origin.y),
-                    physical(geometry.clip.size.width),
-                    physical(geometry.clip.size.height),
-                )?,
-            ))
-        })
+        .map(|(&surface, geometry)| surface_placement(surface, geometry))
         .collect();
     let placements = placements?;
     // Core already detaches a window's final placement when its ordinary root
@@ -996,6 +994,31 @@ pub(super) fn set_placements(
         frame.set_native_surface_placements(binding, &placements)?;
     }
     Ok(())
+}
+
+fn surface_placement(
+    surface: SurfaceId,
+    geometry: &super::input::RegionGeometry,
+) -> Result<NativeSurfacePlacement> {
+    let layout = geometry.element.layout_bounds();
+    let displayed = geometry.element.displayed_bounds();
+    let scale = geometry.device_scale;
+    let physical = |pixels: Pixels| f64::from(f32::from(pixels)) * scale;
+    Ok(NativeSurfacePlacement::new(
+        surface,
+        LogicalSize::new(
+            f64::from(f32::from(layout.size.width)),
+            f64::from(f32::from(layout.size.height)),
+        )?,
+        PhysicalPoint::new(physical(displayed.origin.x), physical(displayed.origin.y))?,
+        ScaleFactor::new(scale * f64::from(geometry.element.window_scale().width))?,
+        PhysicalRect::new(
+            physical(geometry.clip.origin.x),
+            physical(geometry.clip.origin.y),
+            physical(geometry.clip.size.width),
+            physical(geometry.clip.size.height),
+        )?,
+    ))
 }
 
 fn should_stage_root_construction(window: &Window, cx: &App) -> bool {
@@ -1113,7 +1136,7 @@ pub(super) fn schedule(shared: &SharedHost, cx: &mut App) {
 pub(super) fn queue_content_terminal(
     host: &HostState,
     owner: WindowId,
-    binding: NativeWindowBinding,
+    custody: &super::native::CallbackCustody,
     event: dockspace::runtime::SurfacePointerEvent,
     metadata: dockspace::runtime::PointerEventMetadata,
 ) {
@@ -1129,13 +1152,13 @@ pub(super) fn queue_content_terminal(
     else {
         return;
     };
-    if native
+    let Some(callbacks) = native
         .callbacks
         .get(&owner)
-        .is_none_or(|callbacks| callbacks.binding() != binding)
-    {
+        .filter(|callbacks| callbacks.has_callback_custody(custody))
+    else {
         return;
-    }
+    };
     let event = match event {
         SurfacePointerEvent::ButtonReleased(_) => {
             NativePointerEvent::ButtonReleased(NativePointerButton::Primary)
@@ -1150,7 +1173,7 @@ pub(super) fn queue_content_terminal(
             NativePointerId::new(1),
             event,
             NativeLocalPointerLocation::Unknown,
-            NativePointerOwner::Native(binding),
+            NativePointerOwner::Native(callbacks.binding()),
             NativePointerOwner::Unknown,
         )
         .with_metadata(metadata),

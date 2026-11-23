@@ -790,13 +790,17 @@ impl DockspaceElement {
                 window.focus(&accessible_focus, cx);
             }
         });
-        let mut button = button
-            .with_subtree_presentation(if admitted {
-                SubtreePresentation::Visible
-            } else {
-                SubtreePresentation::Inert
-            })
-            .into_any_element();
+        let opener_hitbox = Rc::new(Cell::new(None));
+        let mut button = chrome::ControlElement {
+            inner: button,
+            hitbox: opener_hitbox.clone(),
+        }
+        .with_subtree_presentation(if admitted {
+            SubtreePresentation::Visible
+        } else {
+            SubtreePresentation::Inert
+        })
+        .into_any_element();
         button.prepaint_as_root(rect.origin, definite(rect), window, cx);
         draws.push(PreparedDraw::ClippedElement(
             button,
@@ -886,7 +890,9 @@ impl DockspaceElement {
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_mouse_down_out(move |event, window, cx| {
                 if open(&outside_interaction) == Some(popup_run)
-                    && !rect.contains(&event.window_event().position)
+                    && !opener_hitbox.get().is_some_and(|opener| {
+                        window.frontmost_hitbox_at(event.window_event().position) == Some(opener)
+                    })
                     && input::is_presented(
                         &shared.borrow(),
                         window.window_handle().window_id(),

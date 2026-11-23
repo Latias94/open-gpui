@@ -1828,6 +1828,13 @@ impl App {
         self.platform.active_window()
     }
 
+    /// Reads a window's focus claim revision, including from within its active update.
+    ///
+    /// Returns `None` once the window is no longer registered.
+    pub fn window_focus_claim_revision(&self, window: WindowId) -> Option<u64> {
+        self.this.upgrade()?.window_focus_claim_revision(window)
+    }
+
     /// Returns the display containing the window currently focused at the platform level.
     pub fn active_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         let (display_id, _) = self.active_window_placement()?;

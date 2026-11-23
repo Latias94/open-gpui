@@ -21,7 +21,8 @@ use std::{
 
 use super::{
     AcceptedFrameFence, AnyMouseListener, AnyPointerCancelListener, CursorStyleRequest,
-    ElementStateBox, FocusId, HitTest, ImagePaintDiagnostic, PrepaintPublicationId, TooltipId,
+    ElementStateBox, FocusId, HitTest, ImagePaintDiagnostic, PrepaintPublicationAttempt,
+    PrepaintPublicationId, TooltipId,
     a11y::AccessibilityDeferredParent,
     bring_into_view::{RevealTargetBinding, RevealTargetKey, ScrollContainerBinding},
     portal_anchor::{PortalAnchorBinding, PortalAnchorId},
@@ -50,6 +51,7 @@ pub(crate) struct FrameOutput<T> {
 pub(crate) struct PrepaintCommit {
     pub(super) phase: PrepaintCommitPhase,
     pub(super) publication: Option<PrepaintPublicationId>,
+    pub(super) attempt: Option<PrepaintPublicationAttempt>,
     pub(super) presentation: SubtreePresentation,
     pub(super) commit: PrepaintCommitCallback,
     pub(super) discard: Option<PrepaintCommitCallback>,

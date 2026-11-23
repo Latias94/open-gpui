@@ -768,6 +768,157 @@ impl Render for OptionalDockMount {
 }
 
 #[open_gpui::test]
+fn retiring_content_source_keeps_its_committed_pointer_terminal_in_order(cx: &mut TestAppContext) {
+    use open_gpui::{
+        PlatformFrameDeliveryMode, PlatformInput, PointerCancelEvent, PointerCancelReason,
+    };
+
+    use super::content_receivers::content_fixture_layout;
+
+    let sibling = SurfaceId::new(52);
+    let other = ItemId::new(63);
+    for (terminal, borrowed, close) in [
+        (None, false, false),
+        (None, false, true),
+        (Some(false), false, false),
+        (Some(true), false, true),
+        (Some(false), true, false),
+        (Some(true), true, true),
+    ] {
+        let surfaces = [
+            (SURFACE, DockspaceNode::tabs([FIRST])),
+            (sibling, DockspaceNode::tabs([SECOND, other])),
+        ]
+        .map(|(surface, node)| {
+            DockspaceSurfaceLayout::new(
+                surface,
+                DockspaceRootLayout::new(RootId::new(surface.get()), node),
+            )
+        });
+        let (dock, _) = content_fixture_layout(cx, false, surfaces, &[FIRST, SECOND, other]);
+        let [(source_window, mounted), (target_window, _)] = [SURFACE, sibling].map(|surface| {
+            let mounted = Rc::new(Cell::new(true));
+            cx.defer_next_window_frame_requests();
+            let window = cx.open_window(size(px(620.0), px(400.0)), |_, _| OptionalDockMount {
+                dock: dock.clone(),
+                surface,
+                mounted: mounted.clone(),
+            });
+            (open_gpui::AnyWindowHandle::from(window), mounted)
+        });
+        let mut target = VisualTestContext::from_window(target_window, cx);
+        frames(&mut target, &dock);
+        let mut source = active_visual(source_window, cx);
+        cx.set_platform_hovered_window(Some(source_window));
+        frames(&mut source, &dock);
+        let point = pane_center(&dock, &mut source, FIRST);
+        source.simulate_mouse_down(point, MouseButton::Left, Modifiers::none());
+        frames(&mut source, &dock);
+        assert!(!dock.has_active_gesture());
+        assert!(source.update(|window, _| window.captured_pointer().is_none()));
+        assert!(
+            dock.host.borrow().mounts[&source_window.window_id()]
+                .content_press
+                .is_some()
+        );
+        assert!(dock.host.borrow().inputs.is_empty());
+
+        cx.set_window_frame_delivery_mode(target_window, PlatformFrameDeliveryMode::Deferred);
+        if borrowed {
+            source.update(|window, cx| {
+                let event = match terminal {
+                    Some(true) => PlatformInput::PointerCanceled(PointerCancelEvent {
+                        reason: PointerCancelReason::CaptureRevoked,
+                    }),
+                    _ => PlatformInput::MouseUp(MouseUpEvent {
+                        position: point,
+                        button: MouseButton::Left,
+                        modifiers: Modifiers::none(),
+                        click_count: 1,
+                    }),
+                };
+                window.dispatch_event(event, cx);
+                assert!(
+                    dock.host
+                        .borrow()
+                        .inputs
+                        .iter()
+                        .any(|input| input.is_required_content_terminal()),
+                    "terminal={terminal:?}",
+                );
+                target_window
+                    .update(cx, |_, window, cx| {
+                        let _ = window.draw(cx);
+                    })
+                    .unwrap();
+            });
+        } else {
+            cx.simulate_window_resize(target_window, size(px(644.0), px(412.0)));
+        }
+        assert!(target.simulate_frame(RequestFrameOptions {
+            require_presentation: true,
+            force_render: true,
+            ..Default::default()
+        }));
+        let pending = cx.pending_window_frame_submission(target_window).unwrap();
+        assert!(dock.is_update_pending());
+        if borrowed {
+            assert!(
+                dock.host.borrow().mounts[&target_window.window_id()]
+                    .pending
+                    .as_ref()
+                    .unwrap()
+                    .inputs
+                    .iter()
+                    .any(|input| input.is_required_content_terminal())
+            );
+        } else if let Some(cancel) = terminal {
+            if cancel {
+                source.simulate_event(PointerCancelEvent {
+                    reason: PointerCancelReason::CaptureRevoked,
+                });
+            } else {
+                source.simulate_mouse_up(point, MouseButton::Left, Modifiers::none());
+            }
+            assert!(
+                dock.host
+                    .borrow()
+                    .inputs
+                    .iter()
+                    .any(|input| input.is_required_content_terminal())
+            );
+        }
+        source.update(|window, cx| {
+            if close {
+                window.remove_window(cx);
+            } else {
+                mounted.set(false);
+                let _ = window.draw(cx);
+                assert!(!dock.host.borrow().mounts[&source_window.window_id()].attached);
+            }
+        });
+        cx.update(|_| assert!(pending.complete(PlatformWindowPresentOutcome::Submitted)));
+        cx.set_window_frame_delivery_mode(target_window, PlatformFrameDeliveryMode::Synchronous);
+        let mut target = active_visual(target_window, cx);
+        cx.set_platform_hovered_window(Some(target_window));
+        frames(&mut target, &dock);
+        for item in [other, SECOND] {
+            let tab = target
+                .debug_bounds(&format!("dockspace:tab:{}", item.get()))
+                .unwrap()
+                .center();
+            target.simulate_click(tab, Modifiers::none());
+            frames(&mut target, &dock);
+            assert!(dock.with_view(|view| view.item(item).unwrap().is_active()));
+        }
+        if !close {
+            source.update(|window, cx| window.remove_window(cx));
+        }
+        target.update(|window, cx| window.remove_window(cx));
+    }
+}
+
+#[open_gpui::test]
 fn an_embedded_surface_can_mount_in_another_open_window_after_detaching(cx: &mut TestAppContext) {
     let (dock, _) = overflowing_surfaces(&[SURFACE], cx);
     let [(source, source_mounted), (destination, destination_mounted)] =

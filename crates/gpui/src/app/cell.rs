@@ -880,6 +880,13 @@ impl AppCell {
             .is_some_and(WindowInteractionAuthority::is_admitted)
     }
 
+    pub(super) fn window_focus_claim_revision(&self, window_id: WindowId) -> Option<u64> {
+        self.window_interaction_authorities
+            .borrow()
+            .get(&window_id)
+            .map(WindowInteractionAuthority::focus_claim_revision)
+    }
+
     fn next_native_pointer_capture_release_token(
         &self,
         window_id: WindowId,

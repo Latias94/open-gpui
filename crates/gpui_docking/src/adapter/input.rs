@@ -1,13 +1,15 @@
 //! Event-time submitted geometry and receiver facts for local surface input.
 
+use std::{cell::Cell, collections::BTreeMap, rc::Rc};
+
 use dockspace::{
     geometry::LogicalPoint,
-    model::{SurfaceId, WorkspaceVersion},
+    model::{DockspaceItemView, ItemId, NodeKey, RootId, SurfaceId, WorkspaceVersion},
     runtime::{
         DeferredSurfaceAction, DockspaceHostFrame, HostPointerInput, HostPointerRoute,
-        NativeWindowBinding, PointerDeviceKind, PointerEventMetadata, PresentedDockReceiver,
-        PresentedDockspaceSurface, SurfacePointerCapture, SurfacePointerEvent, SurfacePointerId,
-        SurfacePointerReceiverFacts,
+        PointerDeviceKind, PointerEventMetadata, PresentedDockReceiver, PresentedDockspaceSurface,
+        SurfacePointerButton, SurfacePointerCancelReason, SurfacePointerCapture,
+        SurfacePointerEvent, SurfacePointerId, SurfacePointerReceiverFacts,
     },
 };
 use open_gpui::{
@@ -15,7 +17,7 @@ use open_gpui::{
     WindowId,
 };
 
-use super::HostState;
+use super::{HostState, native::CallbackCustody};
 
 #[derive(Clone, Copy, PartialEq)]
 pub(super) struct RegionGeometry {
@@ -43,28 +45,42 @@ pub(super) struct InputFrame {
     pub(super) geometry: ElementGeometry,
     pub(super) hitboxes: Vec<HitboxId>,
     pub(super) content_hitboxes: Vec<HitboxId>,
-    pub(super) panes: Vec<(dockspace::model::ItemId, open_gpui::HitTestSnapshot)>,
+    pub(super) panes: BTreeMap<ItemId, PanePresentation>,
     pub(super) capture: PointerCaptureHandle,
     pub(super) receivers: Vec<(dockspace::runtime::DockspaceReceiverDescriptor, HitboxId)>,
     pub(super) scale: f64,
     pub(super) native_binding: Option<dockspace::runtime::NativeSurfaceBinding>,
 }
 
-pub(super) struct ContentPress {
-    surface: SurfaceId,
-    native: Option<NativeWindowBinding>,
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct PanePlacement {
+    root: RootId,
+    tabs: Option<NodeKey>,
 }
 
-pub(super) fn remember_content_press(host: &mut HostState, owner: WindowId, surface: SurfaceId) {
-    let native = host.native.as_ref().and_then(|native| {
-        native
-            .callbacks
-            .get(&owner)
-            .map(|callbacks| callbacks.binding())
-    });
-    if let Some(mount) = host.mounts.get_mut(&owner) {
-        mount.content_press = Some(ContentPress { surface, native });
+impl PanePlacement {
+    pub(super) fn of(pane: DockspaceItemView<'_>) -> Self {
+        Self {
+            root: pane.root(),
+            tabs: pane.tabs().map(|tabs| tabs.key()),
+        }
     }
+}
+
+#[derive(Clone)]
+pub(super) struct PanePresentation {
+    pub(super) placement: PanePlacement,
+    pub(super) geometry: open_gpui::HitTestSnapshot,
+}
+
+pub(super) struct ContentPress {
+    surface: SurfaceId,
+    source: ContentPressSource,
+}
+
+enum ContentPressSource {
+    Local(Rc<Cell<bool>>),
+    Native(CallbackCustody),
 }
 
 pub(super) fn finish_content_press(
@@ -88,25 +104,31 @@ pub(super) fn finish_content_press(
         .with_docking_enabled(host.config.input.docking_enabled(modifiers));
     // The press was observed for bookkeeping and pane activation. Its terminal
     // does not need a new hit test, even when the original region was resized.
-    if let Some(binding) = press.native {
-        super::host_native::queue_content_terminal(host, owner, binding, event, metadata);
-    } else {
-        host.inputs.push(QueuedInput::Pointer(QueuedPointer {
-            owner,
-            event,
-            manipulation: HostPointerRoute::Unknown,
-            hover: HostPointerRoute::Unknown,
-            surface: None,
-            delivery: None,
-            drag: None,
-            clear: false,
-            delivery_clear: false,
-            capture: SurfacePointerCapture::None,
-            metadata,
-        }));
+    match press.source {
+        ContentPressSource::Local(committed) => {
+            host.inputs.push(QueuedInput::content_terminal(
+                owner, event, committed, metadata,
+            ));
+        }
+        ContentPressSource::Native(custody) => {
+            super::host_native::queue_content_terminal(host, owner, &custody, event, metadata);
+        }
     }
     window.refresh();
     true
+}
+
+pub(super) fn retire_content_press(host: &mut HostState, owner: WindowId, press: ContentPress) {
+    if let ContentPressSource::Local(committed) = press.source
+        && committed.get()
+    {
+        host.inputs.push(QueuedInput::content_terminal(
+            owner,
+            SurfacePointerEvent::StreamCancelled(SurfacePointerCancelReason::BindingRetired),
+            committed,
+            PointerEventMetadata::new(PointerDeviceKind::Mouse, host.observed_at()),
+        ));
+    }
 }
 
 /// Semantic pointer consequences share the original input's rollback custody.
@@ -120,10 +142,47 @@ pub(super) enum QueuedInput {
 }
 
 impl QueuedInput {
+    fn content_terminal(
+        owner: WindowId,
+        event: SurfacePointerEvent,
+        committed: Rc<Cell<bool>>,
+        metadata: PointerEventMetadata,
+    ) -> Self {
+        Self::Pointer(QueuedPointer {
+            owner,
+            event,
+            manipulation: HostPointerRoute::Unknown,
+            hover: HostPointerRoute::Unknown,
+            surface: None,
+            delivery: None,
+            drag: None,
+            clear: false,
+            delivery_clear: false,
+            capture: SurfacePointerCapture::None,
+            metadata,
+            content_press: Some(committed),
+        })
+    }
+
     pub(super) fn owner(&self) -> WindowId {
         match self {
             Self::Pointer(pointer) => pointer.owner,
             Self::Action { owner, .. } => *owner,
+        }
+    }
+
+    pub(super) fn is_required_content_terminal(&self) -> bool {
+        matches!(self, Self::Pointer(pointer)
+            if !pointer.is_press()
+                && pointer.content_press.as_ref().is_some_and(|committed| committed.get()))
+    }
+
+    pub(super) fn mark_committed(&self) {
+        if let Self::Pointer(pointer) = self
+            && pointer.is_press()
+            && let Some(committed) = &pointer.content_press
+        {
+            committed.set(true);
         }
     }
 
@@ -151,7 +210,7 @@ pub(super) fn queue_action(
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(super) struct QueuedPointer {
     owner: WindowId,
     event: SurfacePointerEvent,
@@ -164,9 +223,14 @@ pub(super) struct QueuedPointer {
     delivery_clear: bool,
     capture: SurfacePointerCapture,
     metadata: PointerEventMetadata,
+    content_press: Option<Rc<Cell<bool>>>,
 }
 
 impl QueuedPointer {
+    fn is_press(&self) -> bool {
+        self.event == SurfacePointerEvent::ButtonPressed(SurfacePointerButton::Primary)
+    }
+
     pub(super) fn submit(&self, frame: &mut DockspaceHostFrame<'_>) -> anyhow::Result<()> {
         let mut facts = SurfacePointerReceiverFacts::unknown();
         if let Some(surface) = &self.surface {
@@ -217,8 +281,13 @@ pub(super) fn queue(
     let target = window.frontmost_hitbox_at(position);
     let chrome_clear = target.is_some_and(|id| hitboxes.contains(&id));
     let content_clear = target.is_some_and(|id| content_hitboxes.contains(&id));
+    let owner = window.window_handle().window_id();
+    let content_press = !captured
+        && !chrome_clear
+        && content_clear
+        && event == SurfacePointerEvent::ButtonPressed(SurfacePointerButton::Primary);
     if host.native.is_some() {
-        return super::host_native::queue_pointer(
+        let queued = super::host_native::queue_pointer(
             host,
             surface_id,
             serial,
@@ -230,8 +299,22 @@ pub(super) fn queue(
             modifiers,
             window,
         );
+        if queued
+            && content_press
+            && let Some(custody) = host
+                .native
+                .as_ref()
+                .and_then(|native| native.callbacks.get(&owner))
+                .map(|callbacks| callbacks.callback_custody())
+            && let Some(mount) = host.mounts.get_mut(&owner)
+        {
+            mount.content_press = Some(ContentPress {
+                surface: surface_id,
+                source: ContentPressSource::Native(custody),
+            });
+        }
+        return queued;
     }
-    let owner = window.window_handle().window_id();
     let chrome_clear = window.is_mouse_in_window() && chrome_clear;
     let clear = chrome_clear || (window.is_mouse_in_window() && content_clear);
     let terminal = matches!(
@@ -290,8 +373,15 @@ pub(super) fn queue(
             .geometry;
         logical_point(position, geometry)
     });
+    let content_press = content_press.then(|| Rc::new(Cell::new(false)));
     if let Some(mount) = host.mounts.get_mut(&owner) {
         mount.wake = None;
+        if let Some(committed) = &content_press {
+            mount.content_press = Some(ContentPress {
+                surface: surface_id,
+                source: ContentPressSource::Local(committed.clone()),
+            });
+        }
     }
     host.inputs.push(QueuedInput::Pointer(QueuedPointer {
         owner,
@@ -320,6 +410,7 @@ pub(super) fn queue(
         },
         metadata: PointerEventMetadata::new(PointerDeviceKind::Mouse, host.observed_at())
             .with_docking_enabled(host.config.input.docking_enabled(modifiers)),
+        content_press,
     }));
     if let Some(region) = host
         .mounts

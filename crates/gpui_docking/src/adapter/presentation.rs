@@ -9,8 +9,9 @@ use dockspace::{
     },
 };
 use open_gpui::{
-    AcceptedFrameFence, App, PlatformFrameDeliveryMode, Window, WindowFrameSubmissionOutcome,
-    WindowFrameSubmissionTicket, WindowId, WindowInitialPresentationStatus, WindowVisibility,
+    AcceptedFrameFence, App, PlatformFrameDeliveryMode, PrepaintPublicationAttempt, Window,
+    WindowFrameSubmissionOutcome, WindowFrameSubmissionTicket, WindowId,
+    WindowInitialPresentationStatus, WindowVisibility,
 };
 
 use super::{
@@ -18,7 +19,7 @@ use super::{
     element::Packet,
     host::PresentedPanes,
     host_native,
-    input::{InputFrame, QueuedInput},
+    input::{self, InputFrame, QueuedInput, RegionGeometry},
 };
 
 pub(super) struct PendingSubmission {
@@ -27,6 +28,7 @@ pub(super) struct PendingSubmission {
     pub(super) packets: BTreeMap<SurfaceId, Rc<Packet>>,
     pub(super) update: Option<DockspaceUpdate>,
     pub(super) inputs: Vec<QueuedInput>,
+    pub(super) publication_attempt: Option<PrepaintPublicationAttempt>,
     input_revoked: bool,
     outputs: Vec<PaintedSurfaceOutput>,
     accepted_generation: Option<u64>,
@@ -79,6 +81,7 @@ impl PendingSubmission {
             packets,
             update: Some(update),
             inputs,
+            publication_attempt: None,
             input_revoked: false,
             outputs: Vec::new(),
             accepted_generation: None,
@@ -91,7 +94,8 @@ impl PendingSubmission {
             return false;
         }
         let count = self.inputs.len();
-        self.inputs.retain(|input| input.owner() != owner);
+        self.inputs
+            .retain(|input| input.owner() != owner || input.is_required_content_terminal());
         let revoked = self.inputs.len() != count;
         // A remount can reuse the WindowId before the original receipt arrives.
         self.input_revoked |= revoked;
@@ -101,13 +105,26 @@ impl PendingSubmission {
 
 pub(super) fn abandon_unaccepted(host: &mut HostState, window: &mut Window, cx: &mut App) {
     let owner = window.window_handle().window_id();
-    if host
+    let ticket = host
         .mounts
         .get(&owner)
         .and_then(|mount| mount.pending.as_ref())
-        .is_some_and(|pending| pending.update.is_some())
+        .filter(|pending| {
+            pending.update.is_some()
+                && pending
+                    .publication_attempt
+                    .as_ref()
+                    .is_some_and(PrepaintPublicationAttempt::is_abandoned)
+        })
+        .map(|pending| pending.ticket.clone());
+    if let Some(ticket) = ticket
+        && window.withdraw_unaccepted_frame_submission(&ticket, cx)
     {
         withdraw_pending(host, window, cx);
+        if let Err(error) = settle_pending(host, Some(window), cx) {
+            host.fail(error.as_ref());
+        }
+        wake_waiting(host, cx);
     }
 }
 
@@ -157,11 +174,11 @@ pub(super) fn observe(
     serial: u64,
     publication: open_gpui::PrepaintPublicationId,
     window: &mut Window,
-) {
+) -> PrepaintPublicationAttempt {
     let weak = Rc::downgrade(shared);
     let handle = window.window_handle();
     let original = ticket.clone();
-    window.on_prepaint_publication_abandoned(publication, move |cx| {
+    let attempt = window.begin_prepaint_publication_attempt(publication, move |cx| {
         let Some(shared) = weak.upgrade() else {
             return;
         };
@@ -190,6 +207,7 @@ pub(super) fn observe(
         });
     });
     observe_presented(shared, ticket, serial, window);
+    attempt
 }
 
 pub(super) fn observe_presented(
@@ -256,10 +274,11 @@ pub(super) fn accept(
     shared: &SharedHost,
     serial: u64,
     mut input_frames: Vec<InputFrame>,
+    region_geometry: &BTreeMap<SurfaceId, RegionGeometry>,
     fence: AcceptedFrameFence,
     window: &mut Window,
     cx: &mut App,
-) {
+) -> bool {
     let owner = window.window_handle().window_id();
     let mut host = shared.borrow_mut();
     if host
@@ -267,21 +286,18 @@ pub(super) fn accept(
         .as_ref()
         .is_some_and(|native| native.is_failed())
     {
-        return;
+        return false;
     }
     let Some(mount) = host.mounts.get_mut(&owner) else {
-        return;
+        return false;
     };
-    if serial != mount.serial {
-        return;
-    }
-    let Some(mut pending) = mount
+    if !mount
         .pending
-        .take()
-        .filter(|pending| pending.serial == serial)
-    else {
-        if !mount.attached {
-            return;
+        .as_ref()
+        .is_some_and(|pending| pending.serial == serial)
+    {
+        if !mount.attached || serial != mount.serial {
+            return false;
         }
         for frame in &mut input_frames {
             frame.native_binding = mount
@@ -293,8 +309,9 @@ pub(super) fn accept(
         mount.input_frames = input_frames;
         drop(host);
         continuation::schedule(shared, window, cx);
-        return;
-    };
+        return true;
+    }
+    let mut pending = mount.pending.take().expect("matching pending submission");
     if pending.update.is_some()
         && (pending.input_revoked
             || pending
@@ -320,7 +337,7 @@ pub(super) fn accept(
         }
         wake_waiting(&mut host, cx);
         window.refresh();
-        return;
+        return false;
     }
     // A Deferred retry retains the same affine outputs and packet. Fresh GPUI
     // hitboxes must keep that packet's original native binding correlation.
@@ -352,6 +369,14 @@ pub(super) fn accept(
                     wake_capacity_blocked(&mut host, cx);
                 }
                 if let Some(mount) = host.mounts.get_mut(&owner) {
+                    mount.serial = serial;
+                    for (surface, geometry) in region_geometry {
+                        mount
+                            .regions
+                            .get_mut(surface)
+                            .expect("mounted region")
+                            .geometry = Some(*geometry);
+                    }
                     for (surface, packet) in &pending.packets {
                         if packet.preserves_repaint_request()
                             && let Some(region) = mount.regions.get_mut(surface)
@@ -362,9 +387,12 @@ pub(super) fn accept(
                         }
                     }
                 }
-                host.accept_mount(owner);
+                host.accept_mount(owner, &pending.packets);
                 host.apply_report(report);
                 host_native::provisional::accept_preview(&mut host, owner, &pending.packets);
+                for input in &pending.inputs {
+                    input.mark_committed();
+                }
                 pending.inputs.clear();
                 if let Some(mount) = host.mounts.get_mut(&owner) {
                     for (surface, packet) in &pending.packets {
@@ -382,8 +410,9 @@ pub(super) fn accept(
                 host.inputs = pending.inputs;
                 host.fail(&error);
                 window.retire_exact_frame_submission(&pending.ticket);
+                wake_waiting(&mut host, cx);
                 window.refresh();
-                return;
+                return false;
             }
         }
     }
@@ -400,6 +429,7 @@ pub(super) fn accept(
     host.mounts.get_mut(&owner).expect("live mount").pending = Some(pending);
     drop(host);
     continuation::schedule(shared, window, cx);
+    true
 }
 
 pub(super) fn accept_focus_stable(
@@ -449,14 +479,19 @@ pub(super) fn discard(shared: &SharedHost, window: &mut Window, cx: &mut App) {
     };
     let capture = mount.capture;
     mount.attached = false;
+    mount.waiting_for_update = false;
+    mount.capacity_blocked = false;
     mount.wake = None;
     mount.input_frames.clear();
-    mount.content_press = None;
+    let content_press = mount.content_press.take();
     for region in mount.regions.values_mut() {
-        *region = Default::default();
+        region.clear_presentation();
     }
     let surfaces = mount.regions.keys().copied().collect::<Vec<_>>();
     withdraw_pending(&mut host, window, cx);
+    if let Some(press) = content_press {
+        input::retire_content_press(&mut host, owner, press);
+    }
     retire_input_source(&mut host, owner, cx);
     release_surfaces(&mut host, owner, surfaces, cx);
     if let Err(error) = settle_pending(&mut host, Some(window), cx) {
@@ -469,13 +504,16 @@ pub(super) fn discard(shared: &SharedHost, window: &mut Window, cx: &mut App) {
 }
 
 fn has_live_source(host: &HostState, input: &QueuedInput) -> bool {
-    host.mounts
-        .get(&input.owner())
-        .is_some_and(|mount| mount.attached)
+    input.is_required_content_terminal()
+        || host
+            .mounts
+            .get(&input.owner())
+            .is_some_and(|mount| mount.attached)
 }
 
 fn retire_input_source(host: &mut HostState, owner: WindowId, cx: &mut App) {
-    host.inputs.retain(|input| input.owner() != owner);
+    host.inputs
+        .retain(|input| input.owner() != owner || input.is_required_content_terminal());
     // A surviving window can hold the unaccepted update that borrowed this
     // mount's input. Withdraw it if possible and retain the other inputs in order.
     let borrowed = host.mounts.values_mut().find_map(|mount| {
@@ -597,7 +635,7 @@ fn apply_presentation(host: &mut HostState, terminal: PendingPresentation) {
                             .find(|frame| frame.surface == surface && !frame.panes.is_empty())
                             .map(|frame| PresentedPanes {
                                 version: frame.version,
-                                geometry: frame.panes.iter().cloned().collect(),
+                                panes: frame.panes.clone(),
                             });
                     } else {
                         region.dirty = true;
@@ -673,7 +711,6 @@ pub(super) fn wake_capacity_blocked(host: &mut HostState, cx: &mut App) {
     // renderer acceptance or arbitrary native work would turn dirt into polling.
     for mount in host.mounts.values_mut() {
         if std::mem::take(&mut mount.capacity_blocked)
-            && mount.attached
             && mount.pending.is_none()
             && mount.regions.values().any(|region| region.dirty)
         {
@@ -714,6 +751,9 @@ pub(super) fn retire_mount(host: &mut HostState, owner: WindowId, cx: &mut App) 
     if let Some(mut mount) = host.mounts.remove(&owner) {
         if let Some(pending) = mount.pending.take() {
             retire_pending(host, owner, pending, SurfacePresentationResult::Dropped, cx);
+        }
+        if let Some(press) = mount.content_press.take() {
+            input::retire_content_press(host, owner, press);
         }
         retire_input_source(host, owner, cx);
         release_surfaces(host, owner, mount.regions.into_keys().collect(), cx);

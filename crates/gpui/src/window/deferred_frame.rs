@@ -89,7 +89,7 @@ impl DeferredCandidateBasis {
             atlas_epoch: window.sprite_atlas.atlas_texture_lease_epoch(),
             focus: window.focus,
             focus_generation: window.focus_generation,
-            focus_claim_revision: window.focus_claim_revision,
+            focus_claim_revision: window.focus_claim_revision(),
             pending_focus_claim: window.pending_focus_claim,
             pending_blur_claim_generation: window.pending_blur_claim_generation,
             provisional_focus_claim: window.provisional_focus_claim,
@@ -120,7 +120,7 @@ impl DeferredCandidateBasis {
             && self.atlas_epoch == window.sprite_atlas.atlas_texture_lease_epoch()
             && self.focus == window.focus
             && self.focus_generation == window.focus_generation
-            && self.focus_claim_revision == window.focus_claim_revision
+            && self.focus_claim_revision == window.focus_claim_revision()
             && self.pending_focus_claim == window.pending_focus_claim
             && self.pending_blur_claim_generation == window.pending_blur_claim_generation
             && self.provisional_focus_claim == window.provisional_focus_claim

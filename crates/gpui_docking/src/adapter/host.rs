@@ -12,8 +12,9 @@ use dockspace::{
     geometry::{LogicalPoint, LogicalRect, LogicalSize, PaneSizing},
     model::{DockPlacement, DockspaceView, ItemId, SurfaceId, WorkspaceVersion},
     runtime::{
-        DockspaceHostFrame, DockspaceSession, HostFrameReport, HostInputOutcome,
-        NativeEffectRequest, SurfacePresentationArtifact, SurfaceUnavailableReason,
+        DockspaceHostFrame, DockspacePaneFocusRequest, DockspaceSession, HostFrameReport,
+        HostInputOutcome, NativeEffectRequest, SurfacePresentationArtifact,
+        SurfaceUnavailableReason,
     },
 };
 use open_gpui::{
@@ -272,6 +273,7 @@ impl DockSurface {
                 config,
                 mounts: BTreeMap::new(),
                 owners: BTreeMap::new(),
+                application_pane_focus: None,
                 inputs: Vec::new(),
                 native_effects: VecDeque::new(),
                 presentation_pending: false,
@@ -371,6 +373,7 @@ impl DockSurface {
                 || host.session.external_key_for_item(pane.id).is_some(),
             "pane identity has no session-owned external View key"
         );
+        let previous_focus = host.mounted_pane_focus_request();
         let HostState {
             session,
             mounts,
@@ -391,6 +394,7 @@ impl DockSurface {
         );
         let report = frame.commit()?;
         host.panels.insert(pane.id, pane);
+        host.record_application_pane_focus(previous_focus, cx);
         host.apply_report(report);
         drop(host);
         cx.refresh_windows();
@@ -444,6 +448,7 @@ impl DockSurface {
             DockPaneError::UnknownPane(item)
         );
         ensure!(!host.has_pane_lifecycle_work(), DockPaneError::Busy);
+        let previous_focus = host.mounted_pane_focus_request();
         let HostState {
             session,
             mounts,
@@ -482,6 +487,7 @@ impl DockSurface {
             pane.title = title;
             pane.sizing = sizing;
         }
+        host.record_application_pane_focus(previous_focus, cx);
         host.apply_report(report);
         if let Some(surface) = surface {
             if let Some(owner) = host.owners.get(&surface).copied() {
@@ -597,6 +603,7 @@ impl DockSurface {
     ) -> Result<T> {
         let mut host = self.host.borrow_mut();
         host.ensure_application_admission()?;
+        let previous_focus = host.mounted_pane_focus_request();
         let HostState {
             session,
             mounts,
@@ -614,6 +621,7 @@ impl DockSurface {
             return Err(DockPaneError::UnknownPane(item).into());
         }
         let report = frame.commit()?;
+        host.record_application_pane_focus(previous_focus, cx);
         let value =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| inspect(&report, value)));
         host.apply_report(report);
@@ -695,6 +703,7 @@ pub(super) struct HostState {
     pub(super) config: GpuiDockspaceConfig,
     pub(super) mounts: BTreeMap<WindowId, WindowMount>,
     pub(super) owners: BTreeMap<SurfaceId, WindowId>,
+    application_pane_focus: Option<(DockspacePaneFocusRequest, PaneFocusClaim)>,
     pub(super) inputs: Vec<input::QueuedInput>,
     pub(super) native_effects: VecDeque<NativeEffectRequest>,
     pub(super) presentation_pending: bool,
@@ -714,6 +723,12 @@ pub(super) struct HostState {
     pub(super) native: Option<host_native::ManagedHost>,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct PaneFocusClaim {
+    pub(super) owner: WindowId,
+    pub(super) revision: u64,
+}
+
 pub(super) struct WindowMount {
     pub(super) window: AnyWindowHandle,
     pub(super) _lifecycle_observers: Option<Subscription>,
@@ -721,6 +736,7 @@ pub(super) struct WindowMount {
     pub(super) regions: BTreeMap<SurfaceId, RegionState>,
     pub(super) pending: Option<presentation::PendingSubmission>,
     pub(super) serial: u64,
+    pub(super) last_attempt_serial: u64,
     pub(super) publication: open_gpui::PrepaintPublicationId,
     pub(super) capture: open_gpui::PointerCaptureHandle,
     pub(super) focus: FocusHandle,
@@ -740,11 +756,12 @@ pub(super) struct RegionState {
     pub(super) presented: Option<(u64, SurfacePresentationArtifact)>,
     pub(super) presented_panes: Option<PresentedPanes>,
     pub(super) dirty: bool,
+    previously_mounted: bool,
 }
 
 pub(super) struct PresentedPanes {
     pub(super) version: WorkspaceVersion,
-    pub(super) geometry: BTreeMap<ItemId, open_gpui::HitTestSnapshot>,
+    pub(super) panes: BTreeMap<ItemId, input::PanePresentation>,
 }
 
 impl Default for RegionState {
@@ -756,7 +773,17 @@ impl Default for RegionState {
             presented: None,
             presented_panes: None,
             dirty: true,
+            previously_mounted: false,
         }
+    }
+}
+
+impl RegionState {
+    pub(super) fn clear_presentation(&mut self) {
+        *self = Self {
+            previously_mounted: self.previously_mounted,
+            ..Self::default()
+        };
     }
 }
 
@@ -783,6 +810,36 @@ fn missing_pane_view(
 }
 
 impl HostState {
+    fn mounted_pane_focus_request(&self) -> Option<DockspacePaneFocusRequest> {
+        self.owners
+            .keys()
+            .find_map(|surface| self.session.pane_focus_request(*surface))
+    }
+
+    fn record_application_pane_focus(
+        &mut self,
+        previous: Option<DockspacePaneFocusRequest>,
+        cx: &App,
+    ) {
+        let current = self.mounted_pane_focus_request();
+        if current != previous {
+            self.application_pane_focus = current.and_then(|request| {
+                let owner = self.owners[&request.surface()];
+                let revision = cx.window_focus_claim_revision(owner)?;
+                Some((request, PaneFocusClaim { owner, revision }))
+            });
+        }
+    }
+
+    pub(super) fn application_pane_focus_claim(
+        &self,
+        request: DockspacePaneFocusRequest,
+    ) -> Option<PaneFocusClaim> {
+        self.application_pane_focus
+            .filter(|(current, _)| *current == request)
+            .map(|(_, claim)| claim)
+    }
+
     pub(super) fn ensure_application_admission(&self) -> Result<()> {
         if let Some(failure) = self
             .failure
@@ -840,27 +897,30 @@ impl HostState {
             mount.pending.is_none()
                 && mount.wake.is_none()
                 && mount.regions.iter().all(|(surface, region)| {
-                    if region.packet.is_none() {
+                    let Some(packet) = &region.packet else {
                         return mount
                             .input_frames
                             .iter()
                             .all(|frame| frame.surface != *surface);
+                    };
+                    if packet.is_vacant() {
+                        return mount.attached
+                            && !region.dirty
+                            && mount
+                                .input_frames
+                                .iter()
+                                .all(|frame| frame.surface != *surface);
                     }
                     // Every topology commit dirties all regions. Only accepting a
                     // replacement packet can clear that dirt with no pending ticket.
                     // Require its corresponding input tree and real presentation too.
-                    // A pruned surface instead encodes an empty physical slot.
-                    // Without an artifact to check, an earlier failed candidate
-                    // makes that proof unavailable until the mount retires.
                     mount.attached
                         && !region.dirty
                         && mount
                             .input_frames
                             .iter()
                             .any(|frame| frame.surface == *surface && frame.serial == mount.serial)
-                        && (input::is_presented(self, *owner, *surface, mount.serial)
-                            || (self.failure.is_none()
-                                && self.session.view().surface(*surface).is_none()))
+                        && input::is_presented(self, *owner, *surface, mount.serial)
                 })
         })
     }
@@ -883,9 +943,11 @@ impl HostState {
             unique.len() == regions.len(),
             "duplicate logical surface mount"
         );
-        if let Some(mount) = self.mounts.get(&owner)
-            && (mount.attached || mount.pending.is_some() || self.native.is_some())
-        {
+        let current_mount = self.mounts.get(&owner);
+        let locked = current_mount.is_some_and(|mount| {
+            mount.attached || mount.pending.is_some() || self.native.is_some()
+        });
+        if let Some(mount) = current_mount.filter(|_| locked) {
             ensure!(
                 mount.element.as_ref() == id,
                 "combine this window's surfaces in one docking element"
@@ -894,9 +956,6 @@ impl HostState {
                 mount.regions.keys().copied().collect::<BTreeSet<_>>() == unique,
                 "a live docking mount cannot silently replace its logical surfaces"
             );
-            // Moving the last ordinary root prunes its logical surface. The
-            // physical region remains a vacant slot until its mount retires.
-            return Ok(false);
         }
         for region in regions {
             let native_staging = self
@@ -908,29 +967,31 @@ impl HostState {
                         .native_surface_bindings_for_window(callbacks.binding())
                         .any(|binding| binding.surface() == region.surface)
                 });
-            ensure!(
-                self.session.view().surface(region.surface).is_some() || native_staging,
-                "unknown logical surface"
-            );
+            if self.session.view().surface(region.surface).is_none() && !native_staging {
+                ensure!(
+                    current_mount
+                        .and_then(|mount| mount.regions.get(&region.surface))
+                        .is_some_and(|previous| previous.previously_mounted),
+                    "unknown logical surface"
+                );
+                continue;
+            }
             ensure!(
                 self.owners
                     .get(&region.surface)
-                    .is_none_or(|current| *current == owner)
-                    && !self.mounts.iter().any(|(current, mount)| {
-                        *current != owner
-                            && mount.pending.is_some()
-                            && mount.regions.contains_key(&region.surface)
-                    }),
+                    .is_none_or(|current| *current == owner),
                 "a logical surface is already mounted in another window"
             );
         }
         if let Some(mount) = self.mounts.get_mut(&owner) {
             // An accepted detach has released these regions. The new element can
             // reclaim any subset without depending on another window's paint order.
-            mount.element = id.cloned();
-            mount.regions.retain(|surface, _| unique.contains(surface));
-            for surface in unique {
-                mount.regions.entry(surface).or_default();
+            if !locked {
+                mount.element = id.cloned();
+                mount.regions.retain(|surface, _| unique.contains(surface));
+                for surface in unique {
+                    mount.regions.entry(surface).or_default();
+                }
             }
             return Ok(false);
         }
@@ -947,6 +1008,7 @@ impl HostState {
                 regions,
                 pending: None,
                 serial: 0,
+                last_attempt_serial: 0,
                 publication: open_gpui::PrepaintPublicationId::new(),
                 capture: window.new_pointer_capture_handle(),
                 focus: cx.focus_handle(),
@@ -961,16 +1023,31 @@ impl HostState {
         Ok(true)
     }
 
-    pub(super) fn accept_mount(&mut self, owner: WindowId) {
+    pub(super) fn accept_mount(
+        &mut self,
+        owner: WindowId,
+        packets: &BTreeMap<SurfaceId, Rc<element::Packet>>,
+    ) {
         let mount = self
             .mounts
             .get_mut(&owner)
             .expect("accepted mount still exists");
-        if mount.attached {
-            return;
-        }
         mount.attached = true;
-        for surface in mount.regions.keys() {
+        for (surface, packet) in packets {
+            let region = mount
+                .regions
+                .get_mut(surface)
+                .expect("accepted region still exists");
+            region.previously_mounted = true;
+            if packet.is_vacant() {
+                if self.owners.get(surface) == Some(&owner) {
+                    self.owners.remove(surface);
+                }
+                region.presented = None;
+                region.presented_panes = None;
+                region.pointer = None;
+                continue;
+            }
             let previous = self.owners.insert(*surface, owner);
             debug_assert!(previous.is_none_or(|previous| previous == owner));
             self.unavailable_surfaces.remove(surface);

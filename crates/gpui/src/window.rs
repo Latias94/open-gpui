@@ -535,6 +535,38 @@ impl Default for PrepaintPublicationId {
     }
 }
 
+/// One attempt to record a prepaint publication during the current candidate frame.
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct PrepaintPublicationAttempt {
+    publication: PrepaintPublicationId,
+    state: Rc<Cell<PrepaintPublicationAttemptState>>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PrepaintPublicationAttemptState {
+    Pending,
+    Published,
+    Abandoned,
+}
+
+impl PrepaintPublicationAttempt {
+    /// Returns whether this attempt has lost its opportunity to publish.
+    pub fn is_abandoned(&self) -> bool {
+        self.state.get() == PrepaintPublicationAttemptState::Abandoned
+    }
+
+    fn abandon(&self) {
+        if self.state.get() == PrepaintPublicationAttemptState::Pending {
+            self.state.set(PrepaintPublicationAttemptState::Abandoned);
+        }
+    }
+
+    fn same_registration(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.state, &other.state)
+    }
+}
+
 /// Proof that one candidate frame has become the rendered frame for a specific window.
 ///
 /// GPUI creates this value only while committing or discarding a
@@ -1494,6 +1526,7 @@ pub(crate) struct WindowInteractionAuthority {
 struct WindowInteractionAuthorityState {
     admitted: Arc<AtomicBool>,
     defer_pointer_cleanup_to_native_capture: Cell<bool>,
+    focus_claim_revision: Cell<u64>,
     platform: RefCell<Option<PlatformWindowInteractionQuiescence>>,
 }
 
@@ -1503,6 +1536,7 @@ impl WindowInteractionAuthority {
             state: Rc::new(WindowInteractionAuthorityState {
                 admitted: Arc::new(AtomicBool::new(true)),
                 defer_pointer_cleanup_to_native_capture: Cell::new(false),
+                focus_claim_revision: Cell::new(0),
                 platform: RefCell::new(None),
             }),
         }
@@ -1525,6 +1559,10 @@ impl WindowInteractionAuthority {
 
     pub(crate) fn is_admitted(&self) -> bool {
         self.state.admitted.load(SeqCst)
+    }
+
+    pub(crate) fn focus_claim_revision(&self) -> u64 {
+        self.state.focus_claim_revision.get()
     }
 
     pub(crate) fn revoke(&self) -> bool {
@@ -1761,7 +1799,6 @@ pub struct Window {
     pending_focus_completion: Option<PendingFocusCompletion>,
     focus_claim_resolutions: Vec<FocusClaimResolution>,
     next_focus_claim_id: u64,
-    focus_claim_revision: u64,
     pub(crate) focus_generation: u64,
     /// The actual leaf most recently counted by `focus_generation`, excluding provisional intent.
     focus_generation_leaf: Option<FocusId>,
@@ -1841,7 +1878,7 @@ struct CandidateFrameTransaction {
     replayed_retained_visuals: FxHashSet<retained_visual::TicketIdentity>,
     focus_completion_ids: FxHashSet<u64>,
     prepaint_commit_plan: Option<Rc<CandidatePrepaintCommitPlan>>,
-    abandoned_publications: Vec<(PrepaintPublicationId, Box<dyn FnOnce(&mut App)>)>,
+    abandoned_publications: Vec<(PrepaintPublicationAttempt, Box<dyn FnOnce(&mut App)>)>,
 }
 
 impl CandidateFrameTransaction {
@@ -1917,13 +1954,26 @@ impl CandidateFrameTransaction {
     }
 
     fn schedule_abandoned_publications(&mut self, cx: &mut App) {
-        for (publication, callback) in self.abandoned_publications.drain(..) {
-            let committed = self.prepaint_commit_plan.as_ref().is_some_and(|plan| {
-                plan.current_commits.iter().any(|output| {
-                    output.value.publication == Some(publication) && output.is_valid()
-                })
-            });
-            if !committed {
+        let accepted = self.is_accepted();
+        for (attempt, callback) in self.abandoned_publications.drain(..) {
+            let committed = accepted
+                && !attempt.is_abandoned()
+                && self.prepaint_commit_plan.as_ref().is_some_and(|plan| {
+                    plan.current_commits.iter().any(|output| {
+                        output
+                            .value
+                            .attempt
+                            .as_ref()
+                            .is_some_and(|recorded| attempt.same_registration(recorded))
+                            && output.is_valid()
+                    })
+                });
+            if committed {
+                attempt
+                    .state
+                    .set(PrepaintPublicationAttemptState::Published);
+            } else {
+                attempt.abandon();
                 cx.defer(callback);
             }
         }
@@ -2989,7 +3039,6 @@ impl Window {
             pending_focus_completion: None,
             focus_claim_resolutions: Vec::new(),
             next_focus_claim_id: 0,
-            focus_claim_revision: 0,
             focus_generation: 0,
             focus_generation_leaf: None,
             prepaint_commit_phase: Rc::new(Cell::new(None)),
@@ -4900,8 +4949,15 @@ impl Window {
     /// Reasserting the currently focused handle and explicitly clearing an already-empty focus
     /// both advance this revision. Deferred focus arbitration can therefore observe newer intent,
     /// not only a different final focus value.
-    pub const fn focus_claim_revision(&self) -> u64 {
-        self.focus_claim_revision
+    pub fn focus_claim_revision(&self) -> u64 {
+        self.interaction_authority.focus_claim_revision()
+    }
+
+    fn set_focus_claim_revision(&self, revision: u64) {
+        self.interaction_authority
+            .state
+            .focus_claim_revision
+            .set(revision);
     }
 
     fn set_focus_leaf(&mut self, focus: Option<FocusId>) {
@@ -5101,7 +5157,7 @@ impl Window {
 
         self.supersede_pending_focus_completion();
         self.restore_provisional_focus_claim();
-        self.focus_claim_revision = self.focus_claim_revision.wrapping_add(1);
+        self.set_focus_claim_revision(self.focus_claim_revision().wrapping_add(1));
         self.pending_focus_claim = None;
         self.pending_focus_reveal_fence = None;
         self.pending_blur_claim_generation = None;
@@ -5215,7 +5271,7 @@ impl Window {
     fn quiesce_focus_authority(&mut self, cx: &mut App) {
         self.focus_enabled = false;
         self.supersede_pending_focus_completion();
-        self.focus_claim_revision = self.focus_claim_revision.wrapping_add(1);
+        self.set_focus_claim_revision(self.focus_claim_revision().wrapping_add(1));
         self.pending_focus_claim = None;
         self.pending_focus_reveal_fence = None;
         self.pending_blur_claim_generation = None;
@@ -5604,7 +5660,7 @@ impl Window {
 
         self.supersede_pending_focus_completion();
         self.restore_provisional_focus_claim();
-        self.focus_claim_revision = self.focus_claim_revision.wrapping_add(1);
+        self.set_focus_claim_revision(self.focus_claim_revision().wrapping_add(1));
         self.pending_focus_claim = None;
         self.pending_focus_reveal_fence = None;
         self.pending_blur_claim_generation = None;
@@ -7956,7 +8012,7 @@ impl Window {
             provisional_focus_claim: self.provisional_focus_claim,
             pending_focus_completion: self.pending_focus_completion.clone(),
             focus_claim_resolutions_len: self.focus_claim_resolutions.len(),
-            focus_claim_revision: self.focus_claim_revision,
+            focus_claim_revision: self.focus_claim_revision(),
             requested_autoscroll: self.requested_autoscroll.clone(),
             tooltip_bounds: self.tooltip_bounds.clone(),
             focus_followup_requested: self.focus_followup_requested,
@@ -7979,7 +8035,7 @@ impl Window {
         self.pending_focus_completion = checkpoint.pending_focus_completion;
         self.focus_claim_resolutions
             .truncate(checkpoint.focus_claim_resolutions_len);
-        self.focus_claim_revision = checkpoint.focus_claim_revision;
+        self.set_focus_claim_revision(checkpoint.focus_claim_revision);
         self.requested_autoscroll = checkpoint.requested_autoscroll;
         self.tooltip_bounds = checkpoint.tooltip_bounds;
         self.focus_followup_requested = checkpoint.focus_followup_requested;
@@ -10707,6 +10763,10 @@ impl Window {
     pub fn transact<T, U>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, U>) -> Result<T, U> {
         self.invalidator.debug_assert_prepaint();
         let index = self.prepaint_index();
+        let publication_attempts = self
+            .candidate_frame_transaction
+            .as_ref()
+            .map_or(0, |transaction| transaction.abandoned_publications.len());
         let candidate_focus = self.next_frame.focus;
         let committed_focus = self.focus;
         let pending_focus_claim = self.pending_focus_claim;
@@ -10715,7 +10775,7 @@ impl Window {
         let provisional_focus_claim = self.provisional_focus_claim;
         let pending_focus_completion = self.pending_focus_completion.clone();
         let focus_claim_resolutions_len = self.focus_claim_resolutions.len();
-        let focus_claim_revision = self.focus_claim_revision;
+        let focus_claim_revision = self.focus_claim_revision();
         let requested_autoscroll = self.requested_autoscroll.clone();
         #[cfg(any(test, feature = "test-support"))]
         let debug_bounds = self.next_frame.debug_bounds.clone();
@@ -10743,7 +10803,7 @@ impl Window {
                 self.pending_focus_completion = pending_focus_completion;
                 self.focus_claim_resolutions
                     .truncate(focus_claim_resolutions_len);
-                self.focus_claim_revision = focus_claim_revision;
+                self.set_focus_claim_revision(focus_claim_revision);
                 self.requested_autoscroll = requested_autoscroll;
             }
             self.next_frame.hitboxes.truncate(index.hitboxes_index);
@@ -10757,6 +10817,16 @@ impl Window {
             self.next_frame
                 .retained_resources
                 .truncate(index.retained_resources_index);
+            if let Some(transaction) = self.candidate_frame_transaction.as_ref() {
+                for (attempt, _) in &transaction.abandoned_publications[publication_attempts..] {
+                    attempt.abandon();
+                }
+            }
+            for output in &self.next_frame.prepaint_commits[index.prepaint_commits_index..] {
+                if let Some(attempt) = &output.value.attempt {
+                    attempt.abandon();
+                }
+            }
             self.next_frame
                 .prepaint_commits
                 .truncate(index.prepaint_commits_index);
@@ -12772,6 +12842,7 @@ impl Window {
             PrepaintCommit {
                 phase,
                 publication: None,
+                attempt: None,
                 presentation: self.subtree_presentation(),
                 commit: PrepaintCommitCallback::Revision(Rc::new(commit)),
                 discard: None,
@@ -12803,11 +12874,33 @@ impl Window {
         commit: impl Fn(AcceptedFrameFence, &mut Window, &mut App) + 'static,
         discard: impl Fn(AcceptedFrameFence, &mut Window, &mut App) + 'static,
     ) {
+        self.record_prepaint_publication(publication, None, commit, discard);
+    }
+
+    /// Records the publication for an attempt from [`Self::begin_prepaint_publication_attempt`].
+    #[doc(hidden)]
+    pub fn record_prepaint_window_transaction_for_attempt(
+        &mut self,
+        attempt: PrepaintPublicationAttempt,
+        commit: impl Fn(AcceptedFrameFence, &mut Window, &mut App) + 'static,
+        discard: impl Fn(AcceptedFrameFence, &mut Window, &mut App) + 'static,
+    ) {
+        self.record_prepaint_publication(attempt.publication, Some(attempt), commit, discard);
+    }
+
+    fn record_prepaint_publication(
+        &mut self,
+        publication: PrepaintPublicationId,
+        attempt: Option<PrepaintPublicationAttempt>,
+        commit: impl Fn(AcceptedFrameFence, &mut Window, &mut App) + 'static,
+        discard: impl Fn(AcceptedFrameFence, &mut Window, &mut App) + 'static,
+    ) {
         self.invalidator.debug_assert_prepaint();
         self.next_frame.prepaint_commits.push(FrameOutput::new(
             PrepaintCommit {
                 phase: PrepaintCommitPhase::Normal,
                 publication: Some(publication),
+                attempt,
                 presentation: self.subtree_presentation(),
                 commit: PrepaintCommitCallback::AcceptedFrame(Rc::new(commit)),
                 discard: Some(PrepaintCommitCallback::AcceptedFrame(Rc::new(discard))),
@@ -12816,24 +12909,29 @@ impl Window {
         ));
     }
 
-    /// Schedules cleanup if this candidate does not publish the given prepaint transaction.
+    /// Starts one registration and schedules cleanup if its own record does not publish.
     ///
-    /// The callback runs outside the window borrow after frame rejection, or
-    /// after an accepted frame in which the publication was invalid or rolled
-    /// back. This is for work leased during this attempt. Use the transaction's
-    /// discard callback to retire a previously accepted publication.
+    /// Finish the registration with [`Self::record_prepaint_window_transaction_for_attempt`].
+    /// The callback runs outside the window borrow after frame rejection or after the candidate
+    /// accepts without this valid record. A failed [`Self::transact`] marks its attempts abandoned
+    /// immediately, allowing new work before the callback runs.
     #[doc(hidden)]
-    pub fn on_prepaint_publication_abandoned(
+    pub fn begin_prepaint_publication_attempt(
         &mut self,
         publication: PrepaintPublicationId,
         callback: impl FnOnce(&mut App) + 'static,
-    ) {
+    ) -> PrepaintPublicationAttempt {
         self.invalidator.debug_assert_prepaint();
+        let attempt = PrepaintPublicationAttempt {
+            publication,
+            state: Rc::new(Cell::new(PrepaintPublicationAttemptState::Pending)),
+        };
         if let Some(transaction) = self.candidate_frame_transaction.as_mut() {
             transaction
                 .abandoned_publications
-                .push((publication, Box::new(callback)));
+                .push((attempt.clone(), Box::new(callback)));
         }
+        attempt
     }
 
     pub(crate) fn record_autoscroll_commit(
@@ -12846,6 +12944,7 @@ impl Window {
             PrepaintCommit {
                 phase: PrepaintCommitPhase::Normal,
                 publication: None,
+                attempt: None,
                 presentation: self.subtree_presentation(),
                 commit: PrepaintCommitCallback::Revision(Rc::new(commit)),
                 discard: None,
@@ -13365,7 +13464,7 @@ impl Window {
         let mut configuration = TextInputConfiguration::default();
         let mut registered = false;
         let generation = self.rendered_frame.generation;
-        let focus_revision = self.focus_claim_revision;
+        let focus_revision = self.focus_claim_revision();
         let mut query_current = true;
         if let Some(mut input_handler) = self.platform_window.take_input_handler() {
             let focus_id = input_handler.focus_id();
@@ -13380,14 +13479,14 @@ impl Window {
                         let accepts = input_handler.accepts_text_input(self, cx);
                         if self.rendered_frame.generation == generation
                             && self.focus == Some(focus_id)
-                            && self.focus_claim_revision == focus_revision
+                            && self.focus_claim_revision() == focus_revision
                             && self.user_interaction_is_admitted()
                         {
                             configuration = input_handler.text_input_configuration(self, cx);
                         }
                         if self.user_interaction_is_admitted()
                             && self.focus == Some(focus_id)
-                            && self.focus_claim_revision == focus_revision
+                            && self.focus_claim_revision() == focus_revision
                             && self.rendered_frame.generation == generation
                             && self.rendered_frame.focus_path().last().copied() == Some(focus_id)
                         {
