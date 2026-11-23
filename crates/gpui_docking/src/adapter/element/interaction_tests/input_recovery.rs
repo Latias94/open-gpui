@@ -767,6 +767,171 @@ impl Render for OptionalDockMount {
     }
 }
 
+struct InsetDockMount(DockSurface);
+
+impl Render for InsetDockMount {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child(
+            div()
+                .w(px(540.0))
+                .h(px(300.0))
+                .child(self.0.element(SURFACE)),
+        )
+    }
+}
+
+#[open_gpui::test]
+fn releasing_outside_the_dock_before_the_press_commits_keeps_tabs_interactive(
+    cx: &mut TestAppContext,
+) {
+    use open_gpui::{PlatformFrameDeliveryMode, PlatformWindowPresentOutcome};
+
+    let dock = preview_fixture(cx);
+    cx.defer_next_window_frame_requests();
+    let window = cx.open_window(size(px(620.0), px(400.0)), |_, _| {
+        InsetDockMount(dock.clone())
+    });
+    let mut visual = active_visual(window.into(), cx);
+    cx.set_platform_hovered_window(Some(window.into()));
+    frames(&mut visual, &dock);
+    let second = visual
+        .debug_bounds(&format!("dockspace:tab:{}", SECOND.get()))
+        .unwrap()
+        .center();
+    cx.set_window_frame_delivery_mode(window.into(), PlatformFrameDeliveryMode::Deferred);
+    visual.simulate_mouse_down(second, MouseButton::Left, Modifiers::none());
+    assert!(visual.update(|window, _| window.captured_pointer().is_some()));
+    assert!(!dock.has_active_gesture());
+    visual.simulate_mouse_up(
+        point(px(575.0), px(350.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    assert!(visual.update(|window, _| window.captured_pointer().is_none()));
+    if let Some(submission) = cx.pending_window_frame_submission(window.into()) {
+        cx.update(|_| submission.complete(PlatformWindowPresentOutcome::Submitted));
+    }
+    cx.set_window_frame_delivery_mode(window.into(), PlatformFrameDeliveryMode::Synchronous);
+    frames(&mut visual, &dock);
+    assert!(!dock.has_active_gesture());
+
+    let first = visual
+        .debug_bounds(&format!("dockspace:tab:{}", FIRST.get()))
+        .unwrap()
+        .center();
+    visual.simulate_mouse_down(first, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_up(first, MouseButton::Left, Modifiers::none());
+    frames(&mut visual, &dock);
+    assert!(dock.with_view(|view| view.item(FIRST).unwrap().is_active()));
+    assert!(!dock.has_active_gesture());
+    assert!(dock.error().is_none());
+    cx.update(|cx| dock.refresh_tab_content(FIRST, cx)).unwrap();
+}
+
+#[open_gpui::test]
+fn closing_local_windows_retires_their_released_pointer_streams(cx: &mut TestAppContext) {
+    use dockspace::runtime::{
+        HostPointerInput, HostPointerRoute, PointerDeviceKind, PointerEventMetadata,
+        SurfacePointerCancelReason, SurfacePointerCapture, SurfacePointerEvent,
+        SurfacePointerReceiverFacts,
+    };
+
+    let dock = preview_fixture(cx);
+    let mut retired = Vec::new();
+    for item in [SECOND, FIRST, SECOND] {
+        cx.defer_next_window_frame_requests();
+        let window = cx.open_window(size(px(620.0), px(400.0)), |_, _| {
+            InsetDockMount(dock.clone())
+        });
+        let mut visual = active_visual(window.into(), cx);
+        cx.set_platform_hovered_window(Some(window.into()));
+        frames(&mut visual, &dock);
+        let tab = visual
+            .debug_bounds(&format!("dockspace:tab:{}", item.get()))
+            .unwrap()
+            .center();
+        visual.simulate_mouse_down(tab, MouseButton::Left, Modifiers::none());
+        visual.simulate_mouse_up(tab, MouseButton::Left, Modifiers::none());
+        frames(&mut visual, &dock);
+        assert!(dock.with_view(|view| view.item(item).unwrap().is_active()));
+        assert!(!dock.has_active_gesture());
+        retired.push(window.window_id());
+        visual.update(|window, cx| window.remove_window(cx));
+        cx.run_until_parked();
+    }
+    assert!(dock.inspection().unwrap().mounts.is_empty());
+
+    // The retired numbers can start a different device lifetime without
+    // contradicting a live mouse stream in core.
+    cx.update(|cx| {
+        dock.update(
+            |frame| {
+                frame.submit_host_pointer_batch(retired.into_iter().map(|owner| {
+                    HostPointerInput::new(
+                        input::local_pointer(owner),
+                        SurfacePointerEvent::StreamCancelled(
+                            SurfacePointerCancelReason::DeviceRemoved,
+                        ),
+                        HostPointerRoute::Unknown,
+                        HostPointerRoute::Unknown,
+                        SurfacePointerCapture::None,
+                        SurfacePointerReceiverFacts::unknown(),
+                    )
+                    .with_metadata(PointerEventMetadata::untimed(PointerDeviceKind::Pen))
+                }))?;
+                Ok(())
+            },
+            cx,
+        )
+    })
+    .unwrap();
+}
+
+#[open_gpui::test]
+fn a_hidden_window_finishes_its_content_press_without_another_frame(cx: &mut TestAppContext) {
+    use open_gpui::{
+        PlatformFrameDeliveryMode, PointerCancelEvent, PointerCancelReason, WindowVisibility,
+    };
+
+    for cancel in [false, true] {
+        let dock = preview_fixture(cx);
+        cx.defer_next_window_frame_requests();
+        let window = cx.open_window(size(px(620.0), px(400.0)), |_, _| {
+            InsetDockMount(dock.clone())
+        });
+        let mut visual = active_visual(window.into(), cx);
+        cx.set_platform_hovered_window(Some(window.into()));
+        frames(&mut visual, &dock);
+        let point = pane_center(&dock, &mut visual, FIRST);
+        visual.simulate_mouse_down(point, MouseButton::Left, Modifiers::none());
+        frames(&mut visual, &dock);
+        assert!(
+            dock.host.borrow().mounts[&window.window_id()]
+                .primary_press
+                .is_some()
+        );
+        assert!(dock.host.borrow().inputs.is_empty());
+
+        cx.set_window_frame_delivery_mode(window.into(), PlatformFrameDeliveryMode::Deferred);
+        cx.simulate_window_visibility_change(window.into(), WindowVisibility::Hidden);
+        if cancel {
+            visual.simulate_event(PointerCancelEvent {
+                reason: PointerCancelReason::CaptureRevoked,
+            });
+        } else {
+            visual.simulate_mouse_up(point, MouseButton::Left, Modifiers::none());
+        }
+        cx.run_until_parked();
+        assert_eq!(
+            dock.inspection().unwrap().queued_input_count,
+            0,
+            "cancel={cancel}"
+        );
+        cx.update(|cx| dock.refresh_tab_content(FIRST, cx)).unwrap();
+        visual.update(|window, cx| window.remove_window(cx));
+    }
+}
+
 #[open_gpui::test]
 fn retiring_content_source_keeps_its_committed_pointer_terminal_in_order(cx: &mut TestAppContext) {
     use open_gpui::{

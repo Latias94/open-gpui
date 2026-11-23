@@ -1637,35 +1637,35 @@ impl DockspaceElement {
     fn listen_content_terminals(&self, window: &mut Window) {
         let shared = self.host.clone();
         let interaction = self.interaction.clone();
-        window.on_mouse_event(move |event: &MouseUpEvent, phase, window, _| {
+        window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
             if phase.capture() {
                 interaction.content_terminal.set(false);
                 if event.button == MouseButton::Left {
-                    interaction
-                        .content_terminal
-                        .set(input::finish_content_press(
-                            &mut shared.borrow_mut(),
-                            SurfacePointerEvent::ButtonReleased(SurfacePointerButton::Primary),
-                            event.modifiers,
-                            window,
-                        ));
+                    settle_primary_terminal(
+                        &shared,
+                        &interaction,
+                        SurfacePointerEvent::ButtonReleased(SurfacePointerButton::Primary),
+                        event.modifiers,
+                        window,
+                        cx,
+                    );
                 }
             }
         });
         let shared = self.host.clone();
         let interaction = self.interaction.clone();
-        window.on_pointer_cancel(move |_, phase, window, _| {
+        window.on_pointer_cancel(move |_, phase, window, cx| {
             if phase.capture() {
-                interaction
-                    .content_terminal
-                    .set(input::finish_content_press(
-                        &mut shared.borrow_mut(),
-                        SurfacePointerEvent::StreamCancelled(
-                            SurfacePointerCancelReason::ExplicitPlatformCancellation,
-                        ),
-                        window.modifiers(),
-                        window,
-                    ));
+                settle_primary_terminal(
+                    &shared,
+                    &interaction,
+                    SurfacePointerEvent::StreamCancelled(
+                        SurfacePointerCancelReason::ExplicitPlatformCancellation,
+                    ),
+                    window.modifiers(),
+                    window,
+                    cx,
+                );
             }
         });
     }
@@ -2939,6 +2939,28 @@ fn routes_to(
             host.session
                 .host_pointer_manipulation_surface(input::local_pointer(owner))
                 .map(|source| source.surface())
+                // GPUI capture starts on the callback, before core sees the press.
+                .or_else(|| mount.primary_press.as_ref()?.captured_local_surface())
         });
     target == Some(surface)
+}
+
+fn settle_primary_terminal(
+    shared: &SharedHost,
+    interaction: &InteractionState,
+    event: SurfacePointerEvent,
+    modifiers: open_gpui::Modifiers,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let mut host = shared.borrow_mut();
+    let handled = input::finish_content_press(&mut host, event, modifiers, window);
+    interaction.content_terminal.set(handled);
+    if handled
+        && host.native.is_none()
+        && !window.is_visible()
+        && let Err(error) = presentation::settle_pending(&mut host, Some(window), cx)
+    {
+        host.fail(error.as_ref());
+    }
 }

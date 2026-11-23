@@ -86,6 +86,16 @@ enum PrimaryPressSource {
     Native(CallbackCustody),
 }
 
+impl PrimaryPress {
+    pub(super) fn captured_local_surface(&self) -> Option<SurfaceId> {
+        matches!(
+            self.source,
+            PrimaryPressSource::Local { captured: true, .. }
+        )
+        .then_some(self.surface)
+    }
+}
+
 pub(super) fn finish_content_press(
     host: &mut HostState,
     event: SurfacePointerEvent,
@@ -130,25 +140,13 @@ pub(super) fn finish_content_press(
     true
 }
 
-pub(super) fn retire_local_pointer(
-    host: &mut HostState,
-    owner: WindowId,
-    press: Option<PrimaryPress>,
-) {
-    if host.native.is_none()
-        && let Some(PrimaryPress {
-            source: PrimaryPressSource::Local { committed, .. },
-            ..
-        }) = press
-        && committed.get()
-    {
-        host.inputs.push(QueuedInput::unrouted_terminal(
-            owner,
-            SurfacePointerEvent::StreamCancelled(SurfacePointerCancelReason::BindingRetired),
-            None,
-            PointerEventMetadata::new(PointerDeviceKind::Mouse, host.observed_at()),
-        ));
-    }
+pub(super) fn retire_local_pointer(host: &mut HostState, owner: WindowId) {
+    host.inputs.push(QueuedInput::unrouted_terminal(
+        owner,
+        SurfacePointerEvent::StreamCancelled(SurfacePointerCancelReason::BindingRetired),
+        None,
+        PointerEventMetadata::new(PointerDeviceKind::Mouse, host.observed_at()),
+    ));
 }
 
 /// Semantic pointer consequences share the original input's rollback custody.
@@ -436,6 +434,7 @@ pub(super) fn queue(
     } else {
         None
     };
+    mount.local_pointer_used = true;
     mount.wake = None;
     host.inputs.push(QueuedInput::Pointer(QueuedPointer {
         owner,
