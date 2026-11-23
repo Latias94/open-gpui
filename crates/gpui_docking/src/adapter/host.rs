@@ -1,7 +1,7 @@
 //! Application views and physical mounts, without a second layout model.
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{BTreeMap, BTreeSet, VecDeque},
     rc::Rc,
     time::Duration,
@@ -742,8 +742,7 @@ pub(super) struct WindowMount {
     pub(super) focus: FocusHandle,
     pub(super) input_frames: Vec<input::InputFrame>,
     pub(super) primary_press: Option<input::PrimaryPress>,
-    // Released presses can still leave a live local stream in the session.
-    pub(super) local_pointer_used: bool,
+    pub(super) local_pointer_live: Rc<Cell<bool>>,
     pub(super) wake: Option<continuation::Wake>,
     pub(super) attached: bool,
     pub(super) waiting_for_update: bool,
@@ -1019,7 +1018,7 @@ impl HostState {
                 focus: cx.focus_handle(),
                 input_frames: Vec::new(),
                 primary_press: None,
-                local_pointer_used: false,
+                local_pointer_live: Rc::new(Cell::new(false)),
                 wake: None,
                 attached: false,
                 waiting_for_update: false,

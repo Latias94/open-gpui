@@ -119,6 +119,7 @@ pub(super) fn finish_content_press(
     if let Some(region) = mount.regions.get_mut(&press.surface) {
         region.dirty = true;
     }
+    let stream_live = mount.local_pointer_live.clone();
     let metadata = PointerEventMetadata::new(PointerDeviceKind::Mouse, host.observed_at())
         .with_docking_enabled(host.config.input.docking_enabled(modifiers));
     // The press was observed for bookkeeping and pane activation. Its terminal
@@ -129,6 +130,7 @@ pub(super) fn finish_content_press(
                 owner,
                 event,
                 Some(committed),
+                stream_live,
                 metadata,
             ));
         }
@@ -140,11 +142,16 @@ pub(super) fn finish_content_press(
     true
 }
 
-pub(super) fn retire_local_pointer(host: &mut HostState, owner: WindowId) {
+pub(super) fn retire_local_pointer(
+    host: &mut HostState,
+    owner: WindowId,
+    stream_live: Rc<Cell<bool>>,
+) {
     host.inputs.push(QueuedInput::unrouted_terminal(
         owner,
         SurfacePointerEvent::StreamCancelled(SurfacePointerCancelReason::BindingRetired),
         None,
+        stream_live,
         PointerEventMetadata::new(PointerDeviceKind::Mouse, host.observed_at()),
     ));
 }
@@ -164,6 +171,7 @@ impl QueuedInput {
         owner: WindowId,
         event: SurfacePointerEvent,
         press_commit: Option<Rc<Cell<bool>>>,
+        stream_live: Rc<Cell<bool>>,
         metadata: PointerEventMetadata,
     ) -> Self {
         Self::Pointer(QueuedPointer {
@@ -179,6 +187,7 @@ impl QueuedInput {
             capture: SurfacePointerCapture::None,
             metadata,
             press_commit,
+            stream_live,
         })
     }
 
@@ -193,16 +202,23 @@ impl QueuedInput {
         matches!(self, Self::Pointer(pointer)
             if pointer.event
                 == SurfacePointerEvent::StreamCancelled(SurfacePointerCancelReason::BindingRetired)
+                || (matches!(pointer.event, SurfacePointerEvent::StreamCancelled(_))
+                    && pointer.stream_live.get())
                 || (is_primary_terminal(pointer.event)
                     && pointer.press_commit.as_ref().is_some_and(|committed| committed.get())))
     }
 
     pub(super) fn mark_committed(&self) {
-        if let Self::Pointer(pointer) = self
-            && is_primary_press(pointer.event)
-            && let Some(committed) = &pointer.press_commit
-        {
-            committed.set(true);
+        if let Self::Pointer(pointer) = self {
+            if is_primary_press(pointer.event)
+                && let Some(committed) = &pointer.press_commit
+            {
+                committed.set(true);
+            }
+            pointer.stream_live.set(!matches!(
+                pointer.event,
+                SurfacePointerEvent::StreamCancelled(_)
+            ));
         }
     }
 
@@ -244,6 +260,7 @@ pub(super) struct QueuedPointer {
     capture: SurfacePointerCapture,
     metadata: PointerEventMetadata,
     press_commit: Option<Rc<Cell<bool>>>,
+    stream_live: Rc<Cell<bool>>,
 }
 
 fn is_primary_press(event: SurfacePointerEvent) -> bool {
@@ -385,8 +402,14 @@ pub(super) fn queue(
     let surface = hit.map(|hit| hit.surface());
     let source = captured
         .then(|| {
+            let pressed = host
+                .mounts
+                .get(&owner)
+                .and_then(|mount| mount.primary_press.as_ref()?.captured_local_surface());
             host.session
                 .host_pointer_manipulation_surface(local_pointer(owner))
+                .filter(|source| pressed.is_none_or(|pressed| source.surface() == pressed))
+                .or_else(|| host.session.presented_surface(pressed?))
         })
         .flatten()
         .or(surface)
@@ -434,7 +457,7 @@ pub(super) fn queue(
     } else {
         None
     };
-    mount.local_pointer_used = true;
+    let stream_live = mount.local_pointer_live.clone();
     mount.wake = None;
     host.inputs.push(QueuedInput::Pointer(QueuedPointer {
         owner,
@@ -464,6 +487,7 @@ pub(super) fn queue(
         metadata: PointerEventMetadata::new(PointerDeviceKind::Mouse, host.observed_at())
             .with_docking_enabled(host.config.input.docking_enabled(modifiers)),
         press_commit,
+        stream_live,
     }));
     if let Some(region) = host
         .mounts

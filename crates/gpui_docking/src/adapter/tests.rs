@@ -967,6 +967,171 @@ fn managed_chrome_clicks_use_the_native_producer_and_submitted_receivers(cx: &mu
 }
 
 #[open_gpui::test]
+fn another_window_cannot_finish_a_managed_close_button_press(cx: &mut TestAppContext) {
+    use open_gpui::{
+        MouseButton, MouseUpEvent, PlatformInput, PointerCancelEvent, PointerCancelReason, point,
+    };
+
+    cx.defer_next_window_frame_requests();
+    let (dock, _, _, [first, second]) = managed_fixture(cx);
+    let mut source = VisualTestContext::from_window(first, cx);
+    let mut target = VisualTestContext::from_window(second, cx);
+    assert!(target.activate_accessibility());
+    target.update(|window, _| {
+        let _ = window.activate_window();
+    });
+    cx.set_platform_hovered_window(Some(second));
+    frames(&mut source, &dock);
+    frames(&mut target, &dock);
+    let tab = target.debug_bounds("dockspace:tab:22").unwrap().center();
+    target.simulate_mouse_move(tab, None, Modifiers::none());
+    frames(&mut target, &dock);
+    let tree = target.latest_accessibility_tree_update().unwrap();
+    let bounds = tree
+        .nodes
+        .iter()
+        .find_map(|(_, node)| {
+            (node.label() == Some("Close Second View"))
+                .then(|| node.bounds())
+                .flatten()
+        })
+        .expect("the close button is exposed in the target window");
+    let scale = f64::from(target.update(|window, _| window.scale_factor()));
+    let close = point(
+        px(((bounds.x0 + bounds.x1) * 0.5 / scale) as f32),
+        px(((bounds.y0 + bounds.y1) * 0.5 / scale) as f32),
+    );
+    target.simulate_mouse_down(close, MouseButton::Left, Modifiers::none());
+    frames(&mut target, &dock);
+    let late = source.debug_bounds("dockspace:tab:21").unwrap().center();
+    source.update(|window, cx| {
+        window.dispatch_event(
+            PlatformInput::MouseUp(MouseUpEvent {
+                position: late,
+                button: MouseButton::Left,
+                modifiers: Modifiers::none(),
+                click_count: 1,
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            PlatformInput::PointerCanceled(PointerCancelEvent {
+                reason: PointerCancelReason::CaptureRevoked,
+            }),
+            cx,
+        );
+    });
+    frames(&mut target, &dock);
+    assert!(dock.pending_content_close_plans().unwrap().is_empty());
+    target.simulate_mouse_up(close, MouseButton::Left, Modifiers::none());
+    frames(&mut target, &dock);
+    let plans = dock.pending_content_close_plans().unwrap();
+    assert_eq!(
+        plans
+            .iter()
+            .flat_map(|plan| plan.items())
+            .map(|item| item.item())
+            .collect::<Vec<_>>(),
+        [B]
+    );
+}
+
+#[open_gpui::test]
+fn first_move_over_another_region_uses_the_pending_press_region(cx: &mut TestAppContext) {
+    use open_gpui::{MouseButton, PlatformFrameDeliveryMode, point};
+
+    let (dock, _, _) = fixture(cx);
+    let window = cx.open_window(size(px(800.0), px(600.0)), |_, _| Root {
+        dock: dock.clone(),
+        surfaces: vec![FIRST, SECOND],
+    });
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    visual.update(|window, _| {
+        let _ = window.activate_window();
+    });
+    cx.set_platform_hovered_window(Some(window.into()));
+    frames(&mut visual, &dock);
+    let tab = visual.debug_bounds("dockspace:tab:21").unwrap().center();
+    let target = point(px(600.0), px(313.0));
+    cx.set_window_frame_delivery_mode(window.into(), PlatformFrameDeliveryMode::Deferred);
+    visual.simulate_mouse_down(tab, MouseButton::Left, Modifiers::none());
+    assert!(!dock.has_active_gesture(), "the press has not reached core");
+    visual.simulate_mouse_move(target, Some(MouseButton::Left), Modifiers::none());
+    cx.set_window_frame_delivery_mode(window.into(), PlatformFrameDeliveryMode::Synchronous);
+    if let Some(ticket) = cx.pending_window_frame_submission(window.into()) {
+        cx.update(|_| {
+            let _ = ticket.complete(PlatformWindowPresentOutcome::Submitted);
+        });
+    }
+    frames(&mut visual, &dock);
+    visual.simulate_mouse_up(target, MouseButton::Left, Modifiers::none());
+    frames(&mut visual, &dock);
+    assert_eq!(
+        dock.with_view(|view| view.item(A).unwrap().surface()),
+        SECOND
+    );
+    assert!(!dock.has_active_gesture());
+}
+
+#[open_gpui::test]
+fn retiring_a_cancelled_mouse_mount_leaves_a_reused_pen_stream_alone(cx: &mut TestAppContext) {
+    use dockspace::runtime::{
+        HostPointerInput, HostPointerRoute, PointerDeviceKind, PointerEventMetadata,
+        SurfacePointerCapture, SurfacePointerEvent, SurfacePointerReceiverFacts,
+    };
+    use open_gpui::{MouseButton, PointerCancelReason, QuitMode};
+
+    cx.update(|cx| cx.set_quit_mode(QuitMode::Explicit));
+    let (dock, _, _) = fixture(cx);
+    let window = cx.open_window(size(px(800.0), px(600.0)), |_, _| Root {
+        dock: dock.clone(),
+        surfaces: vec![FIRST],
+    });
+    let handle: open_gpui::AnyWindowHandle = window.into();
+    let mut visual = VisualTestContext::from_window(handle, cx);
+    visual.update(|window, _| {
+        let _ = window.activate_window();
+    });
+    cx.set_platform_hovered_window(Some(handle));
+    frames(&mut visual, &dock);
+    let tab = visual.debug_bounds("dockspace:tab:21").unwrap().center();
+    visual.simulate_mouse_down(tab, MouseButton::Left, Modifiers::none());
+    frames(&mut visual, &dock);
+    assert!(dock.has_active_gesture());
+    visual.update(|window, cx| {
+        window.quiesce_pointer_session(PointerCancelReason::CaptureRevoked, cx)
+    });
+    visual.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
+    frames(&mut visual, &dock);
+    let pointer = super::input::local_pointer(handle.window_id());
+    cx.update(|cx| {
+        dock.update(
+            |frame| {
+                frame.submit_host_pointer(
+                    HostPointerInput::new(
+                        pointer,
+                        SurfacePointerEvent::Moved,
+                        HostPointerRoute::Unknown,
+                        HostPointerRoute::Unknown,
+                        SurfacePointerCapture::None,
+                        SurfacePointerReceiverFacts::unknown(),
+                    )
+                    .with_metadata(PointerEventMetadata::untimed(PointerDeviceKind::Pen)),
+                )?;
+                Ok(())
+            },
+            cx,
+        )
+    })
+    .unwrap();
+    visual.update(|window, cx| window.remove_window(cx));
+    cx.run_until_parked();
+    assert!(dock.error().is_none(), "{:?}", dock.error());
+    assert_eq!(dock.inspection().unwrap().queued_input_count, 0);
+    cx.update(|cx| dock.refresh_tab_content(B, cx)).unwrap();
+}
+
+#[open_gpui::test]
 fn managed_drag_start_survives_a_submitted_chrome_redraw(cx: &mut TestAppContext) {
     use open_gpui::{MouseButton, NativeCapturedDragPhase, NativeCapturedDragReleaseTerminal};
 

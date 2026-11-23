@@ -26,8 +26,8 @@ use super::{
     DockSurface, HostState, SharedHost,
     host::WindowMount,
     native::{
-        NativeBridge, NativeBridgeError, NativeCallbacks, NativeCloseDecision, NativeGeometry,
-        NativeOpenFailure, NativeReport, NativeTransport, NativeWindowRequest,
+        CallbackCustody, NativeBridge, NativeBridgeError, NativeCallbacks, NativeCloseDecision,
+        NativeGeometry, NativeOpenFailure, NativeReport, NativeTransport, NativeWindowRequest,
     },
     presentation,
 };
@@ -65,6 +65,7 @@ pub(super) struct ManagedHost {
     bridge: Option<NativeBridge>,
     pub(super) transport: NativeTransport,
     pub(super) callbacks: BTreeMap<WindowId, NativeCallbacks>,
+    primary_press: Option<(WindowId, CallbackCustody)>,
     roots: BTreeSet<WindowId>,
     pending_reports: VecDeque<HostFrameReport>,
     reports: reports::Reports,
@@ -93,6 +94,17 @@ impl ManagedHost {
 
     pub(super) fn can_dispatch_close(&self) -> bool {
         self.bridge.is_some() && !self.transport.is_frozen()
+    }
+
+    fn take_primary_press(&mut self, owner: WindowId) -> bool {
+        let Some(callbacks) = self.callbacks.get(&owner) else {
+            return false;
+        };
+        self.primary_press
+            .take_if(|(source, custody)| {
+                *source == owner && callbacks.has_callback_custody(custody)
+            })
+            .is_some()
     }
 }
 
@@ -311,6 +323,7 @@ pub(super) fn enroll(shared: &SharedHost, cx: &mut App) -> Result<()> {
         bridge: Some(bridge),
         transport,
         callbacks: BTreeMap::new(),
+        primary_press: None,
         roots: BTreeSet::new(),
         pending_reports: VecDeque::new(),
         reports: reports::Reports::default(),
@@ -373,22 +386,26 @@ fn install_router(cx: &mut App) {
                     dockspace::runtime::PointerDeviceKind::Mouse,
                     host.observed_at(),
                 );
-                if let Some(native) = &mut host.native
-                    && let Some(callbacks) = native.callbacks.get(&event.source_window())
-                {
-                    // Real ingress may rearm an unchanged finite challenge.
-                    // The callback is queued before scheduling can sample it.
-                    native.blocked_continuation = None;
-                    native.transport.captured_drag(
-                        callbacks.binding(),
-                        super::native::native_capture_owner(event.capture_owner(), |owner| {
-                            native.callbacks.get(&owner).map(NativeCallbacks::binding)
-                        }),
-                        event,
-                        dockspace::runtime::NativePointerId::new(1),
-                        metadata,
-                        cx,
-                    );
+                if let Some(native) = &mut host.native {
+                    let owner = event.source_window();
+                    if !matches!(event.phase(), open_gpui::NativeCapturedDragPhase::Moved) {
+                        native.take_primary_press(owner);
+                    }
+                    if let Some(callbacks) = native.callbacks.get(&owner) {
+                        // Real ingress may rearm an unchanged finite challenge.
+                        // The callback is queued before scheduling can sample it.
+                        native.blocked_continuation = None;
+                        native.transport.captured_drag(
+                            callbacks.binding(),
+                            super::native::native_capture_owner(event.capture_owner(), |owner| {
+                                native.callbacks.get(&owner).map(NativeCallbacks::binding)
+                            }),
+                            event,
+                            dockspace::runtime::NativePointerId::new(1),
+                            metadata,
+                            cx,
+                        );
+                    }
                 }
             }
             pump(&shared, cx);
@@ -1134,7 +1151,7 @@ pub(super) fn schedule(shared: &SharedHost, cx: &mut App) {
 }
 
 pub(super) fn queue_content_terminal(
-    host: &HostState,
+    host: &mut HostState,
     owner: WindowId,
     custody: &super::native::CallbackCustody,
     event: dockspace::runtime::SurfacePointerEvent,
@@ -1147,15 +1164,16 @@ pub(super) fn queue_content_terminal(
     };
     let Some(native) = host
         .native
-        .as_ref()
+        .as_mut()
         .filter(|native| !native.transport.is_frozen())
     else {
         return;
     };
-    let Some(callbacks) = native
+    let Some(binding) = native
         .callbacks
         .get(&owner)
         .filter(|callbacks| callbacks.has_callback_custody(custody))
+        .map(NativeCallbacks::binding)
     else {
         return;
     };
@@ -1168,12 +1186,15 @@ pub(super) fn queue_content_terminal(
         ),
         _ => return,
     };
+    if !native.take_primary_press(owner) {
+        return;
+    }
     native.transport.pointer_in_window(
         NativePointerInput::new_local(
             NativePointerId::new(1),
             event,
             NativeLocalPointerLocation::Unknown,
-            NativePointerOwner::Native(callbacks.binding()),
+            NativePointerOwner::Native(binding),
             NativePointerOwner::Unknown,
         )
         .with_metadata(metadata),
@@ -1208,7 +1229,9 @@ pub(super) fn queue_pointer(
     if !terminal && !super::input::is_presented(host, owner, surface, serial) {
         return false;
     }
-    let Some(native) = &host.native else {
+    let metadata = PointerEventMetadata::new(PointerDeviceKind::Mouse, host.observed_at())
+        .with_docking_enabled(host.config.input.docking_enabled(modifiers));
+    let Some(native) = &mut host.native else {
         return false;
     };
     if native.transport.is_frozen() {
@@ -1218,6 +1241,7 @@ pub(super) fn queue_pointer(
         return false;
     };
     let binding = callbacks.binding();
+    let custody = callbacks.callback_custody();
     let event = match event {
         SurfacePointerEvent::ButtonPressed(_) => {
             NativePointerEvent::ButtonPressed(NativePointerButton::Primary)
@@ -1240,6 +1264,12 @@ pub(super) fn queue_pointer(
     if !captured && !clear && !terminal {
         return false;
     }
+    if terminal && !native.take_primary_press(owner) {
+        return false;
+    }
+    if matches!(event, NativePointerEvent::ButtonPressed(_)) {
+        native.primary_press = Some((owner, custody));
+    }
     let location = local_sample(&host.session, binding, position, window).map_or(
         NativeLocalPointerLocation::Unknown,
         NativeLocalPointerLocation::Exact,
@@ -1252,12 +1282,9 @@ pub(super) fn queue_pointer(
             NativePointerOwner::Native(binding),
             NativePointerOwner::Unknown,
         )
-        .with_metadata(
-            PointerEventMetadata::new(PointerDeviceKind::Mouse, host.observed_at())
-                .with_docking_enabled(host.config.input.docking_enabled(modifiers)),
-        ),
+        .with_metadata(metadata),
     );
-    host.native.as_mut().unwrap().blocked_continuation = None;
+    native.blocked_continuation = None;
     if let Some(region) = host
         .mounts
         .get_mut(&owner)

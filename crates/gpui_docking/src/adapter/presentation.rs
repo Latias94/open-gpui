@@ -491,14 +491,14 @@ pub(super) fn discard(shared: &SharedHost, window: &mut Window, cx: &mut App) {
     mount.wake = None;
     mount.input_frames.clear();
     mount.primary_press = None;
-    let local_pointer_used = std::mem::take(&mut mount.local_pointer_used);
+    let local_pointer_live = mount.local_pointer_live.clone();
     for region in mount.regions.values_mut() {
         region.clear_presentation();
     }
     let surfaces = mount.regions.keys().copied().collect::<Vec<_>>();
     withdraw_pending(&mut host, window, cx);
-    if local_pointer_used {
-        input::retire_local_pointer(&mut host, owner);
+    if local_pointer_live.get() {
+        input::retire_local_pointer(&mut host, owner, local_pointer_live);
     }
     retire_input_source(&mut host, owner, cx);
     release_surfaces(&mut host, owner, surfaces, cx);
@@ -718,7 +718,9 @@ pub(super) fn settle_pending(
         }
     }
     let report = frame.commit()?;
-    drop(host.inputs.drain(..terminal_count));
+    for terminal in host.inputs.drain(..terminal_count) {
+        terminal.mark_committed();
+    }
     let released_capacity = !report.surface_presentation_commits().is_empty();
     if released_capacity {
         wake_capacity_blocked(host, cx);
@@ -775,8 +777,8 @@ pub(super) fn retire_mount(host: &mut HostState, owner: WindowId, cx: &mut App) 
         if let Some(pending) = mount.pending.take() {
             retire_pending(host, owner, pending, SurfacePresentationResult::Dropped, cx);
         }
-        if mount.local_pointer_used {
-            input::retire_local_pointer(host, owner);
+        if mount.local_pointer_live.get() {
+            input::retire_local_pointer(host, owner, mount.local_pointer_live);
         }
         retire_input_source(host, owner, cx);
         release_surfaces(host, owner, mount.regions.into_keys().collect(), cx);
