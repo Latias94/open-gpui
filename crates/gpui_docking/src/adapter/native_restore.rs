@@ -13,7 +13,8 @@ use super::{
     DockSurface,
     native::NativeOpenFailure,
     persistence::{
-        DockHostDocument, DockPersistenceError, DockSurfaceKeyBinding, DockWindowPlacementState,
+        DockHostDocument, DockLogicalPlacementRect, DockPersistenceError, DockSurfaceKeyBinding,
+        DockWindowPlacementState,
     },
 };
 
@@ -63,6 +64,8 @@ impl DockSurface {
     /// display if connected, then the host's display, then the primary display.
     /// Current work areas constrain restore bounds. An unusable saved rectangle
     /// falls back to the host's geometry while retaining the saved window state.
+    /// The callback can use `DockLogicalWindowPlacement::restore_bounds` to read
+    /// usable geometry independently of the requested state.
     /// Presentation states remain requests to GPUI.
     /// Host-region and central-policy hints require the application's own policy;
     /// each root created here fills its window with the corresponding surface.
@@ -180,11 +183,25 @@ fn resolve_options(
             "restored roots require ordinary, independent native windows",
         ));
     }
-    if let Some(bounds) = options.window_bounds {
-        validate_bounds(bounds.get_bounds())?;
+    let placement = binding.logical_placement.as_ref();
+    let hint = placement.and_then(|placement| placement.window_bounds);
+    if let Some(bounds) = options.window_bounds
+        && let Err(error) = validate_bounds(bounds.get_bounds())
+    {
+        if !hint.is_some_and(|hint| bounds.get_bounds() == logical_bounds(hint.bounds)) {
+            return Err(error);
+        }
+        // Older callbacks copied the saved bounds straight into WindowOptions.
+        options.window_bounds = None;
     }
-    if let Some(minimum) = options.window_min_size {
-        validate_bounds(Bounds::new(point(px(0.0), px(0.0)), minimum))?;
+    if let Some(minimum) = options.window_min_size
+        && [minimum.width, minimum.height]
+            .into_iter()
+            .any(|value| !f32::from(value).is_finite() || value < px(0.0))
+    {
+        return Err(invalid(
+            "native restore minimum sizes must be finite and non-negative",
+        ));
     }
     if let Some(position) = options
         .titlebar
@@ -195,7 +212,6 @@ fn resolve_options(
         return Err(invalid("titlebar positions must be finite"));
     }
 
-    let placement = binding.logical_placement.as_ref();
     let saved_display = placement
         .and_then(|placement| placement.display_id)
         .map(DisplayId::new);
@@ -232,22 +248,11 @@ fn resolve_options(
         ));
     }
 
-    let hint = placement.and_then(|placement| placement.window_bounds);
-    let saved_bounds = hint
-        .map(|hint| hint.bounds)
-        .filter(|bounds| bounds.is_window_restore_hint());
+    let saved_bounds = hint.and_then(|hint| hint.restore_bounds());
     let fallback = options
         .window_bounds
         .unwrap_or_else(|| WindowBounds::Windowed(display.default_bounds()));
-    let mut bounds = saved_bounds.map_or_else(
-        || fallback.get_bounds(),
-        |rect| {
-            Bounds::new(
-                point(px(rect.x), px(rect.y)),
-                size(px(rect.width), px(rect.height)),
-            )
-        },
-    );
+    let mut bounds = saved_bounds.map_or_else(|| fallback.get_bounds(), logical_bounds);
     validate_bounds(bounds)?;
     if let Some(minimum) = options.window_min_size {
         if minimum.width > work_area.size.width || minimum.height > work_area.size.height {
@@ -297,6 +302,13 @@ fn resolve_options(
         DockWindowPlacementState::Fullscreen => WindowBounds::Fullscreen(bounds),
     });
     Ok(options)
+}
+
+fn logical_bounds(rect: DockLogicalPlacementRect) -> Bounds<Pixels> {
+    Bounds::new(
+        point(px(rect.x), px(rect.y)),
+        size(px(rect.width), px(rect.height)),
+    )
 }
 
 fn validate_bounds(bounds: Bounds<Pixels>) -> Result<(), DockNativeRestoreError> {
@@ -492,6 +504,63 @@ mod tests {
                     size(px(640.0), px(480.0))
                 ))
             );
+        })
+        .unwrap();
+        cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();
+        settle(cx, &dock);
+    }
+
+    #[open_gpui::test]
+    fn ordinary_minimum_sizes_and_legacy_bounds_copied_by_the_host_can_restore(
+        cx: &mut TestAppContext,
+    ) {
+        let (dock, mut host) = cx.update(workspace);
+        let first = host.surfaces[0].logical_placement.as_mut().unwrap();
+        first.window_bounds.as_mut().unwrap().bounds.height = 180.0;
+        let second = host.surfaces[1].logical_placement.as_mut().unwrap();
+        let unusable = second.window_bounds.as_mut().unwrap();
+        unusable.state = DockWindowPlacementState::Maximized;
+        unusable.bounds.width = 0.0;
+        let windows = cx
+            .update(|cx| {
+                dock.open_restored_native_roots(
+                    &host,
+                    FIRST,
+                    |binding, _| {
+                        let hint = binding
+                            .logical_placement
+                            .as_ref()
+                            .unwrap()
+                            .window_bounds
+                            .unwrap();
+                        if binding.surface == FIRST {
+                            assert_eq!(hint.restore_bounds().unwrap().height, 180.0);
+                            WindowOptions {
+                                window_min_size: Some(size(px(0.0), px(240.0))),
+                                ..Default::default()
+                            }
+                        } else {
+                            assert!(hint.restore_bounds().is_none());
+                            assert_eq!(hint.state, DockWindowPlacementState::Maximized);
+                            WindowOptions {
+                                window_bounds: Some(WindowBounds::Windowed(logical_bounds(
+                                    hint.bounds,
+                                ))),
+                                ..Default::default()
+                            }
+                        }
+                    },
+                    cx,
+                )
+            })
+            .unwrap();
+        settle(cx, &dock);
+        cx.update_window(windows[&FIRST], |_, window, _| {
+            assert_eq!(window.window_bounds().get_bounds().size.height, px(240.0));
+        })
+        .unwrap();
+        cx.update_window(windows[&SECOND], |_, window, _| {
+            assert!(matches!(window.window_bounds(), WindowBounds::Maximized(bounds) if bounds.size.width > px(0.0)));
         })
         .unwrap();
         cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();

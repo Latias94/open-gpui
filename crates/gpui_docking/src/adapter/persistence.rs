@@ -135,6 +135,14 @@ pub struct DockLogicalWindowPlacement {
     pub bounds: DockLogicalPlacementRect,
 }
 
+impl DockLogicalWindowPlacement {
+    /// Returns usable restore geometry. The requested window state can still be
+    /// applied with fallback geometry when a saved rectangle has no area.
+    pub fn restore_bounds(self) -> Option<DockLogicalPlacementRect> {
+        self.bounds.is_window_restore_hint().then_some(self.bounds)
+    }
+}
+
 /// Host-owned logical placement hints migrated without inventing native facts.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
