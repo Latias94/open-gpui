@@ -443,9 +443,6 @@ impl NativeCallbacks {
     pub fn binding(&self) -> NativeWindowBinding {
         self.0.binding.get()
     }
-    pub(in crate::adapter) fn callback_custody(&self) -> CallbackCustody {
-        CallbackCustody(Rc::downgrade(&self.0))
-    }
     pub(in crate::adapter) fn has_callback_custody(&self, original: &CallbackCustody) -> bool {
         Rc::downgrade(&self.0).ptr_eq(&original.0)
     }
@@ -599,7 +596,8 @@ impl NativeCallbacks {
             })
     }
     pub(super) fn continue_root(&self, binding: NativeWindowBinding) {
-        self.0.binding.set(binding);
+        let previous = self.0.binding.replace(binding);
+        self.0.transport.continue_mouse_press(previous, binding);
         // Continuation retains this exact physical window. Its independent
         // geometry and effect proofs must refresh, but inventory remains known.
         self.0.facts.set(Some(if self.0.native_terminal.get() {
@@ -613,7 +611,7 @@ impl NativeCallbacks {
         self.0.input.set(None);
     }
 
-    pub(super) fn can_accept_capture_event(
+    pub(in crate::adapter) fn can_accept_capture_event(
         &self,
         event: &open_gpui::NativeCapturedDragEvent,
     ) -> bool {

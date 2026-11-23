@@ -829,6 +829,192 @@ fn releasing_outside_the_dock_before_the_press_commits_keeps_tabs_interactive(
 }
 
 #[open_gpui::test]
+fn managed_source_callback_releases_a_primary_press_from_either_ingress(cx: &mut TestAppContext) {
+    use dockspace::{
+        geometry::PhysicalPoint,
+        runtime::{
+            NativeDesktopPointerLocation, NativeDesktopPosition, NativePointerButton,
+            NativePointerEvent, NativePointerHover, NativePointerInput, NativePointerOwner,
+            PointerDeviceKind, PointerEventMetadata,
+        },
+    };
+    use open_gpui::{
+        DevicePixels, PlatformInput, PlatformNativePointerCaptureOwner,
+        PlatformNativePointerPhysicalFrame, PlatformWindowHit, PlatformWindowHitStack,
+        PlatformWindowPhysicalCoverage, PointerCancelEvent, PointerCancelReason,
+    };
+
+    cx.update(|cx| cx.set_quit_mode(open_gpui::QuitMode::Explicit));
+    let sibling_surface = SurfaceId::new(52);
+    let sibling_item = ItemId::new(63);
+
+    for (raw_press, outside, flush_press) in [
+        (true, false, true),
+        (true, true, false),
+        (false, true, true),
+    ] {
+        let (dock, _) = super::content_receivers::content_fixture_layout(
+            cx,
+            true,
+            [
+                DockspaceSurfaceLayout::new(
+                    SURFACE,
+                    DockspaceRootLayout::new(RootId::new(71), DockspaceNode::tabs([FIRST, SECOND])),
+                ),
+                DockspaceSurfaceLayout::new(
+                    sibling_surface,
+                    DockspaceRootLayout::new(RootId::new(72), DockspaceNode::tabs([sibling_item])),
+                ),
+            ],
+            &[FIRST, SECOND, sibling_item],
+        );
+        let window = cx.open_window(size(px(620.0), px(400.0)), |window, cx| {
+            dock.bind_native_root(SURFACE, true, window, cx).unwrap();
+            InsetDockMount(dock.clone())
+        });
+        let handle: open_gpui::AnyWindowHandle = window.into();
+        let sibling = cx
+            .update(|cx| dock.open_native_root(sibling_surface, false, Default::default(), cx))
+            .unwrap();
+        let mut sibling_visual = VisualTestContext::from_window(sibling, cx);
+        let (mut sibling_bounds, sibling_scale) = sibling_visual.update(|window, _| {
+            let facts = window.platform_facts();
+            (
+                facts.bounds.to_device_pixels(facts.scale_factor),
+                facts.scale_factor,
+            )
+        });
+        sibling_bounds.origin.x = DevicePixels(2000);
+        cx.set_platform_window_physical_client_geometry(
+            sibling,
+            Some(sibling_bounds),
+            sibling_scale,
+        );
+        cx.simulate_window_scale_factor_change(sibling, sibling_scale);
+        frames(&mut sibling_visual, &dock);
+        let mut visual = active_visual(handle, cx);
+        cx.set_platform_hovered_window(Some(handle));
+        super::content_receivers::prepare_native_input(&mut visual);
+        frames(&mut visual, &dock);
+        let point = receiver_bounds(&dock, &mut visual, DockspaceReceiverRole::TabClose).center();
+        if raw_press {
+            let binding = dock.native_binding_for_window(handle.window_id()).unwrap();
+            let geometry =
+                visual.update(|window, _| window.platform_facts().physical_geometry.unwrap());
+            let global = geometry.local_to_global(point).unwrap();
+            cx.set_platform_window_hit_stack(
+                PlatformWindowHitStack::try_available(
+                    global,
+                    vec![PlatformWindowHit::RegisteredApplication {
+                        window: handle,
+                        geometry,
+                        coverage: PlatformWindowPhysicalCoverage::try_new(geometry.client_bounds())
+                            .unwrap(),
+                    }],
+                )
+                .unwrap(),
+            );
+            let transport = dock.native_transport().unwrap();
+            cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(true));
+            cx.update(|cx| {
+                transport.pointer(
+                    NativePointerInput::new(
+                        dockspace::runtime::NativePointerId::new(1),
+                        NativePointerEvent::ButtonPressed(NativePointerButton::Primary),
+                        NativeDesktopPointerLocation::new(
+                            NativeDesktopPosition::Exact(
+                                PhysicalPoint::new(f64::from(global.x.0), f64::from(global.y.0))
+                                    .unwrap(),
+                            ),
+                            NativePointerHover::Dock(binding),
+                            None,
+                        ),
+                        NativePointerOwner::Native(binding),
+                        NativePointerOwner::Unknown,
+                    )
+                    .with_metadata(PointerEventMetadata::untimed(PointerDeviceKind::Mouse)),
+                    cx,
+                )
+            });
+        } else {
+            visual.simulate_mouse_down(point, MouseButton::Left, Modifiers::none());
+        }
+        if flush_press {
+            frames(&mut visual, &dock);
+            assert!(dock.has_active_gesture());
+            sibling_visual.simulate_event(PointerCancelEvent {
+                reason: PointerCancelReason::CaptureRevoked,
+            });
+            frames(&mut visual, &dock);
+            assert!(
+                dock.has_active_gesture(),
+                "the sibling did not own the press"
+            );
+        }
+        cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
+        if outside {
+            let source_geometry =
+                visual.update(|window, _| window.platform_facts().physical_geometry.unwrap());
+            let sibling_geometry = sibling_visual
+                .update(|window, _| window.platform_facts().physical_geometry.unwrap());
+            let global = sibling_geometry
+                .local_to_global(open_gpui::point(px(20.0), px(20.0)))
+                .unwrap();
+            let position = source_geometry.global_to_local(global).unwrap();
+            cx.set_platform_hovered_window(Some(sibling));
+            cx.set_platform_window_hit_stack(
+                PlatformWindowHitStack::try_available(
+                    global,
+                    vec![PlatformWindowHit::RegisteredApplication {
+                        window: sibling,
+                        geometry: sibling_geometry,
+                        coverage: PlatformWindowPhysicalCoverage::try_new(
+                            sibling_geometry.client_bounds(),
+                        )
+                        .unwrap(),
+                    }],
+                )
+                .unwrap(),
+            );
+            let physical = PlatformNativePointerPhysicalFrame::new(global, source_geometry)
+                .with_capture_owner(PlatformNativePointerCaptureOwner::Window(
+                    handle.window_id(),
+                ));
+            cx.simulate_platform_input_with_native_pointer_physical_frame(
+                handle,
+                PlatformInput::MouseUp(MouseUpEvent {
+                    position,
+                    button: MouseButton::Left,
+                    modifiers: Modifiers::none(),
+                    click_count: 1,
+                }),
+                Some(physical),
+            );
+        } else {
+            visual.simulate_mouse_up(point, MouseButton::Left, Modifiers::none());
+        }
+        frames(&mut visual, &dock);
+        assert!(
+            !dock.has_active_gesture(),
+            "raw_press={raw_press}, outside={outside}"
+        );
+        let requested = dock.pending_content_close_plans().unwrap().len();
+        assert_eq!(requested, usize::from(!outside), "raw_press={raw_press}");
+        cx.set_platform_hovered_window(Some(handle));
+        let second = visual
+            .debug_bounds(&format!("dockspace:tab:{}", SECOND.get()))
+            .unwrap()
+            .center();
+        visual.simulate_click(second, Modifiers::none());
+        frames(&mut visual, &dock);
+        assert!(dock.with_view(|view| view.item(SECOND).unwrap().is_active()));
+        cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();
+        cx.run_until_parked();
+        assert!(dock.native_is_quiescent());
+    }
+}
+
+#[open_gpui::test]
 fn closing_local_windows_retires_their_released_pointer_streams(cx: &mut TestAppContext) {
     use dockspace::runtime::{
         HostPointerInput, HostPointerRoute, PointerDeviceKind, PointerEventMetadata,

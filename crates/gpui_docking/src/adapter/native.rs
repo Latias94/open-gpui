@@ -42,10 +42,10 @@ use open_gpui::{
 };
 use thiserror::Error;
 
-pub(super) use gpui::CallbackCustody;
 pub use gpui::{NativeCallbacks, NativeGeometry, NativeOpenFailure, NativeWindowRequest};
 pub(crate) use input::native_capture_owner;
 pub use input::{NativeCapture, NativePointerFacts};
+pub(super) use transport::{GPUI_MOUSE_POINTER, MousePressLane};
 pub use transport::{NativeTransport, NativeTransportInspection};
 
 /// Facts delivered to the host without acknowledging its semantic outputs.

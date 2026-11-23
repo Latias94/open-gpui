@@ -26,8 +26,9 @@ use super::{
     DockSurface, HostState, SharedHost,
     host::WindowMount,
     native::{
-        CallbackCustody, NativeBridge, NativeBridgeError, NativeCallbacks, NativeCloseDecision,
-        NativeGeometry, NativeOpenFailure, NativeReport, NativeTransport, NativeWindowRequest,
+        GPUI_MOUSE_POINTER, MousePressLane, NativeBridge, NativeBridgeError, NativeCallbacks,
+        NativeCloseDecision, NativeGeometry, NativeOpenFailure, NativeReport, NativeTransport,
+        NativeWindowRequest,
     },
     presentation,
 };
@@ -65,7 +66,6 @@ pub(super) struct ManagedHost {
     bridge: Option<NativeBridge>,
     pub(super) transport: NativeTransport,
     pub(super) callbacks: BTreeMap<WindowId, NativeCallbacks>,
-    primary_press: Option<(WindowId, CallbackCustody)>,
     roots: BTreeSet<WindowId>,
     pending_reports: VecDeque<HostFrameReport>,
     reports: reports::Reports,
@@ -94,17 +94,6 @@ impl ManagedHost {
 
     pub(super) fn can_dispatch_close(&self) -> bool {
         self.bridge.is_some() && !self.transport.is_frozen()
-    }
-
-    fn take_primary_press(&mut self, owner: WindowId) -> bool {
-        let Some(callbacks) = self.callbacks.get(&owner) else {
-            return false;
-        };
-        self.primary_press
-            .take_if(|(source, custody)| {
-                *source == owner && callbacks.has_callback_custody(custody)
-            })
-            .is_some()
     }
 }
 
@@ -323,7 +312,6 @@ pub(super) fn enroll(shared: &SharedHost, cx: &mut App) -> Result<()> {
         bridge: Some(bridge),
         transport,
         callbacks: BTreeMap::new(),
-        primary_press: None,
         roots: BTreeSet::new(),
         pending_reports: VecDeque::new(),
         reports: reports::Reports::default(),
@@ -357,6 +345,11 @@ struct NativeDragPayload {
     host: Weak<RefCell<HostState>>,
 }
 
+pub(super) fn routes_captured_drag(shared: &SharedHost, cx: &App) -> bool {
+    cx.active_drag_value::<NativeDragPayload>()
+        .is_some_and(|payload| payload.host.as_ptr() == Rc::as_ptr(shared))
+}
+
 fn install_router(cx: &mut App) {
     if cx.has_global::<NativeRouter>() {
         return;
@@ -388,10 +381,13 @@ fn install_router(cx: &mut App) {
                 );
                 if let Some(native) = &mut host.native {
                     let owner = event.source_window();
-                    if !matches!(event.phase(), open_gpui::NativeCapturedDragPhase::Moved) {
-                        native.take_primary_press(owner);
-                    }
                     if let Some(callbacks) = native.callbacks.get(&owner) {
+                        if event.button() == open_gpui::MouseButton::Left
+                            && !matches!(event.phase(), open_gpui::NativeCapturedDragPhase::Moved)
+                            && callbacks.can_accept_capture_event(&event)
+                        {
+                            native.transport.retire_mouse_press(callbacks.binding());
+                        }
                         // Real ingress may rearm an unchanged finite challenge.
                         // The callback is queued before scheduling can sample it.
                         native.blocked_continuation = None;
@@ -401,7 +397,7 @@ fn install_router(cx: &mut App) {
                                 native.callbacks.get(&owner).map(NativeCallbacks::binding)
                             }),
                             event,
-                            dockspace::runtime::NativePointerId::new(1),
+                            GPUI_MOUSE_POINTER,
                             metadata,
                             cx,
                         );
@@ -1150,32 +1146,27 @@ pub(super) fn schedule(shared: &SharedHost, cx: &mut App) {
     });
 }
 
-pub(super) fn queue_content_terminal(
+pub(super) fn queue_mouse_terminal(
     host: &mut HostState,
     owner: WindowId,
-    custody: &super::native::CallbackCustody,
+    only_content: bool,
     event: dockspace::runtime::SurfacePointerEvent,
     metadata: dockspace::runtime::PointerEventMetadata,
-) {
+) -> bool {
     use dockspace::runtime::{
-        NativeLocalPointerLocation, NativePointerButton, NativePointerCancelReason,
-        NativePointerEvent, NativePointerId, NativePointerInput, NativePointerOwner,
-        SurfacePointerEvent,
+        NativeDesktopPointerLocation, NativeDesktopPosition, NativeLocalPointerLocation,
+        NativePointerButton, NativePointerCancelReason, NativePointerEvent, NativePointerHover,
+        NativePointerInput, NativePointerOwner, SurfacePointerEvent,
     };
     let Some(native) = host
         .native
         .as_mut()
         .filter(|native| !native.transport.is_frozen())
     else {
-        return;
+        return false;
     };
-    let Some(binding) = native
-        .callbacks
-        .get(&owner)
-        .filter(|callbacks| callbacks.has_callback_custody(custody))
-        .map(NativeCallbacks::binding)
-    else {
-        return;
+    let Some(binding) = native.callbacks.get(&owner).map(NativeCallbacks::binding) else {
+        return false;
     };
     let event = match event {
         SurfacePointerEvent::ButtonReleased(_) => {
@@ -1184,21 +1175,41 @@ pub(super) fn queue_content_terminal(
         SurfacePointerEvent::StreamCancelled(_) => NativePointerEvent::StreamCancelled(
             NativePointerCancelReason::ExplicitPlatformCancellation,
         ),
-        _ => return,
+        _ => return false,
     };
-    if !native.take_primary_press(owner) {
-        return;
+    let Some(lane) = native.transport.mouse_press_lane(binding) else {
+        return false;
+    };
+    if only_content && lane != MousePressLane::Content {
+        return false;
     }
-    native.transport.pointer_in_window(
-        NativePointerInput::new_local(
-            NativePointerId::new(1),
+    let delivery = NativePointerOwner::Native(binding);
+    let input = if lane == MousePressLane::Desktop {
+        NativePointerInput::new(
+            GPUI_MOUSE_POINTER,
             event,
-            NativeLocalPointerLocation::Unknown,
-            NativePointerOwner::Native(binding),
+            NativeDesktopPointerLocation::new(
+                NativeDesktopPosition::Unknown,
+                NativePointerHover::Unknown,
+                None,
+            ),
+            delivery,
             NativePointerOwner::Unknown,
         )
-        .with_metadata(metadata),
-    );
+    } else {
+        NativePointerInput::new_local(
+            GPUI_MOUSE_POINTER,
+            event,
+            NativeLocalPointerLocation::Unknown,
+            delivery,
+            NativePointerOwner::Unknown,
+        )
+    };
+    native
+        .transport
+        .pointer_in_window(input.with_metadata(metadata), false);
+    native.blocked_continuation = None;
+    true
 }
 
 pub(super) fn queue_pointer(
@@ -1208,15 +1219,17 @@ pub(super) fn queue_pointer(
     event: dockspace::runtime::SurfacePointerEvent,
     position: open_gpui::Point<Pixels>,
     geometry: open_gpui::ElementGeometry,
-    clear: bool,
+    chrome_clear: bool,
+    content_clear: bool,
     captured: bool,
     modifiers: open_gpui::Modifiers,
     window: &Window,
 ) -> bool {
     use dockspace::runtime::{
-        NativeLocalPointerLocation, NativePointerButton, NativePointerCancelReason,
-        NativePointerEvent, NativePointerId, NativePointerInput, NativePointerOwner,
-        PointerDeviceKind, PointerEventMetadata, SurfacePointerEvent,
+        NativeDesktopPointerLocation, NativeDesktopPosition, NativeLocalPointerLocation,
+        NativePointerButton, NativePointerCancelReason, NativePointerEvent, NativePointerHover,
+        NativePointerInput, NativePointerOwner, PointerDeviceKind, PointerEventMetadata,
+        SurfacePointerEvent,
     };
     let owner = window.window_handle().window_id();
     let terminal = matches!(
@@ -1241,7 +1254,6 @@ pub(super) fn queue_pointer(
         return false;
     };
     let binding = callbacks.binding();
-    let custody = callbacks.callback_custody();
     let event = match event {
         SurfacePointerEvent::ButtonPressed(_) => {
             NativePointerEvent::ButtonPressed(NativePointerButton::Primary)
@@ -1261,28 +1273,46 @@ pub(super) fn queue_pointer(
         }
         _ => return false,
     };
-    if !captured && !clear && !terminal {
+    if !captured && !chrome_clear && !content_clear && !terminal {
         return false;
     }
-    if terminal && !native.take_primary_press(owner) {
+    let press = native.transport.mouse_press_lane(binding);
+    if terminal && press.is_none() {
         return false;
     }
-    if matches!(event, NativePointerEvent::ButtonPressed(_)) {
-        native.primary_press = Some((owner, custody));
-    }
-    let location = local_sample(&host.session, binding, position, window).map_or(
-        NativeLocalPointerLocation::Unknown,
-        NativeLocalPointerLocation::Exact,
-    );
-    native.transport.pointer_in_window(
-        NativePointerInput::new_local(
-            NativePointerId::new(1),
+    let delivery = NativePointerOwner::Native(binding);
+    let packet = if terminal && press == Some(MousePressLane::Desktop) {
+        let position = window
+            .platform_facts()
+            .physical_geometry
+            .and_then(|geometry| geometry.local_to_global(position))
+            .and_then(|point| PhysicalPoint::new(f64::from(point.x.0), f64::from(point.y.0)).ok())
+            .map_or(NativeDesktopPosition::Unknown, NativeDesktopPosition::Exact);
+        // The window callback establishes delivery. It supplies no independent
+        // desktop hover or native capture observation.
+        NativePointerInput::new(
+            GPUI_MOUSE_POINTER,
             event,
-            location,
-            NativePointerOwner::Native(binding),
+            NativeDesktopPointerLocation::new(position, NativePointerHover::Unknown, None),
+            delivery,
             NativePointerOwner::Unknown,
         )
-        .with_metadata(metadata),
+    } else {
+        let location = local_sample(&host.session, binding, position, window).map_or(
+            NativeLocalPointerLocation::Unknown,
+            NativeLocalPointerLocation::Exact,
+        );
+        NativePointerInput::new_local(
+            GPUI_MOUSE_POINTER,
+            event,
+            location,
+            delivery,
+            NativePointerOwner::Unknown,
+        )
+    };
+    native.transport.pointer_in_window(
+        packet.with_metadata(metadata),
+        !captured && !chrome_clear && content_clear,
     );
     native.blocked_continuation = None;
     if let Some(region) = host

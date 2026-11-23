@@ -1646,6 +1646,7 @@ impl DockspaceElement {
                         &interaction,
                         SurfacePointerEvent::ButtonReleased(SurfacePointerButton::Primary),
                         event.modifiers,
+                        Some(event.position),
                         window,
                         cx,
                     );
@@ -1656,6 +1657,8 @@ impl DockspaceElement {
         let interaction = self.interaction.clone();
         window.on_pointer_cancel(move |_, phase, window, cx| {
             if phase.capture() {
+                interaction.splitter_press.borrow_mut().take();
+                interaction.tab_list_press.borrow_mut().take();
                 settle_primary_terminal(
                     &shared,
                     &interaction,
@@ -1663,6 +1666,7 @@ impl DockspaceElement {
                         SurfacePointerCancelReason::ExplicitPlatformCancellation,
                     ),
                     window.modifiers(),
+                    None,
                     window,
                     cx,
                 );
@@ -1853,7 +1857,7 @@ impl DockspaceElement {
             {
                 return;
             }
-            if shared.borrow().native.is_some() && cx.has_active_drag() {
+            if super::host_native::routes_captured_drag(&shared, cx) {
                 return;
             }
             if input::queue(
@@ -2044,52 +2048,6 @@ impl DockspaceElement {
             let _ = window.release_pointer(&capture);
             window.refresh();
             cx.stop_propagation();
-        });
-        let shared = self.host.clone();
-        let hitboxes = prepared.hitboxes.clone();
-        let content_hitboxes = prepared.content_hitboxes.clone();
-        let interaction = self.interaction.clone();
-        window.on_pointer_cancel(move |_, phase, window, _| {
-            if phase.capture() {
-                interaction.splitter_press.borrow_mut().take();
-                interaction.tab_list_press.borrow_mut().take();
-            }
-            if !phase.bubble() || interaction.content_terminal.get() {
-                return;
-            }
-            let mut host = shared.borrow_mut();
-            if host.native.is_none() {
-                // The window-level listener already settled its own press.
-                return;
-            }
-            let pending_input = host
-                .mounts
-                .get(&owner)
-                .and_then(|mount| mount.pending.as_ref())
-                .is_some_and(|pending| !pending.inputs.is_empty());
-            if !routes_to(&host, surface, window.mouse_position(), window) {
-                return;
-            }
-            if !host.session.has_active_gesture() && host.inputs.is_empty() && !pending_input {
-                return;
-            }
-            let position = window.mouse_position();
-            input::queue(
-                &mut host,
-                surface,
-                serial,
-                SurfacePointerEvent::StreamCancelled(
-                    SurfacePointerCancelReason::ExplicitPlatformCancellation,
-                ),
-                position,
-                geometry,
-                &hitboxes,
-                &content_hitboxes,
-                false,
-                window.modifiers(),
-                window,
-            );
-            window.refresh();
         });
     }
 }
@@ -2919,30 +2877,42 @@ fn routes_to(
     position: open_gpui::Point<Pixels>,
     window: &Window,
 ) -> bool {
+    let target = displayed_surface_at(host, position, window).or_else(|| {
+        if host.native.is_some() {
+            return None;
+        }
+        let owner = window.window_handle().window_id();
+        host.session
+            .host_pointer_manipulation_surface(input::local_pointer(owner))
+            .map(|source| source.surface())
+            // GPUI capture starts on the callback, before core sees the press.
+            .or_else(|| {
+                host.mounts
+                    .get(&owner)?
+                    .primary_press
+                    .as_ref()?
+                    .captured_local_surface()
+            })
+    });
+    target == Some(surface)
+}
+
+fn displayed_surface_at(
+    host: &HostState,
+    position: open_gpui::Point<Pixels>,
+    window: &Window,
+) -> Option<SurfaceId> {
     let owner = window.window_handle().window_id();
-    let Some(mount) = host.mounts.get(&owner) else {
-        return false;
-    };
+    let mount = host.mounts.get(&owner)?;
     let frames = mount
         .pending
         .as_ref()
         .and_then(presentation::PendingSubmission::accepted_input_frames)
         .unwrap_or(&mount.input_frames);
-    let target = frames
+    frames
         .iter()
         .find(|frame| frame.geometry.displayed_bounds().contains(&position))
         .map(|frame| frame.surface)
-        .or_else(|| {
-            if host.native.is_some() {
-                return None;
-            }
-            host.session
-                .host_pointer_manipulation_surface(input::local_pointer(owner))
-                .map(|source| source.surface())
-                // GPUI capture starts on the callback, before core sees the press.
-                .or_else(|| mount.primary_press.as_ref()?.captured_local_surface())
-        });
-    target == Some(surface)
 }
 
 fn settle_primary_terminal(
@@ -2950,11 +2920,31 @@ fn settle_primary_terminal(
     interaction: &InteractionState,
     event: SurfacePointerEvent,
     modifiers: open_gpui::Modifiers,
+    release_position: Option<open_gpui::Point<Pixels>>,
     window: &mut Window,
     cx: &mut App,
 ) {
     let mut host = shared.borrow_mut();
-    let handled = input::finish_content_press(&mut host, event, modifiers, window);
+    let mut handled = input::finish_content_press(&mut host, event, modifiers, window);
+    if !handled && host.native.is_some() && !super::host_native::routes_captured_drag(shared, cx) {
+        use dockspace::runtime::{PointerDeviceKind, PointerEventMetadata};
+        let metadata = PointerEventMetadata::new(PointerDeviceKind::Mouse, host.observed_at())
+            .with_docking_enabled(host.config.input.docking_enabled(modifiers));
+        let routed = release_position
+            .is_some_and(|point| displayed_surface_at(&host, point, window).is_some());
+        handled = super::host_native::queue_mouse_terminal(
+            &mut host,
+            window.window_handle().window_id(),
+            routed,
+            event,
+            metadata,
+        );
+        if handled {
+            interaction.splitter_press.borrow_mut().take();
+            interaction.tab_list_press.borrow_mut().take();
+            window.refresh();
+        }
+    }
     interaction.content_terminal.set(handled);
     if handled
         && host.native.is_none()

@@ -17,7 +17,7 @@ use open_gpui::{
     WindowId,
 };
 
-use super::{HostState, native::CallbackCustody};
+use super::HostState;
 
 #[derive(Clone, Copy, PartialEq)]
 pub(super) struct RegionGeometry {
@@ -75,24 +75,13 @@ pub(super) struct PanePresentation {
 
 pub(super) struct PrimaryPress {
     surface: SurfaceId,
-    source: PrimaryPressSource,
-}
-
-enum PrimaryPressSource {
-    Local {
-        committed: Rc<Cell<bool>>,
-        captured: bool,
-    },
-    Native(CallbackCustody),
+    committed: Rc<Cell<bool>>,
+    captured: bool,
 }
 
 impl PrimaryPress {
     pub(super) fn captured_local_surface(&self) -> Option<SurfaceId> {
-        matches!(
-            self.source,
-            PrimaryPressSource::Local { captured: true, .. }
-        )
-        .then_some(self.surface)
+        self.captured.then_some(self.surface)
     }
 }
 
@@ -107,11 +96,7 @@ pub(super) fn finish_content_press(
         return false;
     };
     let Some(press) = mount.primary_press.take_if(|press| {
-        matches!(event, SurfacePointerEvent::StreamCancelled(_))
-            || !matches!(
-                press.source,
-                PrimaryPressSource::Local { captured: true, .. }
-            )
+        matches!(event, SurfacePointerEvent::StreamCancelled(_)) || !press.captured
     }) else {
         return false;
     };
@@ -124,20 +109,13 @@ pub(super) fn finish_content_press(
         .with_docking_enabled(host.config.input.docking_enabled(modifiers));
     // The press was observed for bookkeeping and pane activation. Its terminal
     // does not need a new hit test, even when the original region was resized.
-    match press.source {
-        PrimaryPressSource::Local { committed, .. } => {
-            host.inputs.push(QueuedInput::unrouted_terminal(
-                owner,
-                event,
-                Some(committed),
-                stream_live,
-                metadata,
-            ));
-        }
-        PrimaryPressSource::Native(custody) => {
-            super::host_native::queue_content_terminal(host, owner, &custody, event, metadata);
-        }
-    }
+    host.inputs.push(QueuedInput::unrouted_terminal(
+        owner,
+        event,
+        Some(press.committed),
+        stream_live,
+        metadata,
+    ));
     window.refresh();
     true
 }
@@ -335,36 +313,19 @@ pub(super) fn queue(
     let content_clear = target.is_some_and(|id| content_hitboxes.contains(&id));
     let owner = window.window_handle().window_id();
     if host.native.is_some() {
-        let queued = super::host_native::queue_pointer(
+        return super::host_native::queue_pointer(
             host,
             surface_id,
             serial,
             event,
             position,
             geometry,
-            chrome_clear || content_clear,
+            chrome_clear,
+            content_clear,
             captured,
             modifiers,
             window,
         );
-        if queued
-            && !captured
-            && !chrome_clear
-            && content_clear
-            && is_primary_press(event)
-            && let Some(custody) = host
-                .native
-                .as_ref()
-                .and_then(|native| native.callbacks.get(&owner))
-                .map(|callbacks| callbacks.callback_custody())
-            && let Some(mount) = host.mounts.get_mut(&owner)
-        {
-            mount.primary_press = Some(PrimaryPress {
-                surface: surface_id,
-                source: PrimaryPressSource::Native(custody),
-            });
-        }
-        return queued;
     }
     let chrome_clear = window.is_mouse_in_window() && chrome_clear;
     let clear = chrome_clear || (window.is_mouse_in_window() && content_clear);
@@ -437,23 +398,17 @@ pub(super) fn queue(
         let committed = Rc::new(Cell::new(false));
         mount.primary_press = Some(PrimaryPress {
             surface: surface_id,
-            source: PrimaryPressSource::Local {
-                committed: committed.clone(),
-                captured,
-            },
+            committed: committed.clone(),
+            captured,
         });
         Some(committed)
     } else if terminal {
-        let Some(PrimaryPress {
-            source: PrimaryPressSource::Local { committed, .. },
-            ..
-        }) = mount.primary_press.take()
-        else {
+        let Some(press) = mount.primary_press.take() else {
             return false;
         };
         // Keep the original release route while making the terminal survive
         // the loss of the window that supplied the press.
-        Some(committed)
+        Some(press.committed)
     } else {
         None
     };

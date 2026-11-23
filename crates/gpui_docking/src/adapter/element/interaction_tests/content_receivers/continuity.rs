@@ -335,11 +335,19 @@ fn resized_editor_finishes_its_original_press_while_a_sibling_waits(cx: &mut Tes
             let content = pane_center(&dock, &mut source, FIRST);
             press(&mut source, content, managed);
             frames(&mut source, &dock);
-            assert!(
-                dock.host.borrow().mounts[&source_window.window_id()]
-                    .primary_press
-                    .is_some()
-            );
+            let owns_press = || {
+                let host = dock.host.borrow();
+                let owner = source_window.window_id();
+                if let Some(native) = &host.native {
+                    native
+                        .transport
+                        .mouse_press_lane(native.callbacks[&owner].binding())
+                        == Some(crate::adapter::native::MousePressLane::Content)
+                } else {
+                    host.mounts[&owner].primary_press.is_some()
+                }
+            };
+            assert!(owns_press());
 
             cx.set_window_frame_delivery_mode(sibling_window, PlatformFrameDeliveryMode::Deferred);
             cx.simulate_window_resize(sibling_window, size(px(680.0), px(470.0)));
@@ -368,11 +376,7 @@ fn resized_editor_finishes_its_original_press_while_a_sibling_waits(cx: &mut Tes
                 }
                 source.simulate_mouse_up(content, MouseButton::Left, Modifiers::none());
             }
-            assert!(
-                dock.host.borrow().mounts[&source_window.window_id()]
-                    .primary_press
-                    .is_none()
-            );
+            assert!(!owns_press());
             cx.update(|_| assert!(pending.complete(PlatformWindowPresentOutcome::Submitted)));
             cx.set_window_frame_delivery_mode(
                 sibling_window,
@@ -449,7 +453,14 @@ fn native_content_terminals_follow_a_continued_root_across_layout_reset(cx: &mut
             let original = dock.native_binding_for_window(owner).unwrap();
             let roots = {
                 let host = dock.host.borrow();
-                assert!(host.mounts[&owner].primary_press.is_some());
+                assert!(
+                    host.native
+                        .as_ref()
+                        .unwrap()
+                        .transport
+                        .mouse_press_lane(original)
+                        .is_some()
+                );
                 host.session
                     .native_surface_bindings_for_window(original)
                     .map(|binding| (binding, binding.surface()))
