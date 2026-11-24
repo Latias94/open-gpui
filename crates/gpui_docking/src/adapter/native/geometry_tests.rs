@@ -293,7 +293,6 @@ fn observe_without_target_redraw(cx: &mut TestAppContext, change: Change, round_
         !transport.is_empty(),
         "{change:?} must enter transport before the target paints"
     );
-    assert_ne!(callbacks.0.observed.get(), Some(original_facts));
     assert_eq!(callbacks.facts(), Some(original_facts));
     {
         let host = fixture.dock.host.borrow();
@@ -309,13 +308,24 @@ fn observe_without_target_redraw(cx: &mut TestAppContext, change: Change, round_
         );
     }
     if round_trip {
+        let queued = transport.inspection().queued_record_count;
         change.apply(target, false, cx);
-        assert_eq!(callbacks.0.observed.get(), Some(original_facts));
+        assert!(transport.inspection().queued_record_count > queued);
     }
     assert_eq!(fixture.renders[1].get(), original_renders);
     fixture.release_collection(cx);
     fixture.pump(cx);
-    assert_eq!(callbacks.facts(), callbacks.0.observed.get());
+    let live_facts = cx
+        .update_window(target, |_, window, _| {
+            callbacks.window_facts(window, || None)
+        })
+        .unwrap();
+    assert_eq!(callbacks.facts(), live_facts);
+    if round_trip {
+        assert_eq!(callbacks.facts(), Some(original_facts));
+    } else {
+        assert_ne!(callbacks.facts(), Some(original_facts));
+    }
     {
         let host = fixture.dock.host.borrow();
         assert_eq!(host.session.version(), version);
@@ -419,7 +429,7 @@ fn occlusion_preserves_shown_window_receivers_without_redraw(cx: &mut TestAppCon
         assert!(!window.platform_facts().is_minimized);
     })
     .unwrap();
-    assert_eq!(callbacks.0.observed.get(), Some(facts));
+    assert_eq!(callbacks.facts(), Some(facts));
     assert!(fixture.dock.native_transport().unwrap().is_empty());
     fixture.release_collection(cx);
     fixture.pump(cx);

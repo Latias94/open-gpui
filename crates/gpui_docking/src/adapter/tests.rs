@@ -158,6 +158,19 @@ fn frames(visual: &mut VisualTestContext, dock: &DockSurface) {
     }
 }
 
+#[open_gpui::test]
+fn update_during_view_inspection_returns_a_borrow_error(cx: &mut TestAppContext) {
+    let (dock, _, _) = fixture(cx);
+    cx.update(|cx| {
+        let result = dock.with_view(|_| dock.update(|_| Ok(()), cx));
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "dockspace host is already borrowed"
+        );
+        dock.update(|_| Ok(()), cx).unwrap();
+    });
+}
+
 fn assert_painted_pane(
     dock: &DockSurface,
     window: open_gpui::AnyWindowHandle,
@@ -227,6 +240,69 @@ fn an_accepted_but_deferred_pane_cannot_receive_content_clicks(cx: &mut TestAppC
     visual.simulate_click(submitted_bounds.center(), Modifiers::default());
     assert_eq!(views[1].read_with(&visual, |view, _| view.clicks), 1);
     assert_eq!(document.borrow().text, "sharedx");
+}
+
+#[open_gpui::test]
+fn reopening_a_pane_does_not_reuse_the_old_presentation_for_content_input(cx: &mut TestAppContext) {
+    use dockspace::close::CloseDecision;
+
+    cx.defer_next_window_frame_requests();
+    let (dock, views, document) = fixture(cx);
+    let window = cx.open_window(size(px(800.0), px(600.0)), |_, _| Root {
+        dock: dock.clone(),
+        surfaces: vec![FIRST],
+    });
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    frames(&mut visual, &dock);
+    let placement = DockPlacement::Center(DockAnchor::Item(A));
+    cx.update(|cx| {
+        dock.update(
+            |frame| {
+                frame.dock_item_current(B, placement)?;
+                frame.select_item_current(B)?;
+                Ok(())
+            },
+            cx,
+        )
+        .unwrap();
+    });
+    frames(&mut visual, &dock);
+    let old_bounds = visual.debug_bounds("view:22").unwrap();
+    visual.set_window_present_outcome(window.into(), PlatformWindowPresentOutcome::Deferred);
+    cx.update(|cx| {
+        dock.update(
+            |frame| {
+                frame.request_close_item_current(B)?;
+                Ok(())
+            },
+            cx,
+        )
+        .unwrap();
+        let plans = dock.pending_content_close_plans().unwrap();
+        let request = plans[0].request();
+        let token = plans[0].items()[0].token();
+        dock.update(
+            |frame| {
+                frame.resolve_close(request, token, CloseDecision::Allow)?;
+                frame.open_item_current(B, placement)?;
+                frame.select_item_current(B)?;
+                Ok(())
+            },
+            cx,
+        )
+        .unwrap();
+    });
+    frames(&mut visual, &dock);
+    let current_bounds = visual.debug_bounds("view:22").unwrap();
+    assert_eq!(current_bounds, old_bounds);
+    visual.simulate_click(current_bounds.center(), Modifiers::none());
+    assert_eq!(views[1].read_with(&visual, |view, _| view.clicks), 0);
+    assert_eq!(document.borrow().text, "shared");
+
+    visual.set_window_present_outcome(window.into(), PlatformWindowPresentOutcome::Submitted);
+    frames(&mut visual, &dock);
+    visual.simulate_click(current_bounds.center(), Modifiers::none());
+    assert_eq!(views[1].read_with(&visual, |view, _| view.clicks), 1);
 }
 
 #[open_gpui::test]
@@ -832,6 +908,70 @@ fn managed_child_creation_paints_the_original_view_after_bootstrap(cx: &mut Test
 }
 
 #[open_gpui::test]
+fn failed_shutdown_settles_a_child_retired_during_placement(cx: &mut TestAppContext) {
+    use dockspace::{
+        geometry::PhysicalRect, model::NativeWindowPlacement, runtime::NativeHostErrorKind,
+    };
+
+    cx.defer_next_window_frame_requests();
+    let (dock, _, _) = managed_workspace(cx);
+    let root = cx.open_window(size(px(800.0), px(600.0)), |window, cx| {
+        dock.bind_native_root(FIRST, true, window, cx).unwrap();
+        Root {
+            dock: dock.clone(),
+            surfaces: vec![FIRST],
+        }
+    });
+    let mut visual = VisualTestContext::from_window(root.into(), cx);
+    frames(&mut visual, &dock);
+    cx.update(|cx| {
+        dock.update(
+            |frame| {
+                frame.create_native_surface_current(
+                    SECOND,
+                    FIRST,
+                    NativeWindowPlacement::new(PhysicalRect::new(20.0, 30.0, 600.0, 450.0)?),
+                )?;
+                Ok(())
+            },
+            cx,
+        )
+        .unwrap();
+    });
+    cx.run_until_parked();
+    let child = cx.update(|cx| {
+        cx.windows()
+            .into_iter()
+            .find(|&window| window != root.into())
+            .unwrap()
+    });
+    assert!(dock.host.borrow().session.has_pending_native_create());
+    let terminal = cx.hold_window_native_terminal(child);
+    cx.update(|cx| {
+        dock.host
+            .borrow_mut()
+            .fail(&super::native::NativeBridgeError::EffectReport(
+                NativeHostErrorKind::InvalidFacts,
+            ));
+        dock.begin_failed_native_shutdown(cx).unwrap();
+    });
+    cx.run_until_parked();
+    assert!(dock.native_termination().is_none());
+
+    assert!(terminal.release());
+    cx.run_until_parked();
+    assert!(
+        matches!(
+            dock.native_termination(),
+            Some(super::DockNativeTermination::Failed(_))
+        ),
+        "{:?}",
+        dock.inspection()
+    );
+    assert!(dock.with_view(|view| view.item(B).unwrap().surface() == SECOND));
+}
+
+#[open_gpui::test]
 fn native_ingress_waits_for_the_original_unaccepted_candidate(cx: &mut TestAppContext) {
     cx.defer_next_window_frame_requests();
     let (dock, _, _, windows) = managed_fixture(cx);
@@ -898,7 +1038,7 @@ fn native_ingress_waits_for_the_original_unaccepted_candidate(cx: &mut TestAppCo
             };
             assert_eq!(retained.surface, SECOND);
             assert_eq!(retained.serial, original_input.serial);
-            assert_eq!(retained.bounds, original_input.bounds);
+            assert_eq!(retained.geometry, original_input.geometry);
             assert_eq!(retained.scale, original_input.scale);
             assert_eq!(retained.native_binding, original_input.native_binding);
         }
@@ -964,6 +1104,171 @@ fn managed_chrome_clicks_use_the_native_producer_and_submitted_receivers(cx: &mu
     frames(&mut first, &dock);
     assert_eq!(views[0].read_with(&first, |view, _| view.clicks), 1);
     assert_eq!(views[1].read_with(&first, |view, _| view.clicks), 0);
+}
+
+#[open_gpui::test]
+fn another_window_cannot_finish_a_managed_close_button_press(cx: &mut TestAppContext) {
+    use open_gpui::{
+        MouseButton, MouseUpEvent, PlatformInput, PointerCancelEvent, PointerCancelReason, point,
+    };
+
+    cx.defer_next_window_frame_requests();
+    let (dock, _, _, [first, second]) = managed_fixture(cx);
+    let mut source = VisualTestContext::from_window(first, cx);
+    let mut target = VisualTestContext::from_window(second, cx);
+    assert!(target.activate_accessibility());
+    target.update(|window, _| {
+        let _ = window.activate_window();
+    });
+    cx.set_platform_hovered_window(Some(second));
+    frames(&mut source, &dock);
+    frames(&mut target, &dock);
+    let tab = target.debug_bounds("dockspace:tab:22").unwrap().center();
+    target.simulate_mouse_move(tab, None, Modifiers::none());
+    frames(&mut target, &dock);
+    let tree = target.latest_accessibility_tree_update().unwrap();
+    let bounds = tree
+        .nodes
+        .iter()
+        .find_map(|(_, node)| {
+            (node.label() == Some("Close Second View"))
+                .then(|| node.bounds())
+                .flatten()
+        })
+        .expect("the close button is exposed in the target window");
+    let scale = f64::from(target.update(|window, _| window.scale_factor()));
+    let close = point(
+        px(((bounds.x0 + bounds.x1) * 0.5 / scale) as f32),
+        px(((bounds.y0 + bounds.y1) * 0.5 / scale) as f32),
+    );
+    target.simulate_mouse_down(close, MouseButton::Left, Modifiers::none());
+    frames(&mut target, &dock);
+    let late = source.debug_bounds("dockspace:tab:21").unwrap().center();
+    source.update(|window, cx| {
+        window.dispatch_event(
+            PlatformInput::MouseUp(MouseUpEvent {
+                position: late,
+                button: MouseButton::Left,
+                modifiers: Modifiers::none(),
+                click_count: 1,
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            PlatformInput::PointerCanceled(PointerCancelEvent {
+                reason: PointerCancelReason::CaptureRevoked,
+            }),
+            cx,
+        );
+    });
+    frames(&mut target, &dock);
+    assert!(dock.pending_content_close_plans().unwrap().is_empty());
+    target.simulate_mouse_up(close, MouseButton::Left, Modifiers::none());
+    frames(&mut target, &dock);
+    let plans = dock.pending_content_close_plans().unwrap();
+    assert_eq!(
+        plans
+            .iter()
+            .flat_map(|plan| plan.items())
+            .map(|item| item.item())
+            .collect::<Vec<_>>(),
+        [B]
+    );
+}
+
+#[open_gpui::test]
+fn first_move_over_another_region_uses_the_pending_press_region(cx: &mut TestAppContext) {
+    use open_gpui::{MouseButton, PlatformFrameDeliveryMode, point};
+
+    let (dock, _, _) = fixture(cx);
+    let window = cx.open_window(size(px(800.0), px(600.0)), |_, _| Root {
+        dock: dock.clone(),
+        surfaces: vec![FIRST, SECOND],
+    });
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    visual.update(|window, _| {
+        let _ = window.activate_window();
+    });
+    cx.set_platform_hovered_window(Some(window.into()));
+    frames(&mut visual, &dock);
+    let tab = visual.debug_bounds("dockspace:tab:21").unwrap().center();
+    let target = point(px(600.0), px(313.0));
+    cx.set_window_frame_delivery_mode(window.into(), PlatformFrameDeliveryMode::Deferred);
+    visual.simulate_mouse_down(tab, MouseButton::Left, Modifiers::none());
+    assert!(!dock.has_active_gesture(), "the press has not reached core");
+    visual.simulate_mouse_move(target, Some(MouseButton::Left), Modifiers::none());
+    cx.set_window_frame_delivery_mode(window.into(), PlatformFrameDeliveryMode::Synchronous);
+    if let Some(ticket) = cx.pending_window_frame_submission(window.into()) {
+        cx.update(|_| {
+            let _ = ticket.complete(PlatformWindowPresentOutcome::Submitted);
+        });
+    }
+    frames(&mut visual, &dock);
+    visual.simulate_mouse_up(target, MouseButton::Left, Modifiers::none());
+    frames(&mut visual, &dock);
+    assert_eq!(
+        dock.with_view(|view| view.item(A).unwrap().surface()),
+        SECOND
+    );
+    assert!(!dock.has_active_gesture());
+}
+
+#[open_gpui::test]
+fn retiring_a_cancelled_mouse_mount_leaves_a_reused_pen_stream_alone(cx: &mut TestAppContext) {
+    use dockspace::runtime::{
+        HostPointerInput, HostPointerRoute, PointerDeviceKind, PointerEventMetadata,
+        SurfacePointerCapture, SurfacePointerEvent, SurfacePointerReceiverFacts,
+    };
+    use open_gpui::{MouseButton, PointerCancelReason, QuitMode};
+
+    cx.update(|cx| cx.set_quit_mode(QuitMode::Explicit));
+    let (dock, _, _) = fixture(cx);
+    let window = cx.open_window(size(px(800.0), px(600.0)), |_, _| Root {
+        dock: dock.clone(),
+        surfaces: vec![FIRST],
+    });
+    let handle: open_gpui::AnyWindowHandle = window.into();
+    let mut visual = VisualTestContext::from_window(handle, cx);
+    visual.update(|window, _| {
+        let _ = window.activate_window();
+    });
+    cx.set_platform_hovered_window(Some(handle));
+    frames(&mut visual, &dock);
+    let tab = visual.debug_bounds("dockspace:tab:21").unwrap().center();
+    visual.simulate_mouse_down(tab, MouseButton::Left, Modifiers::none());
+    frames(&mut visual, &dock);
+    assert!(dock.has_active_gesture());
+    visual.update(|window, cx| {
+        window.quiesce_pointer_session(PointerCancelReason::CaptureRevoked, cx)
+    });
+    visual.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
+    frames(&mut visual, &dock);
+    let pointer = super::input::local_pointer(handle.window_id());
+    cx.update(|cx| {
+        dock.update(
+            |frame| {
+                frame.submit_host_pointer(
+                    HostPointerInput::new(
+                        pointer,
+                        SurfacePointerEvent::Moved,
+                        HostPointerRoute::Unknown,
+                        HostPointerRoute::Unknown,
+                        SurfacePointerCapture::None,
+                        SurfacePointerReceiverFacts::unknown(),
+                    )
+                    .with_metadata(PointerEventMetadata::untimed(PointerDeviceKind::Pen)),
+                )?;
+                Ok(())
+            },
+            cx,
+        )
+    })
+    .unwrap();
+    visual.update(|window, cx| window.remove_window(cx));
+    cx.run_until_parked();
+    assert!(dock.error().is_none(), "{:?}", dock.error());
+    assert_eq!(dock.inspection().unwrap().queued_input_count, 0);
+    cx.update(|cx| dock.refresh_tab_content(B, cx)).unwrap();
 }
 
 #[open_gpui::test]
@@ -1484,7 +1789,11 @@ fn managed_alt_release_docks_the_original_group_as_a_nested_tab(cx: &mut TestApp
             .find(|(receiver, _)| receiver.role() == DockspaceReceiverRole::TabGroupGrip)
             .unwrap()
             .0;
-        frame.bounds.origin + point(px(grip.center().x() as f32), px(grip.center().y() as f32))
+        let center = grip.center();
+        frame
+            .geometry
+            .local_to_window_point(point(px(center.x() as f32), px(center.y() as f32)))
+            .unwrap()
     };
     let geometry =
         source_visual.update(|window, _| window.platform_facts().physical_geometry.unwrap());
@@ -1591,6 +1900,38 @@ fn managed_alt_release_docks_the_original_group_as_a_nested_tab(cx: &mut TestApp
         assert_eq!(view.item(A).unwrap().surface(), SECOND);
         assert_eq!(view.item(EXTRA).unwrap().surface(), SECOND);
     });
+}
+
+#[open_gpui::test]
+fn managed_escape_releases_the_captured_drag_before_mouse_up(cx: &mut TestAppContext) {
+    let (dock, window, _) = managed_stationary_drag_fixture(cx);
+    assert!(dock.has_active_gesture());
+    cx.simulate_keystrokes(window, "escape");
+    let mut visual = VisualTestContext::from_window(window, cx);
+    frames(&mut visual, &dock);
+
+    assert!(!dock.has_active_gesture());
+    assert!(dock.native_pointer_continuation().is_none());
+    assert!(dock.with_view(|view| view.item(B).unwrap().is_active()));
+}
+
+#[open_gpui::test]
+fn managed_modifiers_suspend_stationary_hover_without_another_move(cx: &mut TestAppContext) {
+    let (dock, window, _) = managed_stationary_drag_fixture(cx);
+    assert!(dock.native_pointer_continuation().is_some());
+    let mut visual = VisualTestContext::from_window(window, cx);
+    visual.simulate_modifiers_change(Modifiers {
+        shift: true,
+        ..Modifiers::none()
+    });
+    frames(&mut visual, &dock);
+
+    assert!(
+        dock.has_active_gesture(),
+        "Shift suspends docking during the drag"
+    );
+    assert!(dock.native_pointer_continuation().is_none());
+    assert!(dock.with_view(|view| view.item(B).unwrap().is_active()));
 }
 
 #[open_gpui::test]

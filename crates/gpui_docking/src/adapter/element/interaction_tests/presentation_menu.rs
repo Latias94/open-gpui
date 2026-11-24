@@ -4,6 +4,7 @@ use dockspace::{
     close::{CloseDecision, ClosePlanTarget},
     model::DockPlacement,
 };
+use open_gpui::{SubtreeTransform, SubtreeTransformExt, SubtreeTransformOrigin};
 
 use super::super::presentation_menu::{Scope, open as open_product_menu};
 use super::*;
@@ -17,6 +18,7 @@ const ITEMS: [ItemId; 4] = [FIRST, SECOND, THIRD, FOURTH];
 struct MenuProbe {
     interaction: RefCell<Option<Rc<InteractionState>>>,
     discard_next_prepaint: Cell<bool>,
+    translation: Cell<Pixels>,
 }
 
 struct MenuRoot {
@@ -30,7 +32,16 @@ impl Render for MenuRoot {
         let probe = self.probe.clone();
         div()
             .size_full()
-            .child(self.dock.element(SURFACE))
+            .child(
+                self.dock.element(SURFACE).with_subtree_transform(
+                    SubtreeTransform::try_new(
+                        size(1.0, 1.0),
+                        point(probe.translation.get(), px(0.0)),
+                        SubtreeTransformOrigin::TOP_LEFT,
+                    )
+                    .unwrap(),
+                ),
+            )
             .on_children_prepainted(move |_, window, _| {
                 let id = dock.host.borrow().mounts[&window.window_handle().window_id()]
                     .element
@@ -115,7 +126,7 @@ fn anchor(
             .nth(ordinal)
             .expect("the requested scoped menu must be painted")
             .clone();
-        let bounds = to_gpui(menu.bounds, region.bounds.unwrap());
+        let bounds = to_gpui(menu.bounds, region.layout_bounds().unwrap());
         (menu, bounds)
     })
 }
@@ -574,6 +585,45 @@ fn product_menu_openers_cannot_open_a_replacement_workspace(cx: &mut TestAppCont
 }
 
 #[open_gpui::test]
+fn translated_product_menu_dismisses_at_the_displayed_opener_and_its_old_position(
+    cx: &mut TestAppContext,
+) {
+    let (dock, mut visual, probe) = split_groups(cx);
+    let center = |visual: &mut VisualTestContext| {
+        let scale = f64::from(visual.update(|window, _| window.scale_factor()));
+        let target = semantic_target(visual, Role::Button, "Layout actions");
+        let bounds = visual
+            .latest_accessibility_tree_update()
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == target)
+            .unwrap()
+            .1
+            .bounds()
+            .unwrap();
+        point(
+            px(((bounds.x0 + bounds.x1) / (2.0 * scale)) as f32),
+            px(((bounds.y0 + bounds.y1) / (2.0 * scale)) as f32),
+        )
+    };
+    let original = center(&mut visual);
+    probe.translation.set(px(-150.0));
+    frames(&mut visual, &dock);
+    let displayed = center(&mut visual);
+    assert_eq!(displayed, original + point(px(-150.0), px(0.0)));
+
+    for target in [displayed, original] {
+        visual.simulate_click(displayed, Modifiers::none());
+        frames(&mut visual, &dock);
+        assert!(menu_is_open(&visual, "Layout actions"));
+        visual.simulate_click(target, Modifiers::none());
+        frames(&mut visual, &dock);
+        assert!(!menu_is_open(&visual, "Layout actions"), "point={target:?}");
+    }
+}
+
+#[open_gpui::test]
 fn discarded_prepaint_keeps_the_installed_menu_until_a_replacement_is_accepted(
     cx: &mut TestAppContext,
 ) {
@@ -661,7 +711,7 @@ fn narrow_strips_keep_group_root_list_and_grip_hits_inside_their_visible_chrome(
             let host = dock.host.borrow();
             let mount = &host.mounts[&window.window_handle().window_id()];
             let region = &mount.regions[&SURFACE];
-            let bounds = region.bounds.unwrap();
+            let bounds = region.layout_bounds().unwrap();
             let packet = region.packet.as_ref().unwrap();
             let mut chrome = Vec::new();
             let mut menus = Vec::new();
@@ -812,7 +862,7 @@ fn narrow_strips_keep_group_root_list_and_grip_hits_inside_their_visible_chrome(
                             if matches!(control.kind, ControlKind::Tab(key) if key == item.into())
                                 && control.slot(ControlAction::Activate).is_some() =>
                         {
-                            Some(to_gpui(control.bounds, region.bounds.unwrap()))
+                            Some(to_gpui(control.bounds, region.layout_bounds().unwrap()))
                         }
                         _ => None,
                     }

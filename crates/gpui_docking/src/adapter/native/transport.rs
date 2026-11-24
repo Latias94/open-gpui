@@ -2,14 +2,15 @@ use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
     rc::Rc,
+    time::Duration,
 };
 
-use dockspace::model::TabGroupDockMode;
 use dockspace::runtime::{
     DeferredSurfaceAction, DockspaceSession, NativeCloseEffectAcknowledgement, NativeCloseState,
-    NativeEffectResult, NativeGlobalFocus, NativePointerId, NativePointerInput, NativePointerOwner,
+    NativeEffectResult, NativeGlobalFocus, NativePointerButton, NativePointerEvent,
+    NativePointerId, NativePointerInput, NativePointerLocation, NativePointerOwner,
     NativePointerRoster, NativeWindowBinding, NativeWindowFacts, NativeWorkAreaRoster,
-    PointerEventMetadata,
+    PointerDeviceKind, PointerEventMetadata,
 };
 use open_gpui::{
     App, NativeCapturedDragReleaseBarrier, NativeCapturedDragReleaseTerminal,
@@ -24,6 +25,30 @@ mod tests;
 
 type Wake = dyn Fn(&mut App);
 
+pub(in crate::adapter) const GPUI_MOUSE_POINTER: NativePointerId = NativePointerId::new(1);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::adapter) enum MousePressLane {
+    Local,
+    Content,
+    Desktop,
+}
+
+#[derive(Clone, Copy)]
+struct MousePress {
+    binding: NativeWindowBinding,
+    lane: MousePressLane,
+    observed_at: Option<Duration>,
+}
+
+#[derive(Clone, Copy, Default)]
+enum MousePrimary {
+    #[default]
+    Unobserved,
+    Pressed(MousePress),
+    Settled(NativeWindowBinding),
+}
+
 struct TransportState {
     queue: RefCell<VecDeque<Inbound>>,
     rejection: RefCell<Option<crate::adapter::DockHostFailure>>,
@@ -31,6 +56,7 @@ struct TransportState {
     scheduled: Cell<bool>,
     frozen: Cell<bool>,
     pending_callbacks: Cell<usize>,
+    mouse_primary: Option<Cell<MousePrimary>>,
 }
 
 /// UI-thread FIFO shared by native callbacks and the application's one host owner.
@@ -57,6 +83,14 @@ pub struct NativeTransportInspection {
 impl NativeTransport {
     /// Creates a callback queue with an application-owned wakeup.
     pub fn new(wake: impl Fn(&mut App) + 'static) -> Self {
+        Self::with_mouse_tracking(wake, false)
+    }
+
+    pub(in crate::adapter) fn for_managed_host(wake: impl Fn(&mut App) + 'static) -> Self {
+        Self::with_mouse_tracking(wake, true)
+    }
+
+    fn with_mouse_tracking(wake: impl Fn(&mut App) + 'static, managed: bool) -> Self {
         Self(Rc::new(TransportState {
             queue: RefCell::new(VecDeque::new()),
             rejection: RefCell::new(None),
@@ -64,28 +98,69 @@ impl NativeTransport {
             scheduled: Cell::new(false),
             frozen: Cell::new(false),
             pending_callbacks: Cell::new(0),
+            mouse_primary: managed.then(Cell::default),
         }))
     }
 
     /// Records an already captured native pointer packet without changing its lane.
+    /// In a managed GPUI host, pointer ID 1 is the framework mouse. Its primary
+    /// press can also end through the originating window's GPUI callback. When
+    /// using both routes, report the source delivery binding and preserve the
+    /// original observation time. This lets the transport discard a second
+    /// release and recognize one that predates a newer press in the same window.
     pub fn pointer(&self, input: NativePointerInput, cx: &mut App) {
-        self.push(Inbound::Pointer(input), cx);
+        if self.admit_pointer(input, false) {
+            self.push(Inbound::Pointer(input), cx);
+        }
     }
 
-    pub(crate) fn pointer_in_window(&self, input: NativePointerInput) {
+    pub(in crate::adapter) fn pointer_in_window(
+        &self,
+        input: NativePointerInput,
+        content: bool,
+    ) -> bool {
+        if !self.admit_pointer(input, content) {
+            return false;
+        }
         self.0.queue.borrow_mut().push_back(Inbound::Pointer(input));
+        true
     }
 
-    pub(in crate::adapter) fn modifiers_in_window(
+    pub(in crate::adapter) fn docking_controls(
         &self,
         binding: NativeWindowBinding,
-        docking_enabled: bool,
-        group_dock_mode: TabGroupDockMode,
+        enabled: bool,
+        mode: dockspace::model::TabGroupDockMode,
+        cx: &mut App,
     ) {
-        self.0.queue.borrow_mut().extend([
-            Inbound::DockingEnabled(binding, docking_enabled),
-            Inbound::GroupDockMode(binding, group_dock_mode),
-        ]);
+        self.push(Inbound::DockingEnabled(binding, enabled), cx);
+        self.push(Inbound::GroupDockMode(binding, mode), cx);
+    }
+
+    pub(in crate::adapter) fn mouse_press_lane(
+        &self,
+        binding: NativeWindowBinding,
+    ) -> Option<MousePressLane> {
+        match self.0.mouse_primary.as_ref()?.get() {
+            MousePrimary::Pressed(press) if press.binding == binding => Some(press.lane),
+            _ => None,
+        }
+    }
+
+    pub(super) fn continue_mouse_press(
+        &self,
+        before: NativeWindowBinding,
+        after: NativeWindowBinding,
+    ) {
+        if let Some(mouse) = &self.0.mouse_primary
+            && let MousePrimary::Pressed(press) = mouse.get()
+            && press.binding == before
+        {
+            mouse.set(MousePrimary::Pressed(MousePress {
+                binding: after,
+                ..press
+            }));
+        }
     }
 
     pub(in crate::adapter) fn surface_action(&self, action: DeferredSurfaceAction, cx: &mut App) {
@@ -213,7 +288,89 @@ impl NativeTransport {
         }
     }
 
+    fn admit_pointer(&self, input: NativePointerInput, content: bool) -> bool {
+        let Some(mouse) = &self.0.mouse_primary else {
+            return true;
+        };
+        if input.pointer() != GPUI_MOUSE_POINTER
+            || !matches!(
+                input.metadata().device(),
+                PointerDeviceKind::Mouse | PointerDeviceKind::Unknown
+            )
+        {
+            return true;
+        }
+        let event = input.event();
+        let release = matches!(
+            event,
+            NativePointerEvent::ButtonReleased(NativePointerButton::Primary)
+                | NativePointerEvent::ContactEnded(NativePointerButton::Primary)
+        );
+        let observed_at = input.metadata().observed_at();
+        let delivery = input.delivery();
+        // Settle at ingress so both routes agree even while a frame owns an
+        // uncommitted prefix. The admitted packet keeps its original facts.
+        match (event, mouse.get()) {
+            (NativePointerEvent::ButtonPressed(NativePointerButton::Primary), state)
+                if !matches!(state, MousePrimary::Pressed(_)) =>
+            {
+                mouse.set(match delivery {
+                    NativePointerOwner::Native(binding) => {
+                        let lane = if matches!(input.location(), NativePointerLocation::Desktop(_))
+                        {
+                            MousePressLane::Desktop
+                        } else if content {
+                            MousePressLane::Content
+                        } else {
+                            MousePressLane::Local
+                        };
+                        MousePrimary::Pressed(MousePress {
+                            binding,
+                            lane,
+                            observed_at,
+                        })
+                    }
+                    _ => MousePrimary::Unobserved,
+                });
+            }
+            (event, MousePrimary::Pressed(press))
+                if release
+                    || matches!(
+                        event,
+                        NativePointerEvent::StreamCancelled(_) | NativePointerEvent::StreamEnded
+                    ) =>
+            {
+                if matches!(delivery, NativePointerOwner::Native(binding) if binding != press.binding)
+                    || observed_at
+                        .zip(press.observed_at)
+                        .is_some_and(|(end, start)| end < start)
+                {
+                    return false;
+                }
+                mouse.set(MousePrimary::Settled(press.binding));
+            }
+            (_, MousePrimary::Settled(binding))
+                if release && delivery == NativePointerOwner::Native(binding) =>
+            {
+                return false;
+            }
+            _ => {}
+        }
+        true
+    }
+
     pub(super) fn push(&self, record: Inbound, cx: &mut App) {
+        match &record {
+            Inbound::LogicalClosed(binding) | Inbound::NativeTerminal(binding, _) => {
+                self.retire_mouse_press(*binding);
+            }
+            Inbound::DeviceRemoved => {
+                if let Some(mouse) = &self.0.mouse_primary {
+                    mouse.set(MousePrimary::Unobserved);
+                }
+            }
+            _ => {}
+        }
         self.0.queue.borrow_mut().push_back(record);
         if !self.0.scheduled.replace(true) {
             let queue = Rc::downgrade(&self.0);
@@ -223,6 +380,14 @@ impl NativeTransport {
                     (queue.wake)(cx);
                 }
             });
+        }
+    }
+
+    pub(in crate::adapter) fn retire_mouse_press(&self, binding: NativeWindowBinding) {
+        if let Some(mouse) = &self.0.mouse_primary
+            && self.mouse_press_lane(binding).is_some()
+        {
+            mouse.set(MousePrimary::Settled(binding));
         }
     }
 
@@ -302,9 +467,9 @@ pub(super) enum Inbound {
         CallbackCustody,
     ),
     CaptureUnobserved(NativeWindowBinding),
-    Pointer(NativePointerInput),
     DockingEnabled(NativeWindowBinding, bool),
-    GroupDockMode(NativeWindowBinding, TabGroupDockMode),
+    GroupDockMode(NativeWindowBinding, dockspace::model::TabGroupDockMode),
+    Pointer(NativePointerInput),
     CapturedDrag {
         binding: NativeWindowBinding,
         capture: NativePointerOwner,
@@ -335,9 +500,8 @@ impl Inbound {
             Self::Submission(..) => "submission",
             Self::CaptureTerminal(..) => "capture-terminal",
             Self::CaptureUnobserved(_) => "capture-unobserved",
+            Self::DockingEnabled(..) | Self::GroupDockMode(..) => "docking-controls",
             Self::Pointer(_) => "pointer",
-            Self::DockingEnabled(..) => "docking-enabled",
-            Self::GroupDockMode(..) => "group-dock-mode",
             Self::CapturedDrag { .. } => "captured-drag",
             Self::PointerRoster(_) => "pointer-roster",
             Self::WorkAreas(_) | Self::Desktop(_) => "work-areas",
@@ -356,10 +520,10 @@ impl Inbound {
             | Self::LogicalClosed(binding)
             | Self::NativeTerminal(binding, _)
             | Self::Submission(binding, _, _)
-            | Self::CaptureTerminal(binding, _, _, _)
+            | Self::CaptureTerminal(binding, _, _, _) => Some(*binding),
+            Self::CaptureUnobserved(binding)
             | Self::DockingEnabled(binding, _)
             | Self::GroupDockMode(binding, _) => Some(*binding),
-            Self::CaptureUnobserved(binding) => Some(*binding),
             Self::Effect(result) => Some(result.binding().window()),
             Self::CapturedDrag { binding, .. } => Some(*binding),
             _ => None,
@@ -491,6 +655,13 @@ impl NativeBridge {
                 if let Some(callbacks) = self.windows.get(*binding) {
                     callbacks.set_logical_closed();
                 }
+                if self
+                    .captured_pointer
+                    .as_ref()
+                    .is_some_and(|capture| capture.binding == *binding)
+                {
+                    self.captured_pointer = None;
+                }
                 self.reports
                     .push_back(NativeReport::LogicalClosed(*binding));
                 if self.anchor == Some(*binding) {
@@ -532,18 +703,23 @@ impl NativeBridge {
             Inbound::CaptureUnobserved(_) => self.reports.push_back(NativeReport::Unsupported {
                 operation: "observing the original native capture release after drag retirement",
             }),
-            Inbound::Pointer(input) => {
-                session.record_native_pointer(*input)?;
-                // A local packet does not extend an earlier captured generation's
-                // desktop authority. The next real captured callback supplies its own.
-                self.pointer_frame = None;
-                self.pointer_capture = None;
-            }
             Inbound::DockingEnabled(binding, enabled) => {
                 session.report_native_docking_enabled(*binding, *enabled)?;
             }
             Inbound::GroupDockMode(binding, mode) => {
                 session.report_native_group_dock_mode(*binding, *mode)?;
+            }
+            Inbound::Pointer(input) => {
+                session.record_native_pointer(*input)?;
+                // Only an edge from the same source stream supersedes its
+                // captured desktop observation. Local input from another
+                // window or device cannot retire the provisional drag shell.
+                if self.captured_pointer.as_ref().is_some_and(|capture| {
+                    capture.pointer == input.pointer()
+                        && input.delivery() == NativePointerOwner::Native(capture.binding)
+                }) {
+                    self.captured_pointer = None;
+                }
             }
             Inbound::CapturedDrag {
                 binding,
@@ -565,8 +741,12 @@ impl NativeBridge {
                     session, *binding, *capture, event, *pointer, *metadata,
                 );
                 session.record_native_pointer(input)?;
-                self.pointer_frame = event.physical_frame();
-                self.pointer_capture = Some(super::NativeCapture::from_event(event));
+                self.captured_pointer = Some(super::CapturedPointer {
+                    binding: *binding,
+                    pointer: *pointer,
+                    capture: super::NativeCapture::from_event(event),
+                    frame: event.physical_frame(),
+                });
                 if matches!(event.phase(), open_gpui::NativeCapturedDragPhase::Released) {
                     self.reports.push_back(NativeReport::CapturedRelease {
                         capture: super::NativeCapture::from_event(event),

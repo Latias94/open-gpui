@@ -4804,6 +4804,11 @@ impl ElementGeometry {
         self.displayed_bounds
     }
 
+    /// Returns the accumulated scale from element-local to displayed window coordinates.
+    pub const fn window_scale(self) -> Size<f32> {
+        self.transform.scale()
+    }
+
     /// Returns the element-local bounds whose origin is zero.
     pub fn local_bounds(self) -> Bounds<Pixels> {
         Bounds::new(Point::default(), self.layout_bounds.size)

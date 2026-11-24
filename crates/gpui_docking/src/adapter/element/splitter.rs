@@ -17,9 +17,8 @@ pub(super) fn pressed(
     host: &HostState,
     interaction: &InteractionState,
     surface: SurfaceId,
-    controls: &[(Rc<Control>, FocusHandle, HitboxId)],
+    control: Option<&Control>,
     event: &MouseDownEvent,
-    window: &Window,
 ) {
     let mut pending = interaction.splitter_press.borrow_mut();
     pending.take();
@@ -31,11 +30,9 @@ pub(super) fn pressed(
         Some(SplitterDoubleClick::Equalize) => ControlAction::Equalize,
         None => return,
     };
-    let Some((control, receiver)) = controls.iter().rev().find_map(|(control, _, hitbox)| {
+    let Some((control, receiver)) = control.and_then(|control| {
         let receiver = control.receiver?;
-        (receiver.role() == DockspaceReceiverRole::Splitter
-            && hitbox.window_point_target_rank(event.position, window) == Some(0))
-        .then_some((control, receiver))
+        (receiver.role() == DockspaceReceiverRole::Splitter).then_some((control, receiver))
     }) else {
         return;
     };
@@ -68,6 +65,7 @@ pub(super) fn released(
     interaction: &InteractionState,
     surface: SurfaceId,
     receivers: &[(DockspaceReceiverDescriptor, HitboxId)],
+    target: Option<HitboxId>,
     event: &MouseUpEvent,
     window: &Window,
     cx: &mut App,
@@ -81,7 +79,7 @@ pub(super) fn released(
         || !receivers.iter().any(|(receiver, hitbox)| {
             receiver.visual_id() == press.visual
                 && receiver.role() == DockspaceReceiverRole::Splitter
-                && hitbox.window_point_target_rank(event.position, window) == Some(0)
+                && Some(*hitbox) == target
         })
     {
         return;

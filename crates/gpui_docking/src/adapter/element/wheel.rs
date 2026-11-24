@@ -75,18 +75,16 @@ fn gesture_owner(
     }
     let owner = window.window_handle().window_id();
     let mount = host.mounts.get(&owner).filter(|mount| mount.attached)?;
+    let hitbox = window.frontmost_hitbox_at(event.position)?;
     mount.input_frames.iter().find_map(|frame| {
         if frame.serial != mount.serial
-            || !frame.bounds.contains(&event.position)
+            || !frame.geometry.displayed_bounds().contains(&event.position)
             || !input::is_presented(host, owner, frame.surface, frame.serial)
-            || !frame
-                .hitboxes
-                .iter()
-                .any(|hitbox| hitbox.window_point_target_rank(event.position, window) == Some(0))
+            || !frame.hitboxes.contains(&hitbox)
         {
             return None;
         }
-        let point = input::logical_point(event.position, frame.bounds)?;
+        let point = input::logical_point(event.position, frame.geometry)?;
         let packet = mount.regions.get(&frame.surface)?.packet.as_ref()?;
         packet.draws.iter().rev().find_map(|draw| match draw {
             Draw::Scroll(target) if target.receiver().bounds().contains(point) => {
@@ -105,7 +103,7 @@ pub(super) fn listen(
 ) {
     let shared = shared.clone();
     let interaction = interaction.clone();
-    let bounds = region.bounds;
+    let geometry = region.geometry;
     let surface = region.surface;
     let serial = region.serial;
     let hitboxes = region.hitboxes.clone();
@@ -138,14 +136,19 @@ pub(super) fn listen(
         {
             return;
         }
-        let local = input::logical_point(event.position, bounds);
+        if !window
+            .frontmost_hitbox_at(event.position)
+            .is_some_and(|hitbox| hitboxes.contains(&hitbox))
+        {
+            return;
+        }
+        let local = input::logical_point(event.position, geometry);
         let target = local.and_then(|point| {
-            targets.iter().rev().copied().find(|target| {
-                target.receiver().bounds().contains(point)
-                    && hitboxes.iter().any(|hitbox| {
-                        hitbox.window_point_target_rank(event.position, window) == Some(0)
-                    })
-            })
+            targets
+                .iter()
+                .rev()
+                .copied()
+                .find(|target| target.receiver().bounds().contains(point))
         });
         let Some((target, point)) = target.zip(local) else {
             return;

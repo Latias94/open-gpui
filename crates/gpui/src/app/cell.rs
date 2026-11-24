@@ -880,6 +880,13 @@ impl AppCell {
             .is_some_and(WindowInteractionAuthority::is_admitted)
     }
 
+    pub(super) fn window_focus_claim_revision(&self, window_id: WindowId) -> Option<u64> {
+        self.window_interaction_authorities
+            .borrow()
+            .get(&window_id)
+            .map(WindowInteractionAuthority::focus_claim_revision)
+    }
+
     fn next_native_pointer_capture_release_token(
         &self,
         window_id: WindowId,
@@ -2471,6 +2478,15 @@ impl AppCell {
     ) -> Option<usize> {
         self.native_queries
             .window_point_target_rank(window_id, hitbox, point)
+    }
+
+    pub(super) fn native_window_frontmost_hitbox_at(
+        &self,
+        window_id: WindowId,
+        point: Point<Pixels>,
+    ) -> Option<Option<HitboxId>> {
+        self.native_queries
+            .window_frontmost_hitbox_at(window_id, point)
     }
 
     pub(super) fn native_window_control_area(

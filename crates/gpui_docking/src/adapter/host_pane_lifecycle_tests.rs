@@ -14,8 +14,9 @@ use dockspace::{
     },
 };
 use open_gpui::{
-    Context, Entity, FocusHandle, IntoElement, Modifiers, PlatformWindowPresentOutcome, Render,
-    RequestFrameOptions, TestAppContext, VisualTestContext, Window, div, prelude::*, px, size,
+    Context, Entity, FocusHandle, HitboxTag, IntoElement, Modifiers, MouseButton, MouseUpEvent,
+    PlatformInput, PlatformWindowPresentOutcome, Render, RequestFrameOptions, TestAppContext,
+    VisualTestContext, Window, div, prelude::*, px, size,
 };
 
 use crate::adapter::{
@@ -35,6 +36,7 @@ const KEYS: [&str; 4] = ["pane:a", "pane:b", "pane:c", "pane:closed"];
 struct Content {
     item: ItemId,
     focus: FocusHandle,
+    receiver: HitboxTag,
     clicks: usize,
 }
 
@@ -48,6 +50,7 @@ impl Render for Content {
             .child(
                 div()
                     .id("edit")
+                    .hitbox_tag(self.receiver)
                     .debug_selector(move || format!("pane-button:{}", item.get()))
                     .w(px(100.0))
                     .h(px(32.0))
@@ -104,6 +107,7 @@ fn fixture(cx: &mut TestAppContext, managed: bool) -> Fixture {
             cx.new(|cx| Content {
                 item,
                 focus: cx.focus_handle(),
+                receiver: HitboxTag::new(),
                 clicks: 0,
             })
         });
@@ -180,6 +184,52 @@ fn assert_unmeasured(dock: &DockSurface, surface: SurfaceId) {
 }
 
 #[open_gpui::test]
+fn live_restore_rejects_an_open_pane_without_a_registered_view(cx: &mut TestAppContext) {
+    let Fixture { dock, items, views } = fixture(cx, false);
+    let missing = items[1];
+    cx.update(|cx| {
+        let saved = dock
+            .capture_document(DockHostDocument {
+                surfaces: [FIRST, SECOND]
+                    .map(|surface| DockSurfaceKeyBinding {
+                        space_key: format!("surface-{}", surface.get()),
+                        surface,
+                        logical_placement: None,
+                        central_policy: None,
+                    })
+                    .into(),
+                migration: None,
+            })
+            .unwrap();
+        close(&dock, missing, cx);
+        let pane = dock.take_closed_pane(missing).unwrap();
+        let prepared = dock
+            .host
+            .borrow()
+            .session
+            .prepare_document_restore_json(saved.document_json().as_bytes(), |document, key| {
+                document == DOCUMENT && KEYS.contains(&key)
+            })
+            .unwrap();
+        let before = dock.inspection().unwrap();
+        let version = dock.host.borrow().session.version();
+        assert_pane_error(
+            dock.update(|frame| Ok(frame.submit_document_restore(&prepared)?), cx),
+            DockPaneError::UnknownPane(missing),
+        );
+        assert_eq!(dock.inspection().unwrap(), before);
+        assert_eq!(dock.host.borrow().session.version(), version);
+        assert!(dock.with_view(|view| view.item(missing).is_none()));
+        dock.open_pane(pane, DockPlacement::Center(DockAnchor::Item(items[0])), cx)
+            .unwrap();
+        assert_eq!(
+            dock.host.borrow().panels[&missing].view.entity_id(),
+            views[1].entity_id()
+        );
+    });
+}
+
+#[open_gpui::test]
 fn metadata_remeasures_titles_and_minima_without_replacing_content(cx: &mut TestAppContext) {
     cx.defer_next_window_frame_requests();
     let Fixture { dock, views, items } = fixture(cx, false);
@@ -200,8 +250,15 @@ fn metadata_remeasures_titles_and_minima_without_replacing_content(cx: &mut Test
     let generation = dock.host.borrow().session.next_document_generation();
     visual.update(|_, cx| {
         dock.update_pane_metadata(item, title, minimum, cx).unwrap();
-        assert!(dock.host.borrow().mounts[&window.window_id()].regions[&FIRST].dirty);
-        assert_unmeasured(&dock, FIRST);
+        let host = dock.host.borrow();
+        let mount = &host.mounts[&window.window_id()];
+        assert!(mount.regions[&FIRST].dirty);
+        assert!(crate::adapter::input::is_presented(
+            &host,
+            window.window_id(),
+            FIRST,
+            mount.serial
+        ));
     });
     frames(&mut visual, &dock);
     assert!(visual.debug_bounds(&tab).unwrap().size.width > old_tab.size.width);
@@ -814,7 +871,7 @@ fn queued_pointer_input_retains_registration_until_its_original_frame_commits(
             frame.serial,
             dockspace::runtime::SurfacePointerEvent::Moved,
             tab.center(),
-            frame.bounds,
+            frame.geometry,
             &frame.hitboxes,
             &frame.content_hitboxes,
             false,
@@ -877,26 +934,159 @@ fn closing_the_last_pane_replaces_the_old_content_with_an_empty_slot_before_take
 
 #[open_gpui::test]
 fn mount_retirement_releases_pre_close_packets_before_registration_take(cx: &mut TestAppContext) {
-    cx.defer_next_window_frame_requests();
-    let Fixture { dock, views, items } = fixture(cx, false);
-    let window = cx.open_window(size(px(800.0), px(600.0)), |_, _| Root {
-        dock: dock.clone(),
-        surface: FIRST,
-    });
-    frames(
-        &mut VisualTestContext::from_window(window.into(), cx),
-        &dock,
-    );
-    cx.update(|cx| close(&dock, items[0], cx));
-    assert_pane_error(dock.take_closed_pane(items[0]), DockPaneError::Busy);
-    cx.update_window(window.into(), |_, window, cx| window.remove_window(cx))
-        .unwrap();
-    cx.run_until_parked();
-    assert!(dock.host.borrow().mounts.is_empty());
-    assert_eq!(
-        dock.take_closed_pane(items[0]).unwrap().view.entity_id(),
-        views[0].entity_id()
-    );
+    cx.update(|cx| cx.set_quit_mode(open_gpui::QuitMode::Explicit));
+    for release_before_close in [false, true] {
+        let Fixture { dock, views, items } = fixture(cx, false);
+        let receiver = views[1].read_with(cx, |content, _| content.receiver);
+        dock.host
+            .borrow_mut()
+            .panels
+            .get_mut(&items[1])
+            .unwrap()
+            .content_receivers
+            .push(receiver);
+        let open = |cx: &mut TestAppContext| {
+            cx.defer_next_window_frame_requests();
+            let window = cx.open_window(size(px(800.0), px(600.0)), |_, _| Root {
+                dock: dock.clone(),
+                surface: FIRST,
+            });
+            let mut visual = VisualTestContext::from_window(window.into(), cx);
+            visual.update(|window, _| {
+                let _ = window.activate_window();
+            });
+            cx.set_platform_hovered_window(Some(window.into()));
+            frames(&mut visual, &dock);
+            (window, visual)
+        };
+        let (window, mut visual) = open(cx);
+        let editor = visual
+            .debug_bounds(&format!("pane-button:{}", items[1].get()))
+            .unwrap()
+            .center();
+        visual.simulate_mouse_down(editor, MouseButton::Left, Modifiers::none());
+        frames(&mut visual, &dock);
+        {
+            let host = dock.host.borrow();
+            assert!(host.inputs.is_empty());
+            assert!(host.mounts[&window.window_id()].primary_press.is_some());
+        }
+        cx.update(|cx| close(&dock, items[0], cx));
+        assert_pane_error(dock.take_closed_pane(items[0]), DockPaneError::Busy);
+        visual.update(|window, cx| {
+            if release_before_close {
+                window.dispatch_event(
+                    PlatformInput::MouseUp(MouseUpEvent {
+                        position: editor,
+                        button: MouseButton::Left,
+                        modifiers: Modifiers::none(),
+                        click_count: 1,
+                    }),
+                    cx,
+                );
+                assert!(
+                    dock.host
+                        .borrow()
+                        .inputs
+                        .iter()
+                        .any(super::input::QueuedInput::is_required_pointer_terminal)
+                );
+            }
+            window.remove_window(cx);
+        });
+        cx.run_until_parked();
+        let inspection = dock.inspection().unwrap();
+        assert!(inspection.mounts.is_empty());
+        assert_eq!(
+            inspection.queued_input_count, 0,
+            "release_before_close={release_before_close}"
+        );
+        assert_eq!(
+            dock.take_closed_pane(items[0]).unwrap().view.entity_id(),
+            views[0].entity_id()
+        );
+        cx.update(|cx| dock.refresh_tab_content(items[1], cx).unwrap());
+
+        let (_, mut visual) = open(cx);
+        let editor = visual
+            .debug_bounds(&format!("pane-button:{}", items[1].get()))
+            .unwrap()
+            .center();
+        let previous_clicks = views[1].read_with(&visual, |content, _| content.clicks);
+        visual.simulate_click(editor, Modifiers::none());
+        frames(&mut visual, &dock);
+        assert_eq!(
+            views[1].read_with(&visual, |content, _| content.clicks),
+            previous_clicks + 1,
+        );
+        visual.update(|window, cx| window.remove_window(cx));
+        cx.run_until_parked();
+    }
+}
+
+#[open_gpui::test]
+fn last_mount_retirement_settles_tab_press_before_remount(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_quit_mode(open_gpui::QuitMode::Explicit));
+    for release_before_close in [false, true] {
+        let Fixture { dock, items, .. } = fixture(cx, false);
+        let open = |cx: &mut TestAppContext| {
+            cx.defer_next_window_frame_requests();
+            let window = cx.open_window(size(px(800.0), px(600.0)), |_, _| Root {
+                dock: dock.clone(),
+                surface: FIRST,
+            });
+            let mut visual = VisualTestContext::from_window(window.into(), cx);
+            visual.update(|window, _| {
+                let _ = window.activate_window();
+            });
+            cx.set_platform_hovered_window(Some(window.into()));
+            frames(&mut visual, &dock);
+            visual
+        };
+        let selector = format!("dockspace:tab:{}", items[0].get());
+        let mut source = open(cx);
+        let tab = source.debug_bounds(&selector).unwrap().center();
+        source.simulate_mouse_down(tab, MouseButton::Left, Modifiers::none());
+        frames(&mut source, &dock);
+        assert!(dock.inspection().unwrap().active_gesture);
+        source.update(|window, cx| {
+            if release_before_close {
+                window.dispatch_event(
+                    PlatformInput::MouseUp(MouseUpEvent {
+                        position: tab,
+                        button: MouseButton::Left,
+                        modifiers: Modifiers::none(),
+                        click_count: 1,
+                    }),
+                    cx,
+                );
+                assert!(
+                    dock.host
+                        .borrow()
+                        .inputs
+                        .iter()
+                        .any(super::input::QueuedInput::is_required_pointer_terminal)
+                );
+            }
+            window.remove_window(cx);
+        });
+        cx.run_until_parked();
+        let retired = dock.inspection().unwrap();
+        assert!(retired.mounts.is_empty());
+        assert_eq!(retired.queued_input_count, 0);
+        assert!(!retired.active_gesture);
+
+        let mut replacement = open(cx);
+        let tab = replacement.debug_bounds(&selector).unwrap().center();
+        replacement.simulate_mouse_down(tab, MouseButton::Left, Modifiers::none());
+        frames(&mut replacement, &dock);
+        assert!(dock.inspection().unwrap().active_gesture);
+        replacement.simulate_mouse_up(tab, MouseButton::Left, Modifiers::none());
+        frames(&mut replacement, &dock);
+        assert!(!dock.inspection().unwrap().active_gesture);
+        replacement.update(|window, cx| window.remove_window(cx));
+        cx.run_until_parked();
+    }
 }
 
 #[open_gpui::test]

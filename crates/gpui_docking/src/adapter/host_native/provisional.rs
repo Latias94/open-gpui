@@ -102,6 +102,10 @@ impl Provisional {
         ))
     }
 
+    pub(crate) fn has_preview_window(&self) -> bool {
+        self.opening.is_some() || !self.promotions.is_empty()
+    }
+
     pub(super) fn inspection(&self) -> (bool, usize, usize) {
         (
             self.opening.is_some(),
@@ -623,7 +627,10 @@ pub(super) fn drive(shared: &SharedHost, bridge: &NativeBridge, cx: &mut App) ->
                             Ok(())
                         });
                         if let Ok(Err(error)) = result {
+                            state.failure = Some(error.to_string());
+                            drop(state);
                             shared.borrow_mut().fail(error.as_ref());
+                            super::schedule(shared, cx);
                         }
                     }
                 }

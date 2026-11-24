@@ -11,16 +11,19 @@ use std::{
 use dockspace::{
     geometry::PhysicalRect,
     model::{
-        DockMoveSource, DockspaceLayout, DockspaceNode, DockspaceRootLayout,
+        DockMoveSource, DockPlacement, DockspaceLayout, DockspaceNode, DockspaceRootLayout,
         DockspaceSurfaceLayout, ItemId, NativeWindowPlacement, RootId, SurfaceId,
     },
     policy::DockPolicy,
     runtime::DockspaceSession,
 };
 use open_gpui::{
-    AppContext as _, Bounds, Context, DevicePixels, DisplayId, IntoElement, Modifiers,
-    PlatformWindowPresentOutcome, Render, RequestFrameOptions, TestAppContext, VisualTestContext,
-    Window, WindowBounds, WindowMutationDomain, WindowOptions, div, point, prelude::*, px, size,
+    AppContext as _, Bounds, Context, DevicePixels, DisplayId, Empty, IntoElement, Modifiers,
+    MouseButton, MouseDownEvent, MouseUpEvent, PlatformInput, PlatformNativeDragHysteresis,
+    PlatformNativePointerCaptureOwner, PlatformNativePointerPhysicalFrame, PlatformWindowHit,
+    PlatformWindowHitStack, PlatformWindowPhysicalCoverage, PlatformWindowPresentOutcome, Render,
+    RequestFrameOptions, TestAppContext, VisualTestContext, Window, WindowBounds,
+    WindowMutationDomain, WindowOptions, div, point, prelude::*, px, size,
 };
 
 use super::{NativeBridgeError, NativeReport};
@@ -78,6 +81,245 @@ fn frames(visual: &mut VisualTestContext, dock: &DockSurface) {
         }));
         assert!(dock.error().is_none(), "{:?}", dock.error());
     }
+}
+
+struct ToolbarRoot {
+    dock: DockSurface,
+    surface: SurfaceId,
+    toolbar_height: f32,
+}
+
+impl Render for ToolbarRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .pt(px(self.toolbar_height))
+            .child(div().size_full().child(self.dock.element(self.surface)))
+    }
+}
+
+#[open_gpui::test]
+fn custom_factory_child_projects_its_native_tab_clicks(cx: &mut TestAppContext) {
+    const ANCHOR: ItemId = ItemId::new(3);
+
+    cx.update(|cx| cx.set_quit_mode(open_gpui::QuitMode::Explicit));
+    cx.set_platform_native_drag_hysteresis(Some(
+        PlatformNativeDragHysteresis::try_new(DevicePixels(4), DevicePixels(4)).unwrap(),
+    ));
+    for toolbar_height in [0.0, 48.0] {
+        cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
+        cx.set_platform_window_hit_stack(
+            PlatformWindowHitStack::try_available_open_desktop(
+                point(DevicePixels(0), DevicePixels(0)),
+                vec![],
+            )
+            .unwrap(),
+        );
+        let dock = cx.update(|cx| {
+            let items = [MOVED, REMAINING, ANCHOR];
+            let layout = DockspaceLayout::new([DockspaceSurfaceLayout::new(
+                SOURCE,
+                DockspaceRootLayout::new(RootId::new(1), DockspaceNode::tabs(items)),
+            )])
+            .unwrap();
+            let mut policy = DockPolicy::default();
+            policy.set_allow_native_surfaces(true);
+            let session = DockspaceSession::from_layout(layout, policy).unwrap();
+            DockSurface::new_managed(
+                session,
+                items.map(|item| {
+                    DockPane::new(item, format!("Document {}", item.get()), cx.new(|_| Empty))
+                }),
+                GpuiDockspaceConfig::default(),
+                cx,
+            )
+            .unwrap()
+        });
+        cx.defer_next_window_frame_requests();
+        let source = cx.open_window(size(px(800.0), px(480.0)), |window, cx| {
+            dock.bind_native_root(SOURCE, true, window, cx).unwrap();
+            Root {
+                dock: dock.clone(),
+                surface: SOURCE,
+                renders: Rc::default(),
+            }
+        });
+        let mut source_visual = VisualTestContext::from_window(source.into(), cx);
+        prepare_pointer_geometry(&mut source_visual);
+        frames(&mut source_visual, &dock);
+
+        let created = Rc::new(Cell::new(None));
+        let factory_created = created.clone();
+        dock.set_native_window_factory(move |dock, request, callbacks, cx| {
+            let surface = request.binding.surface();
+            let window = callbacks.open(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        point(px(0.0), px(0.0)),
+                        size(px(650.0), px(480.0)),
+                    ))),
+                    ..Default::default()
+                },
+                |_, cx| {
+                    cx.new(|_| ToolbarRoot {
+                        dock: dock.clone(),
+                        surface,
+                        toolbar_height,
+                    })
+                },
+                cx,
+            )?;
+            assert!(
+                factory_created
+                    .replace(Some((window, request.binding)))
+                    .is_none()
+            );
+            Ok(window)
+        })
+        .unwrap();
+        cx.defer_next_window_frame_requests();
+        cx.update(|cx| {
+            dock.update(
+                |frame| {
+                    frame.move_to_new_window_current(
+                        DockMoveSource::Item(MOVED),
+                        NativeWindowPlacement::new(
+                            PhysicalRect::new(70.0, 50.0, 1300.0, 900.0).unwrap(),
+                        ),
+                    )?;
+                    Ok(())
+                },
+                cx,
+            )
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let (child, binding) = created.get().expect("the factory opens the child");
+        let mut child_visual = VisualTestContext::from_window(child, cx);
+        let _ = cx.flush_window_mutation(child, WindowMutationDomain::Placement);
+        let child_geometry = prepare_pointer_geometry(&mut child_visual);
+        frames(&mut source_visual, &dock);
+        frames(&mut child_visual, &dock);
+        assert_eq!(
+            dock.with_view(|view| view.item(MOVED).unwrap().surface()),
+            binding.surface()
+        );
+        assert!(dock.take_native_reports().iter().any(|report| {
+            matches!(report, NativeReport::Admitted(admitted) if *admitted == binding)
+        }));
+
+        cx.update(|cx| {
+            dock.update(
+                |frame| {
+                    frame.dock_item_current(REMAINING, DockPlacement::After(MOVED))?;
+                    frame.select_item_current(MOVED)?;
+                    Ok(())
+                },
+                cx,
+            )
+        })
+        .unwrap();
+        frames(&mut source_visual, &dock);
+        frames(&mut child_visual, &dock);
+        assert!(dock.with_view(|view| view.item(MOVED).unwrap().is_active()));
+        let position = child_visual
+            .debug_bounds(&format!("dockspace:tab:{}", REMAINING.get()))
+            .expect("the second tab renders in the original child")
+            .center();
+        assert!(position.y > px(toolbar_height));
+        let global = child_geometry.local_to_global(position).unwrap();
+        cx.set_platform_window_hit_stack(
+            PlatformWindowHitStack::try_available(
+                global,
+                vec![PlatformWindowHit::RegisteredApplication {
+                    window: child,
+                    coverage: PlatformWindowPhysicalCoverage::try_new(
+                        child_geometry.client_bounds(),
+                    )
+                    .unwrap(),
+                    geometry: child_geometry,
+                }],
+            )
+            .unwrap(),
+        );
+        let physical_frame = PlatformNativePointerPhysicalFrame::new(global, child_geometry)
+            .with_capture_owner(PlatformNativePointerCaptureOwner::Window(child.window_id()));
+        for (pressed, input) in [
+            (
+                true,
+                PlatformInput::MouseDown(MouseDownEvent {
+                    position,
+                    button: MouseButton::Left,
+                    modifiers: Modifiers::none(),
+                    click_count: 1,
+                    first_mouse: false,
+                }),
+            ),
+            (
+                false,
+                PlatformInput::MouseUp(MouseUpEvent {
+                    position,
+                    button: MouseButton::Left,
+                    modifiers: Modifiers::none(),
+                    click_count: 1,
+                }),
+            ),
+        ] {
+            cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(pressed));
+            cx.simulate_platform_input_with_native_pointer_physical_frame(
+                child,
+                input,
+                Some(physical_frame),
+            );
+            frames(&mut child_visual, &dock);
+        }
+        assert!(dock.with_view(|view| view.item(REMAINING).unwrap().is_active()));
+        cx.update(|cx| {
+            dock.update(
+                |frame| {
+                    assert_eq!(
+                        frame
+                            .native_surface_bindings_for_window(binding.window())
+                            .collect::<Vec<_>>(),
+                        [binding],
+                    );
+                    let placement = frame.native_surface_placement(binding).unwrap();
+                    assert_eq!(
+                        placement.origin().y(),
+                        f64::from(toolbar_height * child_geometry.scale_factor())
+                    );
+                    assert_eq!(placement.clip().y(), placement.origin().y());
+                    Ok(())
+                },
+                cx,
+            )
+        })
+        .unwrap();
+        cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();
+        cx.run_until_parked();
+        assert!(dock.error().is_none(), "{:?}", dock.error());
+    }
+}
+
+fn prepare_pointer_geometry(
+    visual: &mut VisualTestContext,
+) -> open_gpui::PlatformWindowPhysicalGeometry {
+    visual.update(|window, _| {
+        let _ = window.activate_window();
+    });
+    visual.run_until_parked();
+    let (handle, bounds, scale) = visual.update(|window, _| {
+        let facts = window.platform_facts();
+        (
+            window.window_handle(),
+            facts.bounds.to_device_pixels(facts.scale_factor),
+            facts.scale_factor,
+        )
+    });
+    visual.set_platform_hovered_window(Some(handle));
+    visual.set_platform_window_physical_client_geometry(handle, Some(bounds), scale);
+    visual.simulate_window_scale_factor_change(handle, scale);
+    visual.update(|window, _| window.platform_facts().physical_geometry.unwrap())
 }
 
 #[open_gpui::test]

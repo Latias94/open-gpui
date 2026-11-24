@@ -1154,8 +1154,11 @@ pub(super) fn install(
             cx.stop_propagation();
         }
     });
-    *interaction.keyboard_subscription.borrow_mut() =
-        Some(open_gpui::Subscription::join(subscription, activation));
+    let pointer_controls = super::pointer_control::install(shared, interaction, window);
+    *interaction.keyboard_subscription.borrow_mut() = Some(open_gpui::Subscription::join(
+        open_gpui::Subscription::join(subscription, activation),
+        pointer_controls,
+    ));
 }
 
 pub(super) fn restore(

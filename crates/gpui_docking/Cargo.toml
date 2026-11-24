@@ -21,14 +21,24 @@ path = "src/lib.rs"
 doctest = false
 
 [[bench]]
+name = "legacy_tab_drag_latency"
+harness = false
+required-features = ["test-support", "legacy-docking"]
+
+[[bench]]
 name = "tab_drag_latency"
+harness = false
+required-features = ["test-support"]
+
+[[bench]]
+name = "legacy_tab_drag_allocations"
 harness = false
 required-features = ["test-support", "legacy-docking"]
 
 [[bench]]
 name = "tab_drag_allocations"
 harness = false
-required-features = ["test-support", "legacy-docking"]
+required-features = ["test-support"]
 
 [[bench]]
 name = "shared_session_cpu"

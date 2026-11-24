@@ -136,12 +136,14 @@ pub enum SplitterDoubleClick {
 }
 
 /// Bindings applied to event-time input, before it is queued.
-/// Holding Alt over a center dock target preserves the dragged group's layout.
 #[derive(Clone, Debug)]
 pub struct DockspaceInputBindings {
     /// Holding these modifiers suspends docking. Extra modifiers are allowed.
     /// `None` disables this binding.
     pub suspend_docking: Option<Modifiers>,
+    /// Holding these modifiers preserves a dragged group as a layout tab.
+    /// Defaults to Alt. Extra modifiers are allowed.
+    pub preserve_group_layout: Option<Modifiers>,
     /// Cancels a captured gesture when the logical key matches and all required
     /// modifiers are held. Extra modifiers are allowed, so cancellation remains
     /// available while docking is suspended. `None` disables this binding.
@@ -164,16 +166,8 @@ impl DockspaceInputBindings {
         modifiers.map_or(metadata, |modifiers| {
             metadata
                 .with_docking_enabled(self.docking_enabled(modifiers))
-                .with_group_dock_mode(Self::group_dock_mode(modifiers))
+                .with_group_dock_mode(self.group_dock_mode(modifiers))
         })
-    }
-
-    pub(crate) fn group_dock_mode(modifiers: Modifiers) -> TabGroupDockMode {
-        if modifiers.alt {
-            TabGroupDockMode::PreserveLayout
-        } else {
-            TabGroupDockMode::MergeTabs
-        }
     }
 
     pub(crate) fn docking_enabled(&self, modifiers: Modifiers) -> bool {
@@ -187,6 +181,17 @@ impl DockspaceInputBindings {
             binding.key == keystroke.key && binding.modifiers.is_subset_of(&keystroke.modifiers)
         })
     }
+
+    pub(crate) fn group_dock_mode(&self, modifiers: Modifiers) -> TabGroupDockMode {
+        if self
+            .preserve_group_layout
+            .is_some_and(|binding| binding.is_subset_of(&modifiers))
+        {
+            TabGroupDockMode::PreserveLayout
+        } else {
+            TabGroupDockMode::MergeTabs
+        }
+    }
 }
 
 impl Default for DockspaceInputBindings {
@@ -194,6 +199,10 @@ impl Default for DockspaceInputBindings {
         Self {
             suspend_docking: Some(Modifiers {
                 shift: true,
+                ..Modifiers::default()
+            }),
+            preserve_group_layout: Some(Modifiers {
+                alt: true,
                 ..Modifiers::default()
             }),
             cancel: Some(Keystroke {

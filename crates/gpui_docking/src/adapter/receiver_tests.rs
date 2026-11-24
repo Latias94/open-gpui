@@ -10,7 +10,7 @@ use dockspace::{
         DockspaceReceiverRole, DockspaceRuntimeError, DockspaceSession, NativeLocalPointerLocation,
         NativePointerButton, NativePointerEvent, NativePointerId, NativePointerInput,
         NativePointerOwner, NativeReceiverAnswer, NativeReceiverPurpose, NativeReceiverQuery,
-        PointerDeviceKind, PointerEventMetadata, SurfaceUnavailableReason,
+        NativeWindowHit, PointerDeviceKind, PointerEventMetadata, SurfaceUnavailableReason,
     },
 };
 use open_gpui::{
@@ -27,7 +27,12 @@ struct Root(DockSurface);
 
 impl Render for Root {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().size_full().child(self.0.element(SURFACE))
+        div().size_full().child(
+            div()
+                .h(px(540.0))
+                .overflow_hidden()
+                .child(div().h(px(600.0)).child(self.0.element(SURFACE))),
+        )
     }
 }
 
@@ -83,6 +88,20 @@ fn pointer(
     Vec<(NativeReceiverQuery, NativeReceiverAnswer)>,
     Result<(), DockspaceRuntimeError>,
 ) {
+    let (mut queries, result) = pointer_queries(dock, visual, position, event);
+    queries.retain(|(query, _)| matches!(query, NativeReceiverQuery::Surface(_)));
+    (queries, result)
+}
+
+fn pointer_queries(
+    dock: &DockSurface,
+    visual: &mut VisualTestContext,
+    position: Point<Pixels>,
+    event: NativePointerEvent,
+) -> (
+    Vec<(NativeReceiverQuery, NativeReceiverAnswer)>,
+    Result<(), DockspaceRuntimeError>,
+) {
     visual.update(|window, cx| {
         let mut host = dock.host.borrow_mut();
         let binding =
@@ -115,9 +134,7 @@ fn pointer(
         let result = session
             .begin_native_host_frame(|query| {
                 let answer = resolve(query, mounts, native.as_ref().unwrap(), Some(window), cx);
-                if matches!(query, NativeReceiverQuery::Surface(_)) {
-                    queries.push((query, answer));
-                }
+                queries.push((query, answer));
                 answer
             })
             .and_then(|mut frame| {
@@ -127,6 +144,36 @@ fn pointer(
         let result = result.map(|report| host.apply_report(report));
         (queries, result)
     })
+}
+
+#[open_gpui::test]
+fn clipped_native_regions_leave_confirmed_window_background(cx: &mut TestAppContext) {
+    let (dock, mut visual) = fixture(cx);
+    let position = point(px(24.0), px(550.0));
+    visual.update(|window, _| {
+        let host = dock.host.borrow();
+        let frame = &host.mounts[&window.window_handle().window_id()].input_frames[0];
+        assert!(frame.geometry.displayed_bounds().contains(&position));
+        assert!(!frame.clip.contains(&position));
+    });
+    let (queries, result) = pointer_queries(
+        &dock,
+        &mut visual,
+        position,
+        NativePointerEvent::ButtonPressed(NativePointerButton::Primary),
+    );
+    result.unwrap();
+    assert!(
+        matches!(
+            queries.as_slice(),
+            [(
+                NativeReceiverQuery::WindowHit(_),
+                NativeReceiverAnswer::WindowHit(NativeWindowHit::WindowBackground)
+            )]
+        ),
+        "{queries:?}"
+    );
+    assert!(!dock.has_active_gesture());
 }
 
 #[open_gpui::test]
@@ -147,7 +194,10 @@ fn a_frontmost_drag_only_splitter_blocks_click_and_accepts_drag(cx: &mut TestApp
             bounds.y() + bounds.height() * 0.75,
         )
         .unwrap();
-        let position = frame.bounds.origin + point(px(logical.x() as f32), px(logical.y() as f32));
+        let position = frame
+            .geometry
+            .local_to_window_point(point(px(logical.x() as f32), px(logical.y() as f32)))
+            .unwrap();
         assert_eq!(hitbox.window_point_target_rank(position, window), Some(0));
         let semantic = host
             .session
@@ -248,7 +298,10 @@ fn an_exposed_rootless_background_clears_hover_without_inventing_a_drop_target(
             .find(|(descriptor, _)| descriptor.role() == DockspaceReceiverRole::TabBody)
             .unwrap();
         let center = descriptor.center();
-        let position = frame.bounds.origin + point(px(center.x() as f32), px(center.y() as f32));
+        let position = frame
+            .geometry
+            .local_to_window_point(point(px(center.x() as f32), px(center.y() as f32)))
+            .unwrap();
         assert_eq!(hitbox.window_point_target_rank(position, window), Some(0));
         position
     });
@@ -299,9 +352,7 @@ fn an_exposed_rootless_background_clears_hover_without_inventing_a_drop_target(
             "framework clearance must not invent a rootless background target"
         );
         assert_eq!(
-            resolve_in_window((*query).into(), mount, |hitbox, _| {
-                (hitbox == background).then_some(0)
-            }),
+            resolve_in_window((*query).into(), mount, |_| Some(Some(background))),
             clear
         );
         assert_ne!(
@@ -309,7 +360,7 @@ fn an_exposed_rootless_background_clears_hover_without_inventing_a_drop_target(
             NativeReceiverAnswer::EmptyLane(query.presented_surface())
         );
         assert_eq!(
-            resolve_in_window((*query).into(), mount, |_, _| None),
+            resolve_in_window((*query).into(), mount, |_| Some(None)),
             NativeReceiverAnswer::Blocked(query.presented_surface()),
             "an external frontmost widget must still block hover"
         );
@@ -343,9 +394,9 @@ fn a_real_hit_without_matching_presentation_authority_remains_unknown(cx: &mut T
             .unwrap();
         for (query, _) in queries {
             assert_eq!(
-                resolve_in_window(query, mount, |hitbox, point| {
-                    hitbox.window_point_target_rank(point, window)
-                }),
+                resolve_in_window(query, mount, |point| Some(
+                    window.frontmost_hitbox_at(point)
+                )),
                 NativeReceiverAnswer::Unknown
             );
         }
@@ -355,20 +406,32 @@ fn a_real_hit_without_matching_presentation_authority_remains_unknown(cx: &mut T
 
 #[open_gpui::test]
 fn managed_desktop_drag_delivers_to_another_presented_window(cx: &mut TestAppContext) {
-    managed_desktop_drag(cx, true, false);
+    managed_desktop_drag(cx, DesktopDrag::Tab);
 }
 
 #[open_gpui::test]
 fn managed_desktop_drag_without_button_authority_keeps_the_source(cx: &mut TestAppContext) {
-    managed_desktop_drag(cx, false, false);
+    managed_desktop_drag(cx, DesktopDrag::UnobservedButton);
 }
 
 #[open_gpui::test]
 fn managed_desktop_drag_outside_all_records_a_native_preview(cx: &mut TestAppContext) {
-    managed_desktop_drag(cx, true, true);
+    managed_desktop_drag(cx, DesktopDrag::OutsideAll);
 }
 
-fn managed_desktop_drag(cx: &mut TestAppContext, button_state_available: bool, outside_all: bool) {
+#[open_gpui::test]
+fn changing_modifiers_preserves_the_group_during_a_managed_desktop_drag(cx: &mut TestAppContext) {
+    managed_desktop_drag(cx, DesktopDrag::PreserveGroup);
+}
+
+enum DesktopDrag {
+    Tab,
+    UnobservedButton,
+    OutsideAll,
+    PreserveGroup,
+}
+
+fn managed_desktop_drag(cx: &mut TestAppContext, drag: DesktopDrag) {
     use std::time::Duration;
 
     use dockspace::{
@@ -376,10 +439,13 @@ fn managed_desktop_drag(cx: &mut TestAppContext, button_state_available: bool, o
         runtime::{NativeDesktopPointerLocation, NativeDesktopPosition, NativePointerHover},
     };
     use open_gpui::{
-        Bounds, DevicePixels, MouseButton, PlatformPhysicalDisplayObservation,
+        Bounds, DevicePixels, Modifiers, MouseButton, PlatformPhysicalDisplayObservation,
         PlatformWindowHitStack, WindowOptions,
     };
 
+    let button_state_available = !matches!(drag, DesktopDrag::UnobservedButton);
+    let outside_all = matches!(drag, DesktopDrag::OutsideAll);
+    let preserve_group = matches!(drag, DesktopDrag::PreserveGroup);
     let source = SurfaceId::new(1);
     let target = SurfaceId::new(2);
     let item = ItemId::new(1);
@@ -412,13 +478,21 @@ fn managed_desktop_drag(cx: &mut TestAppContext, button_state_available: bool, o
     });
     cx.simulate_physical_display_roster(Some(vec![display]));
     let dock = cx.update(|cx| {
+        let mut items = vec![item, ItemId::new(2), ItemId::new(3)];
+        let mut source_node = DockspaceNode::tabs([item, ItemId::new(2)]);
+        if preserve_group {
+            let remaining = ItemId::new(4);
+            items.push(remaining);
+            source_node = DockspaceNode::equal_split(
+                DockspaceAxis::Horizontal,
+                [source_node, DockspaceNode::tabs([remaining])],
+            )
+            .unwrap();
+        }
         let layout = DockspaceLayout::new([
             DockspaceSurfaceLayout::new(
                 source,
-                DockspaceRootLayout::new(
-                    RootId::new(1),
-                    DockspaceNode::tabs([item, ItemId::new(2)]),
-                ),
+                DockspaceRootLayout::new(RootId::new(1), source_node),
             ),
             DockspaceSurfaceLayout::new(
                 target,
@@ -426,8 +500,10 @@ fn managed_desktop_drag(cx: &mut TestAppContext, button_state_available: bool, o
             ),
         ])
         .unwrap();
-        let panes = [item, ItemId::new(2), ItemId::new(3)]
-            .map(|item| DockPane::new(item, "Pane", cx.new(|_| Empty)));
+        let panes = items
+            .into_iter()
+            .map(|item| DockPane::new(item, "Pane", cx.new(|_| Empty)))
+            .collect::<Vec<_>>();
         let mut policy = DockPolicy::default();
         policy.set_allow_native_surfaces(true);
         DockSurface::new_managed(
@@ -472,17 +548,39 @@ fn managed_desktop_drag(cx: &mut TestAppContext, button_state_available: bool, o
     paint(&mut visuals, cx);
     let [source_binding, target_binding] =
         windows.map(|window| dock.native_binding_for_window(window.window_id()).unwrap());
-    for (index, (event, x, hover)) in [
+    let source_group = dock.with_view(|view| view.item(item).unwrap().tabs().unwrap().key());
+    let pressed = if preserve_group {
+        let host = dock.host.borrow();
+        let input = &host.mounts[&windows[0].window_id()].input_frames[0];
+        let grip = input
+            .receivers
+            .iter()
+            .find(|(receiver, _)| receiver.role() == DockspaceReceiverRole::TabGroupGrip)
+            .unwrap()
+            .0
+            .center();
+        (grip.x(), grip.y())
+    } else {
+        (32.0, 14.0)
+    };
+    for (index, (event, x, y, hover)) in [
         (
             NativePointerEvent::ButtonPressed(NativePointerButton::Primary),
-            32.0,
+            pressed.0,
+            pressed.1,
             source_binding,
         ),
-        (NativePointerEvent::Moved, 64.0, source_binding),
-        (NativePointerEvent::Moved, 1032.0, target_binding),
+        (
+            NativePointerEvent::Moved,
+            pressed.0 + 32.0,
+            pressed.1,
+            source_binding,
+        ),
+        (NativePointerEvent::Moved, 1032.0, 14.0, target_binding),
         (
             NativePointerEvent::ButtonReleased(NativePointerButton::Primary),
             1032.0,
+            14.0,
             target_binding,
         ),
     ]
@@ -492,6 +590,13 @@ fn managed_desktop_drag(cx: &mut TestAppContext, button_state_available: bool, o
         if outside_all && matches!(event, NativePointerEvent::ButtonReleased(_)) {
             break;
         }
+        if preserve_group && index == 2 {
+            assert!(dock.has_active_gesture());
+            visuals[0].simulate_modifiers_change(Modifiers {
+                alt: true,
+                ..Modifiers::none()
+            });
+        }
         let (x, y, hover, work_area) = if outside_all && index == 2 {
             let work_area = dock.host.borrow().session.native_work_area(
                 dockspace::runtime::HostWorkAreaToken::new(u64::from(display.display_id())),
@@ -499,7 +604,7 @@ fn managed_desktop_drag(cx: &mut TestAppContext, button_state_available: bool, o
             assert!(work_area.is_some());
             (900.0, 700.0, NativePointerHover::OutsideAll, work_area)
         } else {
-            (x, 14.0, NativePointerHover::Dock(hover), None)
+            (x, y, NativePointerHover::Dock(hover), None)
         };
         let input = NativePointerInput::new(
             NativePointerId::new(1),
@@ -561,6 +666,14 @@ fn managed_desktop_drag(cx: &mut TestAppContext, button_state_available: bool, o
                 "desktop delivery must respect the backend's button authority"
             );
             assert!(moved.is_active());
+            if preserve_group {
+                assert_eq!(moved.tabs().unwrap().key(), source_group);
+                assert_eq!(
+                    moved.tabs().unwrap().tabs(),
+                    [item.into(), ItemId::new(2).into()]
+                );
+                assert_eq!(view.item(ItemId::new(4)).unwrap().surface(), source);
+            }
         });
     }
     assert!(!dock.has_active_gesture());

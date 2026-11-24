@@ -2,10 +2,12 @@
 
 use std::collections::BTreeMap;
 
+use dockspace::geometry::PhysicalRect;
 use dockspace::runtime::{
-    NativeReceiverAnswer, NativeReceiverPurpose, NativeReceiverQuery, NativeWindowHit,
+    NativeReceiverAnswer, NativeReceiverPurpose, NativeReceiverQuery, NativeRegionWindowHit,
+    NativeWindowHit, resolve_region_window_hit,
 };
-use open_gpui::{App, Pixels, Window, WindowId, point, px};
+use open_gpui::{App, HitboxId, Pixels, Window, WindowId, point, px};
 
 use super::{ManagedHost, WindowMount};
 
@@ -39,11 +41,11 @@ pub(super) fn resolve(
         return NativeReceiverAnswer::Unknown;
     };
     // A sibling's immutable hit graph remains readable while its Window is borrowed.
-    resolve_in_window(query, mount, |hitbox, point| {
+    resolve_in_window(query, mount, |point| {
         if let Some(window) = current.filter(|window| window.window_handle().window_id() == owner) {
-            hitbox.window_point_target_rank(point, window)
+            Some(window.frontmost_hitbox_at(point))
         } else {
-            cx.window_point_target_rank(mount.window, hitbox, point)
+            cx.window_frontmost_hitbox_at(mount.window, point)
         }
     })
 }
@@ -51,40 +53,39 @@ pub(super) fn resolve(
 pub(super) fn resolve_in_window(
     query: NativeReceiverQuery,
     mount: &WindowMount,
-    target_rank: impl Fn(open_gpui::HitboxId, open_gpui::Point<Pixels>) -> Option<usize>,
+    frontmost: impl Fn(open_gpui::Point<Pixels>) -> Option<Option<HitboxId>>,
 ) -> NativeReceiverAnswer {
     match query {
         NativeReceiverQuery::WindowHit(query) => {
-            for frame in &mount.input_frames {
-                let Some((serial, artifact)) = mount
-                    .regions
-                    .get(&frame.surface)
-                    .and_then(|region| region.presented)
-                else {
-                    continue;
-                };
-                if serial != frame.serial {
-                    continue;
-                }
-                let point = point(
-                    px((query.point().x() / frame.scale) as f32),
-                    px((query.point().y() / frame.scale) as f32),
-                );
-                if !frame.bounds.contains(&point) {
-                    continue;
-                }
-                let exposed = frame
-                    .hitboxes
-                    .iter()
-                    .chain(&frame.content_hitboxes)
-                    .any(|hitbox| target_rank(*hitbox, point) == Some(0));
-                return NativeReceiverAnswer::WindowHit(if exposed {
-                    NativeWindowHit::Surface(artifact)
-                } else {
-                    NativeWindowHit::Blocked
-                });
-            }
-            NativeReceiverAnswer::WindowHit(NativeWindowHit::Unknown)
+            let mut regions = mount
+                .input_frames
+                .iter()
+                .filter_map(|frame| {
+                    let (serial, artifact) = mount.regions.get(&frame.surface)?.presented?;
+                    (serial == frame.serial).then_some((frame, artifact))
+                })
+                .peekable();
+            let Some((first, _)) = regions.peek() else {
+                return NativeReceiverAnswer::WindowHit(NativeWindowHit::Unknown);
+            };
+            let point = point(
+                px((query.point().x() / first.scale) as f32),
+                px((query.point().y() / first.scale) as f32),
+            );
+            let Some(target) = frontmost(point) else {
+                return NativeReceiverAnswer::WindowHit(NativeWindowHit::Unknown);
+            };
+            NativeReceiverAnswer::WindowHit(resolve_region_window_hit(
+                query.point(),
+                regions.filter_map(|(frame, artifact)| {
+                    let bounds = physical_rect(frame.geometry.displayed_bounds(), frame.scale)?;
+                    let clip = physical_rect(frame.clip, frame.scale)?;
+                    let exposed = target.is_some_and(|target| {
+                        frame.hitboxes.contains(&target) || frame.content_hitboxes.contains(&target)
+                    });
+                    Some(NativeRegionWindowHit::new(artifact, bounds, clip, exposed))
+                }),
+            ))
         }
         NativeReceiverQuery::Surface(query) => {
             let Some(frame) = mount.input_frames.iter().find(|frame| {
@@ -106,10 +107,13 @@ pub(super) fn resolve_in_window(
                 px((client.x() / frame.scale) as f32),
                 px((client.y() / frame.scale) as f32),
             );
+            let Some(target) = frontmost(point) else {
+                return NativeReceiverAnswer::Unknown;
+            };
             if let Some((descriptor, _)) = frame
                 .receivers
                 .iter()
-                .find(|(_, hitbox)| target_rank(*hitbox, point) == Some(0))
+                .find(|(_, hitbox)| target == Some(*hitbox))
             {
                 if matches!(query.purpose(), NativeReceiverPurpose::HoverHit) {
                     query.clear_hover_lane(descriptor).map_or(
@@ -123,11 +127,7 @@ pub(super) fn resolve_in_window(
                         NativeReceiverAnswer::Dock,
                     )
                 }
-            } else if frame
-                .hitboxes
-                .iter()
-                .any(|hitbox| target_rank(*hitbox, point) == Some(0))
-            {
+            } else if target.is_some_and(|target| frame.hitboxes.contains(&target)) {
                 if matches!(query.purpose(), NativeReceiverPurpose::HoverHit) {
                     // The exposed background clears framework occlusion; the core
                     // resolves dynamic hover targets after preceding pointer edges.
@@ -136,10 +136,7 @@ pub(super) fn resolve_in_window(
                     NativeReceiverAnswer::EmptyLane(query.presented_surface())
                 }
             } else if matches!(query.purpose(), NativeReceiverPurpose::HoverHit)
-                && frame
-                    .content_hitboxes
-                    .iter()
-                    .any(|hitbox| target_rank(*hitbox, point) == Some(0))
+                && target.is_some_and(|target| frame.content_hitboxes.contains(&target))
             {
                 NativeReceiverAnswer::ClearHoverLane(query.presented_surface())
             } else {
@@ -147,4 +144,15 @@ pub(super) fn resolve_in_window(
             }
         }
     }
+}
+
+fn physical_rect(bounds: open_gpui::Bounds<Pixels>, scale: f64) -> Option<PhysicalRect> {
+    let physical = |pixels: Pixels| f64::from(f32::from(pixels)) * scale;
+    PhysicalRect::new(
+        physical(bounds.origin.x),
+        physical(bounds.origin.y),
+        physical(bounds.size.width),
+        physical(bounds.size.height),
+    )
+    .ok()
 }
