@@ -1652,6 +1652,7 @@ impl WindowsWindowInner {
             .invalidate(PlatformWindowPresentOutcome::Rejected);
         self.dialog_owner.close();
         self.state.interaction_gate.quiesce();
+        self.retire_accessibility().log_err();
         self.settle_pointer_capture_before_native_teardown();
         self.retire_native_callbacks();
         self.unregister_from_platform();
@@ -1702,6 +1703,17 @@ impl WindowsWindowInner {
         if let Some(events) = events {
             events.raise();
         }
+        Ok(())
+    }
+
+    pub(crate) fn retire_accessibility(&self) -> Result<()> {
+        let adapter = self
+            .state
+            .a11y
+            .try_borrow_mut()
+            .map_err(|_| anyhow::anyhow!("accessibility adapter is still in use"))?
+            .take();
+        drop(adapter);
         Ok(())
     }
 
@@ -1771,6 +1783,8 @@ impl WindowsWindowInner {
         self.settle_pointer_capture_before_native_teardown();
         self.native_window_lifecycle
             .set(NativeWindowLifecycle::Destroyed);
+        self.state.interaction_gate.quiesce();
+        self.retire_accessibility().log_err();
         self.unregister_from_platform();
         self.retire_native_callbacks();
         self.drag_drop_registered.set(false);
@@ -2107,6 +2121,12 @@ impl WindowsWindowInner {
                 return false;
             }
         }
+        if let Err(error) = self.retire_accessibility() {
+            log::error!(
+                "failed to retire Windows accessibility before native destruction: {error:#}"
+            );
+            return false;
+        }
         #[cfg(any(test, feature = "test-support"))]
         {
             let snapshot = shutdown.snapshot();
@@ -2233,13 +2253,7 @@ impl WindowsWindowInner {
             anyhow::ensure!(matches, "host IME association was not restored");
             attachment.ime_restored.set(true);
         }
-        let a11y = self
-            .state
-            .a11y
-            .try_borrow_mut()
-            .map_err(|_| anyhow::anyhow!("accessibility adapter is still in use"))?
-            .take();
-        drop(a11y);
+        self.retire_accessibility()?;
         if attachment.subclass_installed.get() {
             let mut data = 0;
             anyhow::ensure!(

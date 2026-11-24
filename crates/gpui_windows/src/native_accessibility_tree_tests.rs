@@ -576,6 +576,7 @@ fn native_synthetic_a11y_activation_snapshot_update_and_release() {
                 && platform.inner.native_retirement_is_settled()
         },
     );
+    assert!(native_window.state.a11y.borrow().is_none());
     let lifecycle = observation
         .events_after(cursor)
         .into_iter()

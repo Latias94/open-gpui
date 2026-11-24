@@ -91,8 +91,6 @@ dependencies = [
 [[package]]
 name = "accesskit_windows"
 version = "0.32.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eff7009f1a532e917d66970a1e80c965140c6cfbbabbdde3d64e5431e6c78e21"
 dependencies = [
  "accesskit",
  "accesskit_consumer 0.35.0",

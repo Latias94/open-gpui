@@ -2060,18 +2060,26 @@ impl WindowsWindowInner {
             return Some(0);
         }
         let result = {
-            let mut a11y = self.state.a11y.borrow_mut();
+            let mut a11y = self.state.a11y.try_borrow_mut().ok()?;
             let a11y = a11y.as_mut()?;
             a11y.adapter.handle_wm_getobject(
                 accesskit_windows::WPARAM(wparam.0),
                 accesskit_windows::LPARAM(lparam.0),
                 &mut a11y.activation_handler,
-            )?
+            )
         };
+        if self.state.interaction_is_quiesced() {
+            // A reentrant native close may have shut the gate while AccessKit
+            // held the adapter borrow. Finish its retirement before returning.
+            if !self.accepts_generation_bound_message(self.registration.generation()) {
+                self.retire_accessibility().log_err();
+            }
+            return Some(0);
+        }
         // The borrow above must be dropped before calling `.into()`, because
         // it calls `UiaReturnRawElementProvider` which may send a nested
         // `WM_GETOBJECT` back into this window procedure.
-        let lresult: accesskit_windows::LRESULT = result.into();
+        let lresult: accesskit_windows::LRESULT = result?.into();
         Some(lresult.0)
     }
 

@@ -53,6 +53,7 @@ exclude = [
     "repo-ref/*",
     "tests/fixtures/arena-miri",
     "tests/fixtures/dependency-consumer",
+    "third_party/accesskit_windows",
 ]
 
 [workspace.package]
@@ -355,6 +356,7 @@ todo = "deny"
 unwrap_used = "warn"
 
 [patch.crates-io]
+accesskit_windows = { path = "third_party/accesskit_windows" }
 async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
 calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
 khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42214b36347b108fd9630ca6254b96dde59e04fe" }
