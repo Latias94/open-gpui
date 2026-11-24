@@ -11,8 +11,7 @@ use open_gpui::{
     NoopTextSystem, ParentElement as _, Pixels, PlatformAtlas, PlatformHeadlessRenderer,
     PlatformWindowPresentOutcome, QuitMode, Render, Rgba, Scene, Size, SpringAnimation,
     SpringConfig, SpringPlayback, SpringState, SpringTarget, StyleRefinement, Styled as _,
-    TestAppContext, Window, WindowBounds, WindowHandle, WindowOptions, div, point, px, rgb,
-    sampled_easing, size,
+    TestAppContext, Window, WindowBounds, WindowHandle, WindowOptions, div, point, px, rgb, size,
 };
 use open_gpui_scheduler::Instant;
 use std::{
@@ -27,30 +26,6 @@ fn close(actual: f32, expected: f32) {
         (actual - expected).abs() < 0.0005,
         "expected {expected}, got {actual}",
     );
-}
-
-#[test]
-fn public_gpui_and_motion_exports_are_the_same_solver_types() {
-    let motion_config: open_gpui_motion::SpringConfig = SpringConfig::new(100., 4., 1.);
-    let gpui_config: SpringConfig = motion_config;
-    let motion_state: open_gpui_motion::SpringState = SpringState {
-        position: 0.2,
-        velocity: 1.,
-    };
-    let gpui_state: SpringState = motion_state;
-    assert_eq!(
-        gpui_config.step(gpui_state, 1., 0.05),
-        motion_config.step(motion_state, 1., 0.05),
-    );
-    let (gpui_duration, gpui_easing) = sampled_easing(gpui_config, 0.001);
-    let (motion_duration, motion_easing) = open_gpui_motion::sampled_easing(motion_config, 0.001);
-    assert_eq!(gpui_duration, motion_duration);
-    for progress in [0., 0.1, 0.5, 0.9, 1.] {
-        assert_eq!(gpui_easing(progress), motion_easing(progress));
-    }
-    let _: SpringAnimation<Pixels> = SpringAnimation::new(motion_config)
-        .to(px(100.))
-        .from(px(motion_state.position));
 }
 
 #[test]

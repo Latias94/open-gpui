@@ -1,5 +1,8 @@
 # Open GPUI Command Ecosystem
 
+This guide records the command package at `legacy/v0-pre-slim`. The current desktop components
+consume application-owned command items and action state. [Component guide](../../crates/ui_components/README.md)
+
 Open GPUI's command ecosystem is a projection layer over GPUI's native action and keymap runtime.
 It is the recommended starting point for `Cmd+K` / `Ctrl+P` command palettes, command-menu reuse,
 and plugin-like command metadata contribution.

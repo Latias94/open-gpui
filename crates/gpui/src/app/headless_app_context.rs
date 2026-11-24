@@ -86,8 +86,7 @@ impl HeadlessAppContext {
             Some(renderer_factory),
         );
 
-        let http_client = open_gpui_http_client::FakeHttpClient::with_404_response();
-        let app = App::new_app(platform, asset_source, http_client);
+        let app = App::new_app(platform, asset_source);
         app.borrow_mut().mode = GpuiMode::test();
         let text_system = app.borrow().text_system().clone();
 

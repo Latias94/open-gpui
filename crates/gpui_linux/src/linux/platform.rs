@@ -56,7 +56,6 @@ pub(crate) const SCROLL_LINES: f32 = 3.0;
 pub(crate) const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) const DOUBLE_CLICK_DISTANCE: Pixels = px(5.0);
-pub(crate) const KEYRING_LABEL: &str = "open-gpui-github-account";
 
 type ForegroundSource =
     calloop::Dispatcher<'static, PriorityQueueCalloopReceiver<RunnableVariant>, ()>;
@@ -1130,18 +1129,6 @@ impl Platform for LinuxPlatform {
         self.with_common(|common| common.callbacks.displays_changed = Some(callback));
     }
 
-    #[cfg(feature = "screen-capture")]
-    fn is_screen_capture_supported(&self) -> bool {
-        self.connection.borrow().is_screen_capture_supported()
-    }
-
-    #[cfg(feature = "screen-capture")]
-    fn screen_capture_sources(
-        &self,
-    ) -> oneshot::Receiver<Result<Vec<Rc<dyn open_gpui::ScreenCaptureSource>>>> {
-        self.connection.borrow().screen_capture_sources()
-    }
-
     fn active_window(&self) -> Option<AnyWindowHandle> {
         self.connection.borrow().active_window()
     }
@@ -1466,72 +1453,6 @@ impl Platform for LinuxPlatform {
 
     fn should_auto_hide_scrollbars(&self) -> bool {
         self.with_common(|common| common.auto_hide_scrollbars)
-    }
-
-    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
-        let url = url.to_string();
-        let username = username.to_string();
-        let password = password.to_vec();
-        self.background_executor().spawn(async move {
-            let keyring = oo7::Keyring::new().await?;
-            keyring.unlock().await?;
-            keyring
-                .create_item(
-                    KEYRING_LABEL,
-                    &vec![("url", &url), ("username", &username)],
-                    password,
-                    true,
-                )
-                .await?;
-            Ok(())
-        })
-    }
-
-    fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
-        let url = url.to_string();
-        self.background_executor().spawn(async move {
-            let keyring = oo7::Keyring::new().await?;
-            keyring.unlock().await?;
-
-            let items = keyring.search_items(&vec![("url", &url)]).await?;
-
-            for item in items.into_iter() {
-                if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
-                    let attributes = item.attributes().await?;
-                    let username = attributes
-                        .get("username")
-                        .context("Cannot find username in stored credentials")?;
-                    item.unlock().await?;
-                    let secret = item.secret().await?;
-
-                    // we lose the zeroizing capabilities at this boundary,
-                    // a current limitation GPUI's credentials api
-                    return Ok(Some((username.to_string(), secret.to_vec())));
-                } else {
-                    continue;
-                }
-            }
-            Ok(None)
-        })
-    }
-
-    fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
-        let url = url.to_string();
-        self.background_executor().spawn(async move {
-            let keyring = oo7::Keyring::new().await?;
-            keyring.unlock().await?;
-
-            let items = keyring.search_items(&vec![("url", &url)]).await?;
-
-            for item in items.into_iter() {
-                if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
-                    item.delete().await?;
-                    return Ok(());
-                }
-            }
-
-            Ok(())
-        })
     }
 
     fn window_appearance(&self) -> WindowAppearance {

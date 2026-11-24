@@ -1,5 +1,3 @@
-#![cfg_attr(target_family = "wasm", no_main)]
-
 //! Accessibility (AccessKit) demo app.
 //!
 //! Run with: `cargo run -p open-gpui-platform --features font-kit --example a11y`
@@ -249,18 +247,10 @@ fn run_example() {
     });
 }
 
-#[cfg(not(target_family = "wasm"))]
 fn main() {
     env_logger::builder()
         .filter_level(log::LevelFilter::Warn)
         .filter_module("gpui", log::LevelFilter::Info)
         .init();
-    run_example();
-}
-
-#[cfg(target_family = "wasm")]
-#[wasm_bindgen::prelude::wasm_bindgen(start)]
-pub fn start() {
-    open_gpui_platform::web_init();
     run_example();
 }

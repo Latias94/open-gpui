@@ -16,38 +16,20 @@ pub use hosted_surface::*;
 /// Types for configuring parent-anchored popup windows such as menus, dropdowns and tooltips.
 pub mod popup;
 
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+#[cfg(any(test, feature = "test-support"))]
 mod threaded_dispatcher;
 
 #[cfg(all(target_os = "linux", feature = "wayland"))]
 #[expect(missing_docs)]
 pub mod layer_shell;
 
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+#[cfg(any(test, feature = "test-support"))]
 mod test;
 
 #[cfg(any(test, feature = "test-support"))]
 mod visual_test;
 
-#[cfg(all(
-    feature = "screen-capture",
-    any(target_os = "windows", target_os = "linux", target_os = "freebsd",)
-))]
-pub mod scap_screen_capture;
-
-#[cfg(all(
-    any(target_os = "windows", target_os = "linux"),
-    feature = "screen-capture"
-))]
-pub(crate) type PlatformScreenCaptureFrame = scap::frame::Frame;
-#[cfg(not(feature = "screen-capture"))]
-pub(crate) type PlatformScreenCaptureFrame = ();
-#[cfg(all(
-    any(target_os = "macos", target_os = "ios"),
-    feature = "screen-capture"
-))]
-pub(crate) type PlatformScreenCaptureFrame = PlatformPixelBuffer;
-/// A retained Apple CoreVideo pixel buffer used by screen capture and surface painting.
+/// A retained Apple CoreVideo pixel buffer used for surface painting.
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub type PlatformPixelBuffer = objc2_core_foundation::CFRetained<objc2_core_video::CVPixelBuffer>;
 
@@ -67,7 +49,7 @@ use anyhow::bail;
 use anyhow::{Context as _, Result};
 use async_task::Runnable;
 use futures::channel::oneshot;
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+#[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
 use image::codecs::{gif::GifDecoder, webp::WebPDecoder};
 use image::{DynamicImage, Frame, Rgba};
@@ -124,13 +106,13 @@ impl WindowVisibility {
     }
 }
 
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) use test::*;
 
 #[cfg(any(test, feature = "test-support"))]
-pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
+pub use test::{TestDispatcher, headless_test_platform};
 
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+#[cfg(any(test, feature = "test-support"))]
 pub use threaded_dispatcher::ThreadedDispatcher;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -3965,22 +3947,6 @@ pub trait Platform: 'static {
         None
     }
 
-    fn is_screen_capture_supported(&self) -> bool {
-        false
-    }
-
-    fn screen_capture_sources(
-        &self,
-    ) -> oneshot::Receiver<anyhow::Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
-        let (sources_tx, sources_rx) = oneshot::channel();
-        sources_tx
-            .send(Err(anyhow::anyhow!(
-                "gpui was compiled without the screen-capture feature"
-            )))
-            .ok();
-        sources_rx
-    }
-
     fn open_window(
         &self,
         handle: AnyWindowHandle,
@@ -4164,7 +4130,11 @@ pub trait Platform: 'static {
     #[cfg(target_os = "macos")]
     fn write_to_find_pasteboard(&self, item: ClipboardItem);
 
-    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>>;
+    fn write_credentials(&self, _url: &str, _username: &str, _password: &[u8]) -> Task<Result<()>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "credential storage is unavailable on this platform"
+        )))
+    }
 
     /// Atomically writes credentials unless an item with this URL and username exists.
     ///
@@ -4181,8 +4151,17 @@ pub trait Platform: 'static {
         )))
     }
 
-    fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>>;
-    fn delete_credentials(&self, url: &str) -> Task<Result<()>>;
+    fn read_credentials(&self, _url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "credential storage is unavailable on this platform"
+        )))
+    }
+
+    fn delete_credentials(&self, _url: &str) -> Task<Result<()>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "credential storage is unavailable on this platform"
+        )))
+    }
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
     fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper>;
@@ -4414,42 +4393,6 @@ pub enum ThermalState {
     /// System is critically constrained, minimize all resource usage
     Critical,
 }
-
-/// Metadata for a given [ScreenCaptureSource]
-#[derive(Clone)]
-pub struct SourceMetadata {
-    /// Opaque identifier of this screen.
-    pub id: u64,
-    /// Human-readable label for this source.
-    pub label: Option<SharedString>,
-    /// Whether this source is the main display.
-    pub is_main: Option<bool>,
-    /// Video resolution of this source.
-    pub resolution: Size<DevicePixels>,
-}
-
-/// A source of on-screen video content that can be captured.
-pub trait ScreenCaptureSource {
-    /// Returns metadata for this source.
-    fn metadata(&self) -> Result<SourceMetadata>;
-
-    /// Start capture video from this source, invoking the given callback
-    /// with each frame.
-    fn stream(
-        &self,
-        foreground_executor: &ForegroundExecutor,
-        frame_callback: Box<dyn Fn(ScreenCaptureFrame) + Send>,
-    ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>>;
-}
-
-/// A video stream captured from a screen.
-pub trait ScreenCaptureStream {
-    /// Returns metadata for this source.
-    fn metadata(&self) -> Result<SourceMetadata>;
-}
-
-/// A frame of video captured from a screen.
-pub struct ScreenCaptureFrame(pub PlatformScreenCaptureFrame);
 
 /// An opaque identifier for a hardware display
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]
@@ -6566,7 +6509,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// Inform the adapter of updated window bounds.
     fn a11y_update_window_bounds(&self) {}
 
-    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
         None
     }
@@ -6574,7 +6517,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// Renders the given scene to a texture and returns the pixel data as an RGBA image.
     /// This does not present the frame to screen - useful for visual testing where we want
     /// to capture what would be rendered without displaying it or requiring the window to be visible.
-    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     fn render_to_image(&self, _scene: &Scene) -> Result<RgbaImage> {
         anyhow::bail!("render_to_image not implemented for this platform")
     }
@@ -6597,7 +6540,7 @@ pub enum PlatformWindowPresentOutcome {
 }
 
 /// A renderer for headless windows that can produce real rendered output.
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+#[cfg(any(test, feature = "test-support"))]
 pub trait PlatformHeadlessRenderer {
     /// Render a scene without copying its pixels back to the CPU.
     fn render_scene(&mut self, scene: &Scene, size: Size<DevicePixels>) -> Result<()>;
@@ -6678,7 +6621,7 @@ pub trait PlatformDispatcher: Send + Sync {
         None
     }
 
-    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     fn as_threaded(&self) -> Option<&ThreadedDispatcher> {
         None
     }
@@ -7203,7 +7146,7 @@ pub trait PlatformAtlas {
 
     fn remove(&self, key: &AtlasKey);
 
-    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     fn contains(&self, _key: &AtlasKey) -> bool {
         false
     }

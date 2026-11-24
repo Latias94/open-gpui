@@ -8,7 +8,7 @@ retains the real finished command buffer, acquired surface texture, scene record
 `PlatformFrameSubmission`; the host decides when to submit after the draw callback returns.
 Renderer quiescence discards unsubmitted work, waits for the original submitted prefix and releases
 the surface before native binding retirement. This is an ordinary application using production
-APIs, without `test-support`, `bench-support`, or a simulated/headless Window.
+APIs with a native Window.
 
 Run the ordinary GPUI-owned window and event loop:
 

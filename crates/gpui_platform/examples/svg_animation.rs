@@ -1,5 +1,3 @@
-#![cfg_attr(target_family = "wasm", no_main)]
-
 //! Adapted from Zed aff99ecc3249cfa95e720c4d6c1eb4a72105a3ee.
 //! With `test-support`, `--smoke` verifies real renderer pixels and exits automatically.
 //!
@@ -289,14 +287,6 @@ fn run_example() {
     });
 }
 
-#[cfg(not(target_family = "wasm"))]
 fn main() {
-    run_example();
-}
-
-#[cfg(target_family = "wasm")]
-#[wasm_bindgen::prelude::wasm_bindgen(start)]
-pub fn start() {
-    open_gpui_platform::web_init();
     run_example();
 }

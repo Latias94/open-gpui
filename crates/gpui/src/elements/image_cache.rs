@@ -6,8 +6,8 @@ use crate::{
 
 #[cfg(test)]
 use crate::IntoElement;
+use crate::Refineable;
 use crate::asset_cache::CachedLoad;
-use open_gpui_refineable::Refineable;
 use smallvec::SmallVec;
 use std::{collections::HashMap, fmt, sync::Arc};
 

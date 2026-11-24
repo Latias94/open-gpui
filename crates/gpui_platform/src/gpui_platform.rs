@@ -5,22 +5,6 @@ pub use open_gpui::Platform;
 
 use std::rc::Rc;
 
-#[cfg(target_os = "ios")]
-pub use open_gpui_ios::{IosPlatform, StatusBarContentStyle, ios::set_status_bar_style};
-
-#[cfg(target_family = "wasm")]
-pub use open_gpui_web::{CanvasFontFallback, WebBackendPreference, WebPlatformOptions};
-
-#[cfg(target_family = "wasm")]
-pub fn application_with_web_backend(
-    backend_preference: WebBackendPreference,
-) -> open_gpui::Application {
-    open_gpui::Application::with_platform(Rc::new(open_gpui_web::WebPlatform::new_with_backend(
-        true,
-        backend_preference,
-    )))
-}
-
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> open_gpui::BackgroundExecutor {
     current_platform(true).background_executor()
@@ -52,36 +36,8 @@ pub fn linux(allowed_modes: open_gpui::WindowingModes) -> open_gpui::Application
     open_gpui::Application::with_platform(open_gpui_linux::linux_platform(allowed_modes))
 }
 
-/// Unlike `application`, this function returns a single-threaded web application.
-#[cfg(target_family = "wasm")]
-pub fn single_threaded_web() -> open_gpui::Application {
-    single_threaded_web_with_options(WebPlatformOptions::default())
-}
-
-/// Unlike `application`, this function returns a single-threaded web application with web options.
-#[cfg(target_family = "wasm")]
-pub fn single_threaded_web_with_options(mut options: WebPlatformOptions) -> open_gpui::Application {
-    options.allow_multi_threading = false;
-    open_gpui::Application::with_platform(Rc::new(open_gpui_web::WebPlatform::new_with_options(
-        options,
-    )))
-}
-
-/// Initializes panic hooks and logging for the web platform.
-/// Call this before running the application in a wasm_bindgen entrypoint.
-#[cfg(target_family = "wasm")]
-pub fn web_init() {
-    console_error_panic_hook::set_once();
-    open_gpui_web::init_logging();
-}
-
 /// Returns the default [`Platform`] for the current OS.
 pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
-    #[cfg(target_os = "ios")]
-    {
-        open_gpui_ios::current_platform(headless)
-    }
-
     #[cfg(target_os = "macos")]
     {
         Rc::new(open_gpui_macos::MacPlatform::new(headless))
@@ -110,32 +66,10 @@ pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
     {
         open_gpui_linux::current_platform(headless)
     }
-
-    #[cfg(target_family = "wasm")]
-    {
-        let _ = headless;
-        Rc::new(open_gpui_web::WebPlatform::new(true))
-    }
-}
-
-/// Returns the current platform's text system for benchmark contexts, built once per
-/// thread and shared by every context on it.
-///
-/// `#[gpui::bench]` creates a context for every Criterion routine call. Building a whole
-/// platform each time only to take its text system leaks the platform's threads on Linux
-/// (a 20-worker dispatcher and a timer thread per call), which slows every later
-/// benchmark in the process.
-#[cfg(feature = "bench-support")]
-pub fn bench_text_system() -> std::sync::Arc<dyn open_gpui::PlatformTextSystem> {
-    thread_local! {
-        static TEXT_SYSTEM: std::sync::Arc<dyn open_gpui::PlatformTextSystem> =
-            current_platform(true).text_system();
-    }
-    TEXT_SYSTEM.with(|text_system| text_system.clone())
 }
 
 /// Returns a new [`open_gpui::PlatformHeadlessRenderer`] for the current platform, if available.
-#[cfg(any(feature = "bench-support", feature = "test-support"))]
+#[cfg(feature = "test-support")]
 pub fn current_headless_renderer()
 -> anyhow::Result<Option<Box<dyn open_gpui::PlatformHeadlessRenderer>>> {
     #[cfg(target_os = "macos")]
@@ -163,7 +97,7 @@ pub fn current_headless_renderer()
 
 #[cfg(all(
     test,
-    any(feature = "test-support", feature = "bench-support"),
+    feature = "test-support",
     not(any(
         target_os = "macos",
         all(target_os = "linux", not(target_env = "ohos"))

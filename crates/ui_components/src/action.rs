@@ -1,7 +1,5 @@
 //! Shared renderer-neutral action and icon projection types.
 
-use open_gpui_command::{CommandDescriptor, CommandIconDescriptor};
-
 /// Renderer-neutral icon intent carried by action descriptors.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActionIconDescriptor {
@@ -52,22 +50,6 @@ impl From<&str> for ActionIconDescriptor {
 impl From<String> for ActionIconDescriptor {
     fn from(value: String) -> Self {
         Self::new(value)
-    }
-}
-
-impl From<CommandIconDescriptor> for ActionIconDescriptor {
-    fn from(value: CommandIconDescriptor) -> Self {
-        let mut descriptor = Self::new(value.name());
-        if let Some(fallback_label) = value.fallback_label_ref() {
-            descriptor = descriptor.fallback_label(fallback_label);
-        }
-        descriptor
-    }
-}
-
-impl From<&CommandIconDescriptor> for ActionIconDescriptor {
-    fn from(value: &CommandIconDescriptor) -> Self {
-        value.clone().into()
     }
 }
 
@@ -206,28 +188,6 @@ impl ActionDescriptor {
             tooltip: None,
             accessibility_description: None,
         }
-    }
-
-    /// Creates an action descriptor from shared command metadata.
-    pub fn from_command_descriptor(descriptor: &CommandDescriptor) -> Self {
-        let mut action =
-            Self::new(descriptor.id(), descriptor.label()).disabled(descriptor.disabled_state());
-        if let Some(icon) = descriptor.icon_ref() {
-            action = action.icon(ActionIconDescriptor::from(icon));
-        }
-        if let Some(shortcut) = descriptor.shortcut_ref() {
-            action = action.shortcut(shortcut);
-        }
-        if let Some(reason) = descriptor.disabled_reason_ref() {
-            action = action.disabled_reason(reason);
-        }
-        if let Some(tooltip) = descriptor.tooltip_ref() {
-            action = action.tooltip(tooltip);
-        }
-        if let Some(description) = descriptor.accessibility_description_ref() {
-            action = action.accessibility_description(description);
-        }
-        action
     }
 
     /// Applies renderer-neutral icon metadata.
@@ -440,32 +400,6 @@ impl ResolvedActionState {
 #[cfg(test)]
 mod tests {
     use super::{ActionDescriptor, ActionIconDescriptor, ResolvedActionIcon, ResolvedActionState};
-    use open_gpui_command::{CommandDescriptor, CommandIconDescriptor};
-
-    #[test]
-    fn action_descriptor_projects_command_metadata() {
-        let command = CommandDescriptor::new("workspace.open", "Open Workspace")
-            .icon(CommandIconDescriptor::new("folder-open").fallback_label("O"))
-            .shortcut("Ctrl+O")
-            .disabled_reason("No workspace")
-            .tooltip("Open a workspace")
-            .accessibility_description("Opens the workspace picker");
-
-        let action = ActionDescriptor::from_command_descriptor(&command);
-
-        assert_eq!(action.value(), "workspace.open");
-        assert_eq!(action.label(), "Open Workspace");
-        assert_eq!(action.icon_ref().unwrap().name(), "folder-open");
-        assert_eq!(action.icon_ref().unwrap().fallback_label_ref(), Some("O"));
-        assert_eq!(action.shortcut_ref(), Some("Ctrl+O"));
-        assert!(action.disabled_state());
-        assert_eq!(action.disabled_reason_ref(), Some("No workspace"));
-        assert_eq!(action.tooltip_ref(), Some("Open a workspace"));
-        assert_eq!(
-            action.accessibility_description_ref(),
-            Some("Opens the workspace picker")
-        );
-    }
 
     #[test]
     fn unknown_icon_resolution_reports_diagnostic_without_hiding_action() {

@@ -8,18 +8,9 @@ declare_public_exports! {
     extended EXTENDED_PUBLIC_EXPORTS;
     crate::command => {
         CommandBehaviorSnapshot, CommandColors, CommandDialogState, CommandIndexSnapshot,
-        CommandIndexSnapshotMode, CommandKeyBindingCaptureState, CommandKeyBindingEditorFilter,
-        CommandKeyBindingEditorFilterMode, CommandKeyBindingEditorPreviewState,
-        CommandKeyBindingEditorRow, CommandKeyBindingEditorState, CommandMatchSource,
-        CommandNavigationBehavior, CommandPaletteController, CommandPaletteControllerUpdate,
-        CommandPaletteKeymapPreflight, CommandPalettePendingProviderRequest,
-        CommandPaletteProjection, CommandProviderPaletteProjection, CommandQueryMode,
-        CommandRowBehaviorSnapshot, CommandSelectedChipState, CommandShortcutInspectorCommand,
-        CommandShortcutInspectorState, CommandStateDataSource,
-    },
-    crate::form_adapter => {
-        FormFieldConfig, FormFieldProjection, FormProjection, form_checkbox_value,
-        form_number_value, form_select_value, form_text_value,
+        CommandIndexSnapshotMode, CommandMatchSource,
+        CommandNavigationBehavior, CommandQueryMode,
+        CommandRowBehaviorSnapshot, CommandSelectedChipState, CommandStateDataSource,
     },
     crate::menu => { MenuSafeHoverCorridor, MenuSubmenuNavigation, MenuSubmenuSurface },
     crate::resource_adapter => {

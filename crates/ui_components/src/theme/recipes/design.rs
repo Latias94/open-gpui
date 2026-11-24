@@ -1,4 +1,4 @@
-use open_gpui_motion::MotionPreference;
+use open_gpui_core_util::motion::MotionPreference;
 use open_gpui_ui_core::{Size, ThemeElevationLayer};
 
 use crate::button::ButtonMetrics;
@@ -64,7 +64,7 @@ impl ThemeResolver {
 
 #[cfg(test)]
 mod tests {
-    use open_gpui_motion::MotionPreference;
+    use open_gpui_core_util::motion::MotionPreference;
     use open_gpui_ui_core::{
         Density, Size, SizeScale, ThemeDesignScales, ThemeElevationLayer, ThemeElevationScale,
         ThemeRadiusScale, ThemeSpacingScale, ThemeTypographyScale, ui_px,

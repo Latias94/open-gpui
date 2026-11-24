@@ -1,27 +1,18 @@
 use super::*;
 use crate::{AtlasRemoveOutcome, Context, Empty, ImageSource, Render, TestAppContext, img};
 use futures::channel::oneshot;
-use open_gpui_http_client::{FakeHttpClient, Response, StatusCode};
 
 const IMAGE_BYTES: &[u8] =
     include_bytes!("../../../../../tests/fixtures/images/red-blue-100ms.webp");
 
-fn pending_images(cx: &TestAppContext) -> async_channel::Receiver<oneshot::Sender<()>> {
-    let (requests, pending) = async_channel::unbounded();
-    cx.update(|cx| {
-        cx.set_http_client(FakeHttpClient::create(move |_| {
-            let (complete, receive) = oneshot::channel();
-            requests.try_send(complete).unwrap();
-            async move {
-                receive.await?;
-                Ok(Response::builder()
-                    .status(200)
-                    .body(IMAGE_BYTES.into())
-                    .unwrap())
-            }
-        }));
-    });
-    pending
+fn pending_image(cx: &App) -> (ImageCacheItem, oneshot::Sender<()>) {
+    let (complete, receive) = oneshot::channel();
+    let load = async move {
+        receive.await.map_err(anyhow::Error::from)?;
+        let frames = crate::decode_webp_image(IMAGE_BYTES)?;
+        Ok(Arc::new(RenderImage::new(frames)))
+    };
+    (ImageCacheItem(CachedLoad::new(load, cx)), complete)
 }
 
 struct CachedImageView {
@@ -51,15 +42,14 @@ enum Removal {
 
 #[open_gpui::test]
 fn image_cache_item_owns_real_loader_result_and_pending_cancellation(cx: &mut TestAppContext) {
-    let requests = pending_images(cx);
-    let source = Resource::Uri("https://test.example/image.webp".into());
+    let source = Resource::Path(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/images/red-blue-100ms.webp")
+            .into(),
+    );
     let item = cx.update(|cx| ImageCacheItem::new(&source, cx));
     assert!(item.get().is_none());
 
-    cx.run_until_parked();
-    let complete = requests.try_recv().unwrap();
-    assert!(item.get().is_none());
-    complete.send(()).unwrap();
     cx.run_until_parked();
 
     let image = item.get().expect("published image").unwrap();
@@ -69,9 +59,8 @@ fn image_cache_item_owns_real_loader_result_and_pending_cancellation(cx: &mut Te
     assert_eq!(pixel[3], 255);
     assert!(Arc::ptr_eq(&image, &item.get().unwrap().unwrap()));
 
-    let pending_item = cx.update(|cx| ImageCacheItem::new(&source, cx));
+    let (pending_item, complete) = cx.update(|cx| pending_image(cx));
     cx.run_until_parked();
-    let complete = requests.try_recv().unwrap();
     assert!(!complete.is_canceled());
     drop(pending_item);
     cx.run_until_parked();
@@ -80,34 +69,30 @@ fn image_cache_item_owns_real_loader_result_and_pending_cancellation(cx: &mut Te
 
 #[open_gpui::test]
 fn image_cache_item_retains_real_loader_error(cx: &mut TestAppContext) {
-    cx.update(|cx| cx.set_http_client(FakeHttpClient::with_404_response()));
-    let source = Resource::Uri("https://test.example/missing.webp".into());
+    let source = Resource::Embedded("missing.webp".into());
     let item = cx.update(|cx| ImageCacheItem::new(&source, cx));
     cx.run_until_parked();
 
     for _ in 0..2 {
-        assert!(matches!(
-            item.get(),
-            Some(Err(ImageCacheError::BadStatus {
-                status: StatusCode::NOT_FOUND,
-                ..
-            }))
-        ));
+        assert!(matches!(item.get(), Some(Err(ImageCacheError::Asset(_)))));
     }
 }
 
 #[open_gpui::test]
 fn retain_all_cancels_pending_images_on_remove_clear_and_release(cx: &mut TestAppContext) {
     for removal in [Removal::Remove, Removal::Clear, Removal::Release] {
-        let requests = pending_images(cx);
-        let source = Resource::Uri("https://test.example/image.webp".into());
+        let source = Resource::Embedded("image.webp".into());
         let cache = cx.update(RetainAllImageCache::new);
+        let complete = cache.update(cx, |cache, cx| {
+            let (pending, complete) = pending_image(cx);
+            cache.0.insert(hash(&source), pending);
+            complete
+        });
         let window = cx.add_window(|_, _| CachedImageView {
             cache: Some(cache.clone()),
             source: source.clone(),
         });
         cx.run_until_parked();
-        let complete = requests.try_recv().unwrap();
         assert!(!complete.is_canceled());
         assert_eq!(cache.read_with(cx, |cache, _| cache.len()), 1);
 
@@ -154,9 +139,13 @@ fn retain_all_disposes_loaded_images_in_all_windows_on_remove_clear_and_release(
     cx: &mut TestAppContext,
 ) {
     for removal in [Removal::Remove, Removal::Clear, Removal::Release] {
-        let requests = pending_images(cx);
-        let source = Resource::Uri("https://test.example/image.webp".into());
+        let source = Resource::Embedded("image.webp".into());
         let cache = cx.update(RetainAllImageCache::new);
+        let complete = cache.update(cx, |cache, cx| {
+            let (pending, complete) = pending_image(cx);
+            cache.0.insert(hash(&source), pending);
+            complete
+        });
         let windows = std::array::from_fn::<_, 2, _>(|_| {
             cx.add_window(|_, _| CachedImageView {
                 cache: Some(cache.clone()),
@@ -164,8 +153,7 @@ fn retain_all_disposes_loaded_images_in_all_windows_on_remove_clear_and_release(
             })
         });
         cx.run_until_parked();
-        requests.try_recv().unwrap().send(()).unwrap();
-        assert!(requests.try_recv().is_err());
+        complete.send(()).unwrap();
         cx.run_until_parked();
         let image = cache.read_with(cx, |cache, _| {
             cache.0[&hash(&source)].get().unwrap().unwrap()

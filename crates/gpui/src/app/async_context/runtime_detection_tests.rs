@@ -18,11 +18,7 @@ fn async_app_detection_does_not_borrow_or_retain_the_app() {
         let background = BackgroundExecutor::new(dispatcher.clone());
         let foreground = ForegroundExecutor::new(dispatcher);
         let platform = TestPlatform::new(background, foreground);
-        let app = App::new_app(
-            platform,
-            Arc::new(()),
-            open_gpui_http_client::FakeHttpClient::with_404_response(),
-        );
+        let app = App::new_app(platform, Arc::new(()));
         let weak_app = Rc::downgrade(&app);
         let owner_count = Rc::strong_count(&app);
         let async_app = app.borrow().to_async();

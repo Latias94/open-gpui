@@ -65,7 +65,7 @@ fn host_subscriber_receives_real_list_and_application_spans() {
         "{spans:?}"
     );
     assert!(
-        spans.contains(&("open_gpui_sum_tree::cursor", "seek_forward")),
+        spans.contains(&("open_gpui::elements::list::sum_tree::cursor", "seek_forward")),
         "{spans:?}"
     );
 }

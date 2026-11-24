@@ -1,5 +1,3 @@
-#![cfg_attr(target_family = "wasm", no_main)]
-
 use open_gpui::{
     App, AppContext, Bounds, Context, Window, WindowBounds, WindowOptions, div, linear_color_stop,
     linear_gradient, pattern_slash, prelude::*, px, rgb, size,
@@ -117,14 +115,6 @@ fn run_example() {
     });
 }
 
-#[cfg(not(target_family = "wasm"))]
 fn main() {
-    run_example();
-}
-
-#[cfg(target_family = "wasm")]
-#[wasm_bindgen::prelude::wasm_bindgen(start)]
-pub fn start() {
-    open_gpui_platform::web_init();
     run_example();
 }

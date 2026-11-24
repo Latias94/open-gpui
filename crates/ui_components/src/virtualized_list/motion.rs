@@ -1,4 +1,4 @@
-use open_gpui_motion::{
+use open_gpui_core_util::motion::{
     MotionFrameDemand, MotionFrameResetReason,
     advanced::{MotionModel, MotionPreset, MotionScalarController},
 };
@@ -293,7 +293,7 @@ fn active_indicator_controller_for_bounds(
 }
 
 fn active_indicator_bounds_from_sample(
-    sample: &open_gpui_motion::advanced::MotionScalarControllerSample<
+    sample: &open_gpui_core_util::motion::advanced::MotionScalarControllerSample<
         VirtualizedListActiveIndicatorAxis,
     >,
     target: VirtualizedListActiveIndicatorBounds,

@@ -72,9 +72,7 @@ impl VisualTestAppContext {
 
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
 
-        let http_client = open_gpui_http_client::FakeHttpClient::with_404_response();
-
-        let mut app = App::new_app(platform.clone(), asset_source, http_client);
+        let mut app = App::new_app(platform.clone(), asset_source);
         app.borrow_mut().mode = GpuiMode::test();
 
         Self {
@@ -90,7 +88,7 @@ impl VisualTestAppContext {
     /// Opens a window positioned off-screen for invisible rendering.
     ///
     /// The window is positioned at (-10000, -10000) so it's not visible on any display,
-    /// but it's still fully rendered by the compositor and can be captured via ScreenCaptureKit.
+    /// but it's still fully rendered by the compositor.
     ///
     /// # Arguments
     /// * `size` - The size of the window to create
@@ -126,11 +124,6 @@ impl VisualTestAppContext {
     ) -> Result<WindowHandle<V>> {
         use crate::{px, size};
         self.open_offscreen_window(size(px(1280.0), px(800.0)), build_root)
-    }
-
-    /// Returns whether screen capture is supported on this platform.
-    pub fn is_screen_capture_supported(&self) -> bool {
-        self.platform.is_screen_capture_supported()
     }
 
     /// Returns the text system used by this context.

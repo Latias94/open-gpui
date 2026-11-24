@@ -20,7 +20,6 @@ path = "src/gpui_linux.rs"
 [features]
 default = ["wayland", "x11"]
 test-support = ["open_gpui/test-support"]
-bench-support = ["open_gpui/bench-support", "open_gpui_wgpu?/bench-support"]
 wayland = [
     "bitflags",
     "open_gpui_wgpu",
@@ -48,11 +47,6 @@ x11 = [
     "xim",
     "filedescriptor",
     "open",
-    "scap?/x11",
-]
-screen-capture = [
-    "open_gpui/screen-capture",
-    "scap",
 ]
 
 [dev-dependencies]
@@ -72,7 +66,6 @@ image.workspace = true
 futures.workspace = true
 open_gpui.workspace = true
 open_gpui_wgpu = { workspace = true, optional = true, features = ["font-kit"] }
-open_gpui_http_client.workspace = true
 itertools.workspace = true
 libc.workspace = true
 log.workspace = true
@@ -88,10 +81,6 @@ open_gpui_util.workspace = true
 uuid.workspace = true
 
 # Always used
-oo7 = { workspace = true, features = [
-    "async-std",
-    "native_crypto",
-] }
 calloop = "0.14.3"
 notify-rust = "4"
 raw-window-handle = "0.6"
@@ -103,9 +92,6 @@ bitflags = { workspace = true, optional = true }
 filedescriptor = { version = "0.8.2", optional = true }
 open = { version = "5.3.6", optional = true }
 xkbcommon = { version = "0.8.0", default-features = false, optional = true }
-
-# Screen capture
-scap = { workspace = true, optional = true }
 
 # Wayland
 calloop-wayland-source = { version = "0.4.1", optional = true }

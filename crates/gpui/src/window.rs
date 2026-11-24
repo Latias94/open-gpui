@@ -4,6 +4,7 @@ use crate::Inspector;
 use crate::MouseButton;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use crate::PlatformPixelBuffer;
+use crate::Refineable;
 use crate::app::{AppCell, PlatformWindowCommandSink};
 use crate::element::ElementIdStack;
 #[cfg(feature = "profiler")]
@@ -61,7 +62,6 @@ use futures::channel::oneshot;
 use open_gpui_collections::{FxHashSet, TypeIdHashMap};
 use open_gpui_core_util::post_inc;
 use open_gpui_core_util::{ResultExt, measure};
-use open_gpui_refineable::Refineable;
 use open_gpui_scheduler::Instant;
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
 use smallvec::SmallVec;
@@ -6570,7 +6570,7 @@ impl Window {
     /// and [`Self::painted_underlines`]. Clone and finish the scene to filter late-invalidated
     /// scopes before inspecting its primitives. This observation does not establish renderer
     /// submission or native presentation.
-    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn rendered_scene(&self) -> &crate::Scene {
         &self.rendered_frame.scene
     }

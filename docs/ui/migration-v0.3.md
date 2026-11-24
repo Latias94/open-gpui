@@ -1,8 +1,25 @@
 # Open GPUI v0.3 UI Migration
 
-Open GPUI v0.3 is an intentionally breaking, pre-release architecture release. Superseded fork
-APIs are removed; explicitly adopted official migration aliases retain their upstream contract.
-This guide records each migration in the implementation unit that introduces it.
+Open GPUI v0.3 is an intentionally breaking, pre-release architecture release.
+
+## Phase 1 Desktop Cleanup
+
+- Native docking uses the shared `DockSurface` and `DockspaceSession`. The old feature and
+  example are retired. Import existing v2/v3 session documents through `persistence`.
+- The platform selector covers Windows, macOS, Linux and FreeBSD. Screen capture APIs are retired.
+  Applications can supply their own CoreVideo buffers to the Surface element. Linux credential
+  storage returns an unavailable error.
+- Provide an image through `AssetSource`, a file path, or a custom source. Applications own their
+  HTTP clients and any downloads.
+- Build command lists and menus from application data using component descriptors. Application
+  code owns command providers and form lifecycle. GPUI actions, keymaps, and field controls remain
+  available.
+- Import `Refineable` from `open_gpui` and the shared motion primitives from
+  `open_gpui_core_util::motion`. Use `test-support` and `headless_test_platform` for tests that
+  open an ordinary headless App.
+
+The retired packages, examples and their earlier migration instructions are available at
+[`legacy/v0-pre-slim`](https://github.com/Latias94/open-gpui/blob/legacy/v0-pre-slim/docs/ui/migration-v0.3.md).
 
 ## Default Shared Docking Session
 
@@ -19,8 +36,8 @@ layout, identity, placement and session types.
 | `open_primary_window`, viewport facade and child spaces | `open_native_root` / `bind_native_root` plus shared-core managed native requests through `update`. Each workspace has one session and its own anchor. |
 | Controller/graph mutation and generated node IDs | Revision-bound shared-core actions in the sole session frame. `with_view` provides read-only model access. |
 | Legacy layout/snapshot export and restore | `persistence::DockWorkspaceDocument` and `capture_document`; resolve closed historical View keys before atomic `open_pane`. |
-| Runtime status and DevTools' old `docking_runtime_inspection` | `DockSurface::inspection` and DevTools' ordinary `docking` module. Inspection does not consume reports or drive native work. |
-| Root `DockVisualStyleResolver` | Application-owned `DockspaceColors::from_palette` / `from_visual_style` in `GpuiDockspaceConfig`. The resolver remains an incumbent API under `legacy`. |
+| Runtime status and the old `docking_runtime_inspection` | `DockSurface::inspection` reads the shared session and native transport facts. |
+| Root `DockVisualStyleResolver` | Application-owned `DockspaceColors::from_palette` / `from_visual_style` in `GpuiDockspaceConfig`. |
 
 Documents and history stay in the application. Several Views may share a
 document, but each View needs a distinct pane ID and GPUI entity. Moving a View
@@ -72,20 +89,8 @@ absolute binary size references, central sizing and rounding have a recorded
 contract difference. Native geometry hints acquire authority only from the
 current platform's physical observations.
 
-An incumbent application can temporarily enable `open-gpui-docking/legacy-docking`
-and import `open_gpui_docking::legacy::{prelude, model, runtime, advanced}`.
-DevTools' corresponding feature and module are both named `legacy-docking` and
-`legacy_docking`, respectively. The native dogfood example requires
-`--features legacy-docking`. Cargo feature unification never switches the root
-or prelude back to the incumbent types. The browser unsupported-window probe
-uses the default shared session; the Windows native dogfood remains explicit
-compatibility scope.
-
-See the [crate guide](../../crates/gpui_docking/README.md) and
-[cutover evidence](../knowledge/engineering/verification/dockspace-default-cutover-20261114.md)
-for executed checks and the platform scenarios still required before deleting
-the compatibility engine. Earlier incumbent API migrations in this guide apply
-inside the explicit `legacy` namespace.
+The shared-session examples cover embedded and managed native windows.
+[Docking guide](../../crates/gpui_docking/README.md) · [Dockspace editor](../../examples/dockspace-editor/README.md)
 
 ## Shared Docking Receiver And Recovery APIs
 
@@ -270,7 +275,7 @@ The following APIs extend existing owners:
 | `TestAppContext::set_next_window_present_outcome` | Test support. Configure the next window's renderer outcome before its first draw, allowing initial-presentation rejection and original construction rollback to be tested without forcing native destruction ahead of renderer retirement. |
 | `TestAppContext::set_window_frame_delivery_mode` / `pending_window_frame_submission` | Test support. Select deferred CPU-platform delivery and retain the original pending submission token. Complete that token to exercise overlapping real candidates and ordered renderer terminals; this simulates the backend and does not qualify GPU execution. |
 | `PlatformWindow::on_active_status_source` / `PlatformWindowActiveStatusObservation::with_source` | A backend that confirms activation after its native callback returns captures the original ingress source first, outside backend locks. Attach that opaque source when delivering the observation so a delayed old edge cannot settle a newer activation request. Ordinary synchronous backends retain the default no-op source registration. |
-| `Window::painted_quads`, `painted_underlines`, `rendered_scene` | Test support; `rendered_scene` also remains available with `bench-support`. Painted snapshots exclude late-invalidated scopes and retain transforms and exact clips; resolve clip envelopes through the rendered scene. Accepted-frame inspection does not establish GPU submission or native presentation. |
+| `Window::painted_quads`, `painted_underlines`, `rendered_scene` | Test support. Painted snapshots exclude late-invalidated scopes and retain transforms and exact clips. Resolve clip envelopes through the rendered scene. |
 | `ImageSource::is_asset_cached`, `Image::is_asset_cached`, `Window::has_image_atlas_entry` | Test support. Asset queries include loading entries without initiating work; custom/render sources report false. Atlas membership is window-local and requires every frame of a nonempty image. |
 | `App::set_menus` / `App::get_menus` on the test platform | Existing public methods now retain independent owned snapshots, including nested actions, flags and system menus. Replacement and clearing affect subsequent reads without mutating earlier snapshots. |
 | `ElementId::from(u64)`, `ImageFormat::extension`, constant `hsla` / `opaque_grey` | Ordinary public helpers; no test feature is required. |
@@ -278,31 +283,6 @@ The following APIs extend existing owners:
 `debug_selector` closures run only in GPUI's own tests or debug builds with `test-support`.
 In release builds the builder remains callable but does not evaluate the closure or record
 selectors, even when test support is enabled.
-
-## Optional iOS And Tokio Packages
-
-`open-gpui-ios` is registered in the workspace and selected by `open-gpui-platform` on iOS.
-It owns UIKit application/window/input lifecycle and consumes the shared Apple renderer.
-`App::on_app_lifecycle` reports `Active`, `Inactive`, `Background`, `Foreground` and
-`Disconnected`; `App::on_memory_warning` allows releasing expendable caches. Retain their
-returned subscriptions. Notifications follow ordered native App ingress and wait for an
-active App borrow to end. Desktop platforms emit neither event. Save important state
-incrementally because background termination need not deliver quit or disconnection.
-Backend adapters can read the original focus identity with `PlatformInputHandler::focus_id`.
-Exhaustive `NativeCallbackKind` matches also handle `AppLifecycle` and `MemoryWarning`.
-Custom platforms inherit no-op notification hooks.
-
-`open-gpui-tokio` is an optional application dependency; call `init` to create an App-owned
-runtime or `init_from_handle` to borrow the application's existing runtime. Keep a borrowed
-runtime running. Dropping a returned GPUI task aborts its Tokio task; `spawn` preserves nested
-application results and `spawn_result` returns `anyhow::Result`, preserving application errors
-and wrapping join errors.
-
-The [iOS README](../../crates/gpui_ios/README.md#validation) records target/native
-qualification; the [Tokio README](../../crates/gpui_tokio/README.md#verification) records the
-seven passing public bridge tests and remaining verification scope. Exact upstream provenance,
-platform mapping and current execution evidence remain in the
-[refresh ledger](../imports/zed-gpui-commit-reconciliation-2026-11-12.md#platform-and-functional-unit-verification-matrix).
 
 ## Native File Drag And Window Exit
 
@@ -357,54 +337,6 @@ The [independent test-support consumer](../../tests/fixtures/test-support-consum
 shows feature-only, explicit-tracking and real-time benchmark usage. The existing ordinary
 dependency consumer retains its separate feature graph without test support. This interface
 migration does not establish measured build-time savings or native execution on every platform.
-
-## Benchmark Contexts And Measurements
-
-Enable `bench-support` on both `open-gpui` and `open-gpui-platform`, and depend on Criterion
-0.8.2. Benchmark-only consumers do not need `test-support`. The official `bench` feature remains
-an alias for `bench-support`. Ordinary deterministic tests continue to use `test-support`.
-
-Replace `(bencher, cx)` benchmark functions and the old virtual context constructors with:
-
-```rust,ignore
-#[open_gpui::bench]
-fn update_document(cx: &mut open_gpui::BenchAppContext) {
-    let document = build_document(cx);
-    cx.bench_iter(|cx| update_document_once(&document, cx));
-}
-
-open_gpui::bench_group!(benches, update_document);
-open_gpui::bench_main!(benches);
-```
-
-Use `inputs = [...]` with an input reference before the context, and an optional by-value
-`rand::rngs::StdRng` in any argument position for seeded workloads. `seed`, `seeds`, `iterations`,
-`fps`, `group`, `input_name` and `sample_size` retain the official macro behavior. Tests and
-benchmarks share `SEED` and `ITERATIONS`; each input/seed gets its own report. Manual harnesses
-construct `BenchAppContext::new(platform, name, bencher)` with a `Bencher<BenchMeasurement>`.
-
-The context uses real-time threaded dispatch rather than a virtual test clock. `bench_iter` and
-`bench_task` exclude setup, while frame/settle/session APIs measure actual driven work. Explicit
-teardown drops the App and foreground owners before cancelling and draining timers. It must not
-leave one routine's tasks or windows running during the next routine.
-
-`bench_group!` installs the environment-selected primary measurement and supported secondary
-reports. `bench_main!` wraps the system allocator with `CountingAllocator`; use
-`allocator = Path;` for a custom allocator or `allocator = none;` to omit allocation metrics.
-`BENCH_MEASUREMENT=wall-time` disables secondary counters. Unsupported explicitly requested
-hardware/resource counters fail with an availability error rather than producing zero samples.
-
-Headless renderer factories now return `Result<Option<Box<dyn PlatformHeadlessRenderer>>>`.
-Propagate construction errors; `Ok(None)` means no renderer is available. Implement the required
-`render_scene` method for GPU submission without CPU readback, separately from
-`render_scene_to_image`. The default Windows factory retains the official `Ok(None)` result;
-applications may inject the public WGPU headless renderer. The maintained independent benchmark
-and Canvas consumers demonstrate complete usage.
-
-Canvas exposes separate `test-support` and `bench-support` features. Enable the former for its
-complete window-driven tests and only the latter for its maintained renderer benchmark. Core
-test-support is no longer forced by the Canvas dev-dependency, so benchmark measurements do not
-include entity leak-detection instrumentation.
 
 ## Element Arena Cleanup
 
@@ -568,74 +500,6 @@ are rebased and reported against the complete original source, preserving whole 
 source spacing class across segments. WGPU now directly depends on already resolved
 `unicode-bidi` 0.3.18; no compiler floor or other package versions change.
 
-## Form Lifecycle Authority
-
-`FormStore` now derives `FormStatus` and submission eligibility from active validation plus its
-submission phase. Callers no longer coordinate status changes indirectly.
-
-`FormStore` is no longer `Clone`: cloning a live authority made its outstanding tickets ambiguous.
-Share `FormSnapshot` or application-owned field values when another consumer needs a copy. Tickets
-are scoped to the exact store that created them and are rejected by other stores.
-
-### Async Validation
-
-`ValidationTicket` is opaque and includes the field value revision. Completion returns a typed
-result instead of `bool`:
-
-```rust
-let ticket = form.begin_async_validation(&email)?;
-let completion = form.complete_async_validation(ticket, errors);
-
-match completion {
-    ValidationCompletion::Applied => {}
-    ValidationCompletion::Stale | ValidationCompletion::Cancelled => return Ok(()),
-}
-```
-
-An edit, reset, synchronous validation, or newer generation invalidates old work. Starting
-validation during submission now returns `FormError::CannotValidateWhileSubmitting`.
-
-Successfully registering a new field also advances the form revision and invalidates an active or
-terminal submission because the submitted data shape changed. A rejected duplicate registration
-does not mutate lifecycle state.
-
-### Submission
-
-`begin_submit()` now returns `Result<SubmitTicket, FormError>`. Both finish methods require that
-ticket and return `SubmitCompletion`:
-
-```rust
-let ticket = form.begin_submit()?;
-
-match request_result {
-    Ok(()) => {
-        let _completion = form.finish_submit_success(ticket);
-    }
-    Err(error) => {
-        let _completion = form.finish_submit_error(ticket, error.to_string());
-    }
-}
-```
-
-Handle `FormError::CannotSubmit { reason }` with `SubmitBlockReason::{Invalid, Validating,
-AlreadySubmitting}`. The old free-form rejection reason and ticketless finish methods no longer
-exist. Rejected starts do not increment `submit_count`.
-
-### UI Projection
-
-Use `FormProjection::resolve(&snapshot, disabled)` for form-level busy state and submit eligibility.
-`FormFieldProjection` now exposes `validating()` and `busy()`, and propagates busy state to Field,
-TextInput, Textarea, NumberInput, and Checkbox state. Busy validation does not imply disabled or
-read-only input. When rebuilding concrete components from those states, pass `busy(state.busy())`;
-all five concrete builders preserve that fact in their resolved `state()`.
-
-### DevTools Boundary
-
-The first-party form adapter no longer forwards caller-selected values, field paths, field ids, or
-free-form errors. It emits typed redaction markers, counts, lifecycle facts, and deterministic
-opaque field identities before a `DevtoolsCapture` is constructed. Do not parse DevTools payloads
-for application form data; application and rendering code should consume `FormSnapshot` directly.
-
 ## Theme Scope Authority
 
 Theme selection is no longer owned by a public app-global `ThemeRuntime`. Install definitions and
@@ -722,227 +586,6 @@ Component sizing now resolves as explicit `Size` first, then the theme density d
 component motion preferences merge to the stricter value: either side can request reduced motion,
 and an explicit animated request cannot override a reduced theme. Adaptive device density remains
 an application-shell recommendation rather than an implicit theme override.
-
-## Dock Visual Style Authority
-
-`open-gpui-docking` no longer chooses colors and shadows independently in each render path.
-Every host resolves one complete immutable `DockVisualStyle`. Applications that do not install a
-resolver receive the deterministic built-in style. Applications with a theme system install a
-read-only resolver on the facade:
-
-```rust
-use open_gpui_docking::{
-    DockSurface, DockVisualPalette, DockVisualStyle, DockVisualStyleResolver,
-};
-use open_gpui_ui_components::theme::ThemeResolver;
-
-let resolver = DockVisualStyleResolver::new(|window, cx| {
-    let theme = ThemeResolver::current_snapshot(window, cx);
-    let palette = application_dock_palette(&theme);
-    DockVisualStyle::from_palette(palette)
-});
-
-let surface = DockSurface::builder("main")
-    .visual_style_resolver(resolver)
-    // Register panels and policy as before.
-    .build(cx)?;
-```
-
-The application-owned `application_dock_palette` helper must construct every
-`DockVisualPalette` field deliberately. Neither `DockVisualPalette` nor `DockVisualStyle`
-implements `Default`; use `built_in()` only when the application explicitly chooses the
-deterministic fallback. `DockVisualStyle::from_palette` returns
-the complete host, tab, splitter, floating, drag, preview, guide, route, transition, focus, and
-elevation style; Docking never fills a partial application style during rendering.
-`ThemeResolver::current_snapshot` is the read-only adapter boundary. It observes subtree, window,
-app, and built-in precedence without initializing window state, updating entities, notifying,
-dispatching, or scheduling a refresh.
-
-Low-level multi-window integrations install the same immutable resolver with
-`DockViewportRuntimeHandle::with_visual_style_resolver` or
-`with_close_policy_and_visual_style_resolver`. An explicit `DockHost` may use
-`from_controller_with_visual_style_resolver`. The resolver is evaluated in each host's active
-window and subtree context. It must not reenter Dock rendering.
-
-Source and destination visuals intentionally use different timing. A source-owned drag preview
-freezes its `DockDragVisualStyle` for the drag session's opening generation. Target-owned guides
-and previews resolve the destination host's current style. Cancellation clears the captured
-metadata, and reopening the same payload captures again. No style enters `DockDragPayload`, so
-payload equality, route validation, and persistence are unchanged.
-
-`DockDropGuideStyle`, the `drop_guide_style` builders, and the
-`DockHostOptions::drop_guide_style` field are deleted without aliases. The value contained only
-structural dimensions and hit-test sizing, so migrate both builder calls and direct option
-struct literals to `DockDropGuideMetrics` and `drop_guide_metrics`:
-
-```rust
-// Before
-let builder = builder.drop_guide_style(DockDropGuideStyle::default());
-
-// After
-let builder = builder.drop_guide_metrics(DockDropGuideMetrics::default());
-
-// Direct DockHostOptions literals
-let options = DockHostOptions {
-    drop_guide_metrics: DockDropGuideMetrics::default(),
-    ..DockHostOptions::default()
-};
-```
-
-Dear ImGui remains an interaction reference for tab, inner/outer target, accepted/rejected preview,
-and tear-off behavior. This change does not copy ImGui's colors, immediate `ImGuiDockContext`,
-binary node tree, builder API, or settings format. See
-[ADR 0027](../adr/0027-open-gpui-dock-visual-style-authority.md).
-
-## Dock Surface Change And Activation Authority
-
-`DockSurface` is now a cloneable handle to one private application-level owner instead of a loose
-controller/runtime facade. All clones share one monotonic committed revision and one typed change
-stream. Subscribe to lightweight metadata, apply application-owned debounce, and export the
-revision-consistent snapshot only when your persistence policy requires it:
-
-```rust
-use open_gpui_docking::prelude::DockSurface;
-use std::{cell::Cell, rc::Rc, time::Duration};
-
-let pending = Rc::new(Cell::new(false));
-let pending_for_events = pending.clone();
-let surface_for_events = surface.clone();
-
-surface
-    .subscribe_changes(cx, move |event, cx| {
-        log::debug!(
-            "dock revision={} categories={:?}",
-            event.revision(),
-            event.categories()
-        );
-        if pending_for_events.replace(true) {
-            return;
-        }
-
-        let pending = pending_for_events.clone();
-        let surface = surface_for_events.clone();
-        cx.spawn(async move |cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(250))
-                .await;
-            cx.update(|cx| {
-                persist(surface.export_snapshot(cx));
-                pending.set(false);
-            });
-        })
-        .detach();
-    })
-    .detach();
-```
-
-The event contains only a revision and bounded categories: layout, selection, panel lifecycle,
-viewport topology, and observed viewport placement. It does not contain a snapshot. Failed,
-unchanged, focus-only, style-only, and native-mutation-dispatch-only work does not advance the
-revision. `DockSurfaceSnapshot::revision()` identifies the committed revision paired with both its
-layout and viewport-placement facts; older serialized snapshots without the field load as revision
-zero.
-
-Use stable item ids for product activation:
-
-```rust
-let (_request, completion) =
-    surface.activate_panel_with_completion("editor", cx, |outcome, _cx| {
-        log::debug!("editor activation settled: {outcome:?}");
-    });
-completion.detach();
-```
-
-`select_panel` remains selection-only. Activation may first commit selection and later settle as
-`Committed`, `Rejected`, `Superseded`, `Unavailable`, `DuplicateHostConflict`, or `WindowClosed`
-from exact descendant GPUI focus completion. Dropping the returned subscription stops observing
-the result but does not cancel the issued intent. Product code must no longer call node-id
-`DockHost::focus_pane`; that primitive is crate-private.
-
-Applications should delete generic-notify, end-of-turn, render-count, or snapshot-diff persistence
-inference. Docking intentionally has no persistence timer, built-in debounce duration, path
-setting, or file writer. See
-[ADR 0028](../adr/0028-open-gpui-dock-surface-change-and-activation-authority.md).
-
-## Dock Graph Canonicalization Boundaries
-
-`DockGraph::insert_node` followed by `DockGraph::set_root` remains a staged construction API.
-`DockGraph::simplify_space` now performs only local structural simplification and preserves every
-stored `DockNodeId`, including nodes detached by that simplification. Call
-`DockGraph::canonicalize` only when the graph is complete and all unattached nodes may be discarded.
-`DockLayoutBuilder` and `DockControllerBuilder` perform that canonicalization at their
-complete-graph commit boundaries. Checked graph mutations reclaim only the nodes they detach while
-preserving unrelated staged roots and their transitive dependencies.
-
-Code that validates a complete graph should use `DockGraph::validate_canonical`. This method can
-return the new `DockGraphValidationError::UnreachableNode` variant. Because
-`DockGraphValidationError` remains publicly matchable, downstream exhaustive matches must add that
-case when migrating to v0.3. Use `DockGraph::validate` while assembling a graph; it validates only
-reachable roots and intentionally accepts unattached staging nodes.
-
-## Dock Surface Window Sessions
-
-Facade-managed native Dock windows now belong to one exact-generation surface session. Rename
-the `DockSurfaceViewportSession` facade type to `DockSurfaceViewports`, keep using the existing
-`viewports()` accessor, and stop treating `open_primary_window` as a bare GPUI window-open result:
-
-```rust
-use open_gpui_docking::prelude::{
-    DockSurfacePrimaryWindowOpenOutcome, DockSurfaceViewportOpenOutcome,
-    DockSurfaceViewportUnavailable,
-};
-
-let primary = match surface.open_primary_window(primary_options, cx) {
-    DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened,
-    DockSurfacePrimaryWindowOpenOutcome::Unavailable(reason) => {
-        return Err(format!("Dock anchor unavailable: {reason:?}"));
-    }
-};
-
-let viewport = match surface.viewports().open("preview", preview_options, cx) {
-    DockSurfaceViewportOpenOutcome::Opened(opened) => opened,
-    DockSurfaceViewportOpenOutcome::Unavailable(
-        DockSurfaceViewportUnavailable::SessionInactive { status },
-    ) => {
-        return Err(format!("Dock session is not active: {:?}", status.phase()));
-    }
-    DockSurfaceViewportOpenOutcome::Unavailable(reason) => {
-        return Err(format!("Dock viewport unavailable: {reason:?}"));
-    }
-};
-```
-
-The primary outcome exposes the exact committed window and session generation. Managed viewport
-open, restore, registration, activation, drag, route, mutation, and observation work is admitted
-only for that generation. `DockSurface::window_session_status` reports `Vacant`, `Opening`,
-`Active`, `ShuttingDown`, or `Closed`, plus the anchor, rollback/shutdown reason, terminal ticket
-counts, and runtime convergence.
-
-A facade-managed Host remains laid out and painted while `ShuttingDown`. Host-owned render
-callbacks and controller mutations require the exact active generation; the accepted replacement
-frame presents the whole subtree as inert. Low-level integrations that exhaustively match
-`DockActionApplyError` must handle `SurfaceSessionUnavailable`. Do not retry a rejected G1 callback
-against a reopened G2 surface; wait for a fresh callback carrying the current active window-session
-generation.
-
-Delete application close observers that call `App::quit` when the Dock primary closes. The first
-ordinary anchor close request freezes the surface, force-retires that surface's dependent windows
-before removing the anchor, and bypasses per-viewport `Prevent` or `MergeBack` policy. It does not
-close another `DockSurface`, an unmanaged low-level runtime, or an unrelated application window.
-GPUI's last-window policy remains the application-exit authority. Reopening a surface is rejected
-until the previous exact generation reaches `Closed`. Do not treat a close dispatch or disappearance
-from GPUI's logical window registry as native completion. Ordinary teardown settles from the exact
-platform native-terminal callback. App shutdown may clear the logical registry first, but GPUI
-retains every detached platform owner and Dock remains `ShuttingDown` until those exact native
-terminals arrive.
-
-An embedded `surface.host_view(cx)` remains outside this managed lifecycle and never invents an
-anchor or registers managed route and activation authority. It is a rendering path for content in
-an application-owned window; facade activation reports `Unavailable` until a managed host exists.
-Use `surface.open_primary_window(...)` before `surface.viewports()` when Dock should own the native
-window tree. Applications that need custom window ownership must explicitly construct the low-level
-runtime and host from `open_gpui_docking::runtime` rather than borrowing a facade session. See
-[ADR 0030](../adr/0030-open-gpui-dock-surface-window-session-authority.md).
 
 ## Platform Window Mutation Authority
 
@@ -1633,7 +1276,7 @@ occluding, or leave component drag state dependent on target-window mouse delive
 Motion remains below GPUI. Sample `MotionProjection::try_transform_sample` and convert it in a
 consumer that depends on both crates, such as
 `open_gpui_ui_components::gpui_adapter::subtree_transform_from_motion_projection`. Do not add a
-GPUI type or identity fallback to `open-gpui-motion`.
+GPUI type or identity fallback to `open_gpui_core_util::motion`.
 
 See [ADR 0021](../adr/0021-open-gpui-interactive-subtree-transform-authority.md) for composition,
 cache/deferred, renderer, and failure-ordering details.
@@ -2017,11 +1660,8 @@ aliases. Use `ComponentContractEntry` / `ComponentContractMetadata` for product 
 natural owner for every downstream fact:
 
 - public exports are declared together with typed `PublicApiExport` facts;
-- Components and Overlay Gallery rows own presentation status, selectors, and Story probes;
 - native integration targets own exact coordinates in sibling `*.scenarios.toml` artifacts;
-- DevTools semantic payloads carry `contract_id`, `contract_revision`, and `family` from canonical
-  metadata;
-- `scan-ui-contract` joins and executes these owners but is not another registry.
+- `public_surface` checks the public exports and the component contract metadata.
 
 `ComponentContractEntry` is now immutable canonical metadata rather than a public struct-literal
 inventory row. Replace `entry.name` with `entry.id().as_str()`, `entry.family: Option<_>` with
@@ -2249,37 +1889,6 @@ a collision-checked, length-prefixed occurrence encoding so they cannot alias an
 source key. Do not parse, format, or persist the encoding; only round-trip a render key to the
 adapter-owned measurement path for the same ordered descriptor snapshot. Reordering duplicate
 items creates a new occurrence authority.
-
-### DevTools Semantic Probes
-
-The old `a11y_evidence_probe_snapshot` and `a11y_contracts_probe_snapshot` entry points are deleted
-without compatibility aliases. They projected contract evidence and claim rows rather than the
-resolved semantics used by the renderer.
-
-Construct the replacement probe from canonical component metadata, an app-assigned opaque identity,
-and the ephemeral resolved descriptor:
-
-```rust
-use open_gpui_devtools::ui_components::{
-    ComponentSemanticIdentity, OpaqueSemanticNodeId, ResolvedSemanticNode,
-    resolved_semantics_probe_snapshot,
-};
-
-let component = ComponentSemanticIdentity::for_component("TextInput")
-    .expect("TextInput must have a canonical component contract row");
-let node = ResolvedSemanticNode::new(
-    component,
-    OpaqueSemanticNodeId::new(42),
-    semantic_descriptor,
-);
-let snapshot = resolved_semantics_probe_snapshot([node]);
-```
-
-`OpaqueSemanticNodeId` must not encode a renderer node id, accessible text, or application data.
-The new payload replaces `contract_count` and claim rows with a root `node_count` plus typed,
-redacted semantic nodes. Each node retains canonical contract/family metadata, role, state, actions,
-structural counts, and presence facts; accessible text and numeric values are represented only by
-typed redaction markers.
 
 ## GPUI Pointer Sessions
 
@@ -2697,21 +2306,3 @@ with the window runtime. They never claim or restore focus. Outside press is tra
 allows Escape dismissal, while Tooltip retains its descriptive default Escape policy. The removed
 HoverCard `.outside_press_policy(...)`, `.initial_focus_intent(...)`, and
 `.focus_restore_intent(...)` builders must not be replaced with local event handlers.
-
-### DevTools Window Focus Projection
-
-Construct the GPUI runtime focus projection from the rendered window instead of assembling focus
-facts beside the runtime:
-
-```rust
-use open_gpui_devtools::gpui::GpuiRuntimeFocusSnapshot;
-
-let focus = GpuiRuntimeFocusSnapshot::from_window(window_id, window, cx);
-```
-
-The snapshot now carries optional `focused_element_rendered`, opaque `focus_claim_revision`, and
-opaque `rendered_frame_revision` facts. `focus_scope_count` and `focus_handle_count` are also
-optional: a producer that cannot prove a fact must emit `None`, not a guessed false or zero. This
-keeps older imported JSON distinguishable from a live negative observation. An inactive window may
-retain a logical `FocusHandle`, but `from_window` reports no `focused_window_id` until that window
-again owns keyboard focus. Downstream JSON consumers must accept null for every unavailable fact.

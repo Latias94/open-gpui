@@ -6,6 +6,10 @@ without rewriting the public API. ADR 0008 treats the current UI crates as the a
 boundary; future headless extraction is historical boundary evidence, not the current roadmap or
 the next implied refactor.
 
+The foundation gallery, DevTools projections, command registry and form store described in
+earlier releases are available at `legacy/v0-pre-slim`. The current component verification gates
+are the crate's integration tests and `xtask scan-public-api --check`.
+
 ## Contract Tables
 
 `crates/ui_components/src/component_contract/` is the product authority for official component id,
@@ -15,15 +19,11 @@ functions. Those facts live with the modules and artifacts that execute them.
 
 Public modules generate typed export facts and positive facade compile witnesses from the same
 declaration as each `pub use`. Diagnostic declarations also generate per-export compile-fail
-doctests for the root, common, and prelude facades. The Components and Overlay galleries own their
-selectors and runtime probes. Each native integration test target owns a sibling
-`*.scenarios.toml` artifact that binds product requirements to exact nextest coordinates. Gallery
-stories and DevTools semantic identities independently receive the same immutable
-`ComponentContractMetadata` from canonical product rows. `cargo run -p xtask -- scan-ui-contract`
-joins these owners and rejects drift without becoming a second registry.
+doctests for the root, common, and prelude facades. Native integration tests bind specific scenarios
+through sibling `*.scenarios.toml` files. The `public_surface` test checks the join between typed
+component metadata and exports.
 
-The following table is a human-readable projection of the narrow product rows. The scanner checks
-it exactly against the typed source rows.
+The following table lists the canonical component rows.
 
 <!-- BEGIN COMPONENT CONTRACT PROJECTION -->
 | Contract ID | Revision | Family |
@@ -158,16 +158,8 @@ existing component state. These helpers are public because applications need sta
 but they are not standalone official components and should not move cache, form, or async task
 ownership into the component crate.
 
-The form adapter surface is `FormProjection`, `FormFieldConfig`, `FormFieldProjection`,
-`form_text_value`, `form_number_value`, `form_checkbox_value`, and `form_select_value`.
-`FormProjection` resolves form-level busy state and submit eligibility. The field projection
-consumes `open_gpui_form::FieldSnapshot` and `open_gpui_form::FormStatus`, then resolves existing
-`FieldState`, `TextInputState`, `TextareaState`, `NumberInputState`, and `CheckboxState` inputs.
-Validation activity is busy but remains editable; submission is a separate disabling policy. The
-Field, TextInput, Textarea, NumberInput, and Checkbox builders must preserve projected busy state
-when they rematerialize their resolved state. The
-owning form store, ticket generations, derived lifecycle, submission eligibility, and
-redaction-aware `FormSnapshot` stay in `open-gpui-form`.
+Applications supply validation and submission state to Field, TextInput, Textarea, NumberInput,
+and Checkbox through their component builders.
 
 The resource adapter surface is `ResourceAdapterLabels`, `ResourceAdapterNamespace`,
 `ResourceCollectionProjection`, `ResourceMutationProjection`, and `resource_query_key_label`. Each
@@ -177,12 +169,6 @@ derived from that namespace rather than a query key or mutation ID. It consumes
 existing feedback, command, table/tree children-load, and virtualized-list status inputs. Fetchers,
 retry timers, cancellation, mutations, cache invalidation, pagination, and redacted
 `ResourceSnapshot` values stay in `open-gpui-resource`.
-
-The Components gallery shows `FormProjection`, `FormFieldProjection`,
-`ResourceCollectionProjection`, and `ResourceMutationProjection` as adapter-only rows in the
-`ecosystem-adapters` section. That keeps
-adoption visible while preserving the component catalog distinction between official rendered
-components, renderer-neutral state contracts, adapter helpers, and internal anatomy.
 
 UI-core adaptive helpers accept neutral `UiPx` values. GPUI adapters that start from concrete
 window, viewport, or layout `Pixels` should convert to `UiPx` before calling
@@ -538,25 +524,10 @@ remains ambiguous and disabled even when ranking or query filtering leaves only 
 visible; surface-disabled and ambiguous rows expose neither pointer activation nor an AccessKit
 Click action. Uncontrolled single and multi-selection transactions notify their keyed runtime so
 inline selected state and chips do not wait for an unrelated redraw.
-The reusable command ecosystem boundary is documented in
-[`docs/ui/command-ecosystem.md`](command-ecosystem.md): `open_gpui` owns action/keymap execution,
-`open_gpui_command` owns command metadata, deterministic registry snapshots, scoped registration,
-availability projection, neutral menu trees, usage history, and GPUI command-id dispatch adapters.
-`open_gpui_ui_components` owns rendering only. `open_gpui_command::CommandDescriptor` is the shared
-app-command metadata contract for component projection. It carries id, label, renderer-neutral
-icon descriptor, group, keywords, shortcut, disabled state, optional disabled reason, tooltip,
-accessibility description, caller-owned `when` metadata, and app-owned menu path without storing
-callbacks, keybinding resolution, icon asset loading, or a global runtime singleton.
-`open_gpui_ui_components::ActionDescriptor` and `ResolvedActionState` are the UI-side projection
-bridge. Applications resolve icon descriptors into `ResolvedActionIcon` values and diagnostics;
-components render those resolved facts and return selection or activation intent.
-`CommandItem::from_command_descriptor`, `CommandIndexSnapshot::command_descriptor`,
-`MenuItem::from_command_descriptor`, `ToolbarItem::from_resolved_action`,
-`SidebarItem::from_resolved_action`, `Button::from_resolved_action`,
-`IconButton::from_resolved_action`, and `ContextMenu`'s shared menu state consume the one-item
-presentation fields so Command, Menu, ContextMenu, Toolbar, Sidebar, Button, and IconButton can
-present the same metadata while applications remain the execution authority. `CommandMenuTree` is
-the command-crate hierarchy projection for callers that want submenu trees from `menu_path`.
+Applications supply `CommandItem` and `MenuItem` descriptors from their own command data.
+`ActionDescriptor` and `ResolvedActionState` let Command, Menu, ContextMenu, Toolbar, Sidebar,
+Button and IconButton reuse labels, icons, shortcuts and enablement. GPUI retains action and keymap
+execution. Components return selection or activation intent to the application.
 
 `SeparatorState`, `KbdState`, `ProgressState`, and `SkeletonState` are low-state primitives. They
 still expose resolved state, metrics, token intents, and stable rendered debug selectors rather
@@ -643,9 +614,7 @@ include `TextInputController`, `init_text_input`, `focus_ring_shadow_with_theme`
 `UiA11yElementExt`, accessibility mapping helpers, geometry conversion helpers,
 `VirtualizedListGpuiExt`, and GPUI overlay scheduling
 helpers. The crate root is reserved for official components and component-facing state/readout
-types; the prelude is reserved for common application imports. Advanced command registry/runtime
-types live in
-`open_gpui_command`; table-core, virtualizer, and grid-window contracts live in
+types. The prelude is reserved for common application imports. Table, virtualizer, and grid-window contracts live in
 `open_gpui_ui_core`; advanced theme registry/runtime and JSON loader APIs live under
 `open_gpui_ui_components::theme`. Component examples may consume those owner-crate APIs
 explicitly, but `open_gpui_ui_components` should not re-export them as broad default-surface

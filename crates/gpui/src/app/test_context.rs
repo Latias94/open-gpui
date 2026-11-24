@@ -8,10 +8,10 @@ use crate::{
     PlatformWindowCreationCapabilities, PlatformWindowDispatch, PlatformWindowHitStack,
     PlatformWindowMutationCapabilities, PlatformWindowMutationTerminal,
     PlatformWindowPresentOutcome, Point, PowerMode, Render, Result, SharedString, Size,
-    SystemNotification, SystemNotificationResponse, Task, TestDispatcher, TestPlatform,
-    TestScreenCaptureSource, TestWindow, TextSystem, ThermalState, VisualContext, Window,
-    WindowBounds, WindowHandle, WindowMutationDomain, WindowOptions, WindowPlatformFacts,
-    app::GpuiMode, platform::RequestFrameOptions, window::ElementArenaScope,
+    SystemNotification, SystemNotificationResponse, Task, TestDispatcher, TestPlatform, TestWindow,
+    TextSystem, ThermalState, VisualContext, Window, WindowBounds, WindowHandle,
+    WindowMutationDomain, WindowOptions, WindowPlatformFacts, app::GpuiMode,
+    platform::RequestFrameOptions, window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -293,8 +293,7 @@ impl TestAppContext {
         let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
         let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
         let asset_source = Arc::new(());
-        let http_client = open_gpui_http_client::FakeHttpClient::with_404_response();
-        let app = App::new_app(platform.clone(), asset_source, http_client);
+        let app = App::new_app(platform.clone(), asset_source);
         app.borrow_mut().mode = GpuiMode::test();
         let text_system = app.borrow().text_system().clone();
 
@@ -971,12 +970,6 @@ impl TestAppContext {
     pub fn simulate_validate_app_menu_command(&self, action: &dyn Action) -> bool {
         self.test_platform
             .simulate_validate_app_menu_command(action)
-    }
-
-    /// Causes the given sources to be returned if the application queries for screen
-    /// capture sources.
-    pub fn set_screen_capture_sources(&self, sources: Vec<TestScreenCaptureSource>) {
-        self.test_platform.set_screen_capture_sources(sources);
     }
 
     /// Returns all windows open in the test.

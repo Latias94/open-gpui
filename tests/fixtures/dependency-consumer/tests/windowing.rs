@@ -1,6 +1,6 @@
 //! Independent consumers of Zed f37989fbdf840b308892af66516c2b9c3ef3853a at fixed
 //! target 635026fabc38440fce5e1767d125026a17b12012, with f495dd display refresh.
-//! Ordinary benchmark-platform Tasks exercise unsupported switching without test-support.
+//! Ordinary App tasks on the headless test platform exercise unsupported switching.
 //! Native fixed-headless controls never enter a platform loop on the test runner.
 
 use open_gpui::{
@@ -163,7 +163,7 @@ fn downstream_graphical_environment_preserves_explicit_child_environment() {
     }
 }
 
-#[cfg(any(target_os = "windows", feature = "bench-support"))]
+#[cfg(any(target_os = "windows", feature = "test-support"))]
 fn failure(task: Task<Result<()>>) -> String {
     use std::{
         future::Future,
@@ -219,12 +219,12 @@ fn downstream_native_fixed_headless_platform_cannot_become_switchable() {
     }
 }
 
-#[cfg(feature = "bench-support")]
+#[cfg(feature = "test-support")]
 mod runtime {
     use super::*;
     use open_gpui::{
         AppContext as _, Context, IntoElement, NoopTextSystem, ParentElement as _, QuitMode,
-        Render, Window, WindowOptions, bench_platform, div,
+        Render, Window, WindowOptions, headless_test_platform, div,
     };
     use std::{rc::Rc, sync::Arc};
 
@@ -238,7 +238,7 @@ mod runtime {
 
     #[test]
     fn downstream_ordinary_app_consumes_failed_tasks_and_reopens_the_same_retained_root() {
-        let platform = bench_platform(None, Arc::new(NoopTextSystem));
+        let platform = headless_test_platform(None, Arc::new(NoopTextSystem));
         let app = Application::with_platform(Rc::clone(&platform))
             .with_windowing(WindowingRequest::Windowed(GraphicalEnvironment::detect()))
             .with_windowing(WindowingRequest::Headless)
@@ -256,7 +256,7 @@ mod runtime {
         let dispatcher = foreground_executor
             .dispatcher()
             .as_threaded()
-            .expect("the ordinary benchmark platform must use its threaded dispatcher");
+            .expect("the headless test platform must use its threaded dispatcher");
 
         for revision in 1..=3 {
             for request in [

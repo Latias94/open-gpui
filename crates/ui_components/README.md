@@ -17,29 +17,14 @@ elements.
 - Layout and navigation components: Toolbar, Sidebar, Tabs, Breadcrumb, Accordion, Collapsible,
   ScrollArea, Splitter, Tree, Table, and VirtualizedList.
 - Theme and contract surfaces: shared theme recipes, GPUI accessibility adapters, public API
-  inventory, component-contract rows, and conformance evidence used by the gallery and tests.
+  inventory, component-contract rows, and conformance evidence used by the tests.
 
-## Ecosystem Adapters
+## Resource Adapters
 
-Form and resource adapters connect the new headless ecosystem crates to existing concrete
-components. They are adapter helpers, not standalone widgets:
-
-- `FormProjection` translates form-level lifecycle state into busy/validating/submitting and submit
-  eligibility facts. `FormFieldConfig` and `FormFieldProjection` translate a field snapshot plus
-  `FormStatus` into `FieldState`, `TextInputState`, `TextareaState`, `NumberInputState`, and
-  `CheckboxState` inputs. Validation projects as busy while preserving editability; submission may
-  disable controls according to the form policy. The corresponding concrete builders accept
-  `busy(bool)` and preserve that fact when they rematerialize resolved state.
-- `form_text_value`, `form_number_value`, `form_checkbox_value`, and `form_select_value` normalize
-  dynamic JSON form values for text, number, checkbox, and select controls.
 - `ResourceAdapterLabels`, `ResourceCollectionProjection`, and `ResourceMutationProjection`
-  translate `open_gpui_resource` query and mutation snapshots into `StatusCue`, `EmptyState`,
-  `VirtualizedList`, `Command`, `Table`, and `Tree` status inputs.
+  translate `open_gpui_resource` snapshots into `StatusCue`, `EmptyState`, `VirtualizedList`,
+  `Command`, `Table`, and `Tree` status inputs.
 - `resource_query_key_label` gives resource-backed UI rows a stable slash-separated query label.
-
-The adapters preserve one-way ownership: `open-gpui-form` and `open-gpui-resource` do not depend on
-components or GPUI, while `open-gpui-ui-components` only projects already-owned snapshots into
-renderable state.
 
 ## VirtualizedList
 
@@ -96,26 +81,12 @@ Command and component actions share a typed projection layer:
 
 - `ActionDescriptor` carries id, label, shortcut, disabled reason, tooltip, accessibility
   description, and an optional renderer-neutral `ActionIconDescriptor`.
-- `ActionDescriptor::from_command_descriptor` preserves `open_gpui_command::CommandDescriptor`
-  metadata, including `CommandIconDescriptor`.
 - `ResolvedActionState` resolves icon metadata once and feeds Button, IconButton, Toolbar, Menu,
   ContextMenu, Command, and Sidebar surfaces.
 - `ActionIconDiagnostic` records missing icon resolution in a stable form for tests and tooling.
 
 Prefer passing `ResolvedActionState` into component builders over reconstructing label, icon,
 shortcut, and disabled metadata separately for each surface.
-
-## Demos
-
-Run the normal-checkout component gallery:
-
-```sh
-cargo run -p open-gpui-ui-foundation-gallery
-```
-
-The gallery is the durable visual and conformance surface for official components. It includes
-focused component-family views, state-contract readouts, runtime smoke probes, and examples for
-Tree, Table, Splitter, overlays, and VirtualizedList.
 
 ## Imports
 
@@ -156,11 +127,10 @@ cargo nextest run -p open-gpui-ui-components --no-fail-fast --locked
 cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast --locked
 ```
 
-For form/resource adapter work, run:
+For resource adapter work, run:
 
 ```sh
-cargo nextest run -p open-gpui-ui-components form_adapter resource_adapter --no-fail-fast --locked
-cargo nextest run -p open-gpui-ui-foundation-gallery form resource --no-fail-fast --locked
+cargo nextest run -p open-gpui-ui-components resource_adapter --no-fail-fast --locked
 ```
 
 For VirtualizedList-specific work, the fast local gates are:
@@ -168,7 +138,6 @@ For VirtualizedList-specific work, the fast local gates are:
 ```sh
 cargo test -p open-gpui-ui-components --locked --lib virtualized_list_
 cargo test -p open-gpui-ui-components --locked --test layout virtualized_list_runtime
-cargo nextest run -p open-gpui-ui-foundation-gallery virtualized_list --no-fail-fast --locked
 ```
 
 See `docs/ui/component-contract.md` and `docs/verification.md` for the full component contract and

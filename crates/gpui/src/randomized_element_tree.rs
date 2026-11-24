@@ -13,7 +13,7 @@ use std::{
 };
 
 /// Dispatched to no one: the action generated elements register handlers for. Not
-/// registered, so builds that enable `bench-support` through feature unification (such as
+/// registered, so builds that enable `test-support` through feature unification (such as
 /// the workspace's tests) don't gain an action namespace.
 #[derive(Clone, Default, PartialEq, crate::Action)]
 #[action(namespace = randomized_element_tree, no_json, no_register)]

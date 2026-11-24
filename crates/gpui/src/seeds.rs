@@ -10,7 +10,7 @@ use std::env;
 /// `$ITERATIONS` overrides `iterations`.
 /// Tests and benchmarks share this so that one `SEED` reproduces either.
 ///
-/// This is intended for use by the `open_gpui::test` and `open_gpui::bench` macros and generally
+/// This is intended for use by the `open_gpui::test` macro and generally
 /// should not be used directly.
 #[doc(hidden)]
 pub fn calculate_seeds(

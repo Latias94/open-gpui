@@ -7,12 +7,10 @@ struct RuntimeDebugSource {
     ordinary_presses: Rc<Cell<usize>>,
 }
 
-#[cfg(feature = "bench-support")]
 struct SiblingDebugSource {
     editor_focus: crate::FocusHandle,
 }
 
-#[cfg(feature = "bench-support")]
 impl Render for SiblingDebugSource {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
@@ -34,7 +32,6 @@ impl Render for SiblingDebugSource {
     }
 }
 
-#[cfg(feature = "bench-support")]
 #[test]
 fn debug_source_underline_refreshes_when_keyboard_focus_is_in_a_sibling() {
     for os in [

@@ -2,10 +2,10 @@
 //! can be used to describe common units, concepts, and the relationships
 //! between them.
 
+use crate::Refineable;
 use anyhow::{Context as _, anyhow};
 use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, DivAssign, Mul, Neg, Sub, SubAssign};
-use open_gpui_refineable::Refineable;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use smallvec::{SmallVec, smallvec};

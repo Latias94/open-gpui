@@ -5,7 +5,7 @@
 //! - Deterministic task scheduling via TestDispatcher
 //! - Controllable time via `advance_clock`
 
-use crate::{ActivityGuard, ScreenCaptureSource};
+use crate::ActivityGuard;
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, DevicePixels, ForegroundExecutor, Keymap,
     Menu, MenuItem, MouseButton, NativeAppNotificationHandler, OwnedMenu, PathPromptOptions,
@@ -160,16 +160,6 @@ impl Platform for VisualTestPlatform {
 
     fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {
         self.platform.mouse_button_is_pressed(button)
-    }
-
-    fn is_screen_capture_supported(&self) -> bool {
-        self.platform.is_screen_capture_supported()
-    }
-
-    fn screen_capture_sources(
-        &self,
-    ) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
-        self.platform.screen_capture_sources()
     }
 
     fn open_window(

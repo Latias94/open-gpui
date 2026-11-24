@@ -95,9 +95,6 @@ fn official_components_match_typed_public_exports() {
 
     assert_eq!(
         COMPONENT_CONTRACT_GLOBAL_SCENARIOS,
-        &[
-            "gallery.component-contract.metadata",
-            "public-api.component-contract.exports",
-        ]
+        &["public-api.component-contract.exports"]
     );
 }

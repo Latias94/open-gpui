@@ -7,7 +7,7 @@ window and input ownership.
 
 The crate exposes the official shared macOS/iOS substrate. It does not provide an iOS
 application backend. Enable `font-kit` for `AppleTextSystem`, `runtime_shaders` for runtime
-Metal shader compilation, and `test-support` or `bench-support` for their existing renderer
+Metal shader compilation, and `test-support` for their existing renderer
 consumers. Native services and rendering require an Apple target and their documented native
 thread/resource ownership.
 

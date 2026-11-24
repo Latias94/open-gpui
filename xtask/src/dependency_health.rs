@@ -10,13 +10,10 @@ use std::path::Path;
 const DECLARED_MSRV: &str = "1.93";
 
 const MSRV_EXCEPTIONS: &[(&str, &str)] = &[
-    ("open-gpui-devtools", "1.95"),
     ("open-gpui-docking", "1.95"),
     ("open-gpui-docking-minimal", "1.95"),
     ("open-gpui-docking-multiviewport", "1.95"),
-    ("open-gpui-docking-native", "1.95"),
     ("open-gpui-dockspace-editor", "1.95"),
-    ("open-gpui-ui-foundation-gallery", "1.95"),
     ("xtask", "1.95"),
 ];
 

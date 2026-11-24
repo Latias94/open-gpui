@@ -1,7 +1,7 @@
-#![cfg(all(feature = "bench-support", feature = "test-support"))]
+#![cfg(feature = "test-support")]
 
 //! Public CPU consumers of the real Window pending-candidate lifecycle and native ingress.
-//! An ordinary Application uses bench_platform with no renderer; TestWindow retains the original
+//! An ordinary Application uses headless_test_platform with no renderer; TestWindow retains the original
 //! submission token and completion explicitly simulates a platform outcome. Submitted assertions
 //! qualify framework publication and initial-presentation ordering, not GPU execution, pixel
 //! correctness, an OS compositor, or a native event loop. test-support supplies the existing native
@@ -16,7 +16,7 @@ use open_gpui::{
     PrepaintPublicationId, QuitMode, Render, RequestFrameOptions, Role, ScaledPixels,
     StatefulInteractiveElement as _, StyleRefinement, Styled as _, UTF16Selection, Window,
     WindowBounds, WindowHandle, WindowInitialPresentationStatus, WindowOptions,
-    WindowPresentationFacts, bench_platform, canvas, div, point, px, rgb, size,
+    WindowPresentationFacts, canvas, div, headless_test_platform, point, px, rgb, size,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -340,7 +340,7 @@ struct Consumer {
 
 impl Consumer {
     fn new(mode: PlatformFrameDeliveryMode) -> Self {
-        let platform = bench_platform(None, Arc::new(NoopTextSystem::new()));
+        let platform = headless_test_platform(None, Arc::new(NoopTextSystem::new()));
         let app = Application::with_platform(platform.clone())
             .with_quit_mode(QuitMode::Explicit)
             .run_embedded(|app| {
@@ -1063,7 +1063,7 @@ fn empty_initial_submissions_request_retries_and_terminate_within_a_bound() {
         }
     }
 
-    let platform = bench_platform(None, Arc::new(NoopTextSystem::new()));
+    let platform = headless_test_platform(None, Arc::new(NoopTextSystem::new()));
     let app = Application::with_platform(platform.clone())
         .with_quit_mode(QuitMode::Explicit)
         .run_embedded(|_| ());

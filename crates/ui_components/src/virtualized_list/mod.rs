@@ -10,7 +10,7 @@ pub(crate) mod runtime;
 mod style;
 
 #[cfg(test)]
-use open_gpui_motion::{
+use open_gpui_core_util::motion::{
     MotionFrameDemand, MotionFrameResetReason, MotionPreference, advanced::MotionPreset,
 };
 #[cfg(test)]

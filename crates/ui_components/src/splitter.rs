@@ -9,7 +9,7 @@ use open_gpui::{
     Empty, Entity, IntoElement, KeyDownEvent, ParentElement, Pixels, Point, Render, RenderOnce,
     Styled, Window, div, px, relative, rgb,
 };
-use open_gpui_motion::{
+use open_gpui_core_util::motion::{
     MotionFrameDemand, MotionFrameDriver, MotionFrameDriverUpdate, MotionFrameReason,
     MotionFrameResetReason, MotionPolicyContext, MotionPreference, MotionProjectionClip,
     advanced::{
@@ -398,7 +398,7 @@ fn splitter_frame_demand(needs_frame: bool) -> MotionFrameDemand {
 
 fn fraction_samples_for_transition(
     transition: &SplitterRuntimeTransition,
-    sample: &open_gpui_motion::advanced::MotionScalarControllerSample<String>,
+    sample: &open_gpui_core_util::motion::advanced::MotionScalarControllerSample<String>,
 ) -> Vec<f32> {
     transition
         .panel_ids
@@ -1143,7 +1143,7 @@ fn resize_splitter_handle(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use open_gpui_motion::{
+    use open_gpui_core_util::motion::{
         MotionDuration, MotionEasing, MotionPolicyContext, MotionPolicyIssue,
         advanced::{MotionPolicyInput, MotionSpec, validate_motion_policy},
     };
@@ -1335,7 +1335,7 @@ mod tests {
             .expect("inserted panel should expose a reveal clip");
         assert_eq!(
             center_clip.visible_bounds().size.width,
-            open_gpui_motion::motion_px(0.0)
+            open_gpui_core_util::motion::motion_px(0.0)
         );
 
         assert!(

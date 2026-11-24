@@ -20,7 +20,6 @@ path = "src/gpui_wgpu.rs"
 [features]
 default = []
 font-kit = ["dep:font-kit"]
-bench-support = ["open_gpui/bench-support", "dep:image"]
 test-support = ["open_gpui/test-support", "dep:image"]
 
 [dependencies]

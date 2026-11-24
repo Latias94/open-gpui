@@ -10,7 +10,7 @@ use open_gpui::{
     InspectorElementId, IntoElement, LayoutId, ParentElement, Pixels, Render, RenderOnce, Style,
     StyleRefinement, Styled, Window, deferred, div, point, px, size,
 };
-use open_gpui_motion::MotionPreference;
+use open_gpui_core_util::motion::MotionPreference;
 use open_gpui_ui_components::theme::{
     DARK_THEME_ID, LIGHT_THEME_ID, ThemeColor, ThemeContext, ThemeDefinition, ThemeMode,
     ThemeRegistry, ThemeResolver, ThemeScope, ThemeSelectionError, ThemeSnapshot,

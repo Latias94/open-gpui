@@ -2,8 +2,8 @@ use crate::{
     AnyElement, AnyImageCache, App, Asset, AssetLogger, Bounds, DefiniteLength, Element, ElementId,
     Entity, GlobalElementId, Hitbox, Image, ImageCache, InspectorElementId, InteractiveElement,
     Interactivity, LayoutId, Length, ObjectFit, Pixels, PreparedSubtreeClip, RenderImage, Resource,
-    SharedString, SharedUri, StyleRefinement, Styled, Task, Window, decode_gif_image,
-    decode_static_image, decode_webp_image, px,
+    SharedString, StyleRefinement, Styled, Task, Window, decode_gif_image, decode_static_image,
+    decode_webp_image, px,
 };
 use anyhow::Result;
 
@@ -17,7 +17,6 @@ use std::{
     fs, io,
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
-    str::FromStr,
     sync::Arc,
     time::Duration,
 };
@@ -30,8 +29,7 @@ pub const LOADING_DELAY: Duration = Duration::from_millis(200);
 
 /// A type alias to the resource loader that the `img()` element uses.
 ///
-/// Note: that this is only for Resources, like URLs or file paths.
-/// Custom loaders, or external images will not use this asset loader
+/// Used for file paths and application assets.
 pub type ImgResourceLoader = AssetLogger<ImageAssetLoader>;
 
 /// A source of image content.
@@ -47,39 +45,21 @@ pub enum ImageSource {
     Custom(Arc<dyn Fn(&mut Window, &mut App) -> Option<Result<Arc<RenderImage>, ImageCacheError>>>),
 }
 
-fn is_uri(uri: &str) -> bool {
-    url::Url::from_str(uri).is_ok()
-}
-
-impl From<SharedUri> for ImageSource {
-    fn from(value: SharedUri) -> Self {
-        Self::Resource(Resource::Uri(value))
-    }
-}
-
 impl<'a> From<&'a str> for ImageSource {
     fn from(s: &'a str) -> Self {
-        if is_uri(s) {
-            Self::Resource(Resource::Uri(s.to_string().into()))
-        } else {
-            Self::Resource(Resource::Embedded(s.to_string().into()))
-        }
+        Self::Resource(Resource::Embedded(s.to_string().into()))
     }
 }
 
 impl From<String> for ImageSource {
     fn from(s: String) -> Self {
-        if is_uri(&s) {
-            Self::Resource(Resource::Uri(s.into()))
-        } else {
-            Self::Resource(Resource::Embedded(s.into()))
-        }
+        Self::Resource(Resource::Embedded(s.into()))
     }
 }
 
 impl From<SharedString> for ImageSource {
     fn from(s: SharedString) -> Self {
-        s.as_ref().into()
+        Self::Resource(Resource::Embedded(s))
     }
 }
 
@@ -614,36 +594,13 @@ impl Asset for ImageAssetLoader {
         source: Self::Source,
         cx: &mut App,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
-        let client = cx.http_client();
         // TODO: Can we make SVGs always rescale?
         // let scale_factor = cx.scale_factor();
         let svg_renderer = cx.svg_renderer();
         let asset_source = cx.asset_source().clone();
         async move {
-            let bytes = match source.clone() {
-                Resource::Path(uri) => fs::read(uri.as_ref())?,
-                Resource::Uri(uri) => {
-                    use anyhow::Context as _;
-                    use futures::AsyncReadExt as _;
-
-                    let mut response = client
-                        .get(uri.as_ref(), ().into(), true)
-                        .await
-                        .with_context(|| format!("loading image asset from {uri:?}"))?;
-                    let mut body = Vec::new();
-                    response.body_mut().read_to_end(&mut body).await?;
-                    if !response.status().is_success() {
-                        let mut body = String::from_utf8_lossy(&body).into_owned();
-                        let first_line = body.lines().next().unwrap_or("").trim_end();
-                        body.truncate(first_line.len());
-                        return Err(ImageCacheError::BadStatus {
-                            uri,
-                            status: response.status(),
-                            body,
-                        });
-                    }
-                    body
-                }
+            let bytes = match source {
+                Resource::Path(path) => fs::read(path.as_ref())?,
                 Resource::Embedded(path) => {
                     let data = asset_source.load(&path).ok().flatten();
                     if let Some(data) = data {
@@ -682,16 +639,6 @@ pub enum ImageCacheError {
     /// An error that occurred while reading the image from disk.
     #[error("IO error: {0}")]
     Io(Arc<std::io::Error>),
-    /// An error that occurred while processing an image.
-    #[error("unexpected http status for {uri}: {status}, body: {body}")]
-    BadStatus {
-        /// The URI of the image.
-        uri: SharedUri,
-        /// The HTTP status code.
-        status: open_gpui_http_client::StatusCode,
-        /// The HTTP response body.
-        body: String,
-    },
     /// An error that occurred while processing an asset.
     #[error("asset error: {0}")]
     Asset(SharedString),
@@ -1062,9 +1009,8 @@ mod tests {
     }
 
     #[open_gpui::test]
-    async fn path_and_http_loaders_share_the_public_image_decoder(cx: &mut TestAppContext) {
+    async fn path_loader_uses_the_public_image_decoder(cx: &mut TestAppContext) {
         use crate::{ImageFormat as EncodedFormat, SvgRenderer};
-        use open_gpui_http_client::{FakeHttpClient, Response};
 
         for (name, format, bytes) in [
             (
@@ -1094,21 +1040,6 @@ mod tests {
                 .await
                 .unwrap();
             assert_same_frames(&path_loaded, &expected);
-
-            let client = FakeHttpClient::create(move |_| async move {
-                Ok(Response::builder().status(200).body(bytes.into()).unwrap())
-            });
-            cx.update(|cx| cx.set_http_client(client));
-            let resource = Resource::Uri(format!("https://test.example/{name}").into());
-            let http_loaded = cx
-                .update(|cx| {
-                    let load: futures::future::BoxFuture<'static, _> =
-                        Box::pin(ImageAssetLoader::load(resource, cx));
-                    load
-                })
-                .await
-                .unwrap();
-            assert_same_frames(&http_loaded, &expected);
         }
     }
 
@@ -1117,7 +1048,6 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         use image::{DynamicImage, Rgb};
-        use open_gpui_http_client::{FakeHttpClient, Response};
 
         let source = DynamicImage::ImageRgb8(ImageBuffer::from_fn(4, 4, |column, row| {
             if (column + row) % 2 == 0 {
@@ -1166,13 +1096,9 @@ mod tests {
                 encoded.into_inner()
             };
             assert_eq!(image::guess_format(&bytes).unwrap(), format);
-            cx.update(|cx| {
-                cx.set_http_client(FakeHttpClient::create(move |_| {
-                    let bytes = bytes.clone();
-                    async move { Ok(Response::builder().status(200).body(bytes.into()).unwrap()) }
-                }));
-            });
-            let resource = Resource::Uri(format!("https://test.example/{format:?}").into());
+            let file = tempfile::NamedTempFile::new().unwrap();
+            fs::write(file.path(), bytes).unwrap();
+            let resource = Resource::Path(file.path().into());
             let image = cx
                 .update(|cx| {
                     let load: futures::future::BoxFuture<'static, _> =
@@ -1199,22 +1125,15 @@ mod tests {
     #[open_gpui::test]
     async fn header_only_avif_resource_returns_unsupported(cx: &mut TestAppContext) {
         use image::error::{ImageFormatHint, UnsupportedErrorKind};
-        use open_gpui_http_client::{FakeHttpClient, Response};
 
         let header_only_avif: &[u8] = b"\0\0\0\x18ftypavif\0\0\0\0avifmif1";
         assert_eq!(
             image::guess_format(header_only_avif).unwrap(),
             ImageFormat::Avif
         );
-        cx.update(|cx| {
-            cx.set_http_client(FakeHttpClient::create(move |_| async move {
-                Ok(Response::builder()
-                    .status(200)
-                    .body(header_only_avif.into())
-                    .unwrap())
-            }));
-        });
-        let resource = Resource::Uri("https://test.example/header-only.avif".into());
+        let file = tempfile::NamedTempFile::new().unwrap();
+        fs::write(file.path(), header_only_avif).unwrap();
+        let resource = Resource::Path(file.path().into());
         let error = cx
             .update(|cx| {
                 let load: futures::future::BoxFuture<'static, _> =
@@ -1234,54 +1153,6 @@ mod tests {
         assert!(matches!(
             unsupported.kind(),
             UnsupportedErrorKind::Format(ImageFormatHint::Exact(ImageFormat::Avif))
-        ));
-    }
-
-    #[open_gpui::test]
-    async fn shared_decoder_errors_keep_context_and_http_status_is_separate(
-        cx: &mut TestAppContext,
-    ) {
-        use open_gpui_http_client::{FakeHttpClient, Response, StatusCode};
-
-        let resource = Resource::Uri("https://test.example/truncated.webp".into());
-        let invalid =
-            &include_bytes!("../../../../tests/fixtures/images/red-blue-100ms.webp")[..40];
-        cx.update(|cx| {
-            cx.set_http_client(FakeHttpClient::create(move |_| async move {
-                Ok(Response::builder()
-                    .status(200)
-                    .body(invalid.into())
-                    .unwrap())
-            }));
-        });
-        let decoded = cx
-            .update(|cx| {
-                let load: futures::future::BoxFuture<'static, _> =
-                    Box::pin(ImageAssetLoader::load(resource.clone(), cx));
-                load
-            })
-            .await
-            .err()
-            .expect("the recognized but incomplete WebP must fail");
-        assert!(matches!(decoded, ImageCacheError::Other(_)));
-        assert!(!decoded.to_string().is_empty());
-
-        cx.update(|cx| cx.set_http_client(FakeHttpClient::with_404_response()));
-        let error = cx
-            .update(|cx| {
-                let load: futures::future::BoxFuture<'static, _> =
-                    Box::pin(ImageAssetLoader::load(resource, cx));
-                load
-            })
-            .await
-            .err()
-            .expect("the HTTP error must precede decoding");
-        assert!(matches!(
-            error,
-            ImageCacheError::BadStatus {
-                status: StatusCode::NOT_FOUND,
-                ..
-            }
         ));
     }
 }

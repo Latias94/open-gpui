@@ -51,12 +51,9 @@ fn strict_doc_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     ];
 
     for crate_dir in [
-        "crates/canvas",
         "crates/gpui",
         "crates/gpui_docking",
         "crates/gpui_platform",
-        "crates/gpui_web",
-        "crates/motion",
         "crates/ui_components",
     ] {
         files.push(root.join(crate_dir).join("README.md"));

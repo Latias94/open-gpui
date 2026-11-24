@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
 use accesskit::{Action as AccessibleAction, ActionRequest, Role, TreeId};
-use open_gpui_motion::{
+use open_gpui_core_util::motion::{
     MotionDuration, MotionEasing, MotionIntent, MotionPreference, MotionTransition,
 };
 

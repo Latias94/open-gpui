@@ -148,9 +148,12 @@ for actual consumers and platform limits.
 
 `open-gpui` owns the application, window, element, entity, input, text, accessibility, and rendering-facing API that applications use directly. It does not choose a backend by itself; use `open-gpui-platform` for target-specific application construction.
 
-Native backends cover macOS, Windows, Linux, and FreeBSD through platform crates. WebAssembly uses `open-gpui-web` through `open-gpui-platform` on `wasm32-unknown-unknown`. Backend capabilities such as WebGPU, screen capture, platform viewport windows, and compositor features remain runtime facts.
+Native backends cover macOS, Windows, Linux, and FreeBSD through platform crates. Feature
+availability varies by platform and compositor.
 
-For higher-level controls, use `open-gpui-ui-components`. For deterministic UI motion primitives, use `open-gpui-motion`. For retained dock spaces, use `open-gpui-docking`.
+Use `open-gpui-ui-components` for higher-level controls and `open-gpui-docking` for retained dock
+spaces. Shared motion primitives live in `open_gpui_core_util::motion`. `img()` loads local paths
+or application assets and accepts decoded images and custom loaders.
 
 ## Platform Window Lifecycle
 

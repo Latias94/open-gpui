@@ -1,7 +1,7 @@
 //! Independent consumers of Zed 389c22e1c747d1a433c3b51c176936166c9cc1cf at
 //! 635026fabc38440fce5e1767d125026a17b12012. No GPUI test-support is enabled.
-//! OS-explicit controls run on any host; bench-support executes a real App and
-//! Window with the benchmark platform's actual host identity and discarded scenes.
+//! OS-explicit controls run on any host; the headless test platform executes a real App and
+//! Window with the headless test platform's actual host identity and discarded scenes.
 
 use open_gpui::{
     KeyContext, KeybindingKeystroke, Keystroke, OperatingSystem, PlatformInfo, PlatformTarget,
@@ -123,14 +123,14 @@ fn downstream_static_parsing_rejects_secondary_and_explicit_modifiers_never_chan
     }
 }
 
-#[cfg(all(feature = "bench-support", not(target_family = "wasm")))]
+#[cfg(all(feature = "test-support", not(target_family = "wasm")))]
 mod runtime {
     use super::*;
     use open_gpui::{
         Action, App, AppContext as _, Application, Context, FocusHandle, Global,
         InteractiveElement as _, IntoElement, KeyBinding, KeyBindingContextPredicate, KeyDownEvent,
         Modifiers, NoopTextSystem, ParentElement as _, QuitMode, Render, Styled as _, Subscription,
-        Window, WindowHandle, WindowOptions, actions, bench_platform, div, px,
+        Window, WindowHandle, WindowOptions, actions, headless_test_platform, div, px,
     };
     use std::{
         cell::{Cell, RefCell},
@@ -298,7 +298,7 @@ mod runtime {
             os,
             target: PlatformTarget::Native,
         };
-        let platform = bench_platform(None, Arc::new(NoopTextSystem));
+        let platform = headless_test_platform(None, Arc::new(NoopTextSystem));
         assert_eq!(platform.platform_info(), expected_info);
         let platform_lifetime = Rc::downgrade(&platform);
         let app = Application::with_platform(platform.clone())

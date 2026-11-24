@@ -49,13 +49,13 @@ fn downstream_platform_window_factory_signature_and_snapshot_values_are_public()
     assert!(PlatformDisplaySnapshot::try_new(Some(0), Vec::new(), None).is_none());
 }
 
-#[cfg(feature = "bench-support")]
+#[cfg(feature = "test-support")]
 #[test]
 fn downstream_ordinary_headless_app_executes_factory_refusal_and_retry() {
-    use open_gpui::{Application, NoopTextSystem, QuitMode, bench_platform};
+    use open_gpui::{Application, NoopTextSystem, QuitMode, headless_test_platform};
     use std::{cell::Cell, io, sync::Arc};
 
-    let app = Application::with_platform(bench_platform(None, Arc::new(NoopTextSystem::new())))
+    let app = Application::with_platform(headless_test_platform(None, Arc::new(NoopTextSystem::new())))
         .with_quit_mode(QuitMode::Explicit)
         .run_embedded(|_| {});
     let reserved = Cell::new(None);

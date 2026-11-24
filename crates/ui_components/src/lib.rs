@@ -30,7 +30,6 @@ pub mod dialog;
 pub mod feedback;
 pub mod field;
 mod focus;
-pub mod form_adapter;
 mod form_control;
 mod geometry;
 pub mod hover_card;

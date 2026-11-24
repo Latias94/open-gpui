@@ -1,6 +1,6 @@
 //! Ordinary public consumers of Zed d70c45e5bb1d8b7b3926fba5a6d1c69c23bbc405,
 //! within target 635026fabc38440fce5e1767d125026a17b12012. App and Window cases
-//! use the existing bench-support feature without enabling GPUI test-support.
+//! use the headless test platform.
 
 use open_gpui::{
     ClipboardEntry, ClipboardItem, ClipboardReadError, ClipboardString, ExternalPaths, Image,
@@ -93,13 +93,13 @@ fn downstream_mixed_items_keep_order_metadata_image_bytes_and_text_projection() 
     }
 }
 
-#[cfg(feature = "bench-support")]
+#[cfg(feature = "test-support")]
 mod runtime {
     use super::*;
     use open_gpui::{
         App, AppContext as _, Application, ApplicationHandle, Bounds, Context, ElementInputHandler,
         Empty, EntityInputHandler, Global, InputHandler, NoopTextSystem, Pixels, Point, QuitMode,
-        Task, UTF16Selection, Window, WindowOptions, bench_platform,
+        Task, UTF16Selection, Window, WindowOptions, headless_test_platform,
     };
     use std::{
         cell::Cell,
@@ -112,7 +112,7 @@ mod runtime {
     };
 
     fn application() -> ApplicationHandle {
-        Application::with_platform(bench_platform(None, Arc::new(NoopTextSystem)))
+        Application::with_platform(headless_test_platform(None, Arc::new(NoopTextSystem)))
             .with_quit_mode(QuitMode::Explicit)
             .run_embedded(|_| {})
     }

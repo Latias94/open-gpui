@@ -1,5 +1,3 @@
-#![cfg_attr(target_family = "wasm", no_main)]
-
 fn run_example() {
     #[cfg(all(target_os = "linux", feature = "wayland"))]
     example::main();
@@ -8,18 +6,9 @@ fn run_example() {
     panic!("This example requires the `wayland` feature and a linux system.");
 }
 
-#[cfg(not(target_family = "wasm"))]
 fn main() {
     run_example();
 }
-
-#[cfg(target_family = "wasm")]
-#[wasm_bindgen::prelude::wasm_bindgen(start)]
-pub fn start() {
-    open_gpui_platform::web_init();
-    run_example();
-}
-
 #[cfg(all(target_os = "linux", feature = "wayland"))]
 mod example {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};

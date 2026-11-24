@@ -19,9 +19,9 @@ use calloop::{
 use calloop_wayland_source::WaylandSource;
 use filedescriptor::Pipe;
 use open_gpui_collections::HashMap;
-use open_gpui_http_client::Url;
 use open_gpui_util::ResultExt as _;
 use smallvec::SmallVec;
+use url::Url;
 use wayland_backend::client::ObjectId;
 use wayland_backend::protocol::WEnum;
 use wayland_client::event_created_child;
@@ -1625,30 +1625,6 @@ impl WaylandConnection {
 
     pub(crate) fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         None
-    }
-
-    #[cfg(feature = "screen-capture")]
-    pub(crate) fn is_screen_capture_supported(&self) -> bool {
-        true
-    }
-
-    #[cfg(feature = "screen-capture")]
-    pub(crate) fn screen_capture_sources(
-        &self,
-    ) -> futures::channel::oneshot::Receiver<
-        anyhow::Result<Vec<Rc<dyn open_gpui::ScreenCaptureSource>>>,
-    > {
-        // TODO: Get screen capture working on wayland. Be sure to try window resizing as that may
-        // be tricky.
-        //
-        // start_scap_default_target_source()
-        let (sources_tx, sources_rx) = futures::channel::oneshot::channel();
-        sources_tx
-            .send(Err(anyhow::anyhow!(
-                "Wayland screen capture not yet implemented."
-            )))
-            .ok();
-        sources_rx
     }
 
     pub(crate) fn open_window(

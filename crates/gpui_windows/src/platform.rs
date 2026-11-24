@@ -2831,16 +2831,6 @@ impl Platform for WindowsPlatform {
             .set(Some(callback));
     }
 
-    #[cfg(feature = "screen-capture")]
-    fn is_screen_capture_supported(&self) -> bool {
-        true
-    }
-
-    #[cfg(feature = "screen-capture")]
-    fn screen_capture_sources(&self) -> Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
-        open_gpui::scap_screen_capture::scap_screen_sources(&self.foreground_executor)
-    }
-
     fn active_window(&self) -> Option<AnyWindowHandle> {
         let foreground_window_hwnd = unsafe { GetForegroundWindow() };
         self.window_from_hwnd(foreground_window_hwnd)

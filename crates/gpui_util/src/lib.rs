@@ -16,6 +16,7 @@ use std::{
 use std::{ffi::OsString, path::PathBuf, sync::LazyLock};
 
 pub mod arc_cow;
+pub mod motion;
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000_u32;

@@ -8,7 +8,7 @@
 use crate::metal_atlas::MetalAtlas;
 use anyhow::{Context as _, Result};
 use block2::RcBlock;
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+#[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
 use objc2::{Message, rc::Retained, runtime::ProtocolObject};
 use objc2_core_foundation::{CFRetained, CGSize};
@@ -21,10 +21,7 @@ use objc2_core_video::{
 #[cfg(target_os = "macos")]
 use objc2_foundation::NSRange;
 use objc2_foundation::{NSString, NSUInteger};
-#[cfg(all(
-    target_os = "macos",
-    any(test, feature = "test-support", feature = "bench-support")
-))]
+#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 use objc2_metal::MTLBlitCommandEncoder;
 #[cfg(target_os = "macos")]
 use objc2_metal::MTLCopyAllDevices;
@@ -37,7 +34,7 @@ use objc2_metal::{
     MTLResourceOptions, MTLStorageMode, MTLStoreAction, MTLTexture, MTLTextureDescriptor,
     MTLTextureUsage, MTLViewport,
 };
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+#[cfg(any(test, feature = "test-support"))]
 use objc2_metal::{MTLCommandBufferStatus, MTLOrigin, MTLRegion, MTLSize};
 use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
 use open_gpui::{
@@ -164,7 +161,7 @@ pub struct MetalRenderer {
     sprite_atlas: Arc<MetalAtlas>,
     core_video_texture_cache: CFRetained<CVMetalTextureCache>,
     last_submitted_command_buffer: Option<Retained<ProtocolObject<dyn MTLCommandBuffer>>>,
-    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     headless_render_target: Option<Retained<ProtocolObject<dyn MTLTexture>>>,
     presentation_shutdown: Option<WindowPresentationShutdownTicket>,
 }
@@ -284,7 +281,7 @@ impl MetalRenderer {
     ///
     /// This renderer can render scenes to images without requiring a CAMetalLayer,
     /// window, or AppKit. Use `render_scene_to_image()` to render scenes.
-    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn new_headless(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>) -> Result<Self> {
         let device = Self::create_device()?;
         Self::new_internal(device, None, true, instance_buffer_pool)
@@ -468,7 +465,7 @@ impl MetalRenderer {
             sprite_atlas,
             core_video_texture_cache,
             last_submitted_command_buffer: None,
-            #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+            #[cfg(any(test, feature = "test-support"))]
             headless_render_target: None,
             presentation_shutdown: None,
         })
@@ -635,7 +632,7 @@ impl MetalRenderer {
             command_buffer.waitUntilCompleted();
         }
         self.depth_texture = None;
-        #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+        #[cfg(any(test, feature = "test-support"))]
         {
             self.headless_render_target = None;
         }
@@ -893,7 +890,7 @@ impl MetalRenderer {
     ///
     /// Note: This requires a layer-backed renderer. For headless rendering,
     /// use `render_scene_to_image()` instead.
-    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn render_to_image(&mut self, scene: &Scene) -> Result<RgbaImage> {
         anyhow::ensure!(
             !self.drawable_size_rejected,
@@ -916,7 +913,7 @@ impl MetalRenderer {
     ///
     /// This is the primary method for headless rendering. It creates an offscreen
     /// texture, renders the scene to it, and returns the pixel data as an RGBA image.
-    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn render_scene_to_image(
         &mut self,
         scene: &Scene,
@@ -925,7 +922,7 @@ impl MetalRenderer {
         objc2::rc::autoreleasepool(|_| self.render_offscreen(scene, size))
     }
 
-    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     fn render_offscreen(&mut self, scene: &Scene, size: Size<DevicePixels>) -> Result<RgbaImage> {
         self.validate_render_target_size(size)?;
         validate_scene_clip_envelopes(scene)?;
@@ -1024,7 +1021,7 @@ impl MetalRenderer {
     /// encoding, instance buffer writes, command submission) and is used by
     /// headless benchmark rendering, where the produced pixels are never
     /// inspected.
-    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn render_scene(&mut self, scene: &Scene, size: Size<DevicePixels>) -> Result<()> {
         self.validate_render_target_size(size)?;
         validate_scene_clip_envelopes(scene)?;
@@ -2204,12 +2201,12 @@ mod abi_layout_tests {
     }
 }
 
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+#[cfg(any(test, feature = "test-support"))]
 pub struct MetalHeadlessRenderer {
     renderer: MetalRenderer,
 }
 
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+#[cfg(any(test, feature = "test-support"))]
 impl MetalHeadlessRenderer {
     pub fn new() -> Result<Self> {
         let instance_buffer_pool = Arc::new(Mutex::new(InstanceBufferPool::default()));
@@ -2218,7 +2215,7 @@ impl MetalHeadlessRenderer {
     }
 }
 
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+#[cfg(any(test, feature = "test-support"))]
 impl open_gpui::PlatformHeadlessRenderer for MetalHeadlessRenderer {
     fn render_scene_to_image(
         &mut self,

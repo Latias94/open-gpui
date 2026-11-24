@@ -2636,7 +2636,7 @@ impl PlatformWindow for TestWindow {
         self.0.lock().sprite_atlas.clone()
     }
 
-    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     fn render_to_image(&self, scene: &Scene) -> anyhow::Result<RgbaImage> {
         let mut state = self.0.lock();
         let size = state.bounds.size;

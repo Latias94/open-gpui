@@ -5,7 +5,7 @@ use crate::{
     point,
 };
 use open_gpui_collections::FxHashSet;
-use open_gpui_motion::{MotionProgressRun, MotionTransition};
+use open_gpui_core_util::motion::{MotionProgressRun, MotionTransition};
 use open_gpui_scheduler::Instant;
 use smallvec::SmallVec;
 use std::{cell::RefCell, mem, rc::Rc, time::Duration};

@@ -124,7 +124,7 @@ impl PlatformAtlas for HeadlessAtlas {
         self.0.lock().remove_with_diagnostics(key)
     }
 
-    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     fn contains(&self, key: &AtlasKey) -> bool {
         self.0.lock().contains(key)
     }

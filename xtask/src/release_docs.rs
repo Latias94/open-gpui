@@ -24,39 +24,14 @@ const REQUIRED_CRATE_READMES: &[RequiredCrateReadme] = &[
         readme: "crates/ui_components/README.md",
     },
     RequiredCrateReadme {
-        package: "open-gpui-form",
-        manifest: "crates/form/Cargo.toml",
-        readme: "crates/form/README.md",
-    },
-    RequiredCrateReadme {
         package: "open-gpui-resource",
         manifest: "crates/resource/Cargo.toml",
         readme: "crates/resource/README.md",
     },
     RequiredCrateReadme {
-        package: "open-gpui-devtools",
-        manifest: "crates/devtools/Cargo.toml",
-        readme: "crates/devtools/README.md",
-    },
-    RequiredCrateReadme {
-        package: "open-gpui-motion",
-        manifest: "crates/motion/Cargo.toml",
-        readme: "crates/motion/README.md",
-    },
-    RequiredCrateReadme {
         package: "open-gpui-docking",
         manifest: "crates/gpui_docking/Cargo.toml",
         readme: "crates/gpui_docking/README.md",
-    },
-    RequiredCrateReadme {
-        package: "open-gpui-canvas",
-        manifest: "crates/canvas/Cargo.toml",
-        readme: "crates/canvas/README.md",
-    },
-    RequiredCrateReadme {
-        package: "open-gpui-web",
-        manifest: "crates/gpui_web/Cargo.toml",
-        readme: "crates/gpui_web/README.md",
     },
     RequiredCrateReadme {
         package: "open-gpui-platform",

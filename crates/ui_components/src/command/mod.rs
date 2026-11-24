@@ -14,7 +14,7 @@ use open_gpui::{
     App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div,
 };
-use open_gpui_command::CommandDescriptor;
+
 use open_gpui_ui_core::{
     AccessibleAction, DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent,
     OutsidePressPolicy, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx,
@@ -40,14 +40,8 @@ use crate::text_input::adapter::TextInputController;
 use crate::theme::ThemeResolver;
 pub use descriptor::{
     CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItemDescriptor,
-    CommandKeyBindingCaptureState, CommandKeyBindingEditorFilter,
-    CommandKeyBindingEditorFilterMode, CommandKeyBindingEditorPreviewState,
-    CommandKeyBindingEditorRow, CommandKeyBindingEditorState, CommandLoadingState,
-    CommandMatchSource, CommandOpenMode, CommandPaletteController, CommandPaletteControllerUpdate,
-    CommandPaletteKeymapPreflight, CommandPalettePendingProviderRequest, CommandPaletteProjection,
-    CommandProviderPaletteProjection, CommandQueryMode, CommandSelectionMode,
-    CommandShortcutInspectorCommand, CommandShortcutInspectorState,
-    CommandStatusIdentityDiagnostic, CommandStatusIntent, CommandStatusItem,
+    CommandLoadingState, CommandMatchSource, CommandOpenMode, CommandQueryMode,
+    CommandSelectionMode, CommandStatusIdentityDiagnostic, CommandStatusIntent, CommandStatusItem,
 };
 pub use model::{
     CommandDialogState, CommandGroupState, CommandItemState, CommandNavigationBehavior,
@@ -186,28 +180,6 @@ impl Command {
     /// Applies a caller-owned command index snapshot.
     pub fn index_snapshot(mut self, snapshot: CommandIndexSnapshot) -> Self {
         self.index_snapshot = Some(snapshot);
-        self
-    }
-
-    /// Applies a provider-backed refresh projection to the command query and index snapshot.
-    pub fn provider_refresh_projection(
-        mut self,
-        projection: &open_gpui_command::CommandProviderRefreshProjection,
-    ) -> Self {
-        let palette_projection =
-            CommandProviderPaletteProjection::from_refresh_projection(projection);
-        self.query =
-            Some(TextEditingPolicy::single_line().normalize_text(palette_projection.query()));
-        self.status_items = palette_projection.status_items().to_vec();
-        self.index_snapshot = Some(palette_projection.into_index_snapshot());
-        self
-    }
-
-    /// Applies an app-owned command-center palette projection to the command query and snapshot.
-    pub fn palette_projection(mut self, projection: &CommandPaletteProjection) -> Self {
-        self.query = Some(TextEditingPolicy::single_line().normalize_text(projection.query()));
-        self.index_snapshot = Some(projection.index_snapshot().clone());
-        self.status_items = projection.status_items().to_vec();
         self
     }
 
@@ -899,13 +871,6 @@ impl CommandItem {
         let label = label.into();
         Self {
             descriptor: CommandItemDescriptor::new(value, label.to_string()),
-        }
-    }
-
-    /// Creates a command item from shared app-command metadata.
-    pub fn from_command_descriptor(descriptor: &CommandDescriptor) -> Self {
-        Self {
-            descriptor: CommandItemDescriptor::from_command_descriptor(descriptor),
         }
     }
 

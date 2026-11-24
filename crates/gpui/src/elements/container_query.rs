@@ -2,7 +2,7 @@
 //! The element's own size is determined solely by its style and the space
 //! offered by its parent.
 
-use open_gpui_refineable::Refineable as _;
+use crate::Refineable as _;
 
 use crate::{
     AnyElement, App, AvailableSpace, Bounds, Element, ElementId, GlobalElementId,

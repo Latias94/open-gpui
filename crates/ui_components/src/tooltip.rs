@@ -549,7 +549,14 @@ fn key_binding_text_for_action(
         None => window.highest_precedence_binding_for_action(action),
     }?;
 
-    Some(open_gpui_command::command_shortcut_label(&binding, cx.platform_info().os).into())
+    let os = cx.platform_info().os;
+    let shortcut = binding
+        .keystrokes()
+        .iter()
+        .map(|keystroke| keystroke.display(os).to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
+    Some(shortcut.into())
 }
 
 struct TextTooltipView {

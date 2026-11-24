@@ -1,21 +1,33 @@
 # Verification
 
-## Hosted CI and Local Physical Verification
+The [Verify workflow](../.github/workflows/verify.yml) defines the current Windows, Linux and macOS
+checks. On a Windows desktop, run the shared Dockspace adapter and WGPU native host smokes with
+Rust 1.95.0 and the workspace lockfile.
 
-GitHub Actions runs checks supported by its hosted images. The dedicated Windows physical-input
-workflow has been removed; physical qualification runs locally through the existing manifest gate.
+```powershell
+$env:CARGO_BUILD_JOBS = '1'
+cargo +1.95.0 run --locked -p open-gpui-dockspace-editor -- --smoke-native
+cargo +1.95.0 run --locked -p open-gpui-wgpu-native --no-default-features -- --smoke
+```
 
-| Execution environment | Verification scope |
-| --- | --- |
-| GitHub-hosted Linux, macOS and Windows | Compilation, compiler floors, formatting, library and consumer contracts, packaging and dependency checks. |
-| GitHub-hosted Windows and Linux browser jobs | Programmatic HWND/rendering/retirement tests, shared adapter and recovery baselines, GPU readback and browser smoke supported by those images. |
-| Local Windows interactive desktop | System pointer injection, clean-desktop Z-order, same-HWND physical promotion and mixed-DPI/negative-origin placement. |
+The examples document their recovery modes, GPU requirements and pass conditions.
+[Dockspace editor](../examples/dockspace-editor/README.md) · [Windows WGPU](../examples/wgpu-native/README.md)
 
-The hosted `Verify` workflow keeps physical tests ignored. It checks their manifest, registry and
-compilation without executing the physical gate. A hosted CI pass establishes only the first two
-rows. The local command and hardware requirements are in
-[Windows Native Interactive Runner Gate](#windows-native-interactive-runner-gate). Earlier records
-that name the removed self-hosted workflow retain their historical execution scope.
+The records below describe the revisions at which each suite ran. The retired browser, iOS,
+benchmark and legacy docking source and test commands are available at `legacy/v0-pre-slim`.
+
+## November 25 Phase 1 cleanup
+
+Compared with `legacy/v0-pre-slim`, the slim workspace has 28 packages, down from 47. The
+`crates/` directory has 22 members, down from 38. Tracked project Rust source, including tests
+and examples, dropped from approximately 1,052,000 lines to 678,000 lines. These counts exclude
+fixture, generated, vendored, and historical documentation files.
+
+On Windows 11 with an NVIDIA GeForce RTX 4090, Rust 1.95.0 passed the locked all-feature,
+all-target workspace check and 82 core utility tests. The locked `open-gpui-wgpu-native` build
+compiled against WGPU 30.0.0 at `cddb2f5d80dc0009b2ef6767635140cacf90a007`. All seven native
+smokes passed, covering the GPUI-owned window, external HWND hosting, deferred submission,
+logical roots, and native close. [Smoke commands](../examples/wgpu-native/README.md)
 
 ## November 14 Published Dockspace Adoption
 
@@ -13291,6 +13303,8 @@ retry succeeds. Automated owners include
 `failed_destroy_during_platform_window_retirement_retries_without_losing_owner`.
 
 ## Windows Native Interactive Runner Gate
+
+This section records the legacy docking runner at `legacy/v0-pre-slim`.
 
 Claims about system-routed cross-HWND pointer input, actual Win32 capture ownership, or a live
 provisional viewport require a local execution of the physical-input gate. GitHub Actions does not

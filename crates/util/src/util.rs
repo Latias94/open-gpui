@@ -2,8 +2,6 @@
 extern crate self as open_gpui_util;
 
 #[cfg(not(target_family = "wasm"))]
-pub mod archive;
-#[cfg(not(target_family = "wasm"))]
 pub mod command;
 #[cfg(not(target_family = "wasm"))]
 pub mod fs;

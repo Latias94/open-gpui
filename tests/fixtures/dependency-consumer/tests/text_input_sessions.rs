@@ -97,14 +97,14 @@ fn ordinary_public_text_session_and_viewport_contracts_require_no_support_featur
     let _: Bounds<Pixels> = Bounds::new(point(px(4.0), px(8.0)), size(px(300.0), px(180.0)));
 }
 
-#[cfg(feature = "bench-support")]
+#[cfg(feature = "test-support")]
 mod ordinary_runtime {
     use super::*;
     use open_gpui::{
         AppContext as _, Application, Context, ElementInputHandler, EntityInputHandler,
         InputHandler as _, InteractiveElement as _, IntoElement, NoopTextSystem,
         ParentElement as _, Point, QuitMode, Render, Styled as _, UTF16Selection, WindowOptions,
-        bench_platform, canvas, div,
+        headless_test_platform, canvas, div,
     };
     use std::{cell::Cell, rc::Rc, sync::Arc};
 
@@ -256,7 +256,7 @@ mod ordinary_runtime {
             suggestions: true,
             input_action: TextInputAction::Send,
         };
-        let owner = Application::with_platform(bench_platform(None, Arc::new(NoopTextSystem)))
+        let owner = Application::with_platform(headless_test_platform(None, Arc::new(NoopTextSystem)))
             .with_quit_mode(QuitMode::Explicit)
             .run_embedded(|_| {});
         let handle = owner.update(|app| {

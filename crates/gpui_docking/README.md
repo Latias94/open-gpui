@@ -291,7 +291,7 @@ Resolve an existing closed occurrence with `item_id_for_external_key`, then use
 `open_pane` to atomically register its distinct retained View and open it. A busy
 lease, duplicate entity or rejected placement publishes neither operation.
 
-Legacy v2/v3 data migrates through the same module without `legacy-docking`.
+Legacy v2/v3 data migrates through the same module.
 Choose `LegacyTopologyMigration::RelativeWeights` explicitly. Tab order,
 selection, floating bounds and representable relative shares are retained;
 legacy structural identities and absolute size references stay in a provenance
@@ -299,7 +299,7 @@ receipt. Binary rounding, central sibling-size preservation and absolute sizing
 are not weighted N-ary equivalence claims. Persisted logical window positions
 remain hints until the current platform establishes physical facts.
 
-## Examples And Compatibility
+## Desktop Examples
 
 ```sh
 cargo run -p open-gpui-docking-minimal
@@ -312,36 +312,14 @@ shared-session windows and an isolated workspace. The editor example retains two
 Views of one document and has a bounded native smoke trajectory through the
 repository's macOS probe runner.
 
-The displaced engine is available only through `open_gpui_docking::legacy` and
-its explicit `legacy-docking` feature. Enabling it never changes the root or
-prelude types. It is not a fallback or a second writer for a migrated workspace.
-The old Windows native dogfood example retains its compatibility qualification
-while the ten shared-session replacement scenarios receive physical Windows
-qualification:
-
-```sh
-cargo run -p open-gpui-docking-native --features legacy-docking
-```
-
-See [compatibility notes](LEGACY.md), the
-[migration guide](../../docs/ui/migration-v0.3.md#default-shared-docking-session),
-[ADR 0034](../../docs/adr/0034-shared-dockspace-session-integration.md) and the
-[cutover evidence](../../docs/knowledge/engineering/verification/dockspace-default-cutover-20261114.md).
-Historical receipts retain source paths at their recorded commits; incumbent
-files now live under `src/legacy/`.
-
-The browser unsupported-native-window probe now uses the shared session. Unused
-canonical migration and detached payload experiments have been removed. The
-[shared-session migration record](../../docs/knowledge/engineering/verification/dockspace-shutdown-migration-20261115.md)
-lists the exact source commits and physical Windows qualification boundary. Copy a logical recovery
-checkpoint with `dock.with_view(|view| view.to_layout())`; continue using the
-document envelope when external View-key history and save generations matter.
+The `legacy/v0-pre-slim` tag contains the previous engine and its physical-input qualification
+suite. Use `dock.with_view(|view| view.to_layout())` for a logical recovery checkpoint and the
+session document envelope to persist external View keys and save generations.
 
 ## Compiler And Verification Scope
 
 This crate and its selected shared core require Rust 1.95. Core GPUI and the
-component crates retain Rust 1.93. The default path has no production dependency
-on the displaced engine's motion, UI core or graph containers. Applications map
+component crates retain Rust 1.93. Applications map
 an owned `DockVisualPalette` or `DockVisualStyle` into `DockspaceColors`; content
 styling remains application-owned.
 
@@ -350,7 +328,6 @@ cargo fmt -p open-gpui-docking
 cargo nextest run -p open-gpui-docking --locked --lib --test-threads=1
 cargo nextest run -p open-gpui-docking --locked --all-features --lib --test-threads=1
 cargo check -p open-gpui-docking-minimal -p open-gpui-docking-multiviewport --locked --all-targets
-cargo check -p open-gpui-devtools --features docking --locked --all-targets
 cargo run -p xtask -- scan-public-api
 ```
 
@@ -358,9 +335,10 @@ CPU renderer tests establish model, ownership and exact correlation behavior.
 Physical captured dragging, mixed-DPI movement, OS IME and each foreign backend
 retain separate qualification. See [verification](../../docs/verification.md).
 
-Run the shared retained-host CPU workload independently of the legacy/ImGui
-comparator with `python tools/benchmark_docking_drag.py --suite shared --json`
-from the workspace root. Its TestPlatform and simulated-submission measurements
-are labeled separately and do not claim native input or GPU latency. For a quick
-debug-profile execution, use `cargo bench --locked -p open-gpui-docking --bench
-shared_session_cpu --features test-support --profile dev`.
+Run the shared retained-host CPU workload with:
+
+```sh
+cargo bench --locked -p open-gpui-docking --bench shared_session_cpu --features test-support --profile dev
+```
+
+The workload measures TestPlatform layout and simulated submission.

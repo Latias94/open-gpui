@@ -1,6 +1,6 @@
 //! Independent consumers of native window services at Zed target
 //! 635026fabc38440fce5e1767d125026a17b12012. The baseline checks types in uninvoked
-//! closures. The optional ordinary App control uses bench-support without test-support;
+//! closures. The ordinary App control uses the headless test platform;
 //! it qualifies unsupported headless behavior, not native OS restoration or attention.
 
 use open_gpui::{PlatformWindow, Window};
@@ -24,16 +24,16 @@ fn downstream_native_window_service_calls_are_type_only() {
     };
 }
 
-#[cfg(feature = "bench-support")]
+#[cfg(feature = "test-support")]
 #[test]
 fn downstream_ordinary_window_executes_unsupported_native_state_and_attention_calls() {
     use open_gpui::{
         App, AppContext as _, Application, Empty, NoopTextSystem, QuitMode, WindowOptions,
-        bench_platform,
+        headless_test_platform,
     };
     use std::sync::Arc;
 
-    let app = Application::with_platform(bench_platform(None, Arc::new(NoopTextSystem)))
+    let app = Application::with_platform(headless_test_platform(None, Arc::new(NoopTextSystem)))
         .with_quit_mode(QuitMode::Explicit)
         .run_embedded(|_| {});
     let handle = app
@@ -66,7 +66,7 @@ fn downstream_ordinary_window_executes_unsupported_native_state_and_attention_ca
                 initial_bounds
             })
         })
-        .expect("ordinary public native-service calls must execute without test-support");
+        .expect("ordinary public native-service calls must execute on the headless window");
 
     app.update(|app| {
         app.update_window(handle.into(), |_, window, app| {

@@ -1,7 +1,7 @@
 //! Renderer-neutral split layout primitives.
 
 use crate::{Orientation, Size, UiPx, UiRect, ui_point, ui_px, ui_rect, ui_size};
-use open_gpui_motion::{
+use open_gpui_core_util::motion::{
     MotionEdge, MotionPreference, MotionProjection, MotionProjectionClip, MotionProjectionError,
     MotionRect, advanced::MotionSpec, motion_point, motion_px, motion_rect, motion_size,
     reveal_rect_from_edge,
@@ -2078,7 +2078,7 @@ fn overlap_or_touching_span(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use open_gpui_motion::MotionPreference;
+    use open_gpui_core_util::motion::MotionPreference;
 
     fn rect(width: f32, height: f32) -> UiRect {
         at_rect(0.0, 0.0, width, height)
@@ -2501,11 +2501,11 @@ mod tests {
         );
         assert_eq!(
             center_clip.visible_bounds().size.width,
-            open_gpui_motion::motion_px(0.0)
+            open_gpui_core_util::motion::motion_px(0.0)
         );
         assert_eq!(
             center_clip.visible_bounds().size.height,
-            open_gpui_motion::motion_px(center_to.size.height.as_f32())
+            open_gpui_core_util::motion::motion_px(center_to.size.height.as_f32())
         );
 
         let left_transition = insert
@@ -2578,11 +2578,11 @@ mod tests {
         );
         assert_eq!(
             remove_end_clip.visible_bounds().size.width,
-            open_gpui_motion::motion_px(0.0)
+            open_gpui_core_util::motion::motion_px(0.0)
         );
         assert_eq!(
             remove_end_clip.visible_bounds().size.height,
-            open_gpui_motion::motion_px(center_from.size.height.as_f32())
+            open_gpui_core_util::motion::motion_px(center_from.size.height.as_f32())
         );
     }
 

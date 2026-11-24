@@ -1,12 +1,12 @@
 //! Independent public consumers of credential tasks and Zed's macOS-only
 //! 79fe6a645f API at fixed target 635026fabc38440fce5e1767d125026a17b12012.
-//! Runtime cases use bench-support without test-support or native secret storage.
+//! Runtime cases use a headless test platform and isolated credential storage.
 
-#[cfg(feature = "bench-support")]
+#[cfg(feature = "test-support")]
 mod runtime {
     use open_gpui::{
         App, Application, ApplicationHandle, Global, NoopTextSystem, QuitMode, Result, Task,
-        bench_platform,
+        headless_test_platform,
     };
     use std::{
         cell::Cell,
@@ -18,7 +18,7 @@ mod runtime {
     };
 
     fn application() -> ApplicationHandle {
-        Application::with_platform(bench_platform(None, Arc::new(NoopTextSystem)))
+        Application::with_platform(headless_test_platform(None, Arc::new(NoopTextSystem)))
             .with_quit_mode(QuitMode::Explicit)
             .run_embedded(|_| {})
     }
@@ -36,7 +36,7 @@ mod runtime {
 
     #[test]
     fn downstream_app_and_platform_credentials_execute_ready_headless_stubs() {
-        let platform = bench_platform(None, Arc::new(NoopTextSystem));
+        let platform = headless_test_platform(None, Arc::new(NoopTextSystem));
         let app = Application::with_platform(Rc::clone(&platform))
             .with_quit_mode(QuitMode::Explicit)
             .run_embedded(|_| {});
@@ -156,7 +156,7 @@ mod runtime {
     #[cfg(target_os = "macos")]
     #[test]
     fn downstream_add_only_default_is_unsupported_through_platform_and_shared_app() {
-        let platform = bench_platform(None, Arc::new(NoopTextSystem));
+        let platform = headless_test_platform(None, Arc::new(NoopTextSystem));
         let app = Application::with_platform(Rc::clone(&platform))
             .with_quit_mode(QuitMode::Explicit)
             .run_embedded(|_| {});

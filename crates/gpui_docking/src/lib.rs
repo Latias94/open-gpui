@@ -13,18 +13,11 @@
 //! remain application-owned.
 //!
 //! [`persistence`] stores a versioned session document and stable external View
-//! keys without GPUI entities or native handles. Its one-way legacy v2/v3
-//! conversion does not require the compatibility engine.
-//!
-//! The `legacy-docking` feature exposes the displaced graph/controller engine
-//! only under `legacy`. Enabling it never changes the types at the crate root
-//! or in [`prelude`]. It exists to retain explicit platform qualification paths
-//! while their shared-session replacements are validated.
+//! keys without GPUI entities or native handles. It also imports v2/v3
+//! session documents.
 #![warn(missing_docs)]
 
 pub mod adapter;
-#[cfg(feature = "legacy-docking")]
-pub mod legacy;
 pub mod prelude;
 mod visual_style;
 

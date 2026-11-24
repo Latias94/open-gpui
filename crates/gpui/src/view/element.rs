@@ -1,9 +1,9 @@
 use super::{View, ViewCacheKey, ViewElementState};
+use crate::Refineable;
 use crate::{
     AnyElement, App, Bounds, Element, ElementId, EntityId, GlobalElementId, InspectorElementId,
     IntoElement, LayoutId, Pixels, Style, StyleRefinement, Window,
 };
-use open_gpui_refineable::Refineable;
 use std::{any::type_name, mem};
 
 /// The common layout, prepaint and paint element for a [`View`].

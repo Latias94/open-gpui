@@ -49,38 +49,40 @@ fn ui_core_no_longer_exports_motion_contracts() {
 
     assert!(
         !lib_source.contains("pub mod motion"),
-        "motion modules should live in open-gpui-motion, not open-gpui-ui-core"
+        "motion modules belong to open-gpui-core-util"
     );
     assert!(
         !lib_source.contains("pub use motion"),
-        "motion exports should live in open-gpui-motion, not open-gpui-ui-core"
+        "motion exports belong to open-gpui-core-util"
     );
     assert!(
         !prelude_source.contains("MotionSpec"),
         "the ui_core prelude should not re-export motion contracts"
     );
 
-    let _track: Option<open_gpui_motion::advanced::MotionScalarTrack> = None;
-    let _controller: open_gpui_motion::advanced::MotionScalarController<&'static str> =
-        open_gpui_motion::advanced::MotionScalarController::new();
-    let demand = open_gpui_motion::MotionFrameDemand::Idle;
+    let _track: Option<open_gpui_core_util::motion::advanced::MotionScalarTrack> = None;
+    let _controller: open_gpui_core_util::motion::advanced::MotionScalarController<&'static str> =
+        open_gpui_core_util::motion::advanced::MotionScalarController::new();
+    let demand = open_gpui_core_util::motion::MotionFrameDemand::Idle;
     assert!(!demand.needs_frame());
 
-    let model = open_gpui_motion::advanced::MotionPreset::Immediate.resolve_model();
-    let plan = open_gpui_motion::advanced::MotionExecutionPlan::resolve(
-        open_gpui_motion::advanced::MotionPolicyInput::new(
-            open_gpui_motion::MotionPolicyContext::CommittedLayout,
+    let model = open_gpui_core_util::motion::advanced::MotionPreset::Immediate.resolve_model();
+    let plan = open_gpui_core_util::motion::advanced::MotionExecutionPlan::resolve(
+        open_gpui_core_util::motion::advanced::MotionPolicyInput::new(
+            open_gpui_core_util::motion::MotionPolicyContext::CommittedLayout,
             model,
         )
         .with_reduced_motion_final_state(true),
     );
     assert_eq!(
         plan.state(),
-        open_gpui_motion::advanced::MotionExecutionState::Immediate
+        open_gpui_core_util::motion::advanced::MotionExecutionState::Immediate
     );
-    let _execution: Option<open_gpui_motion::advanced::MotionScalarExecution> = None;
-    let _execution_sample: Option<open_gpui_motion::advanced::MotionScalarExecutionSample> = None;
-    let _clip: Option<open_gpui_motion::MotionProjectionClip> = None;
+    let _execution: Option<open_gpui_core_util::motion::advanced::MotionScalarExecution> = None;
+    let _execution_sample: Option<
+        open_gpui_core_util::motion::advanced::MotionScalarExecutionSample,
+    > = None;
+    let _clip: Option<open_gpui_core_util::motion::MotionProjectionClip> = None;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -122,7 +124,7 @@ fn strict_boundary_blockers() -> Vec<BoundaryBlocker> {
         .collect::<BTreeSet<_>>();
 
     for (file, line) in source_lines_with("open_gpui") {
-        if line.contains("open_gpui_motion") {
+        if line.contains("open_gpui_core_util") {
             continue;
         }
         blockers.insert(BoundaryBlocker::new("source reference", file, line));
@@ -155,7 +157,7 @@ fn cargo_dependency_blockers() -> Vec<BoundaryBlocker> {
     uncommented_manifest_lines(&manifest)
         .lines()
         .map(str::trim)
-        .filter(|line| line.starts_with("open_gpui") && !line.starts_with("open_gpui_motion"))
+        .filter(|line| line.starts_with("open_gpui") && !line.starts_with("open_gpui_core_util"))
         .map(|line| BoundaryBlocker::new("cargo dependency", "Cargo.toml", line))
         .collect()
 }

@@ -1,5 +1,5 @@
 use open_gpui::{SubtreeTransform, SubtreeTransformError, SubtreeTransformOrigin, point, px, size};
-use open_gpui_motion::MotionProjectionTransformSample;
+use open_gpui_core_util::motion::MotionProjectionTransformSample;
 
 /// Converts a checked renderer-neutral motion projection into GPUI's subtree transform authority.
 ///
@@ -20,7 +20,9 @@ pub fn subtree_transform_from_motion_projection(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use open_gpui_motion::{MotionProjection, motion_point, motion_px, motion_rect, motion_size};
+    use open_gpui_core_util::motion::{
+        MotionProjection, motion_point, motion_px, motion_rect, motion_size,
+    };
 
     #[test]
     fn checked_motion_sample_converts_to_gpui_transform() {

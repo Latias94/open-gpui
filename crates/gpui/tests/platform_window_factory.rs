@@ -1,4 +1,4 @@
-#![cfg(feature = "bench-support")]
+#![cfg(feature = "test-support")]
 
 //! Public factory consumers using an ordinary App and the existing headless TestPlatform.
 //! TestWindow submission and input observations qualify the creation transaction only;
@@ -10,8 +10,8 @@ use open_gpui::{
     MouseDownEvent, NoopTextSystem, Platform, PlatformAtlas, PlatformHeadlessRenderer,
     PlatformInput, PlatformWindow, PlatformWindowPresentOutcome, QuitMode, Render,
     RequestFrameOptions, Scene, Size, Styled as _, Window, WindowBounds,
-    WindowInitialPresentationStatus, WindowKind, WindowOpenFailureStage, WindowOptions,
-    bench_platform, div, point, px, rgb, size,
+    WindowInitialPresentationStatus, WindowKind, WindowOpenFailureStage, WindowOptions, div,
+    headless_test_platform, point, px, rgb, size,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -87,7 +87,7 @@ impl Render for Counter {
 
 #[test]
 fn public_factory_receives_reserved_identity_resolved_params_and_snapshot_once() {
-    let platform = bench_platform(None, Arc::new(NoopTextSystem::new()));
+    let platform = headless_test_platform(None, Arc::new(NoopTextSystem::new()));
     let expected_displays = platform.display_snapshot();
     let app = headless_app(platform.clone());
     let reserved = Cell::new(None);
@@ -264,7 +264,10 @@ fn public_factory_receives_reserved_identity_resolved_params_and_snapshot_once()
 
 #[test]
 fn public_factory_typed_error_preserves_platform_stage_without_building_root() {
-    let app = headless_app(bench_platform(None, Arc::new(NoopTextSystem::new())));
+    let app = headless_app(headless_test_platform(
+        None,
+        Arc::new(NoopTextSystem::new()),
+    ));
     let reserved = Cell::new(None);
     let calls = Cell::new(0);
     let root_called = Cell::new(false);
@@ -302,7 +305,7 @@ fn public_factory_typed_error_preserves_platform_stage_without_building_root() {
 #[test]
 fn public_root_panic_and_close_retire_the_original_factory_window_before_retry() {
     for panic_in_root in [true, false] {
-        let platform = bench_platform(None, Arc::new(NoopTextSystem::new()));
+        let platform = headless_test_platform(None, Arc::new(NoopTextSystem::new()));
         let app = headless_app(platform.clone());
         let reserved = Cell::new(None);
         let native = RefCell::new(None);
@@ -394,7 +397,7 @@ impl Drop for RefusingRenderer {
 fn public_initial_presentation_refusal_releases_original_window_and_renderer() {
     let refuse = Rc::new(Cell::new(true));
     let dropped = Rc::new(Cell::new(0));
-    let platform = bench_platform(
+    let platform = headless_test_platform(
         Some(Box::new({
             let refuse = refuse.clone();
             let dropped = dropped.clone();
@@ -458,7 +461,10 @@ fn public_initial_presentation_refusal_releases_original_window_and_renderer() {
 fn public_owner_and_kind_preflight_refuse_before_invoking_the_factory() {
     use open_gpui::popup::{PopupNotSupportedError, PopupOptions};
 
-    let app = headless_app(bench_platform(None, Arc::new(NoopTextSystem::new())));
+    let app = headless_app(headless_test_platform(
+        None,
+        Arc::new(NoopTextSystem::new()),
+    ));
     let parent = app
         .update(|app| app.open_window_detailed(options(), |_, app| app.new(|_| Empty)))
         .unwrap();

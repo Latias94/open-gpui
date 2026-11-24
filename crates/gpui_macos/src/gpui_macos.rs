@@ -11,9 +11,6 @@ mod keyboard;
 mod pasteboard;
 mod system_notifications;
 
-#[cfg(feature = "screen-capture")]
-mod screen_capture;
-
 use open_gpui_apple::metal_renderer as renderer;
 
 mod platform;

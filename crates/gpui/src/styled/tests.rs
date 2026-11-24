@@ -1,6 +1,6 @@
 use super::*;
+use crate::Refineable;
 use crate::{Position, Style, div};
-use open_gpui_refineable::Refineable;
 use serde_json::json;
 
 #[test]

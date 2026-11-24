@@ -1,12 +1,12 @@
 //! Ordinary consumers of Zed's 8e4e5a39eed932d943cb7a3e7078885b75d1ea54 API
 //! at fixed target 635026fabc38440fce5e1767d125026a17b12012.
 //! Windows exercises the actual headless native Platform without starting its loop.
-//! The optional App/Window control uses the returning benchmark platform, not native
+//! The optional App/Window control uses the returning headless test platform, not native
 //! windows or GPUI test-support. Neither path qualifies macOS native titlebars.
 
 use open_gpui::{App, Platform, WindowAppearance};
 
-#[cfg(any(target_os = "windows", feature = "bench-support"))]
+#[cfg(any(target_os = "windows", feature = "test-support"))]
 const REQUESTS: [Option<WindowAppearance>; 13] = [
     None,
     Some(WindowAppearance::Dark),
@@ -50,16 +50,16 @@ fn downstream_native_windows_appearance_requests_preserve_the_system_getter() {
     drop(platform);
 }
 
-#[cfg(feature = "bench-support")]
+#[cfg(feature = "test-support")]
 #[test]
 fn downstream_ordinary_app_appearance_requests_preserve_the_headless_window() {
     use open_gpui::{
         AppContext as _, Application, Empty, NoopTextSystem, QuitMode, WindowOptions,
-        bench_platform,
+        headless_test_platform,
     };
     use std::{rc::Rc, sync::Arc};
 
-    let platform = bench_platform(None, Arc::new(NoopTextSystem));
+    let platform = headless_test_platform(None, Arc::new(NoopTextSystem));
     let app = Application::with_platform(Rc::clone(&platform))
         .with_quit_mode(QuitMode::Explicit)
         .run_embedded(|_| {});
@@ -80,7 +80,7 @@ fn downstream_ordinary_app_appearance_requests_preserve_the_headless_window() {
                 |_, app| app.new(|_| Empty),
             )
         })
-        .expect("the ordinary benchmark platform must open a headless Window");
+        .expect("the headless test platform must open a Window");
 
     for request in REQUESTS {
         app.update(|app| {

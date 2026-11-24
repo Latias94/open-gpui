@@ -16,7 +16,7 @@ use open_gpui::{
     ScrollChainFence, ScrollHandle, ScrollViewportChangeSource, ScrollViewportProgrammaticSource,
     SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
-use open_gpui_motion::{MotionFrameDriver, MotionPreference, advanced::MotionPreset};
+use open_gpui_core_util::motion::{MotionFrameDriver, MotionPreference, advanced::MotionPreset};
 use open_gpui_ui_core::virtualizer::VirtualizerGeometryCache;
 use open_gpui_ui_core::{
     AccessibleAction, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx, VirtualizerSnapshot,

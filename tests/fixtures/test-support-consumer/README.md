@@ -30,8 +30,6 @@ test-support change introduced by `95cd535a5fad96d649513f96c5784ceefd379e47`.
 | --- | --- |
 | `--no-default-features` | Checks availability of the ordinary `App`, `AsyncApp`, GPUI background executor, scheduler local/background executor identity queries, and the process hint. Runs the ordinary home-directory binary. Does not construct an App or a Test context. |
 | Default, or `--no-default-features --features test-support` | Also constructs an actual `TestAppContext` through the public test macro, executes background-to-foreground entity updates, owns and closes a real Test window, and checks typed/erased/weak ownership, release callbacks, retained resources before effect cleanup, and snapshots. Forwards utility `test-support` to the ordinary binary. |
-| `--no-default-features --features bench-support` | Also launches a returning `Application` and executes a real `BenchAppContext`, with neither GPUI nor utility test support enabled by this fixture. Criterion is required only for this workflow. |
-| `--features bench-support` | Runs all of the above. The returning application exists before a Test context is created; it and the subsequent benchmark retain their own real executor identity after `test_scheduler_created()` becomes true in that same process. |
 | `--features leak-detection` | Explicitly forwards `open_gpui/leak-detection`, independently of test support. |
 
 The ordinary binary opens the public home directory for reading and applies the public path
@@ -109,8 +107,6 @@ selection containing test support:
 
 ```text
 cargo nextest run --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --locked --target-dir target --no-default-features --test public_api --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --locked --target-dir target --no-default-features --features bench-support --test public_api --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --locked --target-dir target --features bench-support --test public_api --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 The last selection exercises the returning application and real benchmark with test support

@@ -15,6 +15,7 @@
 //! and Tailwind-like styling that you can use to build your own custom elements. Div is
 //! constructed by combining these two systems into an all-in-one element.
 
+use crate::Refineable;
 use crate::{
     AcceptedFrameFence, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, BackGestureEvent,
     Bounds, ClickEvent, DispatchPhase, Display, Element, ElementId, Entity, EntityId,
@@ -30,7 +31,6 @@ use crate::{
 };
 use open_gpui_collections::HashMap;
 use open_gpui_core_util::ResultExt;
-use open_gpui_refineable::Refineable;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},

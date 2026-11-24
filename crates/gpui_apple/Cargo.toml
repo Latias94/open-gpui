@@ -21,7 +21,6 @@ doctest = false
 [features]
 default = []
 test-support = ["open_gpui/test-support"]
-bench-support = ["open_gpui/bench-support"]
 runtime_shaders = []
 font-kit = ["dep:font-kit", "dep:core-text", "dep:objc2-core-text", "dep:pathfinder_geometry"]
 

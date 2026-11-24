@@ -192,18 +192,3 @@ fn builder_preserves_settings_and_custom_noncopy_target_projection() {
     assert_eq!(default.epsilon, DEFAULT_SPRING_EPSILON);
     assert_eq!(default.target.resolve(1.5), AnimationPhase(1.5));
 }
-
-#[test]
-fn solver_reexports_are_the_motion_types_and_function() {
-    let config: open_gpui_motion::SpringConfig = SpringConfig::new(100.0, 10.0, 1.0);
-    let state: SpringState = open_gpui_motion::SpringState {
-        position: 0.0,
-        velocity: 2.0,
-    };
-    let accepts_motion_state = |state: open_gpui_motion::SpringState| state;
-    assert_eq!(accepts_motion_state(state), state);
-    let (duration, easing) = sampled_easing(config, 0.001);
-    let (motion_duration, motion_easing) = open_gpui_motion::sampled_easing(config, 0.001);
-    assert_eq!(duration, motion_duration);
-    assert_eq!(easing(0.25), motion_easing(0.25));
-}

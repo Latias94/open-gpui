@@ -11,10 +11,10 @@ use open_gpui::{
 use open_gpui_ui_components::{
     AlertDialog, AlertDialogActionKind, AlertDialogIntent, AlertDialogOpenMode, ButtonVariant,
     ColorState, ContextMenu, Dialog, DialogOpenMode, HoverCard, HoverCardContentKind,
-    HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode, Menu, MenuItem,
-    MenuItemDescriptor, MenuItemKind, MenuOpenMode, MenuSelection, MenuSubmenuSurface, Popover,
-    PopoverOpenMode, Sheet, SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide,
-    Tooltip, TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent,
+    HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode, Menu, MenuItem, MenuItemKind,
+    MenuOpenMode, MenuSelection, MenuSubmenuSurface, Popover, PopoverOpenMode, Sheet,
+    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, Tooltip, TooltipContentKind,
+    TooltipDelayPolicy, TooltipOpenIntent,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, FocusTargetRegistration, GpuiOverlayAdapterConfig,
         GpuiOverlayPlacement, OverlayLayerPhase, OverlayOpenIntent, WindowFocusFallbackLease,
@@ -3005,42 +3005,6 @@ fn menu_icon_trigger_keeps_accessible_menu_behavior_and_compacts_trigger(
     assert_eq!(state.content_role(), Role::Menu);
     assert!(state.trigger_selected());
     assert_eq!(state.focused_value(), Some("copy"));
-}
-
-#[test]
-fn menu_items_project_core_command_descriptors() {
-    let descriptor = open_gpui_command::CommandDescriptor::new("workspace.open", "Open Workspace")
-        .shortcut("Ctrl+Shift+O")
-        .when("workspace")
-        .menu_path(["File", "Open"]);
-    let state = Menu::new("file-menu", "File")
-        .open(true)
-        .item(MenuItem::from_command_descriptor(&descriptor))
-        .state();
-
-    assert_eq!(descriptor.menu_path_ref(), ["File", "Open"]);
-    assert_eq!(state.items()[0].value(), "workspace.open");
-    assert_eq!(state.items()[0].label(), "Open Workspace");
-    assert_eq!(state.items()[0].shortcut(), Some("Ctrl+Shift+O"));
-    assert_eq!(state.items()[0].when_ref(), Some("workspace"));
-    assert!(state.items()[0].activation_enabled());
-
-    let context_state = ContextMenu::new("context-menu", "Context menu")
-        .open(true)
-        .item(MenuItem::from_command_descriptor(&descriptor))
-        .state();
-    assert_eq!(
-        context_state.menu().items()[0].shortcut(),
-        Some("Ctrl+Shift+O")
-    );
-    assert_eq!(
-        context_state.menu().items()[0].when_ref(),
-        Some("workspace")
-    );
-
-    let menu_descriptor = MenuItemDescriptor::from_command_descriptor(&descriptor);
-    assert_eq!(menu_descriptor.shortcut_ref(), Some("Ctrl+Shift+O"));
-    assert_eq!(menu_descriptor.when_ref(), Some("workspace"));
 }
 
 #[test]

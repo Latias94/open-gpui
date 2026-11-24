@@ -1,5 +1,3 @@
-#![cfg_attr(target_family = "wasm", no_main)]
-
 //! Demonstrates posting, replacing, dismissing, and responding to system notifications.
 //! Adapted from Zed 635026fabc38440fce5e1767d125026a17b12012, including its startup font loading.
 //! Delivery and dismissal are best-effort and depend on the platform's notification service.
@@ -180,14 +178,6 @@ fn run_example() {
     });
 }
 
-#[cfg(not(target_family = "wasm"))]
 fn main() {
-    run_example();
-}
-
-#[cfg(target_family = "wasm")]
-#[wasm_bindgen::prelude::wasm_bindgen(start)]
-pub fn start() {
-    open_gpui_platform::web_init();
     run_example();
 }

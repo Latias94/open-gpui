@@ -17,8 +17,8 @@ const DISALLOWED_ZED_GIT_SOURCES: &[&str] = &[
     "zed-industries/wgpu",
     "zed-industries/xim",
 ];
-const MOTION_MANIFEST_PATH: &str = "crates/motion/Cargo.toml";
-const DISALLOWED_MOTION_DEPENDENCY_NAMES: &[&str] = &[
+const CORE_UTIL_MANIFEST_PATH: &str = "crates/gpui_util/Cargo.toml";
+const DISALLOWED_CORE_UTIL_DEPENDENCY_NAMES: &[&str] = &[
     "open-gpui",
     "open-gpui-apple",
     "open-gpui-docking",
@@ -27,7 +27,6 @@ const DISALLOWED_MOTION_DEPENDENCY_NAMES: &[&str] = &[
     "open-gpui-platform",
     "open-gpui-ui-components",
     "open-gpui-ui-core",
-    "open-gpui-web",
     "open-gpui-wgpu",
     "open-gpui-windows",
     "open_gpui",
@@ -38,7 +37,6 @@ const DISALLOWED_MOTION_DEPENDENCY_NAMES: &[&str] = &[
     "open_gpui_platform",
     "open_gpui_ui_components",
     "open_gpui_ui_core",
-    "open_gpui_web",
     "open_gpui_wgpu",
     "open_gpui_windows",
 ];
@@ -148,9 +146,11 @@ fn scan_manifest_dependency_table(
                 "{relative}:{section}.{alias}: disallowed dependency name `{alias_name}`"
             ));
         }
-        if relative == MOTION_MANIFEST_PATH && is_disallowed_motion_dependency_name(alias_name) {
+        if relative == CORE_UTIL_MANIFEST_PATH
+            && is_disallowed_core_util_dependency_name(alias_name)
+        {
             failures.push(format!(
-                "{relative}:{section}.{alias}: motion crate must not depend on UI/domain/platform crate `{alias_name}`"
+                "{relative}:{section}.{alias}: core utilities must not depend on UI/domain/platform crate `{alias_name}`"
             ));
         }
 
@@ -160,11 +160,11 @@ fn scan_manifest_dependency_table(
                     "{relative}:{section}.{alias}: disallowed dependency package `{package_name}`"
                 ));
             }
-            if relative == MOTION_MANIFEST_PATH
-                && is_disallowed_motion_dependency_name(package_name)
+            if relative == CORE_UTIL_MANIFEST_PATH
+                && is_disallowed_core_util_dependency_name(package_name)
             {
                 failures.push(format!(
-                    "{relative}:{section}.{alias}: motion crate must not depend on UI/domain/platform package `{package_name}`"
+                    "{relative}:{section}.{alias}: core utilities must not depend on UI/domain/platform package `{package_name}`"
                 ));
             }
         }
@@ -244,8 +244,8 @@ fn is_disallowed_dependency_name(name: &str) -> bool {
     DISALLOWED_DEPENDENCY_NAMES.contains(&name)
 }
 
-fn is_disallowed_motion_dependency_name(name: &str) -> bool {
-    DISALLOWED_MOTION_DEPENDENCY_NAMES.contains(&name)
+fn is_disallowed_core_util_dependency_name(name: &str) -> bool {
+    DISALLOWED_CORE_UTIL_DEPENDENCY_NAMES.contains(&name)
 }
 
 fn is_zed_monorepo_source(source: &str) -> bool {
@@ -440,36 +440,9 @@ scap = { git = 'https://github.com/zed-industries/scap.git', package = 'zed-scap
     }
 
     #[test]
-    fn manifest_scan_allows_open_gpui_scap_fork() {
-        let failures = manifest_failures(
-            r#"
-[dependencies]
-scap = { git = 'https://github.com/Latias94/scap', branch = 'main', package = 'open-gpui-scap', version = '0.1.0-beta.1' }
-"#,
-        );
-
-        assert!(
-            failures.is_empty(),
-            "expected Open GPUI scap fork to be allowed, got: {failures:?}"
-        );
-    }
-
-    #[test]
-    fn manifest_scan_allows_official_reqwest_fork() {
-        let failures = manifest_failures(
-            r#"
-[dependencies]
-reqwest = { git = 'https://github.com/zed-industries/reqwest.git', rev = '33bc764aa15ff7b200bf7c93bd96e24878d53e14', package = 'zed-reqwest', version = '0.12.15-zed' }
-"#,
-        );
-
-        assert!(failures.is_empty(), "{failures:?}");
-    }
-
-    #[test]
-    fn manifest_scan_rejects_motion_crate_ui_domain_and_platform_dependencies() {
+    fn manifest_scan_rejects_core_util_ui_domain_and_platform_dependencies() {
         let failures = manifest_failures_at(
-            MOTION_MANIFEST_PATH,
+            CORE_UTIL_MANIFEST_PATH,
             r#"
 [dependencies]
 open_gpui_ui_core.workspace = true
@@ -486,12 +459,12 @@ open_gpui_docking.workspace = true
     }
 
     #[test]
-    fn manifest_scan_allows_motion_crate_without_ui_domain_or_platform_dependencies() {
+    fn manifest_scan_allows_core_util_without_ui_domain_or_platform_dependencies() {
         let failures = manifest_failures_at(
-            MOTION_MANIFEST_PATH,
+            CORE_UTIL_MANIFEST_PATH,
             r#"
 [package]
-name = "open-gpui-motion"
+name = "open-gpui-core-util"
 
 [dependencies]
 "#,
@@ -499,7 +472,7 @@ name = "open-gpui-motion"
 
         assert!(
             failures.is_empty(),
-            "expected pure motion manifest to be allowed, got: {failures:?}"
+            "expected headless utility manifest to be allowed, got: {failures:?}"
         );
     }
 

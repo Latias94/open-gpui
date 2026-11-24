@@ -314,10 +314,7 @@ impl WgpuContext {
         }
     }
 
-    #[cfg(all(
-        not(target_family = "wasm"),
-        any(test, feature = "bench-support", feature = "test-support")
-    ))]
+    #[cfg(all(not(target_family = "wasm"), any(test, feature = "test-support")))]
     pub(crate) fn new_headless() -> anyhow::Result<(Self, wgpu::TextureFormat)> {
         // Creating a device takes tens of milliseconds, and benchmarks create a headless
         // renderer for every window they open, so the process shares one device until it
@@ -336,10 +333,7 @@ impl WgpuContext {
         Ok(created)
     }
 
-    #[cfg(all(
-        not(target_family = "wasm"),
-        any(test, feature = "bench-support", feature = "test-support")
-    ))]
+    #[cfg(all(not(target_family = "wasm"), any(test, feature = "test-support")))]
     fn create_headless() -> anyhow::Result<(Self, wgpu::TextureFormat)> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY | wgpu::Backends::GL,
@@ -366,14 +360,6 @@ impl WgpuContext {
 
                     match Self::create_device(&adapter).await {
                         Ok((device, queue, dual_source_blending, color_texture_format)) => {
-                            #[cfg(feature = "bench-support")]
-                            if adapter_info.device_type == wgpu::DeviceType::Cpu {
-                                log::error!(
-                                    "Headless renderer selected software adapter {:?}; \
-                                     benchmark results measure CPU software rendering, not hardware GPU rendering",
-                                    adapter_info.name
-                                );
-                            }
                             return Ok((
                                 adapter,
                                 device,
@@ -408,10 +394,7 @@ impl WgpuContext {
         ))
     }
 
-    #[cfg(all(
-        not(target_family = "wasm"),
-        any(test, feature = "bench-support", feature = "test-support")
-    ))]
+    #[cfg(all(not(target_family = "wasm"), any(test, feature = "test-support")))]
     /// Both candidates are 8-bit RGBA-ordered or BGRA-ordered formats: headless readback
     /// copies rows as 4 bytes per pixel and only swizzles, so no other formats may be added
     /// here without updating it.

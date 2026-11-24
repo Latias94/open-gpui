@@ -12,7 +12,10 @@ use crate::{
     SubtreeClipError, TextRun, Window, black, phi, point, px, quad, rems, size,
 };
 use open_gpui_collections::HashSet;
-use open_gpui_refineable::Refineable;
+mod refinement;
+
+pub use open_gpui_macros::Refineable;
+pub use refinement::{IsEmpty, Refineable};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

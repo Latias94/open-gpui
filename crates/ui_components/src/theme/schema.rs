@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use open_gpui_motion::MotionPreference;
+use open_gpui_core_util::motion::MotionPreference;
 use open_gpui_ui_core::{
     Density, SizeScale, ThemeDesignScales, ThemeElevationLayer, ThemeElevationScale,
     ThemeRadiusScale, ThemeSpacingScale, ThemeTypographyScale, TokenKey, semantic,

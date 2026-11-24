@@ -22,26 +22,17 @@ workspace = true
 [features]
 default = ["font-kit", "wayland", "x11", "windows-manifest"]
 test-support = [
-    "open_gpui_bench_metrics?/test-support",
     "open_gpui_collections/test-support",
-    "open_gpui_http_client/test-support",
     "wayland",
     "x11",
     "proptest",
 ]
-bench-support = ["profiler", "dep:criterion", "dep:open_gpui_bench_metrics"]
-bench = ["bench-support"]
 inspector = ["open_gpui_macros/inspector"]
 leak-detection = []
 wasm-threads = ["open_gpui_scheduler/wasm-threads"]
 font-kit = []
 wayland = []
-x11 = [
-    "scap?/x11",
-]
-screen-capture = [
-    "scap",
-]
+x11 = []
 windows-manifest = ["dep:embed-resource"]
 profiler = ["dep:hdrhistogram"]
 stacker = ["dep:stacksafe"]
@@ -63,9 +54,6 @@ anyhow.workspace = true
 async-task.workspace = true
 backtrace.workspace = true
 bitflags.workspace = true
-criterion = { workspace = true, optional = true }
-open_gpui_bench_metrics = { workspace = true, optional = true }
-
 open_gpui_collections.workspace = true
 ctor.workspace = true
 derive_more.workspace = true
@@ -74,7 +62,6 @@ futures.workspace = true
 futures-concurrency.workspace = true
 open_gpui_macros.workspace = true
 open_gpui_shared_string.workspace = true
-open_gpui_http_client.workspace = true
 image.workspace = true
 icu_segmenter.workspace = true
 inventory.workspace = true
@@ -90,9 +77,7 @@ profiling.workspace = true
 rand.workspace = true
 raw-window-handle = "0.6"
 regex.workspace = true
-open_gpui_refineable.workspace = true
 open_gpui_scheduler.workspace = true
-open_gpui_motion.workspace = true
 resvg = { version = "0.46.0", default-features = false, features = [
     "text",
     "system-fonts",
@@ -110,7 +95,9 @@ slotmap.workspace = true
 smallvec.workspace = true
 stacksafe = { workspace = true, optional = true }
 strum.workspace = true
-open_gpui_sum_tree.workspace = true
+open_gpui_tracing.workspace = true
+rayon.workspace = true
+tracing.workspace = true
 taffy = { version = "0.15", default-features = false, features = [
     "std",
     "taffy_tree",
@@ -129,7 +116,6 @@ tiny-skia-path = "0.11"
 pin-project = "1.1.10"
 spin = "0.12.3"
 pollster.workspace = true
-url.workspace = true
 uuid.workspace = true
 web-time.workspace = true
 heapless.workspace = true
@@ -159,9 +145,6 @@ objc2-core-video.workspace = true
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))'.dependencies]
 pathfinder_geometry = "0.5"
 
-[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))'.dependencies]
-scap = { workspace = true, optional = true }
-
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 libc.workspace = true
 
@@ -179,10 +162,10 @@ lyon_extra = "1.1.0"
 rand.workspace = true
 open_gpui_scheduler = { workspace = true, features = ["test-support"] }
 syn.workspace = true
+tempfile.workspace = true
 trybuild.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
-open_gpui_http_client = { workspace = true, features = ["test-support"] }
 proptest = { workspace = true, features = ["fork", "timeout"] }
 
 [build-dependencies]

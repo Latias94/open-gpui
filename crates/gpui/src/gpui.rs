@@ -21,11 +21,9 @@ pub static GPUI_MANIFEST_DIR: &'static str = env!("CARGO_MANIFEST_DIR");
 #[macro_use]
 mod action;
 mod app;
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
-mod bench;
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+#[cfg(any(test, feature = "test-support"))]
 mod seeds;
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+#[cfg(any(test, feature = "test-support"))]
 pub use seeds::calculate_seeds;
 
 mod arena;
@@ -44,9 +42,6 @@ mod elements;
 mod executor;
 mod platform_scheduler;
 pub(crate) use platform_scheduler::PlatformScheduler;
-#[cfg(feature = "bench-support")]
-#[path = "../benches/support/scene.rs"]
-pub mod bench_scene;
 mod geometry;
 mod gestures;
 mod global;
@@ -69,15 +64,13 @@ pub mod profiler;
     target_os = "linux",
     target_family = "wasm",
     test,
-    feature = "test-support",
-    feature = "bench-support"
+    feature = "test-support"
 ))]
 #[expect(missing_docs)]
 pub mod queue;
-#[cfg(any(test, feature = "bench-support"))]
+#[cfg(any(test, feature = "test-support"))]
 pub mod randomized_element_tree;
 mod scene;
-mod shared_uri;
 mod spring;
 mod style;
 mod styled;
@@ -140,7 +133,7 @@ pub use geometry::*;
 pub use gestures::*;
 pub use global::*;
 pub use open_gpui_macros::{
-    AppContext, IntoElement, Render, VisualContext, bench, property_test, register_action, test,
+    AppContext, IntoElement, Render, VisualContext, property_test, register_action, test,
 };
 
 pub use image_texture::*;
@@ -150,8 +143,6 @@ pub use interactive::*;
 use key_dispatch::*;
 pub use keymap::*;
 pub use open_gpui_core_util::arc_cow::ArcCow;
-pub use open_gpui_http_client as http_client;
-pub use open_gpui_refineable::*;
 pub use open_gpui_shared_string::*;
 pub use path_builder::*;
 pub(crate) use path_winding::PathTiles;
@@ -162,12 +153,10 @@ pub use profiler::*;
     target_os = "linux",
     target_family = "wasm",
     test,
-    feature = "test-support",
-    feature = "bench-support"
+    feature = "test-support"
 ))]
 pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
 pub use scene::*;
-pub use shared_uri::*;
 pub use spring::*;
 use std::{any::Any, future::Future};
 pub use style::*;

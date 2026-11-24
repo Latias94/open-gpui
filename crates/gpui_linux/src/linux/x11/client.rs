@@ -15,7 +15,6 @@ use open_gpui::{
     WindowInitialPresentationOrder, WindowMutationSupport,
 };
 use open_gpui_collections::HashMap;
-use open_gpui_http_client::Url;
 use open_gpui_util::ResultExt as _;
 use smallvec::SmallVec;
 use std::{
@@ -26,6 +25,7 @@ use std::{
     rc::{Rc, Weak},
     time::{Duration, Instant},
 };
+use url::Url;
 
 use x11rb::{
     connection::{Connection, RequestConnection},
@@ -1853,21 +1853,6 @@ impl X11Client {
         )
         .log_err()
         .map(|display| Rc::new(display) as Rc<dyn PlatformDisplay>)
-    }
-
-    #[cfg(feature = "screen-capture")]
-    pub(crate) fn is_screen_capture_supported(&self) -> bool {
-        true
-    }
-
-    #[cfg(feature = "screen-capture")]
-    pub(crate) fn screen_capture_sources(
-        &self,
-    ) -> futures::channel::oneshot::Receiver<
-        anyhow::Result<Vec<Rc<dyn open_gpui::ScreenCaptureSource>>>,
-    > {
-        let foreground_executor = self.0.borrow().common.borrow().foreground_executor.clone();
-        open_gpui::scap_screen_capture::scap_screen_sources(&foreground_executor)
     }
 
     pub(crate) fn open_window(

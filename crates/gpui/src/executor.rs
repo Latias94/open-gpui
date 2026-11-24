@@ -589,9 +589,7 @@ mod test {
 
         let platform = TestPlatform::new(background_executor.clone(), foreground_executor);
         let asset_source = Arc::new(());
-        let http_client = open_gpui_http_client::FakeHttpClient::with_404_response();
-
-        let app = App::new_app(platform, asset_source, http_client);
+        let app = App::new_app(platform, asset_source);
         (dispatcher, background_executor, app)
     }
 

@@ -4,12 +4,8 @@ use super::super::ComponentContractEntry;
 
 /// Scenarios required for every official component contract.
 ///
-/// The test-side artifacts own package, target, test, and contract binding coordinates. These ids
-/// express only the product requirement that every component participates in both projections.
-pub const COMPONENT_CONTRACT_GLOBAL_SCENARIOS: &[&str] = &[
-    "gallery.component-contract.metadata",
-    "public-api.component-contract.exports",
-];
+/// The integration test owns the executable coordinates for the public export check.
+pub const COMPONENT_CONTRACT_GLOBAL_SCENARIOS: &[&str] = &["public-api.component-contract.exports"];
 
 /// Product-level metadata for the 48 official component contracts.
 pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
@@ -44,14 +40,10 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
     ComponentContractEntry::new("Combobox", 1, "choice-search"),
     ComponentContractEntry::new("Command", 1, "choice-search"),
     ComponentContractEntry::new("Label", 1, "form"),
-    ComponentContractEntry::new("TextInput", 1, "form")
-        .with_required_scenarios(&["gallery.focus-a11y.devtools-projection"]),
-    ComponentContractEntry::new("Textarea", 1, "form")
-        .with_required_scenarios(&["gallery.focus-a11y.devtools-projection"]),
-    ComponentContractEntry::new("Field", 1, "form").with_required_scenarios(&[
-        "a11y.field.final-tree-relations",
-        "gallery.focus-a11y.devtools-projection",
-    ]),
+    ComponentContractEntry::new("TextInput", 1, "form"),
+    ComponentContractEntry::new("Textarea", 1, "form"),
+    ComponentContractEntry::new("Field", 1, "form")
+        .with_required_scenarios(&["a11y.field.final-tree-relations"]),
     ComponentContractEntry::new("Tabs", 1, "navigation")
         .with_required_scenarios(&["a11y.tabs.final-tree-actions"]),
     ComponentContractEntry::new("ScrollArea", 1, "layout"),

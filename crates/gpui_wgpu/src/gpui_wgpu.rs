@@ -12,10 +12,7 @@ pub use wgpu_atlas::*;
 pub use wgpu_context::{CompositorGpuHint, DeviceErrorState, WgpuBackend, WgpuContext};
 #[cfg(target_family = "wasm")]
 pub use wgpu_context::{PreparedWebGraphics, WebBackendPreference, WebGpuContextOptions};
-#[cfg(all(
-    not(target_family = "wasm"),
-    any(test, feature = "bench-support", feature = "test-support")
-))]
+#[cfg(all(not(target_family = "wasm"), any(test, feature = "test-support")))]
 pub use wgpu_renderer::WgpuHeadlessRenderer;
 pub use wgpu_renderer::{
     GpuContext, WgpuRenderer, WgpuSceneColorSpace, WgpuSceneRecording, WgpuSceneRenderer,

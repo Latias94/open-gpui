@@ -50,17 +50,16 @@ use a11y_support::node_with_label as a11y_node_with_label;
 
 #[test]
 fn resolved_action_projects_consistent_facts_to_navigation_and_action_surfaces() {
-    let command = open_gpui_command::CommandDescriptor::new("workspace.open", "Open Workspace")
-        .icon(open_gpui_command::CommandIconDescriptor::new("folder-open").fallback_label("O"))
+    let descriptor = ActionDescriptor::new("workspace.open", "Open Workspace")
+        .icon(open_gpui_ui_components::ActionIconDescriptor::new("folder-open").fallback_label("O"))
         .shortcut("Ctrl+O")
         .disabled_reason("No workspace")
         .tooltip("Open a workspace")
         .accessibility_description("Opens the workspace picker");
-    let action = ActionDescriptor::from_command_descriptor(&command).resolve_with(
-        &|icon: &open_gpui_ui_components::ActionIconDescriptor| {
+    let action =
+        descriptor.resolve_with(&|icon: &open_gpui_ui_components::ActionIconDescriptor| {
             ResolvedActionIcon::resolved(icon.clone(), "O")
-        },
-    );
+        });
 
     let toolbar_state = ToolbarState::resolve(
         Orientation::Horizontal,

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use open_gpui::{Rgba, rgb};
-use open_gpui_motion::MotionPreference;
+use open_gpui_core_util::motion::MotionPreference;
 use open_gpui_ui_core::{Density, ThemeDesignScales, TokenKey};
 
 use crate::color::{ColorIntent, ColorState};

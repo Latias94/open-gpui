@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use open_gpui_motion::MotionPreference;
+use open_gpui_core_util::motion::MotionPreference;
 
 use crate::{Density, Size, SizeScale, UiPx, ui_px};
 

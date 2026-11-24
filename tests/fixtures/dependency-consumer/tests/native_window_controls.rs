@@ -1,6 +1,6 @@
 //! Independent consumers of native window controls at official Zed target
 //! 635026fabc38440fce5e1767d125026a17b12012. Baseline closures are uninvoked;
-//! bench-support executes an ordinary embedded App without test-support or a renderer.
+//! the headless test platform runs an ordinary embedded App.
 
 use open_gpui::{
     AnyWindowHandle, App, Bounds, Corners, Entity, FocusHandle, InputPreference, KeystrokeEvent,
@@ -79,15 +79,15 @@ fn downstream_native_window_controls_and_complete_popup_schema_are_type_only() {
     }
 }
 
-#[cfg(feature = "bench-support")]
+#[cfg(feature = "test-support")]
 #[test]
 fn downstream_ordinary_app_executes_noop_controls_and_refuses_native_popups() {
     use open_gpui::{
-        App, AppContext as _, Application, Empty, NoopTextSystem, QuitMode, bench_platform,
+        App, AppContext as _, Application, Empty, NoopTextSystem, QuitMode, headless_test_platform,
     };
     use std::{cell::Cell, sync::Arc};
 
-    let app = Application::with_platform(bench_platform(None, Arc::new(NoopTextSystem)))
+    let app = Application::with_platform(headless_test_platform(None, Arc::new(NoopTextSystem)))
         .with_quit_mode(QuitMode::Explicit)
         .run_embedded(|_| {});
     let parent = app
@@ -144,7 +144,7 @@ fn downstream_ordinary_app_executes_noop_controls_and_refuses_native_popups() {
                 original
             })
         })
-        .expect("ordinary public control calls must execute without test-support");
+        .expect("ordinary public control calls must execute on the headless window");
 
     for grab in [false, true] {
         let root_built = Cell::new(false);

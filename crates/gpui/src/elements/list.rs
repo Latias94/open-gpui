@@ -9,6 +9,7 @@
 
 #[cfg(test)]
 use crate::IntoElement;
+use crate::Refineable as _;
 use crate::{
     Along as _, AnyElement, App, AvailableSpace, Axis, Bounds, DispatchPhase, Edges, Element,
     EntityId, FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, Overflow,
@@ -16,13 +17,14 @@ use crate::{
     Styled, SubtreeClip, Window, point, px, size,
 };
 use open_gpui_collections::VecDeque;
-use open_gpui_refineable::Refineable as _;
-use open_gpui_sum_tree::{Bias, Dimensions, SumTree};
 use std::{
     cell::{Cell, RefCell},
     ops::Range,
     rc::Rc,
 };
+use sum_tree::{Bias, Dimensions, SumTree};
+
+mod sum_tree;
 
 type RenderItemFn = dyn FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static;
 
@@ -1740,7 +1742,7 @@ impl Styled for List {
     }
 }
 
-impl open_gpui_sum_tree::Item for ListItem {
+impl sum_tree::Item for ListItem {
     type Summary = ListItemSummary;
 
     fn summary(&self, _: ()) -> Self::Summary {
@@ -1774,7 +1776,7 @@ impl open_gpui_sum_tree::Item for ListItem {
     }
 }
 
-impl open_gpui_sum_tree::ContextLessSummary for ListItemSummary {
+impl sum_tree::ContextLessSummary for ListItemSummary {
     fn zero() -> Self {
         Default::default()
     }
@@ -1789,7 +1791,7 @@ impl open_gpui_sum_tree::ContextLessSummary for ListItemSummary {
     }
 }
 
-impl<'a> open_gpui_sum_tree::Dimension<'a, ListItemSummary> for Count {
+impl<'a> sum_tree::Dimension<'a, ListItemSummary> for Count {
     fn zero(_cx: ()) -> Self {
         Default::default()
     }
@@ -1799,7 +1801,7 @@ impl<'a> open_gpui_sum_tree::Dimension<'a, ListItemSummary> for Count {
     }
 }
 
-impl<'a> open_gpui_sum_tree::Dimension<'a, ListItemSummary> for Height {
+impl<'a> sum_tree::Dimension<'a, ListItemSummary> for Height {
     fn zero(_cx: ()) -> Self {
         Default::default()
     }
@@ -1809,13 +1811,13 @@ impl<'a> open_gpui_sum_tree::Dimension<'a, ListItemSummary> for Height {
     }
 }
 
-impl open_gpui_sum_tree::SeekTarget<'_, ListItemSummary, ListItemSummary> for Count {
+impl sum_tree::SeekTarget<'_, ListItemSummary, ListItemSummary> for Count {
     fn cmp(&self, other: &ListItemSummary, _: ()) -> std::cmp::Ordering {
         Ord::cmp(&self.0, &other.count)
     }
 }
 
-impl open_gpui_sum_tree::SeekTarget<'_, ListItemSummary, ListItemSummary> for Height {
+impl sum_tree::SeekTarget<'_, ListItemSummary, ListItemSummary> for Height {
     fn cmp(&self, other: &ListItemSummary, _: ()) -> std::cmp::Ordering {
         Ord::cmp(&self.0, &other.height)
     }

@@ -3,8 +3,7 @@
 Renderer-neutral async resource state primitives for Open GPUI applications.
 
 This crate owns query keys, observer snapshots, mutation snapshots, cache lifecycle vocabulary, and
-redaction-aware diagnostics. It is protocol-agnostic: applications provide fetchers and mutations;
-HTTP integration belongs in optional adapters or examples.
+redaction-aware diagnostics. Applications provide their own fetchers, mutations, and transport.
 
 ## Public Contract
 
@@ -14,7 +13,7 @@ HTTP integration belongs in optional adapters or examples.
 - `ResourceStatus` and `MutationStatus` describe query and mutation lifecycle state.
 - `RetryPolicy` records retry/backoff policy without owning timers or an executor.
 - `PaginatedResourceSnapshot` and `ResourcePageSnapshot` describe ordered pages and cursor metadata.
-- `ResourceSnapshot` and `MutationSnapshot` are safe to show in tests and devtools when paired with
+- `ResourceSnapshot` and `MutationSnapshot` are safe to show in tests and diagnostics when paired with
   `ResourceRedactionPolicy`.
 
 ## Basic Use
@@ -43,13 +42,10 @@ assert_eq!(snapshot.observer_count, 1);
   executors; apps start/complete fetch and mutation generations around their own async work.
 - Keep cache data redacted by default when crossing diagnostic boundaries. Use
   `ResourceRedactionPolicy::RedactAll` or `ResourceRedactionPolicy::Summarize` before sending
-  snapshots to devtools.
+  snapshots to diagnostic consumers.
 - Project query snapshots into UI components through
   `open_gpui_ui_components::ResourceCollectionProjection` and mutation snapshots through
   `open_gpui_ui_components::ResourceMutationProjection`.
-- Use `open_gpui_devtools::resource` when the `open-gpui-devtools/resource` feature is enabled;
-  the adapter derives DevTools redaction summaries from `RedactedResourceValue::Redacted` query,
-  mutation, and paginated page values.
 
 ## Verification
 
@@ -65,5 +61,4 @@ When changing UI adapters that consume resource snapshots, also run:
 
 ```sh
 cargo nextest run -p open-gpui-ui-components resource_adapter --no-fail-fast --locked
-cargo nextest run -p open-gpui-ui-foundation-gallery resource --no-fail-fast --locked
 ```

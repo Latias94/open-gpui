@@ -18,7 +18,7 @@ use open_gpui::{
     PortalAnchorExt as _, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement,
     Styled, Window, div, px,
 };
-use open_gpui_command::CommandDescriptor;
+
 use open_gpui_ui_core::{
     AccessibleAction, DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent,
     OutsidePressPolicy, OverlayLayerId, OverlayPlacementAlignment, OverlayPlacementInput,
@@ -718,11 +718,6 @@ impl MenuItem {
             children,
             on_select: None,
         }
-    }
-
-    /// Creates an action menu item from shared app-command metadata.
-    pub fn from_command_descriptor(descriptor: &CommandDescriptor) -> Self {
-        Self::from_descriptor(MenuItemDescriptor::from_command_descriptor(descriptor))
     }
 
     /// Creates an action menu item from resolved action metadata.

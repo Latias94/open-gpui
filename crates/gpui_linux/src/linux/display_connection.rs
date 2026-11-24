@@ -246,24 +246,4 @@ impl DisplayConnection {
             headless => Box::pin(std::future::ready(None))
         )
     }
-
-    #[cfg(feature = "screen-capture")]
-    pub(crate) fn is_screen_capture_supported(&self) -> bool {
-        dispatch!(self, connection => connection.is_screen_capture_supported(), headless => false)
-    }
-
-    #[cfg(feature = "screen-capture")]
-    pub(crate) fn screen_capture_sources(
-        &self,
-    ) -> futures::channel::oneshot::Receiver<
-        anyhow::Result<Vec<Rc<dyn open_gpui::ScreenCaptureSource>>>,
-    > {
-        dispatch!(self, connection => connection.screen_capture_sources(), headless => {
-            let (sender, receiver) = futures::channel::oneshot::channel();
-            sender
-                .send(Err(anyhow::anyhow!("Headless mode does not support screen capture.")))
-                .ok();
-            receiver
-        })
-    }
 }

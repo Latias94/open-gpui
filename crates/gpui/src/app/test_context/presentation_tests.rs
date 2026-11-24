@@ -7,10 +7,10 @@ use std::{
     sync::Arc,
 };
 
+use crate::Refineable as _;
 use accesskit::{
     Action as AccessibleAction, ActionRequest, Node, NodeId, Role, TreeId, TreeUpdate,
 };
-use open_gpui_refineable::Refineable as _;
 
 use crate::{
     AnyDrag, AnyElement, AnyView, AnyWindowHandle, App, AppContext as _, Bounds, Context,

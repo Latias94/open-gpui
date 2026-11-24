@@ -15,7 +15,7 @@ description = "Foundation primitives for the Open GPUI component ecosystem."
 path = "src/lib.rs"
 
 [dependencies]
-open_gpui_motion.workspace = true
+open_gpui_core_util.workspace = true
 
 [lints]
 workspace = true

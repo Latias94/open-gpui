@@ -1,6 +1,6 @@
 # Open GPUI Platform
 
-`open-gpui-platform` selects the native or web backend for an Open GPUI application. It is the normal application entry point for constructing an `Application` without importing a specific backend crate.
+`open-gpui-platform` selects the desktop backend for an Open GPUI application. It is the normal application entry point for constructing an `Application` without importing a specific backend crate.
 
 Use this crate when an application wants one dependency that maps the current Rust target to the correct Open GPUI backend:
 
@@ -32,36 +32,25 @@ fn main() {
 
 ## What This Crate Owns
 
-- Target-specific backend selection for macOS, Windows, Linux/FreeBSD, iOS, and WebAssembly.
-- Feature forwarding for backend options such as `font-kit`, `screen-capture`, `wayland`, `x11`, `runtime_shaders`, and `web-multithreaded`.
-- Stable single-threaded web runtime selection, plus optional multithreaded web support through the `web-multithreaded` feature.
+- Target-specific backend selection for macOS, Windows, Linux and FreeBSD.
+- Feature forwarding for backend options such as `font-kit`, `wayland`, `x11`, and `runtime_shaders`.
 - A small application-facing import surface so examples and applications do not need to choose backend crates manually.
 
 ## Boundaries
 
 This crate does not own rendering primitives, window layout policy, component APIs, docking behavior, or backend-specific platform services. Those live in `open-gpui`, `open-gpui-wgpu`, `open-gpui-ui-components`, `open-gpui-docking`, and the platform backend crates.
 
-Backend capabilities remain runtime facts. Enabling a cargo feature does not guarantee that the active operating system, browser, compositor, or GPU supports a capability such as platform viewport windows, screen capture, or WebGPU.
+Backend capabilities such as native viewport windows and compositor features are discovered at runtime.
 
-iOS uses the UIKit backend and shared Apple renderer. Its simulator entry point, native
-text-input probe and execution limits are documented in [Open GPUI iOS](../gpui_ios/README.md).
 OpenHarmony is excluded from Linux backend selection; applications on that target inject
 their own backend with `Application::with_platform`.
 
-For a native application entry point, see `examples/smoke-native`. For a common docking setup built
-through the selector, see `examples/docking-minimal`. Web backend work should use
-`open-gpui-web`-specific examples and the `xtask web-smoke` gate.
+For desktop startup, see [`smoke-native`](../../examples/smoke-native/src/main.rs). For native
+managed windows and recovery, see the [Dockspace editor](../../examples/dockspace-editor/README.md).
 
-## Benchmark Support
-
-Enable `bench-support` on this crate and `open-gpui` to consume `#[open_gpui::bench]` without
-deterministic test support. `bench_text_system()` shares the native text system per thread;
-`current_headless_renderer()` returns a fallible optional renderer. The default factory supplies
-Metal on macOS and WGPU on Linux, with `Ok(None)` on Windows and other targets. A caller can
-inject the public WGPU headless renderer independently. A benchmark without a renderer measures
-UI work and platform submission bookkeeping, not GPU output. See the
-[migration guide](../../docs/ui/migration-v0.3.md#benchmark-contexts-and-measurements) and the
-[independent consumer](../../tests/fixtures/dependency-consumer/README.md).
+With `test-support`, `current_headless_renderer()` returns an optional renderer for visual tests.
+The default factory supplies Metal on macOS and WGPU on Linux. It returns `Ok(None)` on Windows,
+where tests can inject a WGPU renderer explicitly.
 
 ## Verification
 
@@ -69,6 +58,5 @@ For focused platform-selector work, run:
 
 ```sh
 cargo check -p open-gpui-platform --locked
-cargo check -p open-gpui-platform --target wasm32-unknown-unknown --locked -j 1
 cargo run -p xtask -- verify-release-docs
 ```

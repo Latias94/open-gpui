@@ -8,8 +8,9 @@ This full consumer declares Rust 1.95 because it directly depends on `open-gpui-
 whose pinned dockspace dependency declares that minimum. Disabling fixture features does
 not remove its docking dependency. CI checks this application with Rust 1.95 separately
 from the Rust 1.93 gates for core, macros, components, and the independent test-support
-and hot-reload consumers. A successful build on Rust 1.100 or a newer compiler does not
-qualify either minimum compiler version.
+and hot-reload consumers. Use the named compiler in each minimum-version check.
+
+Archived benchmark, Web, HTTP, and Tokio targets are available at `legacy/v0-pre-slim`.
 
 The feature-free `deferred_frames` target type-checks the exact public submission identity,
 delivery mode and platform entry points without constructing private authority. Its closures
@@ -24,17 +25,6 @@ types through utility matching, extension ordering and file-position navigation.
 non-Unicode bytes round-trip separately from checked Unicode relative paths. It does not read
 or modify external files, launch an App or exercise a native file dialog. Run
 `cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --test portable_paths --target-dir target --test-threads=1 --no-fail-fast --no-tests fail`.
-
-The `http_downloads` target composes public request deadline/redirect extensions, executes
-release metadata discovery against a local in-memory HTTP implementation and checks normalized
-digests. Its uninvoked download closure type-checks the executor-bound Task API without writing
-files or starting a worker. The native download dependency is separate from the portable HTTP
-abstraction. A fourth case consumes the exact official reqwest package directly, imports its
-custom client through the framework API, follows a real loopback redirect and reads the response
-with the original User-Agent preserved. Run
-`cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --test http_downloads --target-dir target --test-threads=1 --no-fail-fast --no-tests fail`.
-The framework's separate download regressions execute staging, digest verification, cleanup
-and archive extraction; its Reqwest regressions use loopback, not an external GitHub service.
 
 The `support_primitives` target executes public character conversion and SharedString serde.
 Uninvoked native closures type-check DedicatedExecutor construction and command spawning; they
@@ -98,7 +88,7 @@ The platform dependency enables `x11` and `wayland` on Linux and FreeBSD, and `f
 Windows uses the shared platform dependency without additional fixture-selected features.
 
 The `native_window_controls` target also consumes `Window::set_client_corner_radii` and the
-optional backend method. Its ordinary `bench-support` App checks the public resize and minimize
+optional backend method. Its ordinary `test-support` App checks the public resize and minimize
 creation facts and the prompt query, then exercises the unsupported corner-radius no-op alongside
 the existing native-control and close workflow. It does not qualify compositor blur; the affected
 Linux native tests retain that separate platform scope.
@@ -116,15 +106,6 @@ not start merely because the application links the feature. Neither test starts 
 cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features logging --test logging --target-dir target
 cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features logging-tracy --test logging --target-dir target
 ```
-
-On macOS, `mac-screen-capture` enables the ordinary Mac backend's optional capture support.
-The `apple_screen_capture` target type-checks source enumeration, metadata, stream callbacks
-and direct conversion of a retained capture buffer to a `Surface` element. The test does not
-start capture or request screen-recording permission. Run the compile gate with
-`cargo check --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --features mac-screen-capture --test apple_screen_capture --target-dir target`.
-The fixture build script weak-links ScreenCaptureKit on the final application targets, as Zed
-does. Downstream binaries with capture enabled that deploy to macOS 12.0–12.2 need the same
-`-Wl,-weak_framework,ScreenCaptureKit` linker argument. Capture itself requires macOS 12.3.
 
 Run these commands from the repository root. For dependency maintenance, generate or refresh the
 consumer lockfile, then review and commit it:
@@ -239,7 +220,7 @@ cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml 
 ## Lifecycle and visibility consumer
 
 The `lifecycle` integration test target consumes the public lifecycle and presentation visibility
-APIs without `test-support`. Its source baseline is official Zed at
+APIs. Its source baseline is official Zed at
 [`635026fabc38440fce5e1767d125026a17b12012`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012),
 including the subscription mechanism from
 [`7a7c3e1d2f`](https://github.com/zed-industries/zed/commit/7a7c3e1d2f03195c5fa19bc890da330ad7f3abef)
@@ -729,7 +710,7 @@ preserves generic parameters and where clauses, and retains the conversion calle
 location. Only `Entity<T: Render>` and `AnyView` expose cached embedding; a stateless or manual
 View has no public frozen-cache shortcut.
 
-This independently locked fixture uses ordinary dependency features without `test-support` or
+This independently locked fixture uses ordinary dependency features or
 new dependencies. Its `view_components` target constructs a generic stateless component and a
 generic manual enum, converts both to their actual `ViewElement` types, and checks stateless
 identity and debug source locations. The deliberately unexecuted `_composition_type_only` and
@@ -955,75 +936,6 @@ target inspects the latest complete accepted tree after the public activation he
 work; it does not assert the synchronous initial callback's root-only title snapshot or its
 sequenced refresh. Native initial callbacks, actual screen readers, native `Submitted` frames,
 GPU output and platform-specific identifier exposure require their separate owners and gates.
-
-## Maintained benchmark harness consumer
-
-The `maintained_harness` benchmark binary uses the public benchmark implementation from the fixed
-Zed source
-[`635026fabc38440fce5e1767d125026a17b12012`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012),
-adapted through Open GPUI's platform and presentation owners. Enable this fixture's `bench-support`
-feature to forward Core and facade benchmark support and activate Criterion 0.8.2 and rand 0.9.
-This feature is independent of `test-support`; the consumer does not use `FakeCounter`, test
-contexts, virtual timers or a no-op text system.
-
-The binary executes its workloads through `#[open_gpui::bench]`, a
-`Criterion<BenchMeasurement>` group, and `bench_main!` with the default `CountingAllocator`:
-
-- `simple_native_shaping` calls `bench_text_system()` and measures actual native `layout_line`
-  calls for multilingual text. After execution it checks UTF-8 length, positive native metrics,
-  character-boundary glyph indices and nonempty glyph output.
-- `maintained-renderer/rows/{4,16}` constructs source-observed, labeled views outside timing and
-  measures source updates through `bench_renderer`. Executed render/paint counters and the final
-  painted source value must agree. Accepted frame generations advance, and the final submitted
-  generation and nonempty presentation facts must match the accepted frame. Closing the window
-  and explicitly dropping the window context, view and source releases their weak owners once.
-- `maintained-seeded-tasks/items/{64,256}/seed-{7,23}` puts the by-value `StdRng` between the input
-  and context arguments. Each Criterion routine checks the fresh RNG stream against the selected
-  seeds, clones input in untimed `bench_batched_task` setup, sorts on the background executor, and
-  verifies completed output in its destructor after timing and tracing finish. The next iteration
-  requires the preceding output to have been released.
-- `seeded_task/seed-11` puts `StdRng` first and executes a background-to-foreground `bench_task`
-  workflow with verified completion and released task captures.
-- `module_cases::public_routine` registers a benchmark from a child module through its preserved
-  restricted visibility, proving that reusable benchmark modules can join the public group.
-
-Every executed Criterion routine installs fresh App state. A weak owner and exact release count
-are checked before the next routine and after each generated benchmark returns, including the
-last benchmark. Local handles and context clones are dropped before the macro's teardown. Filters
-and `--list` can skip workloads; listing or compiling the binary is not runtime qualification.
-`SEED` and `ITERATIONS` select reproducible seed cases using the same rules as the benchmark macro.
-
-The Core crate-external `benchmark_harness` target is gated solely on `bench-support`. It executes
-short Criterion measurements through raw public APIs and checks source notifications, resize and
-frame callbacks, root reconstruction, real timer deadlines, an external callback waking a Task,
-untimed batched input/output destruction, metric samples, App/TextSystem lifetime, timer cleanup
-and the next routine's isolation on the shared dispatcher. Finite renderer sessions use fresh
-untimed setup per iteration and require the final source value to be accepted and submitted before
-session destruction. Those Core windows use `NoopTextSystem` without a GPU renderer; native text
-shaping belongs to this independent binary. Candidate refusal and native GPU output retain their
-separate verification owners.
-
-Run the focused public tests, the independently locked binary's execution smoke check, and an
-actual measurement separately, one Cargo process at a time, reusing the existing `target`:
-
-```text
-cargo nextest run --locked -p open-gpui --no-default-features --features bench-support --test benchmark_harness --test-threads=1 --no-fail-fast --no-tests fail
-cargo bench --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --bench maintained_harness --jobs 1 --target-dir target -- --test
-cargo bench --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --bench maintained_harness --jobs 1 --target-dir target
-cargo bench --locked -p open-gpui-canvas --features bench-support --bench large_canvas --jobs 1 -- paint_frame_render_labels --test
-```
-
-Set `BENCH_MEASUREMENT=wall-time` when the smoke check should omit hardware counters; the default
-measurement reports supported counters and allocator observations. Measurement selection and
-`bench_main!(allocator = none; ...)` are owned by the public harness, rather than a consumer-local
-measurement or allocator shim. The Canvas consumer preserves its 200-by-100 labeled grid,
-viewport and culling options while moving only setup-excluded notification/render measurement to
-the maintained context and native text factory.
-
-These commands are verification instructions, not compilation, execution or performance results.
-The consumer's presentation assertions describe the benchmark platform's accepted/submitted facts.
-GPU rendering, OS-native window delivery, cross-platform qualification and rejected-candidate
-controls require their owning checks and recorded execution evidence.
 
 ## Shared atlas ownership runtime consumers
 
@@ -1258,7 +1170,7 @@ records executed host/compiler modes, initial harness corrections and native lim
 The `spring` targets consume the complete official Spring API from fixed Zed source
 `635026fabc38440fce5e1767d125026a17b12012`. GPUI retains typed targets, interpolation,
 builders, playback and element identity. The pure `SpringConfig`, `SpringState` and
-`sampled_easing` implementation belongs to `open-gpui-motion` and is reexported by GPUI.
+`sampled_easing` is implemented in `open_gpui_core_util::motion` and reexported by GPUI.
 These tests introduce no features, dependencies or lockfile changes.
 
 The ordinary independently locked target enables no GPUI test-support. Executed tests consume
@@ -1448,69 +1360,6 @@ Neither target establishes OS-native wake delivery, Windows dispatcher behavior,
 overhead or a minimum supported compiler. The actual native App-update-to-Submitted workflow
 and its qualification belong to the separate native consumer and verification record.
 
-## Randomized tree public consumers
-
-The `randomized_tree` test and benchmark targets consume the production randomized-tree API
-from fixed Zed source
-[`635026fabc38440fce5e1767d125026a17b12012`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012).
-Both require this fixture's existing `bench-support` feature, which forwards Core and platform
-benchmark support and enables Criterion 0.8.2 and rand 0.9. They use the independent consumer
-lockfile and add no dependencies, test-support, leak-detection or measurement framework.
-
-The five value tests execute configuration builders and density normalization, seeded Bounds
-sampling, deterministic topology and snapshot recreation, stable IDs and seeded mutation replay.
-Insertion and subtree removal check counts and preservation of the next ID across reconstruction.
-The public mutation inventory must contain all sixteen controls, including `RemoveLeaf`.
-These test bodies contain no deliberately unexecuted App or Window closures. They do not launch
-windows; the companion benchmark executes the App and Window workflow.
-
-The benchmark registers `randomized-public/mutation/{ordinary,cached}/{kind}/seed-{7,23}` through
-`#[open_gpui::bench]`, `Criterion<BenchMeasurement>`, `bench_group!` and `bench_main!`. Every
-executed mutation case builds a fresh seeded, wide tree with persistent entities and handlers
-using `new_with_config`, warms both frame buffers and applies its explicitly selected mutation
-with notifications. The existing `bench_batched_task` harness measures the mutation and scheduled
-frame delivery. Setup, snapshot comparisons, reference construction and destruction stay outside
-timing and tracing. This is a small public integration workload; the platform's separate tree
-benchmark owns its full topology/family and workload matrix.
-
-After measurement, the accepted generation must have advanced and `Window::rendered_scene`
-supplies the actual accepted scene. The consumer compares it with freshly rendered plain
-`from_snapshot` and entity-preserving `from_snapshot_with_entities` reconstructions. The scene
-comparison follows renderer batch order and retains primitive geometry, colors, transforms,
-shadow/path/text attributes and every exact clip shape in each primitive's ancestry. It normalizes
-frame-local clip offsets, path IDs and per-window atlas allocation identities and coordinates,
-while preserving which primitives share each texture and tile. Positive and negative
-normalization controls distinguish legal allocation renumbering from incorrect glyph aliasing;
-it does not read back glyph textures or compare pixels. `RootVisibility` additionally restores
-the original root and checks the restored scene against both fresh references. Each original
-and reference root must release its weak handle and invoke its release callback exactly once
-after replacement or window close; no window may remain before the next measured setup.
-Reference windows become active while mounted. After closing them, the consumer reactivates its
-persistent window and asserts active state so restoration is not left behind the inactive frame
-rate limit. Every mutation, including visibility restoration, must advance the accepted generation.
-
-Run these commands serially from the repository root with `CARGO_BUILD_JOBS=1`, reusing `target`.
-The first command exposes the resolved feature graph for review: the benchmark-only graph must
-not activate `open-gpui/test-support` or `open-gpui/leak-detection`.
-
-```text
-cargo tree --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support -e features -i open-gpui
-cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --test randomized_tree --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
-cargo bench --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --bench randomized_tree --jobs 1 --target-dir target -- --test
-cargo bench --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --bench randomized_tree --jobs 1 --target-dir target
-```
-
-Leave `SEED` unset to execute both declared seeds 7 and 23. The shared harness lets `SEED`
-override explicit seeds, so a platform smoke's single-seed setting must not carry into this
-consumer unnoticed. Set `BENCH_MEASUREMENT=wall-time` to omit hardware counters during smoke execution. The
-ordinary benchmark macro supplies `bench_platform`, `bench_text_system` and
-`current_headless_renderer`; this consumer does not replace their renderer selection or lifetime
-owners. The current-platform factory returns no GPU renderer on Windows. Other hosts may create
-their ordinary headless renderer, but accepted-scene equality alone does not prove GPU execution.
-These commands are runnable verification instructions, not a record of successful compilation,
-benchmark execution, native `Submitted`, capture, pixel correctness or measured performance.
-Actual GPU submission/capture and numeric performance retain their separate qualification owners.
-
 ## Async clipboard and paste consumer
 
 The `clipboard` integration test consumes the official async clipboard and platform paste APIs
@@ -1525,11 +1374,11 @@ variants (`Unavailable`, `Denied(String)`, `UnsupportedContent`), their `Display
 error contracts, and mixed clipboard entry order, text metadata, image format/bytes, paths and
 text projection. These error values are constructed controls, not permission-denial injection.
 
-With the fixture's existing `bench-support` feature, three additional tests execute actual App
-and Window calls without `test-support`. They construct the existing public
-`bench_platform(None, Arc::new(NoopTextSystem))` and start it through
+With the fixture's existing `test-support` feature, three additional tests execute actual App
+and Window calls. They construct the existing public
+`headless_test_platform(None, Arc::new(NoopTextSystem))` and start it through
 `Application::run_embedded`; this platform returns to its caller. `HeadlessAppContext` is gated
-by `test-support` and is not used here. No Criterion benchmark or native platform loop runs.
+by `test-support` and supplies deterministic test contexts.
 
 The runtime cases call `App::read_from_clipboard_async` through a shared App, retain its ready
 task, overwrite the clipboard, and only then poll the task. Both an initially empty `Ok(None)`
@@ -1543,11 +1392,11 @@ retains the ready read and both async contexts across App release, and checks th
 updates fail and the App-owned drop marker releases exactly once.
 
 Run the default controls and then the runtime cases serially, with `CARGO_BUILD_JOBS=1` and the
-repository build directory. Both commands use the independent lockfile without `test-support`:
+repository build directory. Both commands use the independent lockfile:
 
 ```text
 cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test clipboard --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features bench-support --test clipboard --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features test-support --test clipboard --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 The companion crate-external `crates/gpui/tests/clipboard.rs` target uses `test-support` and the
@@ -1580,16 +1429,16 @@ left unchanged. The Platform default immediately returns
 `this platform does not support atomic credential writes`; it has no read-then-write fallback.
 Ordinary `write_credentials`, `read_credentials` and `delete_credentials` retain their contracts.
 
-With the fixture's existing `bench-support` feature, two runtime tests execute public App,
-Platform and AsyncApp calls through `bench_platform(None, Arc::new(NoopTextSystem))` and
-`Application::run_embedded`, without enabling `test-support`. The platform supplies ready
+With the fixture's existing `test-support` feature, two runtime tests execute public App,
+Platform and AsyncApp calls through `headless_test_platform(None, Arc::new(NoopTextSystem))` and
+`Application::run_embedded`,. The platform supplies ready
 credential stubs: read returns `Ok(None)`, and write/delete return `Ok(())`. Reads remain empty
 after a successful stub write. The tests poll tasks after their borrowed input buffers leave
 scope; a separate lifetime case retains tasks and AsyncApp across shutdown and App release,
 then verifies that the App-owned drop marker releases exactly once and tasks still complete.
 These are executed call paths when the tests run, rather than uncalled signature closures.
 
-On macOS, `bench-support` enables a third runtime test that executes the add-only unsupported
+On macOS, `test-support` enables a third runtime test that executes the add-only unsupported
 default through both `Rc<dyn Platform>` and a shared `&App`. Ordinary stub writes still succeed,
 but neither add-only call may report creation or a duplicate. The lifetime case also retains an
 add-only task beyond input and App release and checks the exact unsupported error.
@@ -1609,10 +1458,10 @@ Run the independent runtime target serially with `CARGO_BUILD_JOBS=1` and the re
 directory. It contains two tests on Windows/Linux and six on macOS, including the error controls:
 
 ```text
-cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features bench-support --test credentials --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features test-support --test credentials --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
-On macOS, run the three standalone error controls without `bench-support` as well. On other
+On macOS, run the three standalone error controls without `test-support` as well. On other
 targets, this feature-free credentials target intentionally contains no tests:
 
 ```text
@@ -1645,8 +1494,8 @@ The two feature-free controls cover all seven `OperatingSystem` variants and bot
 `parse` rejection of `secondary`, explicit-modifier preservation, binding labels and OS defaults
 in `KeyContext`. Only `Mac` resolves `secondary` to Command; the other variants use Control.
 
-With the existing `bench-support` feature, one additional test runs `Application::run_embedded`
-over `bench_platform(None, Arc::new(NoopTextSystem))` without enabling `test-support`.
+With the existing `test-support` feature, one additional test runs `Application::run_embedded`
+over `headless_test_platform(None, Arc::new(NoopTextSystem))`.
 It checks the platform and App's actual native host identity, loads owned dynamic bindings
 through `KeyBinding::load(..., &App)`, draws a real Render tree, dispatches single keys, a held
 repeat, explicit Control/platform keys and a chord to registered action listeners, and compares
@@ -1655,7 +1504,7 @@ context. Activation drains the existing threaded dispatcher and requires the exa
 `Activated` result before checking Window activity. Focus changes cancel a pending prefix before
 the sibling receives its suffix. Closing
 with a pending prefix releases the exact root and its observation, and retained async contexts
-cannot update the retired Window or released App. The benchmark platform has no public identity
+cannot update the retired Window or released App. The headless test platform has no public identity
 injection API: other OS conventions are exercised by the explicit pure controls.
 
 Run both independent configurations serially with `CARGO_BUILD_JOBS=1`, the existing lockfile
@@ -1663,7 +1512,7 @@ and the shared build directory:
 
 ```text
 cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test platform_info --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features bench-support --test platform_info --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features test-support --test platform_info --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 The companion public target uses `TestAppContext::set_platform_info` to execute all fourteen
@@ -1701,7 +1550,7 @@ backends, compositor scanout or performance. Injected `Web` identity exercises s
 conventions and does not launch a browser.
 
 On Windows, `mapped_keybindings` uses ordinary dependencies and the actual native App mapper,
-without `test-support` or `bench-support`. A child process enters the backend's blocking
+without optional features. A child process enters the backend's blocking
 `Application::run` and checks shifted single-key and chord installation, string preflight,
 pending/full palette resolution and already-normalized event input. The parent requires a
 completion marker and successful exit within thirty seconds. It opens no native Window and
@@ -1778,22 +1627,22 @@ an actual `current_platform(true)` exercises all four variants, repeated overrid
 requests against the default no-op setter while preserving the native system appearance getter.
 It drops the platform without launching an App, opening a Window or entering the native loop.
 
-With the existing `bench-support` feature, an ordinary App and hidden headless Window execute the
-same requests on the returning benchmark platform with `NoopTextSystem` and no renderer. App,
+With the existing `test-support` feature, an ordinary App and hidden headless Window execute the
+same requests on the returning headless test platform with `NoopTextSystem` and no renderer. App,
 Platform and Window getters retain their baseline values through replacement, repetition and
 clear requests, and the Window is explicitly closed before App shutdown. This is the benchmark
 platform's no-op behavior, including on macOS; it does not establish native App/Window behavior.
 
 ```text
 cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test window_appearance --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features bench-support --test window_appearance --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features test-support --test window_appearance --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 These are verification instructions, not recorded results. The Windows runtime case requires the
 host's normal native platform initialization prerequisites; it changes no persistent OS setting.
 The root `test-support` consumer separately checks unchanged appearance observers and rendered
 frame revisions. macOS override/clear behavior, system tracking and native titlebars require the
-separate Mac backend gates; neither this Windows control nor the benchmark platform qualifies them.
+separate Mac backend gates; neither this Windows control nor the headless test platform qualifies them.
 
 ## Startup and live windowing consumer
 
@@ -1810,15 +1659,9 @@ khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42
 This fixture declares that patch and independently locks the Git revision. The direct Linux
 dependency and calloop-wayland-source must resolve to the same calloop source; matching
 package names or compatible version numbers do not make their Rust types interchangeable.
-The ordinary and browser example roots each declare their own patches. Native GLES also
-requires the EGL correction above: failed calls with `EGL_SUCCESS` must return
+Native GLES requires the EGL correction above: failed calls with `EGL_SUCCESS` must return
 `Error::Unreported` rather than panic. This is separate from calloop's Rust type identity;
 the [dynamic binding fixture](../egl-errors/README.md) owns its positive and negative controls.
-
-The `tokio_bridge` target uses the independently locked `open-gpui-tokio` package through
-`bench_platform`, ordinary `Application::run_embedded` and `Tokio::spawn`, so real worker completion
-do not depend on root-workspace feature unification or private globals. Package bridge
-tests retain the more detailed cancellation, JoinError and owned/borrowed-runtime cases.
 
 The `windowing` target consumes `WindowingRequest`, the host's `GraphicalEnvironment`, application
 `ActivationPolicy`, `Application::with_windowing`, and the App/Platform mode-request and environment
@@ -1841,7 +1684,7 @@ An actual `current_platform(true)` on Windows repeatedly refuses both live reque
 after startup-mode and activation-policy calls, while retaining its text system and reporting no
 graphical connection. It never launches an App or enters the native loop on a test-runner thread.
 
-With `bench-support`, one ordinary App runs on the existing returning benchmark platform with
+With `test-support`, one ordinary App runs on the existing returning headless test platform with
 `NoopTextSystem` and no renderer. It consumes actual unsupported Tasks from both App and Platform,
 changes and reads retained entity state after failures, and opens/closes/reopens the same retained
 root three times. Both requests fail while each Window is open; after closure and dispatcher
@@ -1854,7 +1697,7 @@ the shared build directory:
 
 ```text
 cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test windowing --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features bench-support --test windowing --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features test-support --test windowing --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 The companion crate-external target checks the same public environment contract and executes
@@ -1864,8 +1707,7 @@ default unsupported Tasks and open-window refusal with a retained root through `
 cargo nextest run -p open-gpui --features test-support --test windowing --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
-The ordinary `toggle_headless` example is registered in `open-gpui-platform` and requires neither
-`test-support` nor `bench-support`. Run it from a terminal on Windows/macOS, or enable the desired
+The ordinary `toggle_headless` example is registered in `open-gpui-platform` and requires no optional features. Run it from a terminal on Windows/macOS, or enable the desired
 compiled display backends on Linux/FreeBSD:
 
 ```text
@@ -1898,7 +1740,7 @@ qualification retain their separate native gates.
 
 The `gestures` target consumes the gesture vocabulary from fixed official target
 [`635026fabc38440fce5e1767d125026a17b12012`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012)
-through ordinary public reexports. It needs neither `test-support` nor `bench-support` and adds
+through ordinary public reexports. It needs no optional features and adds
 no application, renderer, engine integration or dependency.
 
 Its pure tests execute `ScrollEvent`/`ScrollSource` conversion to `PlatformInput::Scroll`, raw
@@ -1963,8 +1805,8 @@ and remaining foreign-runtime scope belong in the main qualification record.
 
 ## Ordinary public external drag consumer
 
-The `external_drag` target consumes ordinary public reexports without `test-support`,
-`bench-support`, an App or a native Window. The payload, lazy resolver and exit vocabulary follow
+The `external_drag` target consumes ordinary public reexports,
+`test-support`, an App or a native Window. The payload, lazy resolver and exit vocabulary follow
 official Zed at fixed target
 [`635026fabc38440fce5e1767d125026a17b12012`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012).
 The fork retains its committed geometry interfaces and adds an opaque native source session.
@@ -2003,8 +1845,8 @@ qualification remain with their respective owners.
 The `native_window_services` target consumes `Window::native_window_state`,
 `Window::restore_native_window_state` and `Window::request_attention` through public APIs.
 The default case checks function signatures and uninvoked closures without creating an App.
-The optional `bench-support` case runs an ordinary `Application::run_embedded` on the existing
-headless benchmark platform, without `test-support`. It executes unsupported query/restoration
+The optional `test-support` case runs an ordinary `Application::run_embedded` on the existing
+headless test platform,. It executes unsupported query/restoration
 and attention requests, verifies unchanged bounds and normal close, and shuts down that App.
 
 Native archives are opaque OS data, not a portable workspace format or a confirmed placement
@@ -2019,7 +1861,7 @@ Run the modes serially with the existing independent lockfile and shared target:
 
 ```text
 cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test native_window_services --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --test native_window_services --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features test-support --test native_window_services --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 These commands are instructions, not results. The headless run does not qualify AppKit archive
@@ -2044,7 +1886,7 @@ Their introduction points are input regions
 | Anchored popup | `WindowKind::AnchoredPopup(popup::PopupOptions)` with `parent: AnyWindowHandle`, `anchor_rect`, `anchor`, `gravity`, `constraint_adjustment`, `offset` and `grab`. The public module includes `PopupAnchor`, `PopupGravity`, all six `PopupConstraintAdjustment` flags, and `PopupNotSupportedError`. |
 
 The baseline test uses function references and explicitly uninvoked closures. It constructs no
-App, Window or native popup and requires neither `test-support` nor `bench-support`. Its popup
+App, Window or native popup and requires no optional features. Its popup
 closure consumes every options field and all constraint flags without interpreting compositor
 placement. A popup uses `popup.parent` as its sole parent contract; combining it with
 `WindowOptions::transient_for` is rejected. Closed or stale parent generations fail validation
@@ -2056,14 +1898,14 @@ protocol focus policy. `Platform::validate_window_kind` is an optional preflight
 refusal before generic option checks. Ordinary `App::open_window` preserves direct backend
 error downcasts; `open_window_detailed` instead preserves its synchronous stage and source.
 
-With the existing optional `bench-support` feature, an ordinary `Application::run_embedded` uses
-the returning benchmark platform with `NoopTextSystem` and no renderer. The runtime test checks
+With the existing optional `test-support` feature, an ordinary `Application::run_embedded` uses
+the returning headless test platform with `NoopTextSystem` and no renderer. The runtime test checks
 that the App and executor are not test instances. It executes region reset/empty/rectangle calls,
 exclusive-zone requests and repeated simple-fullscreen toggles, then observes unchanged bounds,
 ordinary fullscreen and the unsupported simple-fullscreen query. Both grabbing and passive popup
 requests use an actual live parent, reach typed `PopupNotSupportedError`, never run their root
 builder and publish no child window. The parent closes normally, another ordinary window opens
-and closes, and the App shuts down. This is unsupported headless behavior without `test-support`.
+and closes, and the App shuts down. This is unsupported headless behavior.
 
 The companion crate-external `native_window_controls` target adds public TestAppContext controls
 for mixed parent contracts, closed parent handles and replacement generations. Core's private
@@ -2079,7 +1921,7 @@ shared target directory:
 
 ```text
 cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test native_window_controls --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --test native_window_controls --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features test-support --test native_window_controls --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 cargo nextest run --locked -p open-gpui --features test-support --test native_window_controls --test-threads=1 --no-fail-fast --no-tests fail
 cargo nextest run --locked -p open-gpui --lib native_window_control_tests --test-threads=1 --no-fail-fast --no-tests fail
 ```
@@ -2089,18 +1931,6 @@ private observations do not qualify Wayland input pass-through, layer-shell rese
 validation, native popup positioning/grab/dismissal, or Mac screen/notch coverage and shared
 presentation-option restoration. Those behaviors retain their native backend gates; no renderer,
 fake compositor, successful popup implementation or engine-specific UI owner is introduced here.
-
-## Ordinary Canvas fallback policy
-
-The `canvas_fallback` target consumes the public `CanvasFontFallback` policy and complete-
-grapheme classifier from `open-gpui-web`, with default features disabled and no test-support.
-It checks the default Emoji selection and receives the public emoji/CJK classification values.
-This native consumer qualifies API availability and source-grapheme classification, not browser
-font coverage or Canvas rendering. The existing browser smoke owns those execution claims.
-
-```text
-cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test canvas_fallback --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
-```
 
 ## Ordinary text input sessions and visible geometry
 
@@ -2121,14 +1951,14 @@ text/selection notifications, frame preparation, and PlatformInputHandler's UTF-
 editable range, selection mutation and batched selection geometry. This configuration creates
 no App or test-only context.
 
-With the existing optional `bench-support` feature, an ordinary `Application::run_embedded`
-uses the returning headless benchmark platform and `NoopTextSystem`. Its real entity renders a
+With the existing optional `test-support` feature, an ordinary `Application::run_embedded`
+uses the returning headless test platform and `NoopTextSystem`. Its real entity renders a
 focus-tracked field and installs an `ElementInputHandler` through `Window::handle_input`.
 The consumer checks accepted frame/focus ownership, executes keyboard and state notification
 requests, and exercises entity forwarding with surrogate pairs, a bounded editable range,
 native selection updates, batched geometry and application-owned edits. Default visible
 geometry retains the full layout size. Blur, normal close and App shutdown complete through
-the existing owners. Neither configuration enables `test-support`.
+the existing owners. The runtime case enables `test-support`.
 
 The companion crate-external `crates/gpui/tests/text_input_sessions.rs` target uses public
 TestAppContext controls to observe configuration/state histories and keyboard requests. It
@@ -2148,7 +1978,7 @@ Run these targets serially with `CARGO_BUILD_JOBS=1`, the existing lockfiles and
 ```text
 cargo nextest run --locked -p open-gpui --features test-support --test text_input_sessions --test-threads=1 --no-fail-fast --no-tests fail
 cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test text_input_sessions --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --test text_input_sessions --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features test-support --test text_input_sessions --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 These commands are verification instructions, not execution results. Headless consumers do
@@ -2164,13 +1994,13 @@ The feature-free `platform_window_factory` target consumes
 Its signature closures are explicitly unexecuted. Only display-publication value checks execute
 in that configuration; no App or platform window is constructed.
 
-With `bench-support`, an ordinary embedded headless App executes a deliberately unsupported
+With `test-support`, an ordinary embedded headless App executes a deliberately unsupported
 attachment factory. The test checks its original typed error, `PlatformCreateOrMap`, skipped root
 construction, reservation cleanup and a subsequent ordinary window with a different full identity.
-Neither configuration enables `test-support` or supplies a native host adapter.
+The runtime case enables `test-support`.
 
 The separate crate-external `crates/gpui/tests/platform_window_factory.rs` target also uses the
-existing `bench-support` platform constructor and an ordinary App, explicitly checked to have
+existing `test-support` platform constructor and an ordinary App, explicitly checked to have
 ordinary executors. TestPlatform owns its Scene-producing windows. Its bounded runtime cases
 cover factory arguments and ordering, root/render/submission before return, ordinary updates
 and pointer hit routing, factory error preservation, root panic/close and first-presentation
@@ -2182,9 +2012,9 @@ borrowed HWND ownership, native input/IME services or an external event loop.
 Verification instructions, not execution results:
 
 ```text
-cargo nextest run --locked -p open-gpui --no-default-features --features bench-support --test platform_window_factory --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked -p open-gpui --no-default-features --features test-support --test platform_window_factory --test-threads=1 --no-fail-fast --no-tests fail
 cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test platform_window_factory --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --test platform_window_factory --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features test-support --test platform_window_factory --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 Run these configurations serially with `CARGO_BUILD_JOBS=1` and the shared target directory.

@@ -3,8 +3,6 @@ use crate::{
     PlatformWindowPresentOutcome, RetainAllImageCache, VisualTestContext, WindowBounds,
     WindowHandle, WindowOptions, black, fill,
 };
-use futures::channel::oneshot;
-use open_gpui_http_client::{FakeHttpClient, Response};
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -341,105 +339,4 @@ fn static_empty_and_idless_images_do_not_schedule_animation_for_either_motion_po
             .update(|window, app| window.remove_window(app));
         fixture.visual.run_until_parked();
     }
-}
-
-#[open_gpui::test]
-fn reduced_motion_preserves_loading_deadline_cache_notifications_and_image_release(
-    cx: &mut TestAppContext,
-) {
-    let (requests, pending) = async_channel::unbounded();
-    cx.update(|app| {
-        app.set_reduce_motion(true);
-        app.set_http_client(FakeHttpClient::create(move |_| {
-            let (complete, receive) = oneshot::channel();
-            requests.try_send(complete).unwrap();
-            async move {
-                receive.await?;
-                Ok(Response::builder()
-                    .status(200)
-                    .body(ANIMATED_WEBP.into())
-                    .unwrap())
-            }
-        }));
-    });
-    let cache = cx.update(RetainAllImageCache::new);
-    let source = Resource::Uri("https://test.example/reduced-motion.webp".into());
-    let mut fixture = Fixture::new(
-        cx,
-        ImageSource::Resource(source.clone()),
-        true,
-        Some(cache.clone()),
-    );
-    fixture.visual.run_until_parked();
-    let complete = pending.try_recv().unwrap();
-    assert!(pending.try_recv().is_err());
-    let started_loading = fixture.state().started_loading.unwrap();
-    assert_eq!(started_loading, fixture.visual.executor().now());
-    fixture.park();
-    assert_eq!(fixture.observed.loading_paints.get(), 0);
-    fixture
-        .visual
-        .executor()
-        .advance_clock(LOADING_DELAY - Duration::from_millis(1));
-    fixture.visual.run_until_parked();
-    assert_eq!(fixture.observed.loading_paints.get(), 0);
-    assert!(!fixture.visual.frame_scheduled());
-    assert_eq!(fixture.state().started_loading, Some(started_loading));
-
-    fixture
-        .visual
-        .executor()
-        .advance_clock(Duration::from_millis(1));
-    fixture.visual.run_until_parked();
-    assert_eq!(fixture.observed.loading_paints.get(), 1);
-    assert_eq!(fixture.state().started_loading, Some(started_loading));
-    fixture.visual.update(|window, _| {
-        assert!(window.next_frame_callbacks.borrow().is_empty());
-        assert!(window.rendered_frame_image_paint_diagnostics().is_empty());
-    });
-    fixture.park();
-    let renders_before_completion = fixture.observed.renders.get();
-    assert!(fixture.observed.loaded_image.borrow().is_none());
-    complete.send(()).unwrap();
-    fixture.visual.run_until_parked();
-    assert!(fixture.observed.renders.get() > renders_before_completion);
-    assert_eq!(fixture.state().started_loading, None);
-    fixture.visual.update(|window, _| {
-        assert_eq!(window.rendered_frame_image_paint_diagnostics().len(), 1);
-    });
-    let image = fixture
-        .observed
-        .loaded_image
-        .borrow()
-        .clone()
-        .expect("the rendered view must observe its loaded cache entry");
-    assert_eq!(cache.read_with(cx, |cache, _| cache.len()), 1);
-    assert!(pending.try_recv().is_err());
-    assert_eq!(image.frame_count(), 2);
-    assert_eq!(Duration::from(image.delay(0)), Duration::from_millis(100));
-    assert_eq!(fixture.state().started_loading, None);
-    assert_eq!(fixture.state().last_frame_time, None);
-    fixture.assert_frame(&image, 0);
-    fixture.park();
-
-    fixture.visual.update(|_, app| app.set_reduce_motion(false));
-    fixture.advance_frame(Duration::from_millis(99));
-    fixture.assert_frame(&image, 0);
-    fixture.advance_frame(Duration::from_millis(1));
-    fixture.assert_frame(&image, 1);
-    fixture.visual.update(|_, app| app.set_reduce_motion(true));
-    fixture.assert_frame(&image, 1);
-    fixture.park();
-    let weak_image = Arc::downgrade(&image);
-    let weak_cache = cache.downgrade();
-    fixture
-        .visual
-        .update(|window, app| window.remove_window(app));
-    drop(fixture);
-    drop(image);
-    drop(cache);
-    cx.update(|_| {});
-    cx.run_until_parked();
-    assert!(weak_cache.upgrade().is_none());
-    assert!(weak_image.upgrade().is_none());
 }

@@ -1,5 +1,3 @@
-#![cfg_attr(target_family = "wasm", no_main)]
-
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -7,11 +5,9 @@ use std::sync::Arc;
 use anyhow::Result;
 use open_gpui::{
     App, AppContext, AssetSource, Bounds, Context, ImageSource, KeyBinding, Menu, MenuItem, Point,
-    SharedString, SharedUri, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div,
-    img, prelude::*, px, rgb, size,
+    SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, img,
+    prelude::*, px, rgb, size,
 };
-#[cfg(not(target_family = "wasm"))]
-use open_gpui_reqwest_client::ReqwestClient;
 
 struct Assets {
     base: PathBuf,
@@ -70,7 +66,6 @@ impl RenderOnce for ImageContainer {
 
 struct ImageShowcase {
     local_resource: Arc<std::path::Path>,
-    remote_resource: SharedUri,
     asset_resource: SharedString,
 }
 
@@ -89,9 +84,6 @@ impl Render for ImageShowcase {
                     .justify_center()
                     .items_center()
                     .gap_8()
-                    .child(img(
-                        "https://github.com/Latias94/open-gpui/actions/workflows/ci.yml/badge.svg",
-                    ))
                     .child(
                         div()
                             .flex()
@@ -102,10 +94,6 @@ impl Render for ImageShowcase {
                             .child(ImageContainer::new(
                                 "Image loaded from a local file",
                                 self.local_resource.clone(),
-                            ))
-                            .child(ImageContainer::new(
-                                "Image loaded from a remote resource",
-                                self.remote_resource.clone(),
                             ))
                             .child(ImageContainer::new(
                                 "Image loaded from an asset",
@@ -121,13 +109,13 @@ impl Render for ImageShowcase {
                                 div()
                                     .flex_col()
                                     .child("Auto Width")
-                                    .child(img("https://picsum.photos/800/400").h(px(180.))),
+                                    .child(img(self.local_resource.clone()).h(px(180.))),
                             )
                             .child(
                                 div()
                                     .flex_col()
                                     .child("Auto Height")
-                                    .child(img("https://picsum.photos/800/400").w(px(180.))),
+                                    .child(img(self.local_resource.clone()).w(px(180.))),
                             ),
                     )
                     .child(
@@ -140,7 +128,7 @@ impl Render for ImageShowcase {
                             .border_1()
                             .border_color(rgb(0xC0C0C0))
                             .child("image with max width 100%")
-                            .child(img("https://picsum.photos/800/400").max_w_full()),
+                            .child(img(self.local_resource.clone()).max_w_full()),
                     ),
             )
     }
@@ -149,15 +137,9 @@ impl Render for ImageShowcase {
 actions!(image, [Quit]);
 
 fn run_example() {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = PathBuf::from(open_gpui::GPUI_MANIFEST_DIR);
 
     let app = open_gpui_platform::application();
-    #[cfg(not(target_family = "wasm"))]
-    let http_client =
-        ReqwestClient::user_agent("gpui example").expect("failed to create HTTP client");
-    #[cfg(target_family = "wasm")]
-    let http_client = open_gpui_web::FetchHttpClient::new(app.foreground_executor().to_send());
-    let app = app.with_http_client(Arc::new(http_client));
     app.with_assets(Assets {
         base: manifest_dir.join("examples"),
     })
@@ -190,7 +172,7 @@ fn run_example() {
             cx.new(|_| ImageShowcase {
                 // Relative path to your root project path
                 local_resource: manifest_dir.join("examples/image/app-icon.png").into(),
-                remote_resource: "https://picsum.photos/800/400".into(),
+
                 asset_resource: "image/color.svg".into(),
             })
         })
@@ -198,15 +180,7 @@ fn run_example() {
     });
 }
 
-#[cfg(not(target_family = "wasm"))]
 fn main() {
     env_logger::init();
-    run_example();
-}
-
-#[cfg(target_family = "wasm")]
-#[wasm_bindgen::prelude::wasm_bindgen(start)]
-pub fn start() {
-    open_gpui_platform::web_init();
     run_example();
 }

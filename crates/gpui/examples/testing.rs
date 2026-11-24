@@ -202,18 +202,9 @@ fn run_example() {
     });
 }
 
-#[cfg(not(target_family = "wasm"))]
 fn main() {
     run_example();
 }
-
-#[cfg(target_family = "wasm")]
-#[wasm_bindgen::prelude::wasm_bindgen(start)]
-pub fn start() {
-    open_gpui_platform::web_init();
-    run_example();
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

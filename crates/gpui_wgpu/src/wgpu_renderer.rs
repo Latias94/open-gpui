@@ -255,11 +255,11 @@ struct WgpuResources {
     bind_group_layouts: WgpuBindGroupLayouts,
     atlas_sampler: wgpu::Sampler,
     atlas_texture_bind_groups: FxHashMap<AtlasTextureInstanceId, wgpu::BindGroup>,
-    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     atlas_bind_group_creations: u64,
-    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     atlas_bind_group_hits: u64,
-    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     submitted_scene_count: u64,
     globals_buffer: wgpu::Buffer,
     clip_buffer: GpuData,
@@ -793,11 +793,11 @@ impl WgpuRendererCore {
             bind_group_layouts,
             atlas_sampler,
             atlas_texture_bind_groups: FxHashMap::default(),
-            #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+            #[cfg(any(test, feature = "test-support"))]
             atlas_bind_group_creations: 0,
-            #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+            #[cfg(any(test, feature = "test-support"))]
             atlas_bind_group_hits: 0,
-            #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+            #[cfg(any(test, feature = "test-support"))]
             submitted_scene_count: 0,
             globals_buffer,
             clip_buffer,
@@ -1732,10 +1732,7 @@ impl WgpuRendererCore {
         Ok((clip_shape_count, atlas_presentation))
     }
 
-    #[cfg(all(
-        not(target_family = "wasm"),
-        any(test, feature = "bench-support", feature = "test-support")
-    ))]
+    #[cfg(all(not(target_family = "wasm"), any(test, feature = "test-support")))]
     fn render_frame(
         &mut self,
         scene: &Scene,
@@ -1831,7 +1828,7 @@ impl WgpuRendererCore {
             .queue
             .submit(std::iter::once(encoder.finish()));
         atlas_presentation.retain_imported_until_completed(&self.resources.queue);
-        #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+        #[cfg(any(test, feature = "test-support"))]
         {
             self.resources.submitted_scene_count += 1;
         }
@@ -2054,14 +2051,14 @@ impl WgpuRendererCore {
                 .atlas_texture_bind_groups
                 .contains_key(&texture)
             {
-                #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+                #[cfg(any(test, feature = "test-support"))]
                 {
                     self.resources.atlas_bind_group_hits += 1;
                 }
                 continue;
             }
             let bind_group = self.create_texture_bind_group("atlas_texture_bind_group", view);
-            #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+            #[cfg(any(test, feature = "test-support"))]
             {
                 self.resources.atlas_bind_group_creations += 1;
             }
@@ -2820,19 +2817,13 @@ impl WgpuRenderer {
     }
 }
 
-#[cfg(all(
-    not(target_family = "wasm"),
-    any(test, feature = "bench-support", feature = "test-support")
-))]
+#[cfg(all(not(target_family = "wasm"), any(test, feature = "test-support")))]
 struct HeadlessRenderTarget {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
 }
 
-#[cfg(all(
-    not(target_family = "wasm"),
-    any(test, feature = "bench-support", feature = "test-support")
-))]
+#[cfg(all(not(target_family = "wasm"), any(test, feature = "test-support")))]
 impl HeadlessRenderTarget {
     fn size(&self) -> Size<DevicePixels> {
         Size {
@@ -2843,10 +2834,7 @@ impl HeadlessRenderTarget {
 }
 
 /// An offscreen renderer using the same device, atlas and scene submission path as WGPU windows.
-#[cfg(all(
-    not(target_family = "wasm"),
-    any(test, feature = "bench-support", feature = "test-support")
-))]
+#[cfg(all(not(target_family = "wasm"), any(test, feature = "test-support")))]
 pub struct WgpuHeadlessRenderer {
     context: WgpuContext,
     core: WgpuRendererCore,
@@ -2855,10 +2843,7 @@ pub struct WgpuHeadlessRenderer {
     last_submission: Option<wgpu::SubmissionIndex>,
 }
 
-#[cfg(all(
-    not(target_family = "wasm"),
-    any(test, feature = "bench-support", feature = "test-support")
-))]
+#[cfg(all(not(target_family = "wasm"), any(test, feature = "test-support")))]
 impl WgpuHeadlessRenderer {
     /// Creates an offscreen renderer, sharing the process's headless device until device loss.
     pub fn new() -> anyhow::Result<Self> {
@@ -2886,7 +2871,7 @@ impl WgpuHeadlessRenderer {
 
     /// Returns cumulative atlas bind-group creations and cache hits for this renderer.
     #[doc(hidden)]
-    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn atlas_bind_group_cache_counts(&self) -> (u64, u64) {
         (
             self.core.resources.atlas_bind_group_creations,
@@ -3073,10 +3058,7 @@ impl WgpuHeadlessRenderer {
     }
 }
 
-#[cfg(all(
-    not(target_family = "wasm"),
-    any(test, feature = "bench-support", feature = "test-support")
-))]
+#[cfg(all(not(target_family = "wasm"), any(test, feature = "test-support")))]
 impl open_gpui::PlatformHeadlessRenderer for WgpuHeadlessRenderer {
     fn render_scene_to_image(
         &mut self,

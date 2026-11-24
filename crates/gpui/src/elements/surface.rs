@@ -1,12 +1,12 @@
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use crate::PlatformPixelBuffer;
+use crate::Refineable;
 use crate::{
     App, Bounds, Element, ElementId, GlobalElementId, InspectorElementId, LayoutId, ObjectFit,
     Pixels, Style, StyleRefinement, Styled, Window,
 };
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use objc2_core_video::{CVPixelBufferGetHeight, CVPixelBufferGetWidth};
-use open_gpui_refineable::Refineable;
 
 /// A source of a surface's content.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -2,7 +2,7 @@ use open_gpui::{
     Context, IntoElement, ParentElement, Render, Styled, TestAppContext, VisualTestContext, Window,
     div, px,
 };
-use open_gpui_motion::MotionPreference;
+use open_gpui_core_util::motion::MotionPreference;
 use open_gpui_ui_components::{
     Splitter, SplitterPanel, SplitterPanelDescriptor,
     theme::{ThemeContext, ThemeDefinition, ThemeRegistry, ThemeScope, ThemeSnapshot},

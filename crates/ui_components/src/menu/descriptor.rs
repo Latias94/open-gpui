@@ -1,6 +1,6 @@
-use crate::action::{ActionDescriptor, ResolvedActionIcon, ResolvedActionState};
+use crate::action::{ResolvedActionIcon, ResolvedActionState};
 use crate::overlay::OverlayDisclosureOpenMode;
-use open_gpui_command::CommandDescriptor;
+
 /// Menu open-state ownership.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MenuOpenMode {
@@ -108,17 +108,6 @@ impl MenuItemDescriptor {
             when: None,
             children: Vec::new(),
         }
-    }
-
-    /// Creates an action item descriptor from shared app-command metadata.
-    pub fn from_command_descriptor(descriptor: &CommandDescriptor) -> Self {
-        let action = ActionDescriptor::from_command_descriptor(descriptor)
-            .resolve_without_icon_diagnostics();
-        let mut item = Self::from_resolved_action(&action).disabled(descriptor.disabled_state());
-        if let Some(when) = descriptor.when_ref() {
-            item = item.when(when);
-        }
-        item
     }
 
     /// Creates an action item descriptor from resolved action metadata.

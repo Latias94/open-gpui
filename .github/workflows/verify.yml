@@ -6,6 +6,7 @@ on:
     branches:
       - master
       - main
+      - refactor/v2-slim-wgpu
   workflow_dispatch:
 
 permissions:
@@ -40,7 +41,7 @@ jobs:
           cache-on-failure: true
 
       - name: Check framework on minimum Rust
-        run: cargo +1.93.0 check --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-windows -p open-gpui-canvas -p open-gpui-platform -p open-gpui-bench-metrics -p open-gpui-macros -p open-gpui-motion -p open-gpui-ui-core -p open-gpui-ui-components --all-features --all-targets -j 1
+        run: cargo +1.93.0 check --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-windows -p open-gpui-platform -p open-gpui-macros -p open-gpui-ui-core -p open-gpui-ui-components --all-features --all-targets -j 1
 
       - name: Check independent test-support consumer on minimum Rust
         run: cargo +1.93.0 check --locked --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --all-targets --all-features --target-dir target -j 1
@@ -66,7 +67,7 @@ jobs:
           cache-on-failure: true
 
       - name: Check docking, examples, and tooling on minimum Rust
-        run: cargo +1.95.0 check --locked -p open-gpui-devtools -p open-gpui-docking -p open-gpui-docking-minimal -p open-gpui-docking-multiviewport -p open-gpui-docking-native -p open-gpui-dockspace-editor -p open-gpui-ui-foundation-gallery -p xtask --all-features --all-targets -j 1
+        run: cargo +1.95.0 check --locked -p open-gpui-docking -p open-gpui-docking-minimal -p open-gpui-docking-multiviewport -p open-gpui-dockspace-editor -p xtask --all-features --all-targets -j 1
 
       - name: Check independent consumer on docking minimum Rust
         run: cargo +1.95.0 check --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-targets --all-features --target-dir target -j 1
@@ -97,11 +98,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo check -p open-gpui-smoke-native --locked
 
+      - name: Resolve a single WGPU package
+        run: cargo tree --locked -d -p wgpu
+
       - name: Test default Core without additive support
         run: cargo nextest run --locked -p open-gpui --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test default libraries and default docking
-        run: cargo nextest run --locked -p open-gpui-motion -p open-gpui-form -p open-gpui-resource -p open-gpui-devtools -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery -p open-gpui-docking -p open-gpui-dockspace-editor --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui-resource -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-docking -p open-gpui-dockspace-editor --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Check repository contracts
         run: |
@@ -116,8 +120,6 @@ jobs:
           cargo run --locked -p xtask -- scan-import-boundary
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo run --locked -p xtask -- scan-public-api --check
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo run --locked -p xtask -- scan-ui-contract
 
   libraries-windows:
     name: verify complete libraries (windows)
@@ -135,11 +137,11 @@ jobs:
         with:
           cache-on-failure: true
 
-      - name: Test complete libraries and legacy docking
-        run: cargo nextest run --locked -p open-gpui-form -p open-gpui-resource -p open-gpui-devtools -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery -p open-gpui-docking -p open-gpui-docking-native -p open-gpui-canvas -p open-gpui-command -p open-gpui-bench-metrics -p open-gpui-macros -p xtask --all-features --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
+      - name: Test complete libraries and shared docking
+        run: cargo nextest run --locked -p open-gpui-resource -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-docking -p open-gpui-macros -p xtask --all-features --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test public library documentation
-        run: cargo test --locked -p open-gpui-motion -p open-gpui-devtools -p open-gpui-ui-core -p open-gpui-ui-components --all-features --doc
+        run: cargo test --locked -p open-gpui-ui-core -p open-gpui-ui-components --all-features --doc
 
       - name: Test release embedded assets
         run: cargo nextest run --locked -p open-gpui-util --release --test embedded_assets --test-threads=1 --no-fail-fast --no-tests fail
@@ -171,10 +173,10 @@ jobs:
         if: matrix.name == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libdbus-1-dev dbus libfontconfig1-dev libfreetype6-dev libpipewire-0.3-dev libwayland-dev libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev xvfb pkg-config
+          sudo apt-get install -y libdbus-1-dev dbus libfontconfig1-dev libfreetype6-dev libwayland-dev libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev xvfb pkg-config
 
       - name: Test complete Core and utility contracts
-        run: cargo nextest run --locked -p open-gpui -p open-gpui-scheduler -p open-gpui-motion -p open-gpui-core-util -p open-gpui-util -p open-gpui-path -p open-gpui-log -p open-gpui-sum-tree -p open-gpui-reqwest-client -p open-gpui-github-releases --all-features --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui -p open-gpui-scheduler -p open-gpui-core-util -p open-gpui-util -p open-gpui-path -p open-gpui-log --all-features --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test Core without optional instrumentation
         run: cargo nextest run --locked -p open-gpui --no-default-features --features test-support --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
@@ -182,11 +184,11 @@ jobs:
       - name: Test hot reload without default features
         run: cargo nextest run --locked -p open-gpui --no-default-features --features test-support,hot-reload --lib -E 'test(hot_reload::)' --test-threads=1 --no-fail-fast --no-tests fail
 
-      - name: Test host Web sessions and font fallback
-        run: cargo nextest run --locked -p open-gpui-web -p open-gpui-wgpu --lib -E 'package(open-gpui-web) | test(glyph_cache::) | test(run_replacements::) | test(text_edit::) | test(cosmic_text_system::font_installation_tests::)' --test-threads=1 --no-fail-fast --no-tests fail
+      - name: Test WGPU text and font fallback
+        run: cargo nextest run --locked -p open-gpui-wgpu --lib -E 'test(glyph_cache::) | test(run_replacements::) | test(text_edit::) | test(cosmic_text_system::font_installation_tests::)' --test-threads=1 --no-fail-fast --no-tests fail
 
-      - name: Test component platform and motion consumers
-        run: cargo nextest run --locked -p open-gpui-command -p open-gpui-ui-components -p open-gpui-docking --all-features --lib --test runtime_keybindings --test app_motion -E 'test(app_reduced_) | test(app_motion_) | test(list_theme_reduced_) | binary(runtime_keybindings) | binary(app_motion)' --test-threads=1 --no-fail-fast --no-tests fail
+      - name: Test component motion consumers
+        run: cargo nextest run --locked -p open-gpui-ui-components -p open-gpui-docking --all-features --lib --test app_motion -E 'test(app_reduced_) | test(app_motion_) | test(list_theme_reduced_) | binary(app_motion)' --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Check Linux backend feature boundaries
         if: matrix.name == 'linux'
@@ -211,7 +213,7 @@ jobs:
 
       - name: Test Apple and macOS offline Metal backends
         if: matrix.name == 'macos'
-        run: cargo nextest run --locked -p open-gpui-apple -p open-gpui-macos --features font-kit,screen-capture --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui-apple -p open-gpui-macos --features font-kit --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Check native WGPU font-kit path
         run: cargo check --locked -p open-gpui-wgpu --features font-kit
@@ -243,7 +245,7 @@ jobs:
         if: matrix.name == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libdbus-1-dev libfontconfig1-dev libfreetype6-dev libpipewire-0.3-dev libwayland-dev libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config
+          sudo apt-get install -y libdbus-1-dev libfontconfig1-dev libfreetype6-dev libwayland-dev libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config
 
       - name: Check independently locked consumer targets
         run: cargo check --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-targets --all-features --target-dir target
@@ -254,8 +256,8 @@ jobs:
       - name: Test independent API without optional features
         run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --tests --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 
-      - name: Test independent benchmark API without test support
-        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support,profiler --tests --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+      - name: Test independent headless platform API
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features test-support,profiler --tests --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test complete independent API
         run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-features --tests -E 'not binary(wgpu_atlas)' --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
@@ -276,28 +278,11 @@ jobs:
           cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features logging-tracy --test logging --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test independent support and dedicated execution
-        run: cargo nextest run --locked --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --features bench-support --tests --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
-
-      - name: Run independent and platform benchmark smoke
-        if: matrix.name == 'windows'
-        shell: pwsh
-        env:
-          GPUI_LEAK_DETECTION: ''
-          BENCH_MEASUREMENT: wall-time
-        run: |
-          cargo bench --locked --profile dev --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --features bench-support --bench maintained_harness --target-dir target -- --noplot
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $env:SEED = '0'
-          $env:ITERATIONS = '1'
-          cargo bench --locked --profile dev -p open-gpui-platform --features bench-support,open_gpui/stacker --bench randomized_element_tree -- --test
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $env:SEED = $null
-          cargo bench --locked --profile dev --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --features bench-support --bench randomized_tree --target-dir target -- --test
+        run: cargo nextest run --locked --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --features test-support --tests --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 
   native-windows:
     # Programmatic HWND, renderer and retirement tests run on the hosted Windows image.
     # Physical input, clean-desktop Z-order and mixed-DPI qualification run locally
-    # through `cargo run --locked -p xtask -- native-windows-interactive`.
     name: verify native (windows)
     runs-on: windows-latest
     timeout-minutes: 90
@@ -335,7 +320,7 @@ jobs:
         run: |
           cargo nextest run --locked -p open-gpui --no-default-features --features test-support --lib --test test_support -E 'test(runtime_detection_tests) | binary(test_support)' --test-threads=1 --no-fail-fast --no-tests fail
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo nextest run --locked --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --features bench-support --test public_api --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --features test-support --test public_api --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo nextest run --locked -p open-gpui-windows --lib -E 'test(native_generic_views_compose_rebuild_cache_notify_and_release_exact_owners)' --test-threads=1 --no-fail-fast --no-tests fail
 
@@ -363,6 +348,7 @@ jobs:
           cargo nextest run --locked -p open-gpui --no-default-features --features test-support --test test_support -E 'test(snapshots_track_new_entities_only_when_explicitly_enabled)' --test-threads=1 --no-fail-fast --no-tests fail
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo nextest run --locked --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --no-default-features --features test-support --test public_api --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
   renderers-windows:
     name: verify GPU hosts (windows)
     runs-on: windows-latest
@@ -400,29 +386,3 @@ jobs:
           cargo run --locked -p open-gpui-wgpu-native --no-default-features -- --external-host --deferred --logical-root --smoke
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo run --locked -p open-gpui-wgpu-native --no-default-features -- --logical-root --smoke --native-close
-
-  web:
-    name: verify browser (linux)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-      - uses: taiki-e/install-action@trunk
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-
-      - name: Check stable wasm surfaces
-        run: |
-          cargo check --locked -p open-gpui-web --target wasm32-unknown-unknown --tests
-          cargo check --locked -p open-gpui-web --target wasm32-unknown-unknown
-          cargo check --locked -p open-gpui-platform --target wasm32-unknown-unknown
-          cargo check --locked -p open-gpui-wgpu --target wasm32-unknown-unknown
-          cargo check --locked -p open-gpui-tracing -p open-gpui-sum-tree --features open-gpui-tracing/web --target wasm32-unknown-unknown --lib
-
-      - name: Run complete browser web smoke
-        run: cargo run --locked -p xtask -- web-smoke

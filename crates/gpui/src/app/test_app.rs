@@ -88,12 +88,11 @@ impl TestApp {
             ),
             None => TestPlatform::new(background_executor.clone(), foreground_executor.clone()),
         };
-        let http_client = open_gpui_http_client::FakeHttpClient::with_404_response();
         let text_system = Arc::new(TextSystem::new(
             platform_text_system.unwrap_or_else(|| platform.text_system.clone()),
         ));
 
-        let app = App::new_app(platform.clone(), asset_source, http_client);
+        let app = App::new_app(platform.clone(), asset_source);
         app.borrow_mut().mode = GpuiMode::test();
 
         Self {

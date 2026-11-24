@@ -117,7 +117,6 @@ mod native_power_visibility_tests;
 mod native_profiler_tests;
 #[path = "native_quit_tests.rs"]
 mod native_quit_tests;
-#[cfg(feature = "bench-support")]
 #[path = "native_randomized_tree_tests.rs"]
 mod native_randomized_tree_tests;
 #[path = "native_retirement_timer_tests.rs"]

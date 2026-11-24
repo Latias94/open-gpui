@@ -1,5 +1,3 @@
-#![cfg_attr(target_family = "wasm", no_main)]
-
 use open_gpui::{
     Background, Bounds, ColorSpace, Context, MouseDownEvent, MouseMoveEvent, Path, PathBuilder,
     PathStyle, Pixels, Point, Render, StrokeOptions, TargetedEvent, Window, WindowOptions, canvas,
@@ -472,14 +470,6 @@ fn run_example() {
     });
 }
 
-#[cfg(not(target_family = "wasm"))]
 fn main() {
-    run_example();
-}
-
-#[cfg(target_family = "wasm")]
-#[wasm_bindgen::prelude::wasm_bindgen(start)]
-pub fn start() {
-    open_gpui_platform::web_init();
     run_example();
 }

@@ -1,51 +1,32 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/bench_metrics",
-    "crates/canvas",
     "crates/collections",
-    "crates/devtools",
-    "crates/form",
-    "crates/github_releases",
-    "crates/open-gpui-command",
     "crates/gpui",
     "crates/gpui_apple",
-    "crates/gpui_ios",
     "crates/gpui_docking",
     "crates/gpui_linux",
     "crates/gpui_macos",
     "crates/gpui_macros",
     "crates/gpui_platform",
     "crates/gpui_shared_string",
-    "crates/gpui_tokio",
     "crates/gpui_util",
-    "crates/gpui_web",
     "crates/gpui_wgpu",
     "crates/gpui_windows",
-    "crates/http_client",
-    "crates/http_client_tls",
-    "crates/motion",
     "crates/path",
     "crates/resource",
     "crates/ui_components",
     "crates/ui_core",
-    "crates/refineable",
-    "crates/refineable/derive_refineable",
-    "crates/reqwest_client",
     "crates/scheduler",
-    "crates/sum_tree",
     "crates/util",
     "crates/util_macros",
     "crates/zlog",
     "crates/ztracing",
     "crates/ztracing_macro",
-    "examples/canvas-notes",
     "examples/docking-minimal",
     "examples/docking-multiviewport",
-    "examples/docking-native",
     "examples/dockspace-editor",
     "examples/smoke-native",
-    "examples/ui-foundation-gallery",
     "examples/wgpu-native",
     "xtask",
 ]
@@ -69,40 +50,26 @@ readme = "README.md"
 publish = false
 
 [workspace.dependencies]
-open_gpui_bench_metrics = { package = "open-gpui-bench-metrics", version = "0.2.0", path = "crates/bench_metrics" }
 open_gpui = { package = "open-gpui", version = "0.2.0", path = "crates/gpui", default-features = false }
 open_gpui_apple = { package = "open-gpui-apple", version = "0.2.0", path = "crates/gpui_apple", default-features = false }
-open_gpui_canvas = { package = "open-gpui-canvas", version = "0.2.0", path = "crates/canvas" }
 open_gpui_collections = { package = "open-gpui-collections", version = "0.2.0", path = "crates/collections" }
-open_gpui_command = { package = "open-gpui-command", version = "0.2.0", path = "crates/open-gpui-command" }
-open_gpui_devtools = { package = "open-gpui-devtools", version = "0.2.0", path = "crates/devtools" }
 open_gpui_docking = { package = "open-gpui-docking", version = "0.2.0", path = "crates/gpui_docking" }
-open_gpui_form = { package = "open-gpui-form", version = "0.2.0", path = "crates/form" }
 open_gpui_core_util = { package = "open-gpui-core-util", version = "0.2.0", path = "crates/gpui_util" }
 open_gpui_ui_components = { package = "open-gpui-ui-components", version = "0.2.0", path = "crates/ui_components" }
 open_gpui_ui_core = { package = "open-gpui-ui-core", version = "0.2.0", path = "crates/ui_core" }
-open_gpui_http_client = { package = "open-gpui-http-client", version = "0.2.0", path = "crates/http_client" }
-open_gpui_http_client_tls = { package = "open-gpui-http-client-tls", version = "0.2.0", path = "crates/http_client_tls" }
-open_gpui_ios = { package = "open-gpui-ios", version = "0.2.0", path = "crates/gpui_ios", default-features = false }
 open_gpui_linux = { package = "open-gpui-linux", version = "0.2.0", path = "crates/gpui_linux", default-features = false }
 open_gpui_log = { package = "open-gpui-log", version = "0.2.0", path = "crates/zlog" }
 open_gpui_macos = { package = "open-gpui-macos", version = "0.2.0", path = "crates/gpui_macos", default-features = false }
 open_gpui_macros = { package = "open-gpui-macros", version = "0.2.0", path = "crates/gpui_macros" }
-open_gpui_motion = { package = "open-gpui-motion", version = "0.2.0", path = "crates/motion" }
 open_gpui_path = { package = "open-gpui-path", version = "0.2.0", path = "crates/path" }
 open_gpui_platform = { package = "open-gpui-platform", version = "0.2.0", path = "crates/gpui_platform", default-features = false }
-open_gpui_refineable = { package = "open-gpui-refineable", version = "0.2.0", path = "crates/refineable" }
-open_gpui_refineable_derive = { package = "open-gpui-refineable-derive", version = "0.2.0", path = "crates/refineable/derive_refineable" }
-open_gpui_reqwest_client = { package = "open-gpui-reqwest-client", version = "0.2.0", path = "crates/reqwest_client" }
 open_gpui_resource = { package = "open-gpui-resource", version = "0.2.0", path = "crates/resource" }
 open_gpui_scheduler = { package = "open-gpui-scheduler", version = "0.2.0", path = "crates/scheduler" }
 open_gpui_shared_string = { package = "open-gpui-shared-string", version = "0.2.0", path = "crates/gpui_shared_string" }
-open_gpui_sum_tree = { package = "open-gpui-sum-tree", version = "0.2.0", path = "crates/sum_tree" }
 open_gpui_tracing = { package = "open-gpui-tracing", version = "0.2.0", path = "crates/ztracing" }
 open_gpui_tracing_macro = { package = "open-gpui-tracing-macro", version = "0.2.0", path = "crates/ztracing_macro" }
 open_gpui_util = { package = "open-gpui-util", version = "0.2.0", path = "crates/util" }
 open_gpui_util_macros = { package = "open-gpui-util-macros", version = "0.2.0", path = "crates/util_macros" }
-open_gpui_web = { package = "open-gpui-web", version = "0.2.0", path = "crates/gpui_web" }
 open_gpui_wgpu = { package = "open-gpui-wgpu", version = "0.2.0", path = "crates/gpui_wgpu" }
 open_gpui_windows = { package = "open-gpui-windows", version = "0.2.0", path = "crates/gpui_windows", default-features = false }
 
@@ -114,17 +81,13 @@ anyhow = "1.0.103"
 arrayvec = "0.7.8"
 ashpd = { version = "0.13", default-features = false, features = ["async-io", "notification", "open_uri", "file_chooser", "settings", "trash"] }
 async-channel = { version = "2.5.0", default-features = false }
-async-compression = { version = "0.4", features = ["bzip2", "gzip", "futures-io"] }
 async-fs = "2.1"
 async-process = "2.5.0"
 async-std = { version = "1.12", features = ["unstable"] }
-async-tar = { version = "0.6.1", git = "https://github.com/zed-industries/async-tar", rev = "bd3ad6f89df9a9da7a8535958756d6bf465936a0" }
 async-task = { version = "4.7.1", git = "https://github.com/zed-industries/async-task.git", rev = "015845a19fc31752c02367567d3b8900a406f9da" }
-async_zip = { version = "0.0.18", features = ["deflate", "deflate64"] }
 backtrace = "0.3"
 bitflags = "2.6.0"
 block2 = "0.6.2"
-bytes = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.6.1", features = ["derive"] }
 core-foundation = "0.10.0"
@@ -146,8 +109,6 @@ globset = "0.4"
 heapless = "0.9.2"
 heck = "0.5"
 hdrhistogram = "7"
-http = "1.1"
-http-body = "1.0"
 image = { version = "0.25.4", default-features = false, features = [
     "bmp",
     "dds",
@@ -173,63 +134,17 @@ log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 mach2 = "0.5"
 nix = "0.29"
 objc2 = "0.6"
-objc2-ui-kit = { version = "0.3.2", default-features = false, features = [
-    "std",
-    "block2",
-    "objc2-quartz-core",
-    "objc2-core-foundation",
-    "NSText",
-    "UIApplication",
-    "UICommand",
-    "UICornerConfiguration",
-    "UICornerRadius",
-    "UIEvent",
-    "UIGeometry",
-    "UIGestureRecognizer",
-    "UIPanGestureRecognizer",
-    "UIScreenEdgePanGestureRecognizer",
-    "UIInterface",
-    "UIOpenURLContext",
-    "UIPasteboard",
-    "UIResponder",
-    "UIScene",
-    "UISceneConfiguration",
-    "UISceneDefinitions",
-    "UISceneOptions",
-    "UISceneSession",
-    "UIScreen",
-    "UITextInput",
-    "UITextInputTraits",
-    "UITouch",
-    "UITraitCollection",
-    "UIView",
-    "UIViewController",
-    "UIWindow",
-    "UIWindowScene",
-] }
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSGraphics"] }
 objc2-core-foundation = "0.3"
 objc2-core-graphics = "0.3"
-objc2-core-media = { version = "=0.3.2", default-features = false, features = ["CMSampleBuffer", "objc2-core-video"] }
 objc2-core-text = "0.3"
 objc2-core-video = "0.3"
 objc2-foundation = "0.3"
 objc2-metal = "0.3"
 objc2-quartz-core = "0.3"
-objc2-screen-capture-kit = { version = "=0.3.2", default-features = false, features = [
-    "block2",
-    "dispatch2",
-    "objc2-core-graphics",
-    "objc2-core-media",
-    "SCShareableContent",
-    "SCStream",
-    "std",
-] }
 objc2-security = { version = "0.3.2", default-features = false, features = ["std", "SecBase", "SecItem"] }
-oo7 = { git = "https://github.com/zed-industries/oo7", rev = "731c1215edb6905876c6137ab300428c7b8d7c13", version = "0.6", default-features = false }
 parking_lot = "0.12.1"
 percent-encoding = "2.3.2"
-perf-event = { package = "perf-event2", version = "0.7.4" }
 pollster = "0.4.0"
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = { version = "1.3.0", features = ["unstable"] }
@@ -240,12 +155,8 @@ quote = "1.0.9"
 rand = "0.9"
 rayon = "1.8"
 regex = "1.5"
-reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "33bc764aa15ff7b200bf7c93bd96e24878d53e14", package = "zed-reqwest", version = "0.12.15-zed", default-features = false, features = ["http2", "macos-system-configuration", "rustls-tls-native-roots", "socks", "stream"] }
 rust-embed = { version = "8.13", features = ["include-exclude"] }
 rustc-hash = "2.1.0"
-rustls = "0.23.26"
-rustls-platform-verifier = "0.7"
-scap = { package = "open-gpui-scap", version = "0.1.0-beta.1", default-features = false }
 schemars = { version = "1.0", features = ["indexmap2"] }
 semver = { version = "1.0", features = ["serde"] }
 serde = { version = "1.0.221", features = ["derive", "rc"] }
@@ -262,7 +173,6 @@ syn = { version = "2.0.101", features = ["full", "extra-traits", "visit-mut"] }
 tempfile = "3.20.0"
 tendril = "0.5"
 thiserror = "2.0.12"
-tokio = "1"
 tracing = "0.1.40"
 tracing-subscriber = "0.3"
 trybuild = "1.0"
@@ -277,7 +187,6 @@ walkdir = "2.5"
 wasm-bindgen = "0.2.126"
 wasm_thread = { version = "0.3.3", git = "https://github.com/zed-industries/wasm_thread", rev = "0cf96c7708dfb97ccf3da50347e25edcf75d6937", features = ["es_modules"] }
 web-time = "1.1.0"
-webpki-roots = "1.0.10"
 wgpu = { version = "30.0.0", git = "https://github.com/gfx-rs/wgpu", rev = "cddb2f5d80dc0009b2ef6767635140cacf90a007", default-features = false }
 which = "6.0.0"
 windows-core = "0.62"

@@ -8,7 +8,7 @@ use std::{
 };
 
 use open_gpui::{App, Entity, Global, Rgba, Subscription, Window};
-use open_gpui_motion::MotionPreference;
+use open_gpui_core_util::motion::MotionPreference;
 use open_gpui_ui_core::{Density, ThemeDesignScales};
 
 use crate::color::ColorIntent;

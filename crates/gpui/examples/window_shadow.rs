@@ -1,5 +1,3 @@
-#![cfg_attr(target_family = "wasm", no_main)]
-
 use open_gpui::{
     App, Bounds, Context, Corners, CursorStyle, Decorations, HitboxBehavior, Hsla, MouseButton,
     Pixels, Point, ResizeEdge, Size, Window, WindowBackgroundAppearance, WindowBounds,
@@ -250,14 +248,6 @@ fn run_example() {
     });
 }
 
-#[cfg(not(target_family = "wasm"))]
 fn main() {
-    run_example();
-}
-
-#[cfg(target_family = "wasm")]
-#[wasm_bindgen::prelude::wasm_bindgen(start)]
-pub fn start() {
-    open_gpui_platform::web_init();
     run_example();
 }
