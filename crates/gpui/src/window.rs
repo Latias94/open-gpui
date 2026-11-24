@@ -1696,6 +1696,7 @@ pub struct Window {
     pub(crate) dirty_views: FxHashSet<EntityId>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     key_down_interceptors: SubscriberSet<(), AnyWindowKeyDownInterceptor>,
+    modifiers_changed_observers: SubscriberSet<(), crate::key_dispatch::ModifiersChangedListener>,
     mouse_interceptors: SubscriberSet<(), AnyWindowMouseInterceptor>,
     window_states: Rc<RefCell<TypeIdHashMap<WindowStateSlot>>>,
     input_dispatch_active: Rc<Cell<bool>>,
@@ -2909,6 +2910,7 @@ impl Window {
             dirty_views: FxHashSet::default(),
             focus_listeners: SubscriberSet::new(),
             key_down_interceptors: SubscriberSet::new(),
+            modifiers_changed_observers: SubscriberSet::new(),
             mouse_interceptors: SubscriberSet::new(),
             window_states: Rc::new(RefCell::new(TypeIdHashMap::default())),
             input_dispatch_active: Rc::new(Cell::new(false)),
@@ -13513,6 +13515,19 @@ impl Window {
         subscription
     }
 
+    /// Observes modifier changes on this window independently of element focus.
+    #[doc(hidden)]
+    pub fn observe_window_modifiers_changed(
+        &mut self,
+        listener: impl Fn(&ModifiersChangedEvent, &mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self
+            .modifiers_changed_observers
+            .insert((), Rc::new(listener));
+        activate();
+        subscription
+    }
+
     /// Register a modifiers changed event listener on the window for the next frame.
     ///
     /// This is a fairly low-level method, so prefer using event handlers on elements unless you have
@@ -13985,6 +14000,20 @@ impl Window {
     }
 
     fn dispatch_key_event(&mut self, event: &dyn Any, cx: &mut App) {
+        if let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() {
+            self.modifiers_changed_observers
+                .clone()
+                .retain(&(), |listener| {
+                    if self.user_interaction_is_admitted() {
+                        listener(event, self, cx);
+                    }
+                    true
+                });
+            if !self.user_interaction_is_admitted() {
+                cx.stop_propagation();
+                return;
+            }
+        }
         if event.is::<KeyDownEvent>() || event.is::<KeyUpEvent>() {
             self.key_event_revision = self.key_event_revision.wrapping_add(1);
         }

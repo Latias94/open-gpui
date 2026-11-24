@@ -637,6 +637,40 @@ impl DockSurface {
         )
     }
 
+    /// Returns the center of the presented group grip on a single-group test surface.
+    #[cfg(feature = "test-support")]
+    pub fn presented_group_grip_for_test(
+        &self,
+        window: WindowId,
+        surface: SurfaceId,
+    ) -> Option<open_gpui::Point<Pixels>> {
+        let host = self.host.borrow();
+        let frame = host
+            .mounts
+            .get(&window)?
+            .input_frames
+            .iter()
+            .find(|frame| {
+                frame.surface == surface
+                    && input::is_presented(&host, window, surface, frame.serial)
+            })?;
+        let mut grips = frame.receivers.iter().filter(|(receiver, _)| {
+            receiver.role() == dockspace::runtime::DockspaceReceiverRole::TabGroupGrip
+        });
+        let (grip, _) = grips.next()?;
+        if grips.next().is_some() {
+            return None;
+        }
+        let center = grip.center();
+        Some(
+            frame.bounds.origin
+                + open_gpui::point(
+                    open_gpui::px(center.x() as f32),
+                    open_gpui::px(center.y() as f32),
+                ),
+        )
+    }
+
     /// Returns the primary background diagnostic, if any.
     ///
     /// The first classified protocol, internal or foreign-update failure is

@@ -3,6 +3,7 @@
 use std::{
     cell::RefCell,
     collections::BTreeSet,
+    mem::size_of,
     panic::{AssertUnwindSafe, set_hook, take_hook},
     rc::Rc,
     sync::{Arc, Mutex},
@@ -15,7 +16,13 @@ use open_gpui::{
     WindowFrameSubmissionOutcome, WindowProvisionalPlacementOutcome,
     WindowProvisionalPlacementPurpose,
 };
-use open_gpui_docking::{dockspace::geometry::PhysicalRect, native::NativeReport};
+use open_gpui_docking::{
+    dockspace::{
+        geometry::PhysicalRect,
+        model::{DockAnchor, DockPlacement, DockspaceTabView},
+    },
+    native::NativeReport,
+};
 use open_gpui_windows::{
     NativeTestPointerAction, NativeWindowTestEventKind, NativeWindowTestMessage,
     NativeWindowTestObservation, WindowsPlatform, begin_native_window_test_observation,
@@ -25,10 +32,13 @@ use open_gpui_windows::{
 use windows::Win32::{
     Foundation::{HWND, LPARAM, POINT, WPARAM},
     UI::{
-        Input::KeyboardAndMouse::GetCapture,
+        Input::KeyboardAndMouse::{
+            GetAsyncKeyState, GetCapture, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS,
+            KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY, VK_ESCAPE, VK_MENU, VK_SHIFT,
+        },
         WindowsAndMessaging::{
-            GetCursorPos, HTTRANSPARENT, IsWindow, IsWindowVisible, PostMessageW, SendMessageW,
-            WM_CLOSE, WM_NCHITTEST,
+            GetCursorPos, GetForegroundWindow, HTTRANSPARENT, IsWindow, IsWindowVisible,
+            PostMessageW, SendMessageW, WM_CLOSE, WM_NCHITTEST,
         },
     },
 };
@@ -40,9 +50,9 @@ use super::process_harness::{
 use super::shared_session::{
     SHARED_MIDDLE_ITEM, SHARED_MIDDLE_SECONDARY_ITEM, SHARED_MIDDLE_SURFACE, SHARED_SOURCE_ITEM,
     SHARED_SOURCE_SECONDARY_ITEM, SHARED_SOURCE_SURFACE, SHARED_TARGET_ITEM,
-    SHARED_TARGET_SECONDARY_ITEM, SHARED_TARGET_SURFACE, SharedFixtureShape, SharedSession,
-    SharedWindow, shared_item_selected, shared_surface_contains_item, three_window_bounds,
-    two_window_bounds,
+    SHARED_TARGET_SECONDARY_ITEM, SHARED_TARGET_SURFACE, SharedCapturedDrag, SharedFixtureShape,
+    SharedSession, SharedWindow, shared_item_selected, shared_surface_contains_item,
+    three_window_bounds, two_window_bounds,
 };
 use super::{
     INPUT_CANARY, NATIVE_SCENARIO_ENV, NATIVE_TEST_INPUT_CANARY, NativeDockBehavior,
@@ -417,6 +427,7 @@ impl SharedScenarioWorker {
         let target = session.target_window()?;
         super::shared_recovery::seed_source_view(cx, session).await?;
         raise_native_window(target.hwnd)?;
+        Self::verify_capture_keyboard(cx, session, source, target).await?;
         let drag = session.begin_captured_drag(cx, source, source.item).await?;
         let target_point = tab_screen_point(cx, target, target.item).await?;
         let delivered = session
@@ -447,7 +458,176 @@ impl SharedScenarioWorker {
         session
             .milestones
             .push("shared.source-capture-committed".to_owned());
+        Self::verify_alt_group_drop(cx, session, source, target).await?;
+        self.milestones
+            .push("shared.alt-group-layout-preserved".to_owned());
         Ok(())
+    }
+
+    async fn keyboard_drop_point(
+        cx: &mut AsyncApp,
+        session: &mut SharedSession,
+        drag: &SharedCapturedDrag,
+        target: SharedWindow,
+    ) -> Result<POINT> {
+        let target_point = tab_screen_point(cx, target, target.item).await?;
+        let delivered = session
+            .move_captured_pointer(cx, target_point, "shared keyboard target route")
+            .await?;
+        wait_until(cx, "shared keyboard journey target HWND", |cx| {
+            session.pump(cx);
+            Ok(session.drag_events.borrow().iter().any(|event| {
+                event.generation() == drag.generation
+                    && event.phase() == open_gpui::NativeCapturedDragPhase::Moved
+                    && event.window_hit_stack().observation().is_some_and(|hit| {
+                        matches!(hit.terminus(),
+                            open_gpui::PlatformWindowHitTerminus::Window(
+                                open_gpui::PlatformWindowHit::RegisteredApplication { window, .. }
+                            ) if window == target.window)
+                    })
+            }))
+        })
+        .await?;
+        ensure!(
+            unsafe { GetForegroundWindow() } == drag.source.hwnd
+                && unsafe { GetCapture() } == drag.source.hwnd
+                && native_test_non_shell_root_window_at(delivered) == Some(target.hwnd),
+            "the keyboard journey needs its exact foreground source and visible target"
+        );
+        Ok(delivered)
+    }
+
+    async fn verify_capture_keyboard(
+        cx: &mut AsyncApp,
+        session: &mut SharedSession,
+        source: SharedWindow,
+        target: SharedWindow,
+    ) -> Result<()> {
+        let item = source.item;
+        for key in [VK_SHIFT, VK_ESCAPE] {
+            let drag = session.begin_captured_drag(cx, source, item).await?;
+            let delivered = Self::keyboard_drop_point(cx, session, &drag, target).await?;
+            let held_key = HeldNativeKey::press(key)?;
+            if key == VK_SHIFT {
+                wait_until(cx, "shared held Shift", |cx| {
+                    cx.update(|app| {
+                        app.update_window(source.window, |_, window, _| window.modifiers().shift)
+                            .map_err(Into::into)
+                    })
+                })
+                .await?;
+            } else {
+                session.wait_drag_released(cx).await?;
+                ensure!(
+                    session.drag_events.borrow().iter().any(|event| {
+                        event.generation() == drag.generation
+                            && event.phase()
+                                == open_gpui::NativeCapturedDragPhase::Cancelled(
+                                    open_gpui::PointerCancelReason::CaptureRevoked,
+                                )
+                    }),
+                    "Escape did not cancel the original drag generation before physical release"
+                );
+            }
+            session.release_captured_pointer(delivered)?;
+            session.wait_drag_released(cx).await?;
+            if key == VK_SHIFT {
+                ensure!(
+                    session.drag_events.borrow().iter().any(|event| {
+                        event.generation() == drag.generation
+                            && event.phase() == open_gpui::NativeCapturedDragPhase::Released
+                            && event.modifiers().is_some_and(|modifiers| modifiers.shift)
+                    }),
+                    "Shift was not held on the original release edge"
+                );
+            }
+            held_key.release()?;
+            session.assert_release_terminal(source, drag.generation)?;
+            ensure!(
+                shared_surface_contains_item(session, item, source.surface),
+                "keyboard directive {key:?} moved the pane out of its original surface"
+            );
+        }
+        Ok(())
+    }
+
+    async fn verify_alt_group_drop(
+        cx: &mut AsyncApp,
+        session: &mut SharedSession,
+        source: SharedWindow,
+        target: SharedWindow,
+    ) -> Result<()> {
+        cx.update(|app| {
+            session.dock.update(
+                |frame| {
+                    frame.dock_item_current(
+                        source.item,
+                        DockPlacement::Center(DockAnchor::Item(SHARED_SOURCE_SECONDARY_ITEM)),
+                    )?;
+                    frame.select_item_current(source.item)?;
+                    Ok(())
+                },
+                app,
+            )
+        })?;
+        wait_shared_transfer(cx, session, source.item, source).await?;
+        let (key, tabs, selected) = session.dock.with_view(|view| {
+            view.item(source.item)
+                .and_then(|item| item.tabs())
+                .map(|group| (group.key(), group.tabs().to_vec(), group.selected()))
+                .context("the Alt journey needs its original source tab group")
+        })?;
+        ensure!(tabs.len() == 2, "the Alt journey needs both original tabs");
+        let grip = session
+            .dock
+            .presented_group_grip_for_test(source.window.window_id(), source.surface)
+            .context("the source did not present its whole-group grip")?;
+        raise_native_window(target.hwnd)?;
+        let drag = session.begin_captured_drag_at(cx, source, grip).await?;
+        let delivered = Self::keyboard_drop_point(cx, session, &drag, target).await?;
+        let alt = HeldNativeKey::press(VK_MENU)?;
+        wait_until(cx, "shared held Alt", |cx| {
+            cx.update(|app| {
+                app.update_window(source.window, |_, window, _| window.modifiers().alt)
+                    .map_err(Into::into)
+            })
+        })
+        .await?;
+        session.release_captured_pointer(delivered)?;
+        session.wait_drag_released(cx).await?;
+        alt.release()?;
+        ensure!(
+            session.drag_events.borrow().iter().any(|event| {
+                event.generation() == drag.generation
+                    && event.phase() == open_gpui::NativeCapturedDragPhase::Released
+                    && event.modifiers().is_some_and(|modifiers| modifiers.alt)
+            }),
+            "Alt was not held on the original release edge"
+        );
+        session.assert_release_terminal(source, drag.generation)?;
+        wait_shared_transfer(cx, session, source.item, target).await?;
+        session.dock.with_view(|view| {
+            let destination = view
+                .item(target.item)
+                .and_then(|item| item.tabs())
+                .context("the target lost its original tab group")?;
+            let nested = destination
+                .children()
+                .find_map(|child| match child {
+                    DockspaceTabView::Layout(layout) => layout.tabs(),
+                    DockspaceTabView::Item(_) => None,
+                })
+                .context("Alt did not dock the group as a nested layout tab")?;
+            ensure!(
+                destination.tabs().len() == 2
+                    && destination.items().eq([target.item])
+                    && nested.key() == key
+                    && nested.tabs() == tabs
+                    && nested.selected() == selected,
+                "Alt did not preserve the original group identity, tab order and selection"
+            );
+            Ok(())
+        })
     }
 
     async fn run_complex_workflow(&mut self, cx: &mut AsyncApp) -> Result<()> {
@@ -1275,6 +1455,54 @@ impl SharedScenarioWorker {
             session.capture_census(cx)
         } else {
             capture_worker_app_census_without_surface(cx)
+        }
+    }
+}
+
+struct HeldNativeKey(Option<VIRTUAL_KEY>);
+
+impl HeldNativeKey {
+    fn press(key: VIRTUAL_KEY) -> Result<Self> {
+        ensure!(
+            unsafe { GetAsyncKeyState(i32::from(key.0)) } as u16 & 0x8000 == 0,
+            "the keyboard journey started with {key:?} already held"
+        );
+        Self::send(key, KEYBD_EVENT_FLAGS::default())?;
+        Ok(Self(Some(key)))
+    }
+
+    fn release(mut self) -> Result<()> {
+        if let Some(key) = self.0 {
+            Self::send(key, KEYEVENTF_KEYUP)?;
+            self.0 = None;
+        }
+        Ok(())
+    }
+
+    fn send(key: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS) -> Result<()> {
+        let event = INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: key,
+                    dwFlags: flags,
+                    dwExtraInfo: INPUT_CANARY,
+                    ..Default::default()
+                },
+            },
+        };
+        ensure!(
+            unsafe { SendInput(&[event], size_of::<INPUT>() as i32) } == 1,
+            "Windows rejected the shared keyboard journey's {key:?} input"
+        );
+        Ok(())
+    }
+}
+
+impl Drop for HeldNativeKey {
+    fn drop(&mut self) {
+        if let Some(key) = self.0 {
+            let _ = Self::send(key, KEYEVENTF_KEYUP);
         }
     }
 }

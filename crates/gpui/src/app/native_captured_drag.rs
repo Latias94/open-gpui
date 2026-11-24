@@ -8,7 +8,7 @@ use std::{
 };
 
 use crate::{
-    App, AppCell, Bounds, DevicePixels, MouseMoveEvent, MouseUpEvent, Pixels,
+    App, AppCell, Bounds, DevicePixels, Modifiers, MouseMoveEvent, MouseUpEvent, Pixels,
     PlatformNativePointerCaptureOwner, PlatformNativePointerPhysicalFrame, PlatformWindowHitStack,
     PlatformWindowPhysicalGeometry, Point, PointerCancelEvent, PointerCancelReason, Subscription,
     Window, WindowId,
@@ -319,6 +319,7 @@ pub struct NativeCapturedDragEvent {
     payload: Arc<dyn Any>,
     button: crate::MouseButton,
     phase: NativeCapturedDragPhase,
+    modifiers: Option<Modifiers>,
     source_local_position: Option<Point<Pixels>>,
     physical_frame: Option<PlatformNativePointerPhysicalFrame>,
     window_hit_stack: PlatformWindowHitStack,
@@ -334,6 +335,7 @@ impl fmt::Debug for NativeCapturedDragEvent {
             .field("source_window", &self.source_window)
             .field("phase", &self.phase)
             .field("button", &self.button)
+            .field("modifiers", &self.modifiers)
             .field("source_local_position", &self.source_local_position)
             .field("physical_frame", &self.physical_frame)
             .field("window_hit_stack", &self.window_hit_stack)
@@ -371,6 +373,11 @@ impl NativeCapturedDragEvent {
     /// Returns the captured pointer phase.
     pub fn phase(&self) -> NativeCapturedDragPhase {
         self.phase
+    }
+
+    /// Returns the modifiers carried by the original move or release edge.
+    pub fn modifiers(&self) -> Option<Modifiers> {
+        self.modifiers
     }
 
     /// Returns the pointer position in source-window logical coordinates.
@@ -556,6 +563,7 @@ impl NativeCapturedDragEnvelope {
             && self.event.generation == next.event.generation
             && self.event.phase == NativeCapturedDragPhase::Moved
             && next.event.phase == NativeCapturedDragPhase::Moved
+            && self.event.modifiers == next.event.modifiers
             && self.event.window_hit_stack == next.event.window_hit_stack
     }
 }
@@ -769,6 +777,7 @@ impl NativeCapturedDragOutbox {
                             payload: authority.payload.clone(),
                             button: authority.button,
                             phase: NativeCapturedDragPhase::Cancelled(reason),
+                            modifiers: None,
                             source_local_position: None,
                             physical_frame: None,
                             window_hit_stack: PlatformWindowHitStack::Unavailable,
@@ -1420,19 +1429,27 @@ impl App {
             return;
         }
         let button = drag.button;
-        let (phase, source_local_position) =
+        let (phase, source_local_position, modifiers) =
             if let Some(event) = event.downcast_ref::<MouseMoveEvent>() {
                 if event.pressed_button != Some(button) {
                     return;
                 }
-                (NativeCapturedDragPhase::Moved, Some(event.position))
+                (
+                    NativeCapturedDragPhase::Moved,
+                    Some(event.position),
+                    Some(event.modifiers),
+                )
             } else if let Some(event) = event.downcast_ref::<MouseUpEvent>() {
                 if event.button != button {
                     return;
                 }
-                (NativeCapturedDragPhase::Released, Some(event.position))
+                (
+                    NativeCapturedDragPhase::Released,
+                    Some(event.position),
+                    Some(event.modifiers),
+                )
             } else if let Some(event) = event.downcast_ref::<PointerCancelEvent>() {
-                (NativeCapturedDragPhase::Cancelled(event.reason), None)
+                (NativeCapturedDragPhase::Cancelled(event.reason), None, None)
             } else {
                 return;
             };
@@ -1463,6 +1480,7 @@ impl App {
             payload,
             button,
             phase,
+            modifiers,
             source_local_position,
             physical_frame,
             window_hit_stack,
@@ -1623,6 +1641,7 @@ mod tests {
             payload: Arc::new("payload"),
             button: crate::MouseButton::Left,
             phase,
+            modifiers: None,
             source_local_position: (!matches!(phase, NativeCapturedDragPhase::Cancelled(_)))
                 .then(Point::default),
             physical_frame: None,

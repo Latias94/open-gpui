@@ -354,6 +354,16 @@ impl Element for DockspaceElement {
                         presentation::visibility_changed(&host, visibility, window, cx);
                     }
                 });
+                let mut observers = open_gpui::Subscription::join(
+                    visibility,
+                    open_gpui::Subscription::join(closed, terminal),
+                );
+                if self.host.borrow().native.is_some() {
+                    observers = open_gpui::Subscription::join(
+                        observers,
+                        host_native::listen_capture_keyboard(&self.host, window),
+                    );
+                }
                 // Observations leave with their mount, including removal from
                 // inside either terminal callback.
                 self.host
@@ -361,10 +371,7 @@ impl Element for DockspaceElement {
                     .mounts
                     .get_mut(&owner)
                     .unwrap()
-                    ._lifecycle_observers = Some(open_gpui::Subscription::join(
-                    visibility,
-                    open_gpui::Subscription::join(closed, terminal),
-                ));
+                    ._lifecycle_observers = Some(observers);
             }
             Ok(false) => {}
             Err(error) => {
@@ -1847,7 +1854,8 @@ impl DockspaceElement {
         let hitboxes = prepared.hitboxes.clone();
         let content_hitboxes = prepared.content_hitboxes.clone();
         window.on_modifiers_changed(move |event, window, _| {
-            if !capture.is_captured(window)
+            if shared.borrow().native.is_some()
+                || !capture.is_captured(window)
                 || !routes_to(&shared.borrow(), surface, window.mouse_position(), window)
             {
                 return;

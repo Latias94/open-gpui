@@ -247,8 +247,10 @@ pub(super) fn queue(
         } else {
             SurfacePointerCapture::None
         },
-        metadata: PointerEventMetadata::new(PointerDeviceKind::Mouse, host.observed_at())
-            .with_docking_enabled(host.config.input.docking_enabled(modifiers)),
+        metadata: host
+            .config
+            .input
+            .pointer_metadata(host.observed_at(), Some(modifiers)),
     }));
     if let Some(region) = host
         .mounts

@@ -25,6 +25,7 @@ use open_gpui::{
 
 use super::{
     DockSurface, HostState, SharedHost,
+    config::DockspaceInputBindings,
     host::WindowMount,
     native::{
         NativeBridge, NativeBridgeError, NativeCallbacks, NativeCloseDecision, NativeGeometry,
@@ -370,10 +371,10 @@ fn install_router(cx: &mut App) {
             };
             {
                 let mut host = shared.borrow_mut();
-                let metadata = dockspace::runtime::PointerEventMetadata::new(
-                    dockspace::runtime::PointerDeviceKind::Mouse,
-                    host.observed_at(),
-                );
+                let metadata = host
+                    .config
+                    .input
+                    .pointer_metadata(host.observed_at(), event.modifiers());
                 if let Some(native) = &mut host.native
                     && let Some(callbacks) = native.callbacks.get(&event.source_window())
                 {
@@ -422,6 +423,69 @@ pub(super) fn wrap(shared: &SharedHost, element: open_gpui::AnyElement) -> open_
         .into_any_element()
 }
 
+pub(super) fn listen_capture_keyboard(shared: &SharedHost, window: &mut Window) -> Subscription {
+    let modifier_host = Rc::downgrade(shared);
+    let modifiers = window.observe_window_modifiers_changed(move |event, window, cx| {
+        let owner = window.window_handle().window_id();
+        if cx.active_native_captured_drag_source_window() != Some(owner) {
+            return;
+        }
+        let Some(shared) = modifier_host.upgrade() else {
+            return;
+        };
+        {
+            let mut host = shared.borrow_mut();
+            let enabled = host.config.input.docking_enabled(event.modifiers);
+            let Some(native) = &mut host.native else {
+                return;
+            };
+            let Some(callbacks) = native.callbacks.get(&owner) else {
+                return;
+            };
+            if native.transport.is_frozen() || callbacks.active_capture().is_none() {
+                return;
+            }
+            native.transport.modifiers_in_window(
+                callbacks.binding(),
+                enabled,
+                DockspaceInputBindings::group_dock_mode(event.modifiers),
+            );
+            native.blocked_continuation = None;
+        }
+        schedule(&shared, cx);
+    });
+    let weak = Rc::downgrade(shared);
+    let cancel = window.intercept_window_key_down(move |event, window, cx| {
+        let owner = window.window_handle().window_id();
+        if cx.active_native_captured_drag_source_window() != Some(owner) {
+            return;
+        }
+        let Some(shared) = weak.upgrade() else {
+            return;
+        };
+        let capture = {
+            let host = shared.borrow();
+            if !host.config.input.cancel_matches(&event.keystroke) {
+                return;
+            }
+            host.native
+                .as_ref()
+                .and_then(|native| native.callbacks.get(&owner))
+                .and_then(NativeCallbacks::active_capture)
+        };
+        if let Some(capture) = capture
+            && cx.cancel_native_captured_drag(
+                owner,
+                capture.generation(),
+                open_gpui::PointerCancelReason::CaptureRevoked,
+            )
+        {
+            cx.stop_propagation();
+        }
+    });
+    Subscription::join(modifiers, cancel)
+}
+
 fn start_drag(
     shared: &SharedHost,
     geometry: &open_gpui::DragStartGeometry,
@@ -438,10 +502,10 @@ fn start_drag(
     };
     let binding = callbacks.binding();
     let sample = local_sample(&host.session, binding, geometry.window_position(), window);
-    let metadata = dockspace::runtime::PointerEventMetadata::new(
-        dockspace::runtime::PointerDeviceKind::Mouse,
-        host.observed_at(),
-    );
+    let metadata = host
+        .config
+        .input
+        .pointer_metadata(host.observed_at(), Some(window.modifiers()));
     let capture = super::native::native_capture_owner(
         geometry.native_drag_start_snapshot().map_or(
             open_gpui::PlatformNativePointerCaptureOwner::Unavailable,
@@ -1121,7 +1185,7 @@ pub(super) fn queue_pointer(
     use dockspace::runtime::{
         NativeLocalPointerLocation, NativePointerButton, NativePointerCancelReason,
         NativePointerEvent, NativePointerId, NativePointerInput, NativePointerOwner,
-        PointerDeviceKind, PointerEventMetadata, SurfacePointerEvent,
+        SurfacePointerEvent,
     };
     let owner = window.window_handle().window_id();
     let terminal = matches!(
@@ -1155,12 +1219,6 @@ pub(super) fn queue_pointer(
         SurfacePointerEvent::StreamCancelled(_) => NativePointerEvent::StreamCancelled(
             NativePointerCancelReason::ExplicitPlatformCancellation,
         ),
-        SurfacePointerEvent::DockingEnabledChanged { enabled } => {
-            return host
-                .session
-                .report_native_docking_enabled(binding, enabled)
-                .is_ok();
-        }
         _ => return false,
     };
     let clear = hitboxes
@@ -1183,8 +1241,9 @@ pub(super) fn queue_pointer(
             NativePointerOwner::Unknown,
         )
         .with_metadata(
-            PointerEventMetadata::new(PointerDeviceKind::Mouse, host.observed_at())
-                .with_docking_enabled(host.config.input.docking_enabled(modifiers)),
+            host.config
+                .input
+                .pointer_metadata(host.observed_at(), Some(modifiers)),
         ),
     );
     host.native.as_mut().unwrap().blocked_continuation = None;

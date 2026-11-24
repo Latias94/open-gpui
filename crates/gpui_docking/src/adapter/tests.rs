@@ -1364,6 +1364,236 @@ fn managed_stationary_drag_fixture(
 }
 
 #[open_gpui::test]
+fn managed_drag_accepts_stationary_shift_and_escape_before_release(cx: &mut TestAppContext) {
+    use open_gpui::{MouseButton, MouseUpEvent, NativeCapturedDragPhase, PlatformInput};
+
+    let (dock, window, frame) = managed_stationary_drag_fixture(cx);
+    assert!(dock.native_pointer_continuation().is_some());
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let _observer = cx.update({
+        let events = events.clone();
+        move |cx| cx.observe_native_captured_drag(move |event, _| events.borrow_mut().push(event))
+    });
+    let mut visual = VisualTestContext::from_window(window, cx);
+    let shift = Modifiers {
+        shift: true,
+        ..Modifiers::none()
+    };
+    visual.simulate_modifiers_change(shift);
+    frames(&mut visual, &dock);
+    assert!(dock.has_active_gesture());
+    assert_eq!(dock.native_pointer_continuation(), None);
+    assert!(events.borrow().is_empty());
+
+    visual.simulate_keystrokes("shift-escape");
+    frames(&mut visual, &dock);
+    assert!(!dock.has_active_gesture());
+    visual.update(|_, cx| assert!(!cx.has_active_drag()));
+    visual
+        .cx
+        .set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
+    visual
+        .cx
+        .simulate_platform_input_with_native_pointer_physical_frame(
+            window,
+            PlatformInput::MouseUp(MouseUpEvent {
+                button: MouseButton::Left,
+                position: frame
+                    .source_geometry()
+                    .global_to_local(frame.global_position())
+                    .unwrap(),
+                modifiers: shift,
+                click_count: 1,
+            }),
+            Some(frame),
+        );
+    frames(&mut visual, &dock);
+
+    dock.with_view(|view| assert_eq!(view.item(B).unwrap().surface(), FIRST));
+    let events = events.borrow();
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0].phase(),
+        NativeCapturedDragPhase::Cancelled(open_gpui::PointerCancelReason::CaptureRevoked)
+    );
+    assert!(dock.error().is_none());
+}
+
+#[open_gpui::test]
+fn managed_alt_release_docks_the_original_group_as_a_nested_tab(cx: &mut TestAppContext) {
+    use dockspace::{model::DockspaceTabView, runtime::DockspaceReceiverRole};
+    use open_gpui::{
+        Bounds, DevicePixels, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+        PlatformInput, PlatformNativeDragHysteresis, PlatformNativePointerCaptureOwner,
+        PlatformNativePointerPhysicalFrame, PlatformWindowHit, PlatformWindowHitStack,
+        PlatformWindowPhysicalCoverage, point,
+    };
+
+    const EXTRA: ItemId = ItemId::new(23);
+    cx.defer_next_window_frame_requests();
+    cx.set_platform_window_hit_stack(
+        PlatformWindowHitStack::try_available_open_desktop(
+            point(DevicePixels(0), DevicePixels(0)),
+            Vec::new(),
+        )
+        .unwrap(),
+    );
+    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
+    let (dock, _, document, [source, target]) = managed_fixture(cx);
+    for (window, x) in [(source, 0), (target, 900)] {
+        cx.set_platform_window_physical_client_geometry(
+            window,
+            Some(Bounds::new(
+                point(DevicePixels(x), DevicePixels(0)),
+                size(DevicePixels(800), DevicePixels(600)),
+            )),
+            1.0,
+        );
+        cx.simulate_window_scale_factor_change(window, 1.0);
+    }
+    cx.set_platform_native_drag_hysteresis(Some(
+        PlatformNativeDragHysteresis::try_new(DevicePixels(4), DevicePixels(4)).unwrap(),
+    ));
+    let mut source_visual = VisualTestContext::from_window(source, cx);
+    let mut target_visual = VisualTestContext::from_window(target, cx);
+    frames(&mut source_visual, &dock);
+    frames(&mut target_visual, &dock);
+    source_visual.update(|window, cx| {
+        let _ = window.activate_window();
+        let extra = cx.new(|_| View {
+            document,
+            item: EXTRA,
+            clicks: 0,
+        });
+        dock.open_pane(
+            DockPane::new(EXTRA, "Extra View", extra),
+            DockPlacement::Center(DockAnchor::Item(A)),
+            cx,
+        )
+        .unwrap();
+    });
+    frames(&mut source_visual, &dock);
+    frames(&mut target_visual, &dock);
+    let group = dock.with_view(|view| view.item(A).unwrap().tabs().unwrap().key());
+    let start = {
+        let host = dock.host.borrow();
+        let frame = &host.mounts[&source.window_id()].input_frames[0];
+        let grip = frame
+            .receivers
+            .iter()
+            .find(|(receiver, _)| receiver.role() == DockspaceReceiverRole::TabGroupGrip)
+            .unwrap()
+            .0;
+        frame.bounds.origin + point(px(grip.center().x() as f32), px(grip.center().y() as f32))
+    };
+    let geometry =
+        source_visual.update(|window, _| window.platform_facts().physical_geometry.unwrap());
+    let target_geometry =
+        target_visual.update(|window, _| window.platform_facts().physical_geometry.unwrap());
+    let target_tab = target_visual
+        .debug_bounds("dockspace:tab:22")
+        .unwrap()
+        .center();
+    let release_point = target_geometry.local_to_global(target_tab).unwrap();
+    let release_position = geometry.global_to_local(release_point).unwrap();
+    cx.set_platform_window_hit_stack(
+        PlatformWindowHitStack::try_available(
+            release_point,
+            vec![PlatformWindowHit::RegisteredApplication {
+                window: target,
+                coverage: PlatformWindowPhysicalCoverage::try_new(target_geometry.client_bounds())
+                    .unwrap(),
+                geometry: target_geometry,
+            }],
+        )
+        .unwrap(),
+    );
+    let capture = PlatformNativePointerCaptureOwner::Window(source.window_id());
+    let frame_at = |position| {
+        PlatformNativePointerPhysicalFrame::new(
+            geometry.local_to_global(position).unwrap(),
+            geometry,
+        )
+        .with_capture_owner(capture)
+    };
+    let threshold = start + point(px(24.0), px(0.0));
+    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(true));
+    for (input, position) in [
+        (
+            PlatformInput::MouseDown(MouseDownEvent {
+                button: MouseButton::Left,
+                position: start,
+                modifiers: Modifiers::none(),
+                click_count: 1,
+                first_mouse: false,
+            }),
+            start,
+        ),
+        (
+            PlatformInput::MouseMove(MouseMoveEvent {
+                position: threshold,
+                pressed_button: Some(MouseButton::Left),
+                modifiers: Modifiers::none(),
+            }),
+            threshold,
+        ),
+        (
+            PlatformInput::MouseMove(MouseMoveEvent {
+                position: release_position,
+                pressed_button: Some(MouseButton::Left),
+                modifiers: Modifiers::none(),
+            }),
+            release_position,
+        ),
+    ] {
+        cx.simulate_platform_input_with_native_pointer_physical_frame(
+            source,
+            input,
+            Some(frame_at(position)),
+        );
+        frames(&mut source_visual, &dock);
+    }
+    assert!(dock.has_active_gesture());
+
+    let alt = Modifiers {
+        alt: true,
+        ..Modifiers::none()
+    };
+    source_visual.simulate_modifiers_change(alt);
+    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
+    cx.simulate_platform_input_with_native_pointer_physical_frame(
+        source,
+        PlatformInput::MouseUp(MouseUpEvent {
+            button: MouseButton::Left,
+            position: release_position,
+            modifiers: alt,
+            click_count: 1,
+        }),
+        Some(frame_at(release_position)),
+    );
+    frames(&mut source_visual, &dock);
+    frames(&mut target_visual, &dock);
+    assert!(!dock.has_active_gesture());
+    dock.with_view(|view| {
+        let destination = view.item(B).unwrap().tabs().unwrap();
+        assert_eq!(destination.tabs().len(), 2, "{:?}", destination.tabs());
+        assert_eq!(destination.items().collect::<Vec<_>>(), [B]);
+        let nested = destination
+            .children()
+            .find_map(|tab| match tab {
+                DockspaceTabView::Layout(nested) => Some(nested),
+                DockspaceTabView::Item(_) => None,
+            })
+            .expect("the dragged group must be inserted as a layout");
+        let nested = nested.tabs().unwrap();
+        assert_eq!(nested.key(), group);
+        assert_eq!(nested.tabs(), [A.into(), EXTRA.into()]);
+        assert_eq!(view.item(A).unwrap().surface(), SECOND);
+        assert_eq!(view.item(EXTRA).unwrap().surface(), SECOND);
+    });
+}
+
+#[open_gpui::test]
 fn managed_stationary_drag_selects_hovered_tab_without_another_native_move(
     cx: &mut TestAppContext,
 ) {

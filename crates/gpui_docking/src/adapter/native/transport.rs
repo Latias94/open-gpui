@@ -4,6 +4,7 @@ use std::{
     rc::Rc,
 };
 
+use dockspace::model::TabGroupDockMode;
 use dockspace::runtime::{
     DeferredSurfaceAction, DockspaceSession, NativeCloseEffectAcknowledgement, NativeCloseState,
     NativeEffectResult, NativeGlobalFocus, NativePointerId, NativePointerInput, NativePointerOwner,
@@ -73,6 +74,18 @@ impl NativeTransport {
 
     pub(crate) fn pointer_in_window(&self, input: NativePointerInput) {
         self.0.queue.borrow_mut().push_back(Inbound::Pointer(input));
+    }
+
+    pub(in crate::adapter) fn modifiers_in_window(
+        &self,
+        binding: NativeWindowBinding,
+        docking_enabled: bool,
+        group_dock_mode: TabGroupDockMode,
+    ) {
+        self.0.queue.borrow_mut().extend([
+            Inbound::DockingEnabled(binding, docking_enabled),
+            Inbound::GroupDockMode(binding, group_dock_mode),
+        ]);
     }
 
     pub(in crate::adapter) fn surface_action(&self, action: DeferredSurfaceAction, cx: &mut App) {
@@ -290,6 +303,8 @@ pub(super) enum Inbound {
     ),
     CaptureUnobserved(NativeWindowBinding),
     Pointer(NativePointerInput),
+    DockingEnabled(NativeWindowBinding, bool),
+    GroupDockMode(NativeWindowBinding, TabGroupDockMode),
     CapturedDrag {
         binding: NativeWindowBinding,
         capture: NativePointerOwner,
@@ -321,6 +336,8 @@ impl Inbound {
             Self::CaptureTerminal(..) => "capture-terminal",
             Self::CaptureUnobserved(_) => "capture-unobserved",
             Self::Pointer(_) => "pointer",
+            Self::DockingEnabled(..) => "docking-enabled",
+            Self::GroupDockMode(..) => "group-dock-mode",
             Self::CapturedDrag { .. } => "captured-drag",
             Self::PointerRoster(_) => "pointer-roster",
             Self::WorkAreas(_) | Self::Desktop(_) => "work-areas",
@@ -339,7 +356,9 @@ impl Inbound {
             | Self::LogicalClosed(binding)
             | Self::NativeTerminal(binding, _)
             | Self::Submission(binding, _, _)
-            | Self::CaptureTerminal(binding, _, _, _) => Some(*binding),
+            | Self::CaptureTerminal(binding, _, _, _)
+            | Self::DockingEnabled(binding, _)
+            | Self::GroupDockMode(binding, _) => Some(*binding),
             Self::CaptureUnobserved(binding) => Some(*binding),
             Self::Effect(result) => Some(result.binding().window()),
             Self::CapturedDrag { binding, .. } => Some(*binding),
@@ -519,6 +538,12 @@ impl NativeBridge {
                 // desktop authority. The next real captured callback supplies its own.
                 self.pointer_frame = None;
                 self.pointer_capture = None;
+            }
+            Inbound::DockingEnabled(binding, enabled) => {
+                session.report_native_docking_enabled(*binding, *enabled)?;
+            }
+            Inbound::GroupDockMode(binding, mode) => {
+                session.report_native_group_dock_mode(*binding, *mode)?;
             }
             Inbound::CapturedDrag {
                 binding,

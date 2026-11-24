@@ -129,7 +129,8 @@ pub(crate) struct DispatchResult {
 }
 
 type KeyListener = Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Window, &mut App)>;
-type ModifiersChangedListener = Rc<dyn Fn(&ModifiersChangedEvent, &mut Window, &mut App)>;
+pub(crate) type ModifiersChangedListener =
+    Rc<dyn Fn(&ModifiersChangedEvent, &mut Window, &mut App)>;
 
 #[derive(Clone)]
 pub(crate) struct DispatchActionListener {

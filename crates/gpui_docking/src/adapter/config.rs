@@ -1,5 +1,11 @@
 //! Application-owned chrome and input preferences.
 
+use std::time::Duration;
+
+use dockspace::{
+    model::TabGroupDockMode,
+    runtime::{PointerDeviceKind, PointerEventMetadata},
+};
 use open_gpui::{BoxShadow, Font, Hsla, Keystroke, Modifiers, Pixels, font, px};
 
 use crate::{DockVisualPalette, DockVisualStyle};
@@ -130,6 +136,7 @@ pub enum SplitterDoubleClick {
 }
 
 /// Bindings applied to event-time input, before it is queued.
+/// Holding Alt over a center dock target preserves the dragged group's layout.
 #[derive(Clone, Debug)]
 pub struct DockspaceInputBindings {
     /// Holding these modifiers suspends docking. Extra modifiers are allowed.
@@ -148,6 +155,27 @@ pub struct DockspaceInputBindings {
 }
 
 impl DockspaceInputBindings {
+    pub(crate) fn pointer_metadata(
+        &self,
+        observed_at: Duration,
+        modifiers: Option<Modifiers>,
+    ) -> PointerEventMetadata {
+        let metadata = PointerEventMetadata::new(PointerDeviceKind::Mouse, observed_at);
+        modifiers.map_or(metadata, |modifiers| {
+            metadata
+                .with_docking_enabled(self.docking_enabled(modifiers))
+                .with_group_dock_mode(Self::group_dock_mode(modifiers))
+        })
+    }
+
+    pub(crate) fn group_dock_mode(modifiers: Modifiers) -> TabGroupDockMode {
+        if modifiers.alt {
+            TabGroupDockMode::PreserveLayout
+        } else {
+            TabGroupDockMode::MergeTabs
+        }
+    }
+
     pub(crate) fn docking_enabled(&self, modifiers: Modifiers) -> bool {
         !self
             .suspend_docking

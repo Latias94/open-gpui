@@ -6,8 +6,8 @@ use anyhow::{Context as _, Result, bail, ensure};
 use open_gpui::{
     AnyWindowHandle, App, AppContext as _, AsyncApp, Context, Empty, Entity, IntoElement,
     NativeCapturedDragEvent, NativeCapturedDragGeneration, NativeCapturedDragPhase,
-    NativeCapturedDragReleaseTerminal, PlatformWindowPhysicalGeometry, Render, Window, WindowId,
-    div, prelude::*, px,
+    NativeCapturedDragReleaseTerminal, Pixels, PlatformWindowPhysicalGeometry, Point, Render,
+    Window, WindowId, div, prelude::*, px,
 };
 use open_gpui_docking::{
     DockPane, DockSurface, GpuiDockspaceConfig,
@@ -40,9 +40,10 @@ use windows::Win32::{
 
 use super::process_harness;
 use super::{
-    native_generation_label, native_system_mouse_message_observed, raw_hwnd,
-    unique_matching_debug_bounds, unique_native_identity_for_window, wait_for_cursor, wait_until,
-    window_has_non_empty_frame, window_scale_factor,
+    native_generation_label, native_system_mouse_message_observed,
+    native_system_mouse_message_observed_for_admission, raw_hwnd,
+    unique_native_identity_for_window, wait_for_cursor, wait_until, window_has_non_empty_frame,
+    window_scale_factor,
 };
 
 pub(super) const SHARED_SOURCE_SURFACE: SurfaceId = SurfaceId::new(1);
@@ -586,6 +587,34 @@ impl SharedSession {
         source: SharedWindow,
         item: ItemId,
     ) -> Result<SharedCapturedDrag> {
+        let selector = format!("dockspace:tab:{}", item.get());
+        let mut bounds = None;
+        wait_until(cx, "shared source tab presentation", |cx| {
+            self.pump(cx);
+            self.check_health()?;
+            bounds = cx.update(|app| {
+                app.update_window(source.window, |_, window, _| {
+                    window
+                        .committed_debug_bounds_for_test()
+                        .into_iter()
+                        .find_map(|(candidate, bounds)| (candidate == selector).then_some(bounds))
+                })
+            })?;
+            Ok(bounds.is_some())
+        })
+        .await
+        .with_context(|| format!("source {:?} did not present {selector}", source.surface))?;
+        let bounds = bounds.context("shared source tab presentation lost its bounds")?;
+        self.begin_captured_drag_at(cx, source, bounds.center())
+            .await
+    }
+
+    pub(super) async fn begin_captured_drag_at(
+        &mut self,
+        cx: &mut AsyncApp,
+        source: SharedWindow,
+        position: Point<Pixels>,
+    ) -> Result<SharedCapturedDrag> {
         ensure!(
             unsafe { GetCapture() } == HWND::default(),
             "shared drag began with native capture"
@@ -599,30 +628,30 @@ impl SharedSession {
             Some(pointer) => pointer,
             None => NativeTestSystemPointerGuard::capture()?,
         };
-        let bounds = cx.update(|app| {
-            unique_matching_debug_bounds(
-                app,
-                source.window,
-                "dockspace:tab:",
-                &item.get().to_string(),
-            )
-        })?;
         let scale = cx.update(|app| window_scale_factor(app, source.window))?;
-        let press_point =
-            native_test_logical_client_point_to_screen(source.hwnd, bounds.center(), scale)?;
+        let press_point = native_test_logical_client_point_to_screen(source.hwnd, position, scale)?;
+        native_test_acquire_foreground_window(source.hwnd.0 as isize)?;
+        let mut ambient_cursor = POINT::default();
+        unsafe { GetCursorPos(&mut ambient_cursor) }
+            .context("failed to sample the cursor before shared drag admission")?;
+        // An absolute SendInput move to the current pixel can omit WM_MOUSEMOVE.
+        let threshold_offset = if position.x < px(28.0) || ambient_cursor.x <= press_point.x {
+            px(28.0)
+        } else {
+            px(-28.0)
+        };
         let threshold_point = native_test_logical_client_point_to_screen(
             source.hwnd,
-            open_gpui::point(bounds.center().x + px(28.0), bounds.center().y),
+            open_gpui::point(position.x + threshold_offset, position.y),
             scale,
         )?;
-        native_test_acquire_foreground_window(source.hwnd.0 as isize)?;
         for point in [threshold_point, press_point] {
             ensure!(
                 native_test_non_shell_root_window_at(point) == Some(source.hwnd),
                 "shared drag point is occluded: point={point:?}, source={:?}",
                 source.hwnd
             );
-            let canary_context = || {
+            let positioning_context = || {
                 let mut cursor = POINT::default();
                 let cursor = unsafe { GetCursorPos(&mut cursor) }.ok().map(|_| cursor);
                 let messages: Vec<_> = self
@@ -643,25 +672,28 @@ impl SharedSession {
                     .take(12)
                     .collect();
                 format!(
-                    "shared pointer canary requested={point:?}, cursor={cursor:?}, source={source:?}, root={:?}, foreground={:?}, messages={messages:?}",
+                    "shared hover positioning requested={point:?}, cursor={cursor:?}, source={source:?}, root={:?}, foreground={:?}, messages={messages:?}",
                     native_test_non_shell_root_window_at(point),
                     unsafe { GetForegroundWindow() }
                 )
             };
             pointer.inject(point, NativeTestPointerAction::Move)?;
-            let delivered = wait_for_cursor(cx, point, "shared source pointer canary")
+            let delivered = wait_for_cursor(cx, point, "shared source pointer positioning")
                 .await
-                .with_context(&canary_context)?;
-            wait_until(cx, "shared source WndProc pointer canary", |_| {
-                Ok(native_system_mouse_message_observed(
+                .with_context(&positioning_context)?;
+            // User32 can replace an idle hover with its own untagged move.
+            // The button-down below remains the first tagged input proof.
+            wait_until(cx, "shared source WndProc hover positioning", |_| {
+                Ok(native_system_mouse_message_observed_for_admission(
                     &self.observation,
                     source.window,
                     NativeWindowTestMessage::MouseMove,
                     delivered,
+                    false,
                 ))
             })
             .await
-            .with_context(canary_context)?;
+            .with_context(positioning_context)?;
         }
         let event_cursor = self.drag_events.borrow().len();
         pointer.inject(press_point, NativeTestPointerAction::PrimaryDown)?;
