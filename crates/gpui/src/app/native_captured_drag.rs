@@ -320,6 +320,7 @@ pub struct NativeCapturedDragEvent {
     button: crate::MouseButton,
     phase: NativeCapturedDragPhase,
     source_local_position: Option<Point<Pixels>>,
+    modifiers: Option<crate::Modifiers>,
     physical_frame: Option<PlatformNativePointerPhysicalFrame>,
     window_hit_stack: PlatformWindowHitStack,
     route_lock: Option<Arc<dyn Any>>,
@@ -376,6 +377,11 @@ impl NativeCapturedDragEvent {
     /// Returns the pointer position in source-window logical coordinates.
     pub fn source_local_position(&self) -> Option<Point<Pixels>> {
         self.source_local_position
+    }
+
+    /// Returns the modifiers from the original move or release callback.
+    pub fn modifiers(&self) -> Option<crate::Modifiers> {
+        self.modifiers
     }
 
     /// Returns the callback-scoped physical pointer frame for move and release facts.
@@ -770,6 +776,7 @@ impl NativeCapturedDragOutbox {
                             button: authority.button,
                             phase: NativeCapturedDragPhase::Cancelled(reason),
                             source_local_position: None,
+                            modifiers: None,
                             physical_frame: None,
                             window_hit_stack: PlatformWindowHitStack::Unavailable,
                             route_lock: None,
@@ -1420,19 +1427,27 @@ impl App {
             return;
         }
         let button = drag.button;
-        let (phase, source_local_position) =
+        let (phase, source_local_position, modifiers) =
             if let Some(event) = event.downcast_ref::<MouseMoveEvent>() {
                 if event.pressed_button != Some(button) {
                     return;
                 }
-                (NativeCapturedDragPhase::Moved, Some(event.position))
+                (
+                    NativeCapturedDragPhase::Moved,
+                    Some(event.position),
+                    Some(event.modifiers),
+                )
             } else if let Some(event) = event.downcast_ref::<MouseUpEvent>() {
                 if event.button != button {
                     return;
                 }
-                (NativeCapturedDragPhase::Released, Some(event.position))
+                (
+                    NativeCapturedDragPhase::Released,
+                    Some(event.position),
+                    Some(event.modifiers),
+                )
             } else if let Some(event) = event.downcast_ref::<PointerCancelEvent>() {
-                (NativeCapturedDragPhase::Cancelled(event.reason), None)
+                (NativeCapturedDragPhase::Cancelled(event.reason), None, None)
             } else {
                 return;
             };
@@ -1464,6 +1479,7 @@ impl App {
             button,
             phase,
             source_local_position,
+            modifiers,
             physical_frame,
             window_hit_stack,
             route_lock: None,
@@ -1625,6 +1641,7 @@ mod tests {
             phase,
             source_local_position: (!matches!(phase, NativeCapturedDragPhase::Cancelled(_)))
                 .then(Point::default),
+            modifiers: None,
             physical_frame: None,
             window_hit_stack: hits,
             route_lock: None,

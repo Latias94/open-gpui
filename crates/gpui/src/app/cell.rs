@@ -2480,6 +2480,15 @@ impl AppCell {
             .window_point_target_rank(window_id, hitbox, point)
     }
 
+    pub(super) fn native_window_frontmost_hitbox_at(
+        &self,
+        window_id: WindowId,
+        point: Point<Pixels>,
+    ) -> Option<Option<HitboxId>> {
+        self.native_queries
+            .window_frontmost_hitbox_at(window_id, point)
+    }
+
     pub(super) fn native_window_control_area(
         &self,
         window_id: WindowId,

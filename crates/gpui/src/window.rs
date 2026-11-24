@@ -252,6 +252,9 @@ type AnyObserver = Box<dyn FnMut(&mut Window, &mut App) -> bool + 'static>;
 type AnyWindowKeyDownInterceptor =
     Box<dyn FnMut(&KeyDownEvent, &mut Window, &mut App) -> bool + 'static>;
 
+type AnyWindowModifiersObserver =
+    Box<dyn FnMut(&ModifiersChangedEvent, &mut Window, &mut App) + 'static>;
+
 type AnyWindowMouseInterceptor =
     Box<dyn for<'a> FnMut(WindowMouseEvent<'a>, &mut Window, &mut App) -> bool + 'static>;
 
@@ -731,6 +734,14 @@ impl CommittedWindowHitTestSnapshot {
                 .map(CommittedWindowHitTestEntry::from_hitbox)
                 .collect(),
         }
+    }
+
+    pub(crate) fn frontmost_hitbox_at(&self, point: Point<Pixels>) -> Option<HitboxId> {
+        self.hitboxes
+            .iter()
+            .rev()
+            .find(|hitbox| hitbox.is_window_point_target(point))
+            .map(|hitbox| hitbox.id)
     }
 
     pub(crate) fn window_point_target_rank(
@@ -1734,6 +1745,7 @@ pub struct Window {
     pub(crate) dirty_views: FxHashSet<EntityId>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     key_down_interceptors: SubscriberSet<(), AnyWindowKeyDownInterceptor>,
+    modifiers_observers: SubscriberSet<(), AnyWindowModifiersObserver>,
     mouse_interceptors: SubscriberSet<(), AnyWindowMouseInterceptor>,
     window_states: Rc<RefCell<TypeIdHashMap<WindowStateSlot>>>,
     input_dispatch_active: Rc<Cell<bool>>,
@@ -2974,6 +2986,7 @@ impl Window {
             dirty_views: FxHashSet::default(),
             focus_listeners: SubscriberSet::new(),
             key_down_interceptors: SubscriberSet::new(),
+            modifiers_observers: SubscriberSet::new(),
             mouse_interceptors: SubscriberSet::new(),
             window_states: Rc::new(RefCell::new(TypeIdHashMap::default())),
             input_dispatch_active: Rc::new(Cell::new(false)),
@@ -13662,6 +13675,19 @@ impl Window {
         subscription
     }
 
+    /// Observes modifier changes independently of the focused element.
+    ///
+    /// The subscription is owned by the window and runs before key bindings or
+    /// element listeners. Use it for a gesture that retains pointer capture.
+    pub fn observe_window_modifiers(
+        &mut self,
+        listener: impl FnMut(&ModifiersChangedEvent, &mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.modifiers_observers.insert((), Box::new(listener));
+        activate();
+        subscription
+    }
+
     /// Register a modifiers changed event listener on the window for the next frame.
     ///
     /// This is a fairly low-level method, so prefer using event handlers on elements unless you have
@@ -14152,6 +14178,14 @@ impl Window {
         let mut keystroke: Option<Keystroke> = None;
 
         if let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() {
+            self.modifiers_observers.clone().retain(&(), |observer| {
+                observer(event, self, cx);
+                true
+            });
+            if !self.user_interaction_is_admitted() {
+                cx.stop_propagation();
+                return;
+            }
             if event.modifiers.number_of_modifiers() == 0
                 && self.pending_modifier.modifiers.number_of_modifiers() == 1
                 && !self.pending_modifier.saw_other_input

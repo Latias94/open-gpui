@@ -1718,6 +1718,21 @@ impl App {
             .native_window_point_target_rank(window.window_id(), hitbox, point)
     }
 
+    /// Returns the frontmost committed hitbox at a point in another window.
+    ///
+    /// An available snapshot can prove that no hitbox covers the point.
+    /// The outer `None` means there is no readable committed hit-test snapshot.
+    #[doc(hidden)]
+    pub fn window_frontmost_hitbox_at(
+        &self,
+        window: AnyWindowHandle,
+        point: Point<Pixels>,
+    ) -> Option<Option<HitboxId>> {
+        self.this
+            .upgrade()?
+            .native_window_frontmost_hitbox_at(window.window_id(), point)
+    }
+
     pub(crate) fn set_native_window_control_area(
         &self,
         window_id: WindowId,

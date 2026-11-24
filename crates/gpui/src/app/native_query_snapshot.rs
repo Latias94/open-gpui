@@ -101,6 +101,20 @@ impl NativeQuerySnapshots {
             .window_point_target_rank(hitbox, point)
     }
 
+    pub(super) fn window_frontmost_hitbox_at(
+        &self,
+        window_id: WindowId,
+        point: Point<Pixels>,
+    ) -> Option<Option<HitboxId>> {
+        self.committed(window_id)?;
+        Some(
+            self.window_hit_tests
+                .borrow()
+                .get(&window_id)?
+                .frontmost_hitbox_at(point),
+        )
+    }
+
     pub(super) fn commit_app_menu_action_availability(&self, action_type: TypeId, available: bool) {
         self.app_menu_actions
             .borrow_mut()
