@@ -929,11 +929,24 @@ impl SharedScenarioWorker {
                     && unsafe { GetCapture() } == source.hwnd,
                 "shared mixed-DPI route replaced or hid its provisional HWND or lost source capture before release"
             );
-            ensure!(
-                point_is_open_desktop(delivered_release),
-                "shared mixed-DPI release point is no longer open desktop before release"
-            );
             wait_shared_live_placement(cx, session, provisional, source, delivered_release).await?;
+            let expected_point = open_gpui::point(
+                open_gpui::DevicePixels(delivered_release.x),
+                open_gpui::DevicePixels(delivered_release.y),
+            );
+            let sample = cx.update(|app| {
+                app.sample_native_captured_drag(source.window.window_id(), drag.generation)
+            });
+            ensure!(
+                sample.as_ref().is_some_and(|(frame, stack)| {
+                    frame.global_position() == expected_point
+                        && stack.observation().is_some_and(|hit| {
+                            NativeReleasePointAuthority::OpenDesktop
+                                .matches_hit_terminus(hit.terminus())
+                        })
+                }),
+                "shared mixed-DPI release needs a fresh open-desktop observation at {expected_point:?}: {sample:?}"
+            );
         }
         let release_display = native_test_display_at(delivered_release)?;
         let divergence = if behavior == NativeDockBehavior::LiveRouteAndReleaseLock {
