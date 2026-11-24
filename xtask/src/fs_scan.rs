@@ -36,7 +36,7 @@ fn collect_files(
 }
 
 fn should_skip_dir(root: &Path, path: &Path, file_name: &str) -> bool {
-    if matches!(file_name, ".git" | "target" | "repo-ref") {
+    if matches!(file_name, ".git" | ".context" | "target" | "repo-ref") {
         return true;
     }
 

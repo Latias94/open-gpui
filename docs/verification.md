@@ -29,6 +29,10 @@ compiled against WGPU 30.0.0 at `cddb2f5d80dc0009b2ef6767635140cacf90a007`. All 
 smokes passed, covering the GPUI-owned window, external HWND hosting, deferred submission,
 logical roots, and native close. [Smoke commands](../examples/wgpu-native/README.md)
 
+The Dockspace editor's Windows native and recovery smokes also passed. They exercised two
+submitted windows, View retention through a failed native retirement, and successful recovery.
+[Dockspace smoke commands](../examples/dockspace-editor/README.md)
+
 ## November 14 Published Dockspace Adoption
 
 The [remote adoption record](knowledge/engineering/verification/dockspace-remote-adoption-20261114.md)
