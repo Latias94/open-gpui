@@ -88,6 +88,10 @@ pub(super) struct ManagedHost {
 }
 
 impl ManagedHost {
+    pub(super) fn has_preview_window(&self) -> bool {
+        self.provisional.has_preview_window()
+    }
+
     pub(super) fn is_failed(&self) -> bool {
         self.failed_shutdown.is_some()
     }
@@ -375,10 +379,15 @@ fn install_router(cx: &mut App) {
             };
             {
                 let mut host = shared.borrow_mut();
-                let metadata = dockspace::runtime::PointerEventMetadata::new(
+                let mut metadata = dockspace::runtime::PointerEventMetadata::new(
                     dockspace::runtime::PointerDeviceKind::Mouse,
                     host.observed_at(),
                 );
+                if let Some(modifiers) = event.modifiers() {
+                    metadata = metadata
+                        .with_docking_enabled(host.config.input.docking_enabled(modifiers))
+                        .with_group_dock_mode(host.config.input.group_dock_mode(modifiers));
+                }
                 if let Some(native) = &mut host.native {
                     let owner = event.source_window();
                     if let Some(callbacks) = native.callbacks.get(&owner) {
@@ -1172,8 +1181,12 @@ pub(super) fn queue_mouse_terminal(
         SurfacePointerEvent::ButtonReleased(_) => {
             NativePointerEvent::ButtonReleased(NativePointerButton::Primary)
         }
-        SurfacePointerEvent::StreamCancelled(_) => NativePointerEvent::StreamCancelled(
-            NativePointerCancelReason::ExplicitPlatformCancellation,
+        SurfacePointerEvent::StreamCancelled(reason) => NativePointerEvent::StreamCancelled(
+            if reason == dockspace::runtime::SurfacePointerCancelReason::ExplicitCancellation {
+                NativePointerCancelReason::ExplicitCancellation
+            } else {
+                NativePointerCancelReason::ExplicitPlatformCancellation
+            },
         ),
         _ => return false,
     };
@@ -1246,7 +1259,8 @@ pub(super) fn queue_pointer(
         return false;
     }
     let metadata = PointerEventMetadata::new(PointerDeviceKind::Mouse, host.observed_at())
-        .with_docking_enabled(host.config.input.docking_enabled(modifiers));
+        .with_docking_enabled(host.config.input.docking_enabled(modifiers))
+        .with_group_dock_mode(host.config.input.group_dock_mode(modifiers));
     let Some(native) = &mut host.native else {
         return false;
     };
@@ -1265,15 +1279,13 @@ pub(super) fn queue_pointer(
             NativePointerEvent::ButtonReleased(NativePointerButton::Primary)
         }
         SurfacePointerEvent::Moved => NativePointerEvent::Moved,
-        SurfacePointerEvent::StreamCancelled(_) => NativePointerEvent::StreamCancelled(
-            NativePointerCancelReason::ExplicitPlatformCancellation,
+        SurfacePointerEvent::StreamCancelled(reason) => NativePointerEvent::StreamCancelled(
+            if reason == dockspace::runtime::SurfacePointerCancelReason::ExplicitCancellation {
+                NativePointerCancelReason::ExplicitCancellation
+            } else {
+                NativePointerCancelReason::ExplicitPlatformCancellation
+            },
         ),
-        SurfacePointerEvent::DockingEnabledChanged { enabled } => {
-            return host
-                .session
-                .report_native_docking_enabled(binding, enabled)
-                .is_ok();
-        }
         _ => return false,
     };
     if !captured && !chrome_clear && !content_clear && !terminal {

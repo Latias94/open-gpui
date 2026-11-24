@@ -533,6 +533,40 @@ pub(super) fn record(
                                 ));
                             }
                         }
+                        if let Some(bar) = preview.tab_bar() {
+                            draws.push(Draw::Fill(bar.bounds(), colors.tab_bar));
+                            for tab in preview.tabs() {
+                                let Some(bounds) = tab.visible_bounds() else {
+                                    continue;
+                                };
+                                let color = if tab.selected() {
+                                    colors.selected_tab
+                                } else {
+                                    colors.tab
+                                };
+                                draws.push(Draw::Fill(bounds, color));
+                                if tab.is_payload() {
+                                    draws.push(Draw::Outline(bounds, colors.accent));
+                                }
+                                if let Some((layout, clip)) =
+                                    tab.text_layout_bounds().zip(tab.text_bounds())
+                                {
+                                    draws.push(Draw::Text {
+                                        layout,
+                                        clip,
+                                        title: tab_label(tab.label(), panels),
+                                        color: if tab.selected() {
+                                            colors.text
+                                        } else {
+                                            colors.muted_text
+                                        },
+                                    });
+                                }
+                                if let Some(close) = tab.close_visual_bounds() {
+                                    draws.push(Draw::Icon(close, Icon::Close, false));
+                                }
+                            }
+                        }
                     }
                 }
                 Step::ContainedTransformPreview(preview) => {

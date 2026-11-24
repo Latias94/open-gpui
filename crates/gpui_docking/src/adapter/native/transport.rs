@@ -126,6 +126,17 @@ impl NativeTransport {
         true
     }
 
+    pub(in crate::adapter) fn docking_controls(
+        &self,
+        binding: NativeWindowBinding,
+        enabled: bool,
+        mode: dockspace::model::TabGroupDockMode,
+        cx: &mut App,
+    ) {
+        self.push(Inbound::DockingEnabled(binding, enabled), cx);
+        self.push(Inbound::GroupDockMode(binding, mode), cx);
+    }
+
     pub(in crate::adapter) fn mouse_press_lane(
         &self,
         binding: NativeWindowBinding,
@@ -456,6 +467,8 @@ pub(super) enum Inbound {
         CallbackCustody,
     ),
     CaptureUnobserved(NativeWindowBinding),
+    DockingEnabled(NativeWindowBinding, bool),
+    GroupDockMode(NativeWindowBinding, dockspace::model::TabGroupDockMode),
     Pointer(NativePointerInput),
     CapturedDrag {
         binding: NativeWindowBinding,
@@ -487,6 +500,7 @@ impl Inbound {
             Self::Submission(..) => "submission",
             Self::CaptureTerminal(..) => "capture-terminal",
             Self::CaptureUnobserved(_) => "capture-unobserved",
+            Self::DockingEnabled(..) | Self::GroupDockMode(..) => "docking-controls",
             Self::Pointer(_) => "pointer",
             Self::CapturedDrag { .. } => "captured-drag",
             Self::PointerRoster(_) => "pointer-roster",
@@ -507,7 +521,9 @@ impl Inbound {
             | Self::NativeTerminal(binding, _)
             | Self::Submission(binding, _, _)
             | Self::CaptureTerminal(binding, _, _, _) => Some(*binding),
-            Self::CaptureUnobserved(binding) => Some(*binding),
+            Self::CaptureUnobserved(binding)
+            | Self::DockingEnabled(binding, _)
+            | Self::GroupDockMode(binding, _) => Some(*binding),
             Self::Effect(result) => Some(result.binding().window()),
             Self::CapturedDrag { binding, .. } => Some(*binding),
             _ => None,
@@ -639,6 +655,13 @@ impl NativeBridge {
                 if let Some(callbacks) = self.windows.get(*binding) {
                     callbacks.set_logical_closed();
                 }
+                if self
+                    .captured_pointer
+                    .as_ref()
+                    .is_some_and(|capture| capture.binding == *binding)
+                {
+                    self.captured_pointer = None;
+                }
                 self.reports
                     .push_back(NativeReport::LogicalClosed(*binding));
                 if self.anchor == Some(*binding) {
@@ -680,12 +703,23 @@ impl NativeBridge {
             Inbound::CaptureUnobserved(_) => self.reports.push_back(NativeReport::Unsupported {
                 operation: "observing the original native capture release after drag retirement",
             }),
+            Inbound::DockingEnabled(binding, enabled) => {
+                session.report_native_docking_enabled(*binding, *enabled)?;
+            }
+            Inbound::GroupDockMode(binding, mode) => {
+                session.report_native_group_dock_mode(*binding, *mode)?;
+            }
             Inbound::Pointer(input) => {
                 session.record_native_pointer(*input)?;
-                // A local packet does not extend an earlier captured generation's
-                // desktop authority. The next real captured callback supplies its own.
-                self.pointer_frame = None;
-                self.pointer_capture = None;
+                // Only an edge from the same source stream supersedes its
+                // captured desktop observation. Local input from another
+                // window or device cannot retire the provisional drag shell.
+                if self.captured_pointer.as_ref().is_some_and(|capture| {
+                    capture.pointer == input.pointer()
+                        && input.delivery() == NativePointerOwner::Native(capture.binding)
+                }) {
+                    self.captured_pointer = None;
+                }
             }
             Inbound::CapturedDrag {
                 binding,
@@ -707,8 +741,12 @@ impl NativeBridge {
                     session, *binding, *capture, event, *pointer, *metadata,
                 );
                 session.record_native_pointer(input)?;
-                self.pointer_frame = event.physical_frame();
-                self.pointer_capture = Some(super::NativeCapture::from_event(event));
+                self.captured_pointer = Some(super::CapturedPointer {
+                    binding: *binding,
+                    pointer: *pointer,
+                    capture: super::NativeCapture::from_event(event),
+                    frame: event.physical_frame(),
+                });
                 if matches!(event.phase(), open_gpui::NativeCapturedDragPhase::Released) {
                     self.reports.push_back(NativeReport::CapturedRelease {
                         capture: super::NativeCapture::from_event(event),

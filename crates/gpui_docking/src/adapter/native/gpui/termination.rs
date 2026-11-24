@@ -66,34 +66,30 @@ impl NativeBridge {
     ) -> Result<bool, NativeBridgeError> {
         self.draining = true;
         self.service_failed_capture_terminals();
-        if self
-            .pending
-            .as_ref()
-            .is_some_and(|pending| match &pending.ticket {
-                PendingTicket::Mutation(ticket) => ticket.observation().is_some(),
-                PendingTicket::Focus(ticket) => ticket.snapshot().status().terminal().is_some(),
-            })
-        {
-            // A terminal result still belongs to this generation's old FIFO.
-            self.finish_pending(cx)?;
-        }
+        // A retired binding can no longer deliver its original ticket. Settle
+        // its dispatch even when the failed semantic prefix will not be retried.
+        self.finish_pending(cx);
         let callbacks: Vec<_> = self
             .windows
             .iter()
             .map(|(_, _, callbacks)| callbacks.clone())
             .chain(self.opening.iter().cloned())
             .collect();
+        let mut retry = false;
         if !self.failed_children_terminated() {
-            let mut retry = false;
             for callbacks in callbacks
                 .iter()
                 .filter(|callbacks| callbacks.is_child_window())
             {
                 retry |= callbacks.retire_failed(cx);
             }
-            return Ok(retry);
+            if !self.failed_children_terminated() {
+                return Ok(retry);
+            }
+            // Sealing the final child can complete synchronously. Wake the host
+            // so it can now retire any external roots before closing the anchor.
+            retry = true;
         }
-        let mut retry = false;
         for callbacks in callbacks
             .iter()
             .filter(|callbacks| Some(callbacks.binding()) != self.anchor)
@@ -126,7 +122,7 @@ impl NativeBridge {
     }
 
     pub(in crate::adapter) fn failed_shutdown_complete(&self) -> bool {
-        self.pending.is_none()
+        self.effects.pending().is_none()
             && self
                 .windows
                 .iter()

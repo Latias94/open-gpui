@@ -6,10 +6,10 @@ use dockspace::{
     geometry::LogicalPoint,
     model::{DockspaceItemView, ItemId, NodeKey, RootId, SurfaceId, WorkspaceVersion},
     runtime::{
-        DeferredSurfaceAction, DockspaceHostFrame, HostPointerInput, HostPointerRoute,
-        PointerDeviceKind, PointerEventMetadata, PresentedDockReceiver, PresentedDockspaceSurface,
-        SurfacePointerButton, SurfacePointerCancelReason, SurfacePointerCapture,
-        SurfacePointerEvent, SurfacePointerId, SurfacePointerReceiverFacts,
+        DeferredSurfaceAction, DockspaceHostFrame, DockspaceOpenItemId, HostPointerInput,
+        HostPointerRoute, PointerDeviceKind, PointerEventMetadata, PresentedDockReceiver,
+        PresentedDockspaceSurface, SurfacePointerButton, SurfacePointerCancelReason,
+        SurfacePointerCapture, SurfacePointerEvent, SurfacePointerId, SurfacePointerReceiverFacts,
     },
 };
 use open_gpui::{
@@ -43,6 +43,7 @@ pub(super) struct InputFrame {
     pub(super) serial: u64,
     pub(super) version: WorkspaceVersion,
     pub(super) geometry: ElementGeometry,
+    pub(super) clip: Bounds<Pixels>,
     pub(super) hitboxes: Vec<HitboxId>,
     pub(super) content_hitboxes: Vec<HitboxId>,
     pub(super) panes: BTreeMap<ItemId, PanePresentation>,
@@ -54,13 +55,15 @@ pub(super) struct InputFrame {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct PanePlacement {
+    open_item: DockspaceOpenItemId,
     root: RootId,
     tabs: Option<NodeKey>,
 }
 
 impl PanePlacement {
-    pub(super) fn of(pane: DockspaceItemView<'_>) -> Self {
+    pub(super) fn of(pane: DockspaceItemView<'_>, open_item: DockspaceOpenItemId) -> Self {
         Self {
+            open_item,
             root: pane.root(),
             tabs: pane.tabs().map(|tabs| tabs.key()),
         }
@@ -440,7 +443,8 @@ pub(super) fn queue(
             SurfacePointerCapture::None
         },
         metadata: PointerEventMetadata::new(PointerDeviceKind::Mouse, host.observed_at())
-            .with_docking_enabled(host.config.input.docking_enabled(modifiers)),
+            .with_docking_enabled(host.config.input.docking_enabled(modifiers))
+            .with_group_dock_mode(host.config.input.group_dock_mode(modifiers)),
         press_commit,
         stream_live,
     }));

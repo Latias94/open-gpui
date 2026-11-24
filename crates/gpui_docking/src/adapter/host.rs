@@ -601,7 +601,10 @@ impl DockSurface {
         inspect: impl FnOnce(&HostFrameReport, R) -> T,
         cx: &mut App,
     ) -> Result<T> {
-        let mut host = self.host.borrow_mut();
+        let mut host = self
+            .host
+            .try_borrow_mut()
+            .map_err(|_| anyhow::anyhow!("dockspace host is already borrowed"))?;
         host.ensure_application_admission()?;
         let previous_focus = host.mounted_pane_focus_request();
         let HostState {
@@ -812,6 +815,8 @@ fn missing_pane_view(
 
 impl HostState {
     fn mounted_pane_focus_request(&self) -> Option<DockspacePaneFocusRequest> {
+        // Core admits one pane-focus intent across the session. Its surface
+        // identifies the window whose newer focus claims can supersede it.
         self.owners
             .keys()
             .find_map(|surface| self.session.pane_focus_request(*surface))
