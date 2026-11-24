@@ -1078,10 +1078,10 @@ def run_native_latency_benchmark() -> dict[str, Any]:
 
 def run_legacy_comparison() -> dict[str, Any]:
     rust_timing = run_rust_benchmark(
-        "tab_drag_latency", features=LEGACY_BENCH_FEATURES
+        "legacy_tab_drag_latency", features=LEGACY_BENCH_FEATURES
     )
     rust_allocations = run_rust_benchmark(
-        "tab_drag_allocations", features=LEGACY_BENCH_FEATURES
+        "legacy_tab_drag_allocations", features=LEGACY_BENCH_FEATURES
     )
     for report in (rust_timing, rust_allocations):
         if report.get("open_gpui_adapter") != LEGACY_ADAPTER:

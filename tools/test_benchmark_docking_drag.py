@@ -371,7 +371,7 @@ class BenchmarkRunnerTests(unittest.TestCase):
         ):
             result = benchmark.run_legacy_comparison()
 
-        names = ("tab_drag_latency", "tab_drag_allocations")
+        names = ("legacy_tab_drag_latency", "legacy_tab_drag_allocations")
         for command_call, name in zip(run.call_args_list[:2], names):
             command = command_call.args[0]
             self.assertEqual(command[command.index("--bench") + 1], name)
