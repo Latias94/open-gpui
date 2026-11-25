@@ -23,11 +23,13 @@ workspace has 24 packages, down from 28 after Phase 1. The platform uses `open-g
 native renderers and accepts an application-owned device and queue through `SharedWgpuContext`.
 The WGPU pin is `cddb2f5d80dc0009b2ef6767635140cacf90a007`. [Shared rendering](external-wgpu.md)
 
-On Windows 11 and DX12, the locked all-feature, all-target workspace check and 151 WGPU tests
-passed. Six focused tests covered retained presentation with deferred delivery, native premultiplied
-color, peer windows and imported image retirement, and portable frame-source state. The independently
-locked dependency and hot-reload consumer checks passed after the package move. The Nara Mode A
-example exercised the application-owned device through two real Windows surfaces.
+On Windows 11 and DX12, the locked all-feature, all-target workspace check passed. The full rerun
+passed 337 platform and 151 WGPU tests, with 12 opt-in tests skipped. The native image test compares
+exact pixels before and after reconstructing the window. Packed color atlas sampling now clamps to
+the current tile's texel centers so adjacent content cannot affect that image. The production exit
+probe derives its module prefix after the platform merge. The independently locked dependency and
+hot-reload consumer checks passed after the package move. The Nara Mode A example exercised the
+application-owned device through two real Windows surfaces.
 
 WSL2 passed the all-feature, Wayland-only, X11-only, and headless platform build matrix and 212
 tests. Six windowing probes passed with Weston on a private Xvfb display and Mesa llvmpipe,

@@ -131,13 +131,10 @@ fn native_session_quit_flushes_and_uses_production_exit() {
         panic!("completed production session shutdown returned instead of exiting");
     }
 
+    let (_, module) = module_path!().split_once("::").unwrap();
+    let test = format!("{module}::native_session_quit_flushes_and_uses_production_exit");
     let mut child = Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "platform::native_test_support::native_quit_tests::native_session_quit_flushes_and_uses_production_exit",
-            "--nocapture",
-            "--test-threads=1",
-        ])
+        .args(["--exact", &test, "--nocapture", "--test-threads=1"])
         .env(CHILD, "1")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
