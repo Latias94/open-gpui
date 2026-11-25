@@ -207,7 +207,6 @@ fn draw(
     assert!(recorded.scene.monochrome_sprites.is_empty());
     assert!(recorded.scene.subpixel_sprites.is_empty());
     assert!(recorded.scene.polychrome_sprites.is_empty());
-    assert!(recorded.scene.surfaces.is_empty());
     let root = recorded
         .scene
         .quads

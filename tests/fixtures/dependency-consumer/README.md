@@ -375,7 +375,7 @@ Those framework cases use the test platform's presentation callback and outcome.
 establish native `Submitted` receipts, GPU output, physical power transitions, native visibility,
 frame-deadline expiry, a never-returning foreground watchdog, or measured overhead. Native
 input/draw/submission, power/visibility interruption, shutdown flush and retirement belong to
-the separate `crates/gpui_windows/src/native_profiler_tests.rs` trajectory. The commands above
+the separate `crates/gpui_platform/src/windows/native_profiler_tests.rs` trajectory. The commands above
 are verification instructions, not a record that this gate has been compiled or executed.
 
 ## Platform frame signal and skip consumer
@@ -1444,9 +1444,9 @@ but neither add-only call may report creation or a duplicate. The lifetime case 
 add-only task beyond input and App release and checks the exact unsupported error.
 
 Three macOS-only error controls require no optional fixture feature. They consume the backend's
-public `open_gpui_apple::keychain::{KeychainError, KeychainOperation}`, matching official Keychain
+public `open_gpui_platform::macos::keychain::{KeychainError, KeychainOperation}`, matching official Keychain
 source blob `a40eafcf2032a3cae4282e822a0354fb63aaf51c`. These tests require the fixture's
-target-specific `open_gpui_apple` dependency. Constructed `Security`, `UserCanceled` and
+macOS API from the `open_gpui_platform` dependency. Constructed `Security`, `UserCanceled` and
 `InvalidResponse` errors check exact operations, OSStatus values, official secret-free messages,
 and borrowed and owned downcasting after application context is added through `open_gpui::Result`.
 The controls construct errors directly; they do not inject OS statuses, query Keychain, or prove
@@ -1539,7 +1539,7 @@ platform message window and OLE owner. This test is ignored by default because i
 interactive Windows desktop and a DirectX GPU:
 
 ```text
-cargo nextest run -p open-gpui-windows --lib -E 'test(=platform::native_test_support::native_platform_info_tests::native_runtime_os_loads_routes_labels_text_and_exact_window_retirement)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run -p open-gpui-platform --lib -E 'test(=windows::platform::native_test_support::native_platform_info_tests::native_runtime_os_loads_routes_labels_text_and_exact_window_retirement)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 These commands are verification instructions, not execution results. Independent scenes are

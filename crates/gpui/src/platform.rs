@@ -29,10 +29,6 @@ mod test;
 #[cfg(any(test, feature = "test-support"))]
 mod visual_test;
 
-/// A retained Apple CoreVideo pixel buffer used for surface painting.
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-pub type PlatformPixelBuffer = objc2_core_foundation::CFRetained<objc2_core_video::CVPixelBuffer>;
-
 use crate::{
     Action, AnyWindowHandle, App, AppCell, AsyncApp, AsyncWindowContext, BackgroundExecutor,
     Bounds, Corners, DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, FocusId, Font,
@@ -7112,6 +7108,12 @@ impl Drop for AtlasTextureLease {
 
 #[expect(missing_docs)]
 pub trait PlatformAtlas {
+    /// Erases an owned atlas handle for backend-specific image registration.
+    #[doc(hidden)]
+    fn into_image_atlas(self: Arc<Self>) -> Option<Box<dyn std::any::Any>> {
+        None
+    }
+
     /// The builder runs with the atlas locked and must not re-enter the same atlas.
     fn get_or_insert_with<'a>(
         &self,

@@ -5,16 +5,16 @@ use anyhow::Context as _;
 #[cfg(not(target_family = "wasm"))]
 use open_gpui_core_util::ResultExt;
 use parking_lot::Mutex;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Weak};
 use wgpu::TextureFormat;
 
 #[derive(Clone)]
-pub struct WgpuContext {
-    pub instance: wgpu::Instance,
-    pub adapter: wgpu::Adapter,
-    pub device: Arc<wgpu::Device>,
-    pub queue: Arc<wgpu::Queue>,
+pub struct SharedWgpuContext {
+    pub(crate) instance: wgpu::Instance,
+    pub(crate) adapter: wgpu::Adapter,
+    pub(crate) device: Arc<wgpu::Device>,
+    pub(crate) queue: Arc<wgpu::Queue>,
     backend: WgpuBackend,
     dual_source_blending: bool,
     color_texture_format: wgpu::TextureFormat,
@@ -39,7 +39,7 @@ pub enum WebBackendPreference {
 
 #[cfg(target_family = "wasm")]
 pub struct PreparedWebGraphics {
-    pub context: WgpuContext,
+    pub context: SharedWgpuContext,
     pub surface: wgpu::Surface<'static>,
 }
 
@@ -66,6 +66,7 @@ impl raw_window_handle::HasDisplayHandle for WebDisplaySource {
 pub struct DeviceErrorState {
     lost: AtomicBool,
     last_error: Mutex<(u64, Option<String>)>,
+    loss_observers: Mutex<Vec<Weak<dyn Fn() + Send + Sync>>>,
 }
 
 impl DeviceErrorState {
@@ -74,10 +75,10 @@ impl DeviceErrorState {
         device.set_device_lost_callback({
             let errors = Arc::clone(&errors);
             move |reason, message| {
-                log::error!("wgpu device lost: reason={reason:?}, message={message}");
                 if reason != wgpu::DeviceLostReason::Destroyed {
-                    errors.lost.store(true, Ordering::Relaxed);
+                    log::error!("wgpu device lost: reason={reason:?}, message={message}");
                 }
+                errors.mark_lost();
             }
         });
         device.on_uncaptured_error(Arc::new({
@@ -89,7 +90,38 @@ impl DeviceErrorState {
 
     /// Returns true if the GPU device was lost (e.g., due to driver crash, suspend/resume).
     pub fn device_lost(&self) -> bool {
-        self.lost.load(Ordering::Relaxed)
+        self.lost.load(Ordering::Acquire)
+    }
+
+    fn mark_lost(&self) {
+        let observers = {
+            let mut observers = self.loss_observers.lock();
+            if self.lost.swap(true, Ordering::AcqRel) {
+                return;
+            }
+            std::mem::take(&mut *observers)
+        };
+        for observer in observers
+            .into_iter()
+            .filter_map(|observer| observer.upgrade())
+        {
+            observer();
+        }
+    }
+
+    /// Registers a device-loss observer, without keeping the observer alive.
+    ///
+    /// The observer runs outside the state lock. A late observer runs immediately if
+    /// the device is already lost. It must be safe to call on the WGPU callback thread.
+    pub fn on_device_lost(&self, observer: &Arc<dyn Fn() + Send + Sync>) {
+        let mut observers = self.loss_observers.lock();
+        if self.device_lost() {
+            drop(observers);
+            observer();
+        } else {
+            observers.retain(|observer| observer.strong_count() != 0);
+            observers.push(Arc::downgrade(observer));
+        }
     }
 
     fn record(&self, error: String) {
@@ -135,7 +167,52 @@ fn adapter_info(adapter: &wgpu::Adapter) -> wgpu::AdapterInfo {
     adapter.get_info()
 }
 
-impl WgpuContext {
+impl SharedWgpuContext {
+    /// Requests one device for both GPUI and the application's renderers.
+    ///
+    /// GPUI contributes its baseline limits and adds subpixel blending when the
+    /// adapter supports it. Select the adapter for the displays the app will use.
+    #[cfg(not(target_family = "wasm"))]
+    pub async fn request_device(
+        instance: wgpu::Instance,
+        adapter: wgpu::Adapter,
+        mut descriptor: wgpu::DeviceDescriptor<'_>,
+    ) -> anyhow::Result<Self> {
+        let color_texture_format = Self::select_color_texture_format(&adapter)?;
+        descriptor.required_features |= adapter.features() & wgpu::Features::DUAL_SOURCE_BLENDING;
+        descriptor.required_limits = descriptor
+            .required_limits
+            .or_better_values_from(&Self::renderer_limits(&adapter));
+        let (device, queue) = adapter.request_device(&descriptor).await?;
+        let dual_source_blending = device
+            .features()
+            .contains(wgpu::Features::DUAL_SOURCE_BLENDING);
+        Ok(Self::from_adapter_and_device(
+            instance,
+            adapter,
+            device,
+            queue,
+            dual_source_blending,
+            color_texture_format,
+        ))
+    }
+
+    pub fn instance_handle(&self) -> &wgpu::Instance {
+        &self.instance
+    }
+
+    pub fn adapter(&self) -> &wgpu::Adapter {
+        &self.adapter
+    }
+
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+
     pub(crate) fn adapter_supports_transient_attachments(adapter: &wgpu::Adapter) -> bool {
         #[cfg(target_family = "wasm")]
         if adapter.get_info().backend == wgpu::Backend::BrowserWebGpu {
@@ -321,7 +398,7 @@ impl WgpuContext {
         // is lost. A static rather than a thread-local: the cached device is never dropped,
         // because wgpu's queue reads its own thread-locals on drop and would panic if
         // dropped while a thread's thread-locals are being destroyed.
-        static HEADLESS: Mutex<Option<(WgpuContext, wgpu::TextureFormat)>> = Mutex::new(None);
+        static HEADLESS: Mutex<Option<(SharedWgpuContext, wgpu::TextureFormat)>> = Mutex::new(None);
         let mut headless = HEADLESS.lock();
         if let Some((context, format)) = headless.as_ref()
             && !context.device_lost()
@@ -432,26 +509,11 @@ impl WgpuContext {
         }
 
         let color_atlas_texture_format = Self::select_color_texture_format(adapter)?;
-        #[cfg(target_family = "wasm")]
-        let required_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
-            wgpu::Limits::downlevel_webgl2_defaults()
-                .using_resolution(adapter.limits())
-                .using_alignment(adapter.limits())
-        } else {
-            wgpu::Limits::downlevel_defaults()
-                .using_resolution(adapter.limits())
-                .using_alignment(adapter.limits())
-        };
-        #[cfg(not(target_family = "wasm"))]
-        let required_limits = wgpu::Limits::downlevel_defaults()
-            .using_resolution(adapter.limits())
-            .using_alignment(adapter.limits());
-
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("gpui_device"),
                 required_features,
-                required_limits,
+                required_limits: Self::renderer_limits(adapter),
                 memory_hints: wgpu::MemoryHints::MemoryUsage,
                 trace: wgpu::Trace::Off,
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
@@ -468,12 +530,42 @@ impl WgpuContext {
         ))
     }
 
+    fn renderer_limits(adapter: &wgpu::Adapter) -> wgpu::Limits {
+        let limits = wgpu::Limits::downlevel_defaults();
+        #[cfg(target_family = "wasm")]
+        let limits = if adapter.get_info().backend == wgpu::Backend::Gl {
+            wgpu::Limits::downlevel_webgl2_defaults()
+        } else {
+            limits
+        };
+        limits
+            .using_resolution(adapter.limits())
+            .using_alignment(adapter.limits())
+    }
+
     #[cfg(not(target_family = "wasm"))]
     pub fn instance(display: Box<dyn wgpu::wgt::WgpuHasDisplayHandle>) -> wgpu::Instance {
+        #[cfg(target_os = "windows")]
+        let backends = wgpu::Backends::DX12 | wgpu::Backends::VULKAN;
+        #[cfg(target_os = "macos")]
+        let backends = wgpu::Backends::METAL;
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        let backends = wgpu::Backends::VULKAN | wgpu::Backends::GL;
+        let backend_options = wgpu::BackendOptions::default();
+        #[cfg(target_os = "windows")]
+        let backend_options = wgpu::BackendOptions {
+            dx12: wgpu::Dx12BackendOptions {
+                // The Windows frame scheduler already paces painting off the window thread.
+                latency_waitable_object: wgpu::Dx12UseFrameLatencyWaitableObject::DontWait
+                    .with_env(),
+                ..backend_options.dx12
+            },
+            ..backend_options
+        };
         wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::VULKAN | wgpu::Backends::GL,
+            backends,
             flags: wgpu::InstanceFlags::default(),
-            backend_options: wgpu::BackendOptions::default(),
+            backend_options,
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
             display: Some(display),
         })
@@ -633,8 +725,9 @@ impl WgpuContext {
             };
 
             let backend_priority: u8 = match info.backend {
-                wgpu::Backend::Vulkan | wgpu::Backend::Metal | wgpu::Backend::Dx12 => 0,
-                _ => 1,
+                wgpu::Backend::Dx12 | wgpu::Backend::Metal => 0,
+                wgpu::Backend::Vulkan => 1,
+                _ => 2,
             };
 
             (
@@ -837,7 +930,7 @@ mod tests {
 
     #[test]
     fn device_callback_delivers_validation_error_to_all_observers() -> anyhow::Result<()> {
-        let (context, _) = super::WgpuContext::create_headless()?;
+        let (context, _) = super::SharedWgpuContext::create_headless()?;
         let mut first = context.errors().current_generation();
         let mut second = first;
         let _invalid = context.device.create_buffer(&wgpu::BufferDescriptor {

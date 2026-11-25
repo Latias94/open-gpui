@@ -20,25 +20,17 @@ const DISALLOWED_ZED_GIT_SOURCES: &[&str] = &[
 const CORE_UTIL_MANIFEST_PATH: &str = "crates/gpui_util/Cargo.toml";
 const DISALLOWED_CORE_UTIL_DEPENDENCY_NAMES: &[&str] = &[
     "open-gpui",
-    "open-gpui-apple",
     "open-gpui-docking",
-    "open-gpui-linux",
-    "open-gpui-macos",
     "open-gpui-platform",
     "open-gpui-ui-components",
     "open-gpui-ui-core",
     "open-gpui-wgpu",
-    "open-gpui-windows",
     "open_gpui",
-    "open_gpui_apple",
     "open_gpui_docking",
-    "open_gpui_linux",
-    "open_gpui_macos",
     "open_gpui_platform",
     "open_gpui_ui_components",
     "open_gpui_ui_core",
     "open_gpui_wgpu",
-    "open_gpui_windows",
 ];
 
 pub(crate) fn scan_import_boundary(root: &Path) -> Result<(), ()> {

@@ -2,8 +2,6 @@
 use crate::Inspector;
 #[cfg(not(target_family = "wasm"))]
 use crate::MouseButton;
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-use crate::PlatformPixelBuffer;
 use crate::Refineable;
 use crate::app::{AppCell, PlatformWindowCommandSink};
 use crate::element::ElementIdStack;
@@ -1439,6 +1437,7 @@ impl Drop for PlatformWindowCreationRollback {
 struct WindowPresentationState {
     frame_accepted_generation: Option<u64>,
     present_submitted_generation: Option<u64>,
+    present_submission_count: u64,
     non_empty_presented_generation: Option<u64>,
     latest_present_attempt: Option<WindowPresentAttemptFacts>,
     renderer_invalidated_generation: Option<u64>,
@@ -1723,6 +1722,7 @@ pub struct Window {
         SubscriberSet<(), Box<dyn FnMut(WindowVisibility, &mut Window, &mut App) -> bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
+    retained_presentation_requested: bool,
     /// The accepted scene's animation demand; candidates publish it only when accepted.
     scene_animation_interval: Option<Duration>,
     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
@@ -2936,6 +2936,7 @@ impl Window {
             visibility_observers: SubscriberSet::new(),
             hovered,
             needs_present,
+            retained_presentation_requested: false,
             scene_animation_interval: None,
             input_rate_tracker,
             frame_pacer: FramePacer::default(),
@@ -4340,6 +4341,17 @@ impl Window {
         }
     }
 
+    /// Schedules presentation of the accepted scene without invalidating layout or paint.
+    ///
+    /// Use this after updating the backing of a retained image. Requests coalesce until the
+    /// next delivery. A fresh scene takes precedence when a redraw is already required.
+    pub fn request_retained_presentation(&mut self) {
+        if self.rendered_frame.generation != 0 && self.presentation_is_allowed() {
+            self.retained_presentation_requested = true;
+            self.schedule_pending_frame();
+        }
+    }
+
     fn refresh_focus_authority(&mut self) {
         let needs_effect_wakeup =
             self.frame_focus_authority_sealed || self.invalidator.is_focus_phase();
@@ -4931,6 +4943,11 @@ impl Window {
     /// Returns an opaque revision for the most recently completed rendered frame.
     pub const fn rendered_frame_revision(&self) -> u64 {
         self.rendered_frame.generation
+    }
+
+    /// Counts renderer submissions accepted by this window, including repeated scene deliveries.
+    pub const fn present_submission_count(&self) -> u64 {
+        self.presentation_state.present_submission_count
     }
 
     /// Returns whether a focus handle belongs to the most recently rendered dispatch tree.
@@ -6556,6 +6573,17 @@ impl Window {
         }
     }
 
+    /// Returns the renderer's owned atlas handle for backend-specific image registration.
+    #[doc(hidden)]
+    pub fn image_atlas<A: PlatformAtlas + 'static>(&self) -> Option<Arc<A>> {
+        self.sprite_atlas
+            .clone()
+            .into_image_atlas()?
+            .downcast::<Arc<A>>()
+            .ok()
+            .map(|atlas| *atlas)
+    }
+
     /// Renders the current frame's scene to a texture and returns the pixel data as an RGBA image.
     /// This does not present the frame to screen - useful for visual testing where we want
     /// to capture what would be rendered without displaying it or requiring the window to be visible.
@@ -7731,6 +7759,7 @@ impl Window {
             && self.presentation_is_allowed()
             && (self.invalidator.is_dirty()
                 || self.needs_present.get()
+                || self.retained_presentation_requested
                 || self.has_scene_animations()
                 || !self.next_frame_callbacks.borrow().is_empty()
                 || self.deferred_force_render)
@@ -7767,7 +7796,7 @@ impl Window {
         self.cancel_deferred_scene_if_stale();
         if self.deferred_scene.is_some() {
             self.deferred_force_render |= request_frame_options.force_render;
-            self.present_animated_deferred_scene(cx);
+            self.present_deferred_scene(cx);
             return;
         }
         if self.deferred_candidate.is_some() {
@@ -7797,6 +7826,7 @@ impl Window {
             || !self.next_frame_callbacks.borrow().is_empty()
             || request_frame_options.require_presentation
             || self.needs_present.get()
+            || self.retained_presentation_requested
             || high_rate_input;
         let has_frame_demand = has_demand_besides_animation || self.has_scene_animations();
         let min_frame_interval = if initial_presentation_pending
@@ -7865,7 +7895,9 @@ impl Window {
 
         let needs_present = PresentFacts {
             require_presentation: request_frame_options.require_presentation,
-            needs_present: self.needs_present.get() || self.has_scene_animations(),
+            needs_present: self.needs_present.get()
+                || self.retained_presentation_requested
+                || self.has_scene_animations(),
             high_rate_input: self
                 .input_rate_tracker
                 .borrow()
@@ -8831,8 +8863,11 @@ impl Window {
             return PlatformWindowPresentOutcome::RepaintRequired;
         }
         if self.platform_window.frame_delivery_mode() == PlatformFrameDeliveryMode::Deferred {
-            if self.has_scene_animations() || self.deferred_scene.is_some() {
-                return self.present_animated_deferred_scene(cx);
+            if self.retained_presentation_requested
+                || self.has_scene_animations()
+                || self.deferred_scene.is_some()
+            {
+                return self.present_deferred_scene(cx);
             }
             // A retained scene also needs exact completion authority when its renderer
             // submits asynchronously. Prepare a candidate on the next frame instead of
@@ -8843,6 +8878,7 @@ impl Window {
         #[cfg(feature = "profiler")]
         let present_start = Instant::now();
         let outcome = if self.presentation_is_allowed() {
+            self.retained_presentation_requested = false;
             self.advance_scene_animations(cx);
             self.platform_window.draw(&self.rendered_frame.scene)
         } else {
@@ -8904,6 +8940,10 @@ impl Window {
                 });
             }
             self.presentation_state.present_submitted_generation = Some(generation);
+            self.presentation_state.present_submission_count = self
+                .presentation_state
+                .present_submission_count
+                .saturating_add(1);
             if self.record_exact_frame_submission_present_outcome(generation, outcome, cx)
                 == WindowProvisionalSemanticsPresentTransition::Invalidated
             {
@@ -12651,35 +12691,6 @@ impl Window {
                 validity,
             ));
         Ok(())
-    }
-
-    /// Paint a surface into the scene for the next frame at the current z-index.
-    ///
-    /// This method should only be called as part of the paint phase of element drawing.
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: PlatformPixelBuffer) {
-        use crate::PaintSurface;
-
-        self.invalidator.debug_assert_paint();
-
-        let bounds = self.device_local_bounds(bounds);
-        let Some(base_transform) = self.base_primitive_transform() else {
-            return;
-        };
-        let Some(transform) = self.primitive_raster_transform(
-            base_transform,
-            bounds,
-            PrimitiveRasterSnap::NearestEdges,
-        ) else {
-            return;
-        };
-        self.insert_scene_primitive(PaintSurface {
-            order: 0,
-            bounds,
-            clip: Default::default(),
-            image_buffer,
-            transform,
-        });
     }
 
     /// Removes an image from the sprite atlas.

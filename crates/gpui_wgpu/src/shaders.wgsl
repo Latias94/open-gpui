@@ -98,7 +98,7 @@ struct GammaParams {
 @group(0) @binding(0) var<uniform> globals: GlobalParams;
 @group(0) @binding(1) var<uniform> gamma_params: GammaParams;
 @group(2) @binding(0) var t_sprite: texture_2d<f32>;
-@group(2) @binding(1) var s_sprite: sampler;
+@group(0) @binding(3) var s_sprite: sampler;
 
 const M_PI_F: f32 = 3.1415926;
 const GRAYSCALE_FACTORS: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
@@ -1541,7 +1541,7 @@ fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
 
     if ((input.underline_id & SIMPLE_PRIMITIVE_FLAG) != 0u)
     {
-        return blend_color(input.color, input.color.a);
+        return blend_color(input.color, 1.0);
     }
 
     let underline = load_underline(input.underline_id);
@@ -1558,7 +1558,7 @@ fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
     let distance_from_top_border = distance_in_pixels - half_thickness;
     let distance_from_bottom_border = distance_in_pixels + half_thickness;
     let alpha = saturate(0.5 - max(-distance_from_bottom_border, distance_from_top_border));
-    return blend_color(input.color, alpha * input.color.a);
+    return blend_color(input.color, alpha);
 }
 
 // --- monochrome sprites --- //
@@ -1745,54 +1745,4 @@ fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
         color = vec4<f32>(vec3<f32>(grayscale), sample.a);
     }
     return blend_scene_color(color, sprite.opacity * coverage);
-}
-
-// --- surfaces --- //
-
-struct SurfaceParams {
-    bounds: Bounds,
-    @size(32) clip: ClipEnvelope,
-}
-
-@group(1) @binding(0) var<uniform> surface_locals: SurfaceParams;
-@group(1) @binding(1) var t_y: texture_2d<f32>;
-@group(1) @binding(2) var t_cb_cr: texture_2d<f32>;
-@group(1) @binding(3) var s_surface: sampler;
-
-const ycbcr_to_RGB = mat4x4<f32>(
-    vec4<f32>( 1.0000f,  1.0000f,  1.0000f, 0.0),
-    vec4<f32>( 0.0000f, -0.3441f,  1.7720f, 0.0),
-    vec4<f32>( 1.4020f, -0.7141f,  0.0000f, 0.0),
-    vec4<f32>(-0.7010f,  0.5291f, -0.8860f, 1.0),
-);
-
-struct SurfaceVarying {
-    @builtin(position) position: vec4<f32>,
-    @location(0) texture_position: vec2<f32>,
-}
-
-@vertex
-fn vs_surface(@builtin(vertex_index) vertex_id: u32) -> SurfaceVarying {
-    let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
-
-    var out = SurfaceVarying();
-    let clipped = clip_to_mask(unit_vertex, surface_locals.bounds, surface_locals.clip,
-        PrimitiveTransform(1.0, 1.0, 0.0, 0.0));
-    out.position = to_device_position_impl(clipped.position);
-    out.texture_position = clipped.unit_vertex;
-    return out;
-}
-
-@fragment
-fn fs_surface(input: SurfaceVarying) -> @location(0) vec4<f32> {
-    if (!clip_envelope_contains(input.position.xy, surface_locals.clip)) {
-        return vec4<f32>(0.0);
-    }
-
-    let y_cb_cr = vec4<f32>(
-        textureSampleLevel(t_y, s_surface, input.texture_position, 0.0).r,
-        textureSampleLevel(t_cb_cr, s_surface, input.texture_position, 0.0).rg,
-        1.0);
-
-    return ycbcr_to_RGB * y_cb_cr;
 }

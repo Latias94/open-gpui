@@ -15,10 +15,6 @@ pub(super) struct SceneSnapshot {
 impl SceneSnapshot {
     pub(super) fn from_window(window: &Window) -> Self {
         let scene = &window.rendered_frame.scene;
-        assert!(
-            scene.surfaces.is_empty(),
-            "randomized tree fixtures must not introduce unobserved native surface pixels"
-        );
         let mut texture_ids = std::collections::HashMap::new();
         let mut tile_ids = std::collections::HashMap::new();
         for tile in scene
@@ -52,7 +48,6 @@ impl SceneSnapshot {
                 crate::PrimitiveBatch::Shadows(range)
                 | crate::PrimitiveBatch::Quads(range)
                 | crate::PrimitiveBatch::Underlines(range)
-                | crate::PrimitiveBatch::Surfaces(range)
                 | crate::PrimitiveBatch::MonochromeSprites { range, .. }
                 | crate::PrimitiveBatch::SubpixelSprites { range, .. }
                 | crate::PrimitiveBatch::PolychromeSprites { range, .. } => (range, false),

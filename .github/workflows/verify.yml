@@ -41,7 +41,7 @@ jobs:
           cache-on-failure: true
 
       - name: Check framework on minimum Rust
-        run: cargo +1.93.0 check --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-windows -p open-gpui-platform -p open-gpui-macros -p open-gpui-ui-core -p open-gpui-ui-components --all-features --all-targets -j 1
+        run: cargo +1.93.0 check --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-platform -p open-gpui-macros -p open-gpui-ui-core -p open-gpui-ui-components --all-features --all-targets -j 1
 
       - name: Check independent test-support consumer on minimum Rust
         run: cargo +1.93.0 check --locked --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --all-targets --all-features --target-dir target -j 1
@@ -193,27 +193,26 @@ jobs:
       - name: Check Linux backend feature boundaries
         if: matrix.name == 'linux'
         run: |
-          cargo check --locked -p open-gpui-linux --all-features
-          cargo check --locked -p open-gpui-linux --no-default-features --features wayland --lib
-          cargo check --locked -p open-gpui-linux --no-default-features --features x11 --lib
+          cargo check --locked -p open-gpui-platform --all-features
+          cargo check --locked -p open-gpui-platform --no-default-features --features wayland --lib
+          cargo check --locked -p open-gpui-platform --no-default-features --features x11 --lib
           cargo check --locked -p open-gpui-platform --no-default-features --features x11,wayland --example toggle_headless
 
       - name: Test Linux backends and headless activity
         if: matrix.name == 'linux'
         run: |
-          cargo nextest run --locked -p open-gpui-linux --all-features --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
-          cargo nextest run --locked -p open-gpui-linux --no-default-features --lib -E 'test(headless_idle_sleep_prevention_is_unsupported)' --test-threads=1 --no-fail-fast --no-tests fail
-          cargo nextest run --locked -p open-gpui-linux --no-default-features --features x11,wayland,test-support --lib -E 'test(/^linux::x11::clipboard::native_windowing_tests::/)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked -p open-gpui-platform --all-features --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked -p open-gpui-platform --no-default-features --lib -E 'test(headless_idle_sleep_prevention_is_unsupported)' --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked -p open-gpui-platform --no-default-features --features x11,wayland,test-support --lib -E 'test(/^linux::x11::clipboard::native_windowing_tests::/)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Check macOS backends and native examples
         if: matrix.name == 'macos'
         run: |
-          cargo check --locked -p open-gpui-apple -p open-gpui-macos --all-features --all-targets
-          cargo check --locked -p open-gpui-platform --all-features --example svg_animation
+          cargo check --locked -p open-gpui-platform --all-features --all-targets
 
-      - name: Test Apple and macOS offline Metal backends
+      - name: Test macOS platform and CoreText
         if: matrix.name == 'macos'
-        run: cargo nextest run --locked -p open-gpui-apple -p open-gpui-macos --features font-kit --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui-platform --features font-kit --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Check native WGPU font-kit path
         run: cargo check --locked -p open-gpui-wgpu --features font-kit
@@ -295,22 +294,19 @@ jobs:
         with:
           cache-on-failure: true
 
-      - name: Test production FXC sprite entries
-        run: cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(=directx_renderer::shader_resources::tests::sprite_shader_entry_points_compile_with_fxc)' --test-threads=1 --no-fail-fast --no-tests fail
-
       - name: Test native generic and SVG animation
-        run: cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(platform::native_test_support::native_animation_tests::)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui-platform --all-features --lib -E 'test(windows::platform::native_test_support::native_animation_tests::)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Check Windows backend
-        run: cargo check --locked -p open-gpui-windows --all-features
+        run: cargo check --locked -p open-gpui-platform --all-features
 
       - name: Test complete Windows backend
         env:
           GPUI_LEAK_DETECTION: '1'
-        run: cargo nextest run --locked -p open-gpui-windows --all-features --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui-platform --all-features --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test desktop pixels, credentials and native retirement
-        run: cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(native_frame_overlay_modes_reset_resize_preserve_input_and_retirement) | test(native_runtime_os_loads_routes_labels_text_and_exact_window_retirement) | test(credential) | test(native_send_foreground_) | test(native_springs_retarget_playback_reduce_motion_and_retire_active_frames) | test(native_randomized_tree_cached_color_hide_restore_click_and_retire)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui-platform --all-features --lib -E 'test(native_frame_overlay_modes_reset_resize_preserve_input_and_retirement) | test(native_runtime_os_loads_routes_labels_text_and_exact_window_retirement) | test(credential) | test(native_send_foreground_) | test(native_springs_retarget_playback_reduce_motion_and_retire_active_frames) | test(native_randomized_tree_cached_color_hide_restore_click_and_retire)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test additive support without handle tracking
         shell: pwsh
@@ -322,7 +318,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo nextest run --locked --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --features test-support --test public_api --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo nextest run --locked -p open-gpui-windows --lib -E 'test(native_generic_views_compose_rebuild_cache_notify_and_release_exact_owners)' --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked -p open-gpui-platform --lib -E 'test(native_generic_views_compose_rebuild_cache_notify_and_release_exact_owners)' --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test explicit handle tracking and native release
         shell: pwsh
@@ -334,7 +330,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo nextest run --locked --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --no-default-features --features test-support --test public_api --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo nextest run --locked -p open-gpui-windows --features test-support,profiler --lib -E 'test(native_generic_views_compose_rebuild_cache_notify_and_release_exact_owners)' --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked -p open-gpui-platform --features test-support,profiler --lib -E 'test(native_generic_views_compose_rebuild_cache_notify_and_release_exact_owners)' --test-threads=1 --no-fail-fast --no-tests fail
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:GPUI_LEAK_DETECTION = ''
           cargo nextest run --locked --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --features leak-detection --test public_api --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
@@ -368,8 +364,8 @@ jobs:
       - name: Test independent application-owned GPU atlas
         run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features wgpu-renderer --test wgpu_atlas --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 
-      - name: Test application-supplied DirectX renderer
-        run: cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(native_custom_renderer_submits_imported_texture_resizes_and_retires_exact_gpu_prefix)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
+      - name: Test application-supplied Windows renderer
+        run: cargo nextest run --locked -p open-gpui-platform --all-features --lib -E 'test(native_custom_renderer_submits_imported_texture_resizes_and_retires_exact_gpu_prefix)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Run ordinary WGPU hosts and native-close retirement
         run: |

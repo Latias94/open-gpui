@@ -505,7 +505,6 @@ mod tests {
                 PrimitiveKind::MonochromeSprite,
                 PrimitiveKind::SubpixelSprite,
                 PrimitiveKind::PolychromeSprite,
-                PrimitiveKind::Surface,
             ];
 
             // Insert a random number of random AABBs into the tree.

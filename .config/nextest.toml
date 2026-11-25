@@ -2,6 +2,6 @@
 windows-native = { max-threads = 1 }
 
 [[profile.default.overrides]]
-filter = 'package(open-gpui-windows)'
+filter = 'package(open-gpui-platform) & test(/^windows::/)'
 platform = 'cfg(windows)'
 test-group = 'windows-native'

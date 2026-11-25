@@ -1199,6 +1199,7 @@ fn packed_shader_reads_odd_quads_and_exact_clips_across_texture_rows() -> anyhow
                 &core.resources.bind_group_layouts.globals,
                 &core.resources.globals_buffer,
                 &core.resources.clip_buffer,
+                &core.resources.atlas_sampler,
                 0,
                 core.gamma_offset,
                 clip_capacity,
@@ -2044,7 +2045,7 @@ fn warm_atlas_cache_refuses_mixed_stale_generation_without_partial_submission() 
 }
 
 #[test]
-fn builtin_submission_retains_imported_owner_until_completion_callback() -> anyhow::Result<()> {
+fn builtin_submission_retains_replaced_imported_owner_until_gpu_completion() -> anyhow::Result<()> {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct HostOwner(Arc<AtomicUsize>);
@@ -2085,7 +2086,7 @@ fn builtin_submission_retains_imported_owner_until_completion_callback() -> anyh
         wgpu::CompositeAlphaMode::Opaque,
         false,
     )?;
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
+    let texture_descriptor = wgpu::TextureDescriptor {
         label: Some("builtin submission imported image"),
         size: wgpu::Extent3d {
             width: 2,
@@ -2098,7 +2099,9 @@ fn builtin_submission_retains_imported_owner_until_completion_callback() -> anyh
         format,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
-    });
+    };
+    let texture = device.create_texture(&texture_descriptor);
+    let replacement = device.create_texture(&texture_descriptor);
     queue.write_texture(
         texture.as_image_copy(),
         &[255_u8, 0, 0, 255].repeat(4),
@@ -2112,8 +2115,8 @@ fn builtin_submission_retains_imported_owner_until_completion_callback() -> anyh
     let drops = Arc::new(AtomicUsize::new(0));
     let owner = Arc::new(HostOwner(drops.clone()));
     let owner_lifetime = Arc::downgrade(&owner);
-    let image = atlas.import_image(crate::WgpuImportedImageDescriptor {
-        texture: texture.clone(),
+    let import = crate::WgpuImportedImageDescriptor {
+        texture,
         mip_level: 0,
         array_layer: 0,
         region: Bounds::new(
@@ -2123,7 +2126,11 @@ fn builtin_submission_retains_imported_owner_until_completion_callback() -> anyh
         transfer: ImageTextureTransfer::Srgb,
         alpha: ImageTextureAlpha::Straight,
         sampling: ImageTextureSampling::Linear,
+        owner: None,
+    };
+    let image = atlas.import_image(crate::WgpuImportedImageDescriptor {
         owner: Some(owner),
+        ..import.clone()
     })?;
     let fixture = WindowFixture::imported_image(image.clone());
     let captured = Rc::new(RefCell::new(None));
@@ -2140,7 +2147,10 @@ fn builtin_submission_retains_imported_owner_until_completion_callback() -> anyh
             })))
         }
     });
+    let expected_atlas = atlas.clone();
     let handle = app.open_window(size(px(32.0), px(32.0)), move |window, app| {
+        let window_atlas = WgpuAtlas::for_window(window).expect("the window must expose its atlas");
+        assert!(Arc::ptr_eq(&window_atlas, &expected_atlas));
         scale_factor.set(Some(window.scale_factor()));
         app.new(|_| fixture)
     })?;
@@ -2174,10 +2184,19 @@ fn builtin_submission_retains_imported_owner_until_completion_callback() -> anyh
     let submission = core.render_frame(&scene, &view, target_size, false, wgpu::Color::BLACK)?;
     assert_eq!(core.resources.submitted_scene_count, 1);
     assert_eq!(core.resources.atlas_texture_bind_groups.len(), 1);
-    drop(image);
-    drop(scene);
-    drop(app);
-    atlas.clear();
+    let replacement_owner = Arc::new(HostOwner(Arc::new(AtomicUsize::new(0))));
+    let replacement_lifetime = Arc::downgrade(&replacement_owner);
+    atlas.update_image(
+        &image,
+        crate::WgpuImportedImageDescriptor {
+            texture: replacement,
+            owner: Some(replacement_owner),
+            ..import
+        },
+    )?;
+    image
+        .validate()
+        .expect("a compatible update must preserve the image lease");
     assert!(
         owner_lifetime.upgrade().is_some(),
         "the submission callback must retain the host owner before polling"
@@ -2189,11 +2208,15 @@ fn builtin_submission_retains_imported_owner_until_completion_callback() -> anyh
     })?;
     assert!(
         owner_lifetime.upgrade().is_none(),
-        "the completion callback must release the original host owner"
+        "the completion callback must release the old owner while the image remains live"
     );
     assert_eq!(drops.load(Ordering::SeqCst), 1);
     assert_eq!(core.resources.atlas_texture_bind_groups.len(), 1);
-    assert_eq!(texture.width(), 2);
+    assert!(replacement_lifetime.upgrade().is_some());
+    drop(image);
+    drop(app);
+    atlas.clear();
+    assert!(replacement_lifetime.upgrade().is_none());
     Ok(())
 }
 

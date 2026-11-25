@@ -1,7 +1,27 @@
-//! Convenience crate that re-exports GPUI's platform traits and the
-//! `current_platform` constructor so consumers don't need `#[cfg]` gating.
+//! Native desktop platforms and application constructors for Open GPUI.
+
+#[cfg(all(
+    any(target_os = "linux", target_os = "freebsd"),
+    not(target_env = "ohos")
+))]
+pub mod linux;
+#[cfg(target_os = "macos")]
+pub mod macos;
+#[cfg(target_os = "windows")]
+pub mod windows;
+
+#[cfg(all(test, not(target_os = "windows")))]
+#[path = "windows/color_glyph_bitmap.rs"]
+mod color_glyph_bitmap;
+#[cfg(all(test, not(any(target_os = "linux", target_os = "freebsd"))))]
+#[path = "linux/power/profile.rs"]
+mod power_profile;
+#[cfg(all(test, not(any(target_os = "linux", target_os = "freebsd"))))]
+#[path = "linux/wayland/frame_state.rs"]
+mod wayland_frame_state;
 
 pub use open_gpui::Platform;
+pub use open_gpui_wgpu::SharedWgpuContext;
 
 use std::rc::Rc;
 
@@ -12,6 +32,50 @@ pub fn background_executor() -> open_gpui::BackgroundExecutor {
 
 pub fn application() -> open_gpui::Application {
     open_gpui::Application::with_platform(current_platform(false))
+}
+
+/// Creates a native application whose top-level windows all use the supplied WGPU context.
+///
+/// Create the instance without a bound display handle when GPUI opens the display connection.
+/// The caller selects a device that can present to that display and owns device replacement.
+pub fn application_with_shared_wgpu(
+    context: SharedWgpuContext,
+) -> anyhow::Result<open_gpui::Application> {
+    #[cfg(target_os = "macos")]
+    {
+        Ok(open_gpui::Application::with_platform(Rc::new(
+            macos::MacPlatform::new_with_shared_wgpu(context),
+        )))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Ok(open_gpui::Application::with_platform(Rc::new(
+            windows::WindowsPlatform::new_with_shared_wgpu(context)?,
+        )))
+    }
+    #[cfg(all(
+        any(target_os = "linux", target_os = "freebsd"),
+        not(target_env = "ohos"),
+        any(feature = "wayland", feature = "x11")
+    ))]
+    {
+        Ok(open_gpui::Application::with_platform(
+            linux::linux_platform_with_shared_wgpu(context),
+        ))
+    }
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "windows",
+        all(
+            any(target_os = "linux", target_os = "freebsd"),
+            not(target_env = "ohos"),
+            any(feature = "wayland", feature = "x11")
+        )
+    )))]
+    {
+        let _ = context;
+        anyhow::bail!("no native WGPU windowing backend is enabled")
+    }
 }
 
 pub fn headless() -> open_gpui::Application {
@@ -25,7 +89,7 @@ pub fn headless() -> open_gpui::Application {
 /// switch later with [`open_gpui::App::request_windowing`]. Unlike [`headless`], this factory
 /// retains the ability to attach to an allowed display server later.
 /// To transfer an inherited Wayland socket, construct the platform with
-/// `open_gpui_linux::linux_platform_with_startup` and pass it to
+/// `linux::linux_platform_with_startup` and pass it to
 /// [`open_gpui::Application::with_platform`]. This factory does not adopt a Host descriptor
 /// from `WAYLAND_SOCKET` or mutate the running Host's environment.
 #[cfg(all(
@@ -33,21 +97,20 @@ pub fn headless() -> open_gpui::Application {
     not(target_env = "ohos")
 ))]
 pub fn linux(allowed_modes: open_gpui::WindowingModes) -> open_gpui::Application {
-    open_gpui::Application::with_platform(open_gpui_linux::linux_platform(allowed_modes))
+    open_gpui::Application::with_platform(linux::linux_platform(allowed_modes))
 }
 
 /// Returns the default [`Platform`] for the current OS.
 pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
     #[cfg(target_os = "macos")]
     {
-        Rc::new(open_gpui_macos::MacPlatform::new(headless))
+        Rc::new(macos::MacPlatform::new(headless))
     }
 
     #[cfg(target_os = "windows")]
     {
         Rc::new(
-            open_gpui_windows::WindowsPlatform::new(headless)
-                .expect("failed to initialize Windows platform"),
+            windows::WindowsPlatform::new(headless).expect("failed to initialize Windows platform"),
         )
     }
 
@@ -64,7 +127,7 @@ pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
         not(target_env = "ohos")
     ))]
     {
-        open_gpui_linux::current_platform(headless)
+        linux::current_platform(headless)
     }
 }
 
@@ -72,37 +135,20 @@ pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
 #[cfg(feature = "test-support")]
 pub fn current_headless_renderer()
 -> anyhow::Result<Option<Box<dyn open_gpui::PlatformHeadlessRenderer>>> {
-    #[cfg(target_os = "macos")]
-    {
-        Ok(Some(Box::new(
-            open_gpui_apple::metal_renderer::MetalHeadlessRenderer::new()?,
-        )))
-    }
-
-    #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
+    #[cfg(not(target_family = "wasm"))]
     {
         open_gpui_wgpu::WgpuHeadlessRenderer::new().map(|renderer| {
             Some(Box::new(renderer) as Box<dyn open_gpui::PlatformHeadlessRenderer>)
         })
     }
 
-    #[cfg(not(any(
-        target_os = "macos",
-        all(target_os = "linux", not(target_env = "ohos"))
-    )))]
+    #[cfg(target_family = "wasm")]
     {
         Ok(None)
     }
 }
 
-#[cfg(all(
-    test,
-    feature = "test-support",
-    not(any(
-        target_os = "macos",
-        all(target_os = "linux", not(target_env = "ohos"))
-    ))
-))]
+#[cfg(all(test, feature = "test-support", target_family = "wasm"))]
 mod headless_facade_tests {
     #[test]
     fn unsupported_platform_has_no_default_headless_renderer() -> anyhow::Result<()> {
@@ -123,7 +169,7 @@ mod tests {
     // SIGABRT when interacting with macOS AppKit/Cocoa APIs.
     //
     // To run these tests, use:
-    // cargo test -p gpui visual_test_context -- --ignored --test-threads=1
+    // cargo test -p open-gpui-platform --features test-support -- --ignored --test-threads=1
 
     #[test]
     #[ignore] // Requires macOS main thread

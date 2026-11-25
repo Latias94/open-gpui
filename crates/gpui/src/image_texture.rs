@@ -39,10 +39,10 @@ pub enum ImageTextureSampling {
 
 /// A renderer-local retained image that can participate in normal GPUI paint order.
 ///
-/// Clones share one allocation. The backend allocation and its owner remain alive until the
-/// final handle and all frame/recording leases release them. Atlas resets invalidate new paint
-/// with this handle; already-recorded GPU work retains its original resources independently.
-/// This retains resource identity, not a snapshot of mutable GPU pixel contents.
+/// Clones share one atlas registration. Frame leases keep the registration's current backing
+/// available for paint. A backend may replace that backing while preserving the registration.
+/// Atlas resets invalidate new paint. Already-recorded GPU work retains its original resources
+/// independently. GPU pixel contents can still change in place.
 #[derive(Clone)]
 pub struct ImageTexture {
     inner: Rc<ImageTextureInner>,
@@ -55,7 +55,7 @@ struct ImageTextureInner {
     alpha: ImageTextureAlpha,
     sampling: ImageTextureSampling,
     lease: AtlasTextureLease,
-    _owner: Arc<dyn Any>,
+    owner: Arc<dyn Any>,
 }
 
 impl ImageTexture {
@@ -111,7 +111,7 @@ impl ImageTexture {
                 alpha,
                 sampling,
                 lease,
-                _owner: owner,
+                owner,
             }),
         })
     }
@@ -144,6 +144,12 @@ impl ImageTexture {
     /// Refuses a handle invalidated by an atlas reset.
     pub fn validate(&self) -> Result<(), AtlasTextureLeaseInvalidation> {
         self.inner.lease.validate()
+    }
+
+    /// Returns the backend's registration owner when it has the requested concrete type.
+    #[doc(hidden)]
+    pub fn atlas_owner<T: Any>(&self) -> Option<&T> {
+        self.inner.owner.downcast_ref()
     }
 
     pub(crate) fn tile(&self) -> AtlasTile {

@@ -748,24 +748,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cbindgen"
-version = "0.29.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ecb53484c9c167ba674026b656d8a27d7657a58e6066aa902bfb1a4aa00ae20"
-dependencies = [
- "heck",
- "indexmap",
- "log",
- "proc-macro2",
- "quote",
- "serde",
- "serde_json",
- "syn 2.0.119",
- "tempfile",
- "toml 0.9.12+spec-1.1.0",
-]
-
-[[package]]
 name = "cc"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1280,7 +1262,7 @@ dependencies = [
  "cc",
  "memchr",
  "rustc_version",
- "toml 1.1.8+spec-1.1.0",
+ "toml",
  "vswhom",
  "winreg",
 ]
@@ -2970,6 +2952,7 @@ dependencies = [
  "objc2 0.6.5",
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
+ "objc2-quartz-core 0.3.2",
  "objc2-uniform-type-identifiers",
 ]
 
@@ -3117,9 +3100,7 @@ checksum = "a0125f776a10d00af4152d74616409f0d4a2053a6f57fa5b7d6aa2854ac04794"
 dependencies = [
  "bitflags 2.13.2",
  "block2 0.6.2",
- "dispatch2",
  "objc2 0.6.5",
- "objc2-core-foundation",
  "objc2-foundation 0.3.2",
 ]
 
@@ -3237,8 +3218,6 @@ dependencies = [
  "log",
  "lyon_path",
  "num_cpus",
- "objc2-core-foundation",
- "objc2-core-video",
  "open-gpui-collections",
  "open-gpui-core-util",
  "open-gpui-macros",
@@ -3281,45 +3260,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "open-gpui-apple"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "async-task 4.7.1 (git+https://github.com/zed-industries/async-task.git?rev=015845a19fc31752c02367567d3b8900a406f9da)",
- "block2 0.6.2",
- "cbindgen",
- "core-foundation",
- "core-foundation-sys",
- "core-graphics",
- "core-text",
- "dispatch2",
- "etagere",
- "futures",
- "image",
- "libc",
- "log",
- "mach2",
- "objc2 0.6.5",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-core-text",
- "objc2-core-video",
- "objc2-foundation 0.3.2",
- "objc2-metal 0.3.2",
- "objc2-quartz-core 0.3.2",
- "objc2-security",
- "open-gpui",
- "open-gpui-collections",
- "open-gpui-font-kit",
- "open-gpui-scheduler",
- "open-gpui-util",
- "parking_lot",
- "pathfinder_geometry",
- "smallvec",
- "thiserror 2.0.21",
-]
-
-[[package]]
 name = "open-gpui-collections"
 version = "0.2.0"
 dependencies = [
@@ -3346,7 +3286,6 @@ dependencies = [
  "core-foundation",
  "image",
  "open-gpui",
- "open-gpui-apple",
  "open-gpui-docking",
  "open-gpui-log",
  "open-gpui-path",
@@ -3406,53 +3345,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "open-gpui-linux"
-version = "0.2.0"
-dependencies = [
- "accesskit",
- "accesskit_unix",
- "anyhow",
- "as-raw-xcb-connection",
- "ashpd",
- "bitflags 2.13.2",
- "bytemuck",
- "calloop",
- "calloop-wayland-source",
- "filedescriptor",
- "futures",
- "image",
- "itertools",
- "libc",
- "log",
- "notify-rust",
- "open",
- "open-gpui",
- "open-gpui-collections",
- "open-gpui-util",
- "open-gpui-wgpu",
- "parking_lot",
- "pathfinder_geometry",
- "pollster 0.4.0",
- "profiling",
- "raw-window-handle",
- "smallvec",
- "smol",
- "strum",
- "swash",
- "url",
- "uuid",
- "wayland-backend",
- "wayland-client",
- "wayland-cursor",
- "wayland-protocols",
- "wayland-protocols-plasma",
- "wayland-protocols-wlr",
- "x11rb",
- "xim",
- "xkbcommon",
-]
-
-[[package]]
 name = "open-gpui-log"
 version = "0.2.0"
 dependencies = [
@@ -3460,50 +3352,6 @@ dependencies = [
  "chrono",
  "log",
  "open-gpui-collections",
-]
-
-[[package]]
-name = "open-gpui-macos"
-version = "0.2.0"
-dependencies = [
- "accesskit",
- "accesskit_macos",
- "anyhow",
- "bitflags 2.13.2",
- "block2 0.6.2",
- "core-foundation",
- "core-foundation-sys",
- "core-graphics",
- "ctor",
- "derive_more",
- "dispatch2",
- "foreign-types",
- "futures",
- "image",
- "itertools",
- "libc",
- "log",
- "objc2 0.6.5",
- "objc2-app-kit 0.3.2",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-core-video",
- "objc2-foundation 0.3.2",
- "objc2-quartz-core 0.3.2",
- "objc2-uniform-type-identifiers",
- "objc2-user-notifications",
- "open-gpui",
- "open-gpui-apple",
- "open-gpui-collections",
- "open-gpui-scheduler",
- "open-gpui-util",
- "parking_lot",
- "raw-window-handle",
- "semver",
- "serde_json",
- "smallvec",
- "strum",
- "uuid",
 ]
 
 [[package]]
@@ -3530,12 +3378,81 @@ dependencies = [
 name = "open-gpui-platform"
 version = "0.2.0"
 dependencies = [
+ "accesskit",
+ "accesskit_macos",
+ "accesskit_unix",
+ "accesskit_windows",
  "anyhow",
+ "as-raw-xcb-connection",
+ "ashpd",
+ "async-task 4.7.1 (git+https://github.com/zed-industries/async-task.git?rev=015845a19fc31752c02367567d3b8900a406f9da)",
+ "bitflags 2.13.2",
+ "block2 0.6.2",
+ "bytemuck",
+ "calloop",
+ "calloop-wayland-source",
+ "core-foundation",
+ "core-foundation-sys",
+ "core-graphics",
+ "core-text",
+ "ctor",
+ "derive_more",
+ "dispatch2",
+ "filedescriptor",
+ "foreign-types",
+ "futures",
+ "image",
+ "itertools",
+ "libc",
+ "log",
+ "mach2",
+ "notify-rust",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-core-text",
+ "objc2-core-video",
+ "objc2-foundation 0.3.2",
+ "objc2-quartz-core 0.3.2",
+ "objc2-security",
+ "objc2-uniform-type-identifiers",
+ "objc2-user-notifications",
+ "open",
  "open-gpui",
- "open-gpui-apple",
- "open-gpui-linux",
- "open-gpui-macos",
- "open-gpui-windows",
+ "open-gpui-collections",
+ "open-gpui-font-kit",
+ "open-gpui-scheduler",
+ "open-gpui-util",
+ "open-gpui-wgpu",
+ "parking_lot",
+ "pathfinder_geometry",
+ "pollster 0.4.0",
+ "profiling",
+ "rand 0.9.5",
+ "raw-window-handle",
+ "semver",
+ "serde_json",
+ "smallvec",
+ "smol",
+ "strum",
+ "swash",
+ "thiserror 2.0.21",
+ "url",
+ "uuid",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-cursor",
+ "wayland-protocols",
+ "wayland-protocols-plasma",
+ "wayland-protocols-wlr",
+ "windows",
+ "windows-core",
+ "windows-numerics",
+ "windows-registry",
+ "x11rb",
+ "xim",
+ "xkbcommon",
 ]
 
 [[package]]
@@ -3683,33 +3600,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "wgpu",
-]
-
-[[package]]
-name = "open-gpui-windows"
-version = "0.2.0"
-dependencies = [
- "accesskit",
- "accesskit_windows",
- "anyhow",
- "etagere",
- "futures",
- "image",
- "itertools",
- "log",
- "open-gpui",
- "open-gpui-collections",
- "open-gpui-scheduler",
- "open-gpui-util",
- "parking_lot",
- "rand 0.9.5",
- "raw-window-handle",
- "smallvec",
- "uuid",
- "windows",
- "windows-core",
- "windows-numerics",
- "windows-registry",
 ]
 
 [[package]]
@@ -5380,21 +5270,6 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "0.9.12+spec-1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf92845e79fc2e2def6a5d828f0801e29a2f8acc037becc5ab08595c7d5e9863"
-dependencies = [
- "indexmap",
- "serde_core",
- "serde_spanned",
- "toml_datetime 0.7.5+spec-1.1.0",
- "toml_parser",
- "toml_writer",
- "winnow 0.7.15",
-]
-
-[[package]]
-name = "toml"
 version = "1.1.8+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20489e00e4d8741d6be680764cc12e270655e375a20d1011e844a9c3379e678d"
@@ -5402,19 +5277,10 @@ dependencies = [
  "indexmap",
  "serde_core",
  "serde_spanned",
- "toml_datetime 1.1.2+spec-1.1.0",
+ "toml_datetime",
  "toml_parser",
  "toml_writer",
- "winnow 1.0.4",
-]
-
-[[package]]
-name = "toml_datetime"
-version = "0.7.5+spec-1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92e1cfed4a3038bc5a127e35a2d360f145e1f4b971b551a2ba5fd7aedf7e1347"
-dependencies = [
- "serde_core",
+ "winnow",
 ]
 
 [[package]]
@@ -5433,9 +5299,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3641d5bbb5349a79e1020a242d251efbc546ad8048d133958323ce9c40a9c9c"
 dependencies = [
  "indexmap",
- "toml_datetime 1.1.2+spec-1.1.0",
+ "toml_datetime",
  "toml_parser",
- "winnow 1.0.4",
+ "winnow",
 ]
 
 [[package]]
@@ -5444,7 +5310,7 @@ version = "1.1.5+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baa693a8032d7e1cada7d0041e96126df243179ff061456783ac7f12bda4744c"
 dependencies = [
- "winnow 1.0.4",
+ "winnow",
 ]
 
 [[package]]
@@ -6502,12 +6368,6 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
 name = "winnow"
-version = "0.7.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945"
-
-[[package]]
-name = "winnow"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
@@ -6715,7 +6575,7 @@ dependencies = [
  "uds_windows",
  "uuid",
  "windows-sys 0.61.2",
- "winnow 1.0.4",
+ "winnow",
  "zbus_macros",
  "zbus_names",
  "zvariant",
@@ -6767,7 +6627,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8bf88b4a3ff53e883001e0e0115b297a9d53c31b9c1edd2bfdd853e3428624e"
 dependencies = [
  "serde",
- "winnow 1.0.4",
+ "winnow",
  "zvariant",
 ]
 
@@ -6778,7 +6638,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d1586c021a01ca0a9216dcd874e546382e156a5cbab5fab6cb5f10087e22682a"
 dependencies = [
  "serde",
- "winnow 1.0.4",
+ "winnow",
  "zbus_names",
  "zvariant",
 ]
@@ -6947,7 +6807,7 @@ dependencies = [
  "endi",
  "enumflags2",
  "serde",
- "winnow 1.0.4",
+ "winnow",
  "zcheapstr",
  "zvariant_derive",
  "zvariant_utils",
@@ -6976,5 +6836,5 @@ dependencies = [
  "quote",
  "serde",
  "syn 3.0.9",
- "winnow 1.0.4",
+ "winnow",
 ]

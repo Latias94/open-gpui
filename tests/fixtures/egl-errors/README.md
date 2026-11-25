@@ -61,7 +61,7 @@ The inspected WGPU source is exactly
 [`cddb2f5d80dc0009b2ef6767635140cacf90a007`](https://github.com/gfx-rs/wgpu/tree/cddb2f5d80dc0009b2ef6767635140cacf90a007),
 whose workspace requests `khronos-egl = "6"` and whose native GLES feature enables `dynamic`.
 
-- Linux/FreeBSD: `open-gpui-linux` X11/Wayland windows construct `WgpuRenderer`;
+- Linux/FreeBSD: `open-gpui-platform` X11/Wayland windows construct `WgpuRenderer`;
   `WgpuContext::instance` requests `VULKAN | GL`; WGPU Core's `try_add_hal(Gles)` enters
   `wgpu-hal/src/gles/egl.rs`. It loads `DynamicInstance<EGL1_4>`, obtains a display and calls
   `Inner::create -> initialize_display -> egl.initialize`. Initialization errors become

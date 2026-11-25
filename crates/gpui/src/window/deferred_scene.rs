@@ -1,4 +1,4 @@
-//! Exact asynchronous re-presentation of an already accepted animated Scene.
+//! Exact asynchronous re-presentation of an already accepted scene.
 
 use super::*;
 use crate::{PlatformFrameSubmission, PlatformFrameSubmissionStatus, Scene};
@@ -64,10 +64,7 @@ impl Window {
             .is_some_and(|frame| frame.submission.cancel())
     }
 
-    pub(super) fn present_animated_deferred_scene(
-        &mut self,
-        cx: &mut App,
-    ) -> PlatformWindowPresentOutcome {
+    pub(super) fn present_deferred_scene(&mut self, cx: &mut App) -> PlatformWindowPresentOutcome {
         self.cancel_deferred_scene_if_stale();
         if let Some(pending) = self.deferred_scene.as_ref() {
             let submission = pending.submission.clone();
@@ -138,6 +135,7 @@ impl Window {
             font_generation,
             validities,
         });
+        self.retained_presentation_requested = false;
         let outcome = self
             .platform_window
             .draw_with_submission(&self.deferred_scene.as_ref().unwrap().scene, &submission);

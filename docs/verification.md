@@ -16,6 +16,25 @@ The examples document their recovery modes, GPU requirements and pass conditions
 The records below describe the revisions at which each suite ran. The retired browser, iOS,
 benchmark and legacy docking source and test commands are available at `legacy/v0-pre-slim`.
 
+## November 25 Phase 2 shared WGPU and platform consolidation
+
+`open-gpui-platform` now contains the Windows, macOS, and Linux/FreeBSD native services. The
+workspace has 24 packages, down from 28 after Phase 1. The platform uses `open-gpui-wgpu` for its
+native renderers and accepts an application-owned device and queue through `SharedWgpuContext`.
+The WGPU pin is `cddb2f5d80dc0009b2ef6767635140cacf90a007`. [Shared rendering](external-wgpu.md)
+
+On Windows 11 and DX12, the locked all-feature, all-target workspace check and 151 WGPU tests
+passed. Six focused tests covered retained presentation with deferred delivery, native premultiplied
+color, peer windows and imported image retirement, and portable frame-source state. The independently
+locked dependency and hot-reload consumer checks passed after the package move. The Nara Mode A
+example exercised the application-owned device through two real Windows surfaces.
+
+WSL2 passed the all-feature, Wayland-only, X11-only, and headless platform build matrix and 212
+tests. Six windowing probes passed with Weston on a private Xvfb display and Mesa llvmpipe,
+including X11 and Wayland nonempty presentation, Wayland popup and startup-socket lifetime, and X11
+clipboard partitioning. The Apple Silicon all-feature, all-target platform cross-check passed.
+Physical Linux graphics and native AppKit verification are pending.
+
 ## November 25 Phase 1 cleanup
 
 Compared with `legacy/v0-pre-slim`, the slim workspace has 28 packages, down from 47. The

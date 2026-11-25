@@ -1,10 +1,11 @@
-use super::{WgpuAtlas, WgpuAtlasTexture};
+use super::{WgpuAtlas, WgpuAtlasTexture, WgpuAtlasTextureBacking};
 use anyhow::{Context as _, Result, ensure};
 use open_gpui::{
     AtlasTextureId, AtlasTextureInstanceId, AtlasTextureKind, AtlasTextureLeaseEpoch, AtlasTile,
     Bounds, DevicePixels, ImageTexture, ImageTextureAlpha, ImageTextureSampling,
-    ImageTextureTransfer, PlatformAtlas, Size, TileId,
+    ImageTextureTransfer, PlatformAtlas, Size, TileId, Window,
 };
+use parking_lot::Mutex;
 use std::{
     any::Any,
     sync::{Arc, Weak},
@@ -51,16 +52,53 @@ pub struct WgpuImportedImageDescriptor {
 }
 
 pub(super) struct ImportedImageResource {
-    _texture: wgpu::Texture,
-    _view: wgpu::TextureView,
+    pub(super) view: wgpu::TextureView,
     _owner: Option<Arc<dyn Any + Send + Sync>>,
+}
+
+impl ImportedImageResource {
+    fn new(descriptor: &WgpuImportedImageDescriptor) -> Self {
+        let view = descriptor
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor {
+                label: Some("imported GPUI image"),
+                format: Some(descriptor.texture.format()),
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                usage: Some(wgpu::TextureUsages::TEXTURE_BINDING),
+                aspect: wgpu::TextureAspect::All,
+                base_mip_level: descriptor.mip_level,
+                mip_level_count: Some(1),
+                base_array_layer: descriptor.array_layer,
+                array_layer_count: Some(1),
+                ..Default::default()
+            });
+        Self {
+            view,
+            _owner: descriptor.owner.clone(),
+        }
+    }
+}
+
+#[derive(PartialEq)]
+struct ImportedImageLayout {
+    mip_size: Size<DevicePixels>,
+    region: Bounds<DevicePixels>,
+    transfer: ImageTextureTransfer,
+    sampled_transfer: ImageTextureTransfer,
+    alpha: ImageTextureAlpha,
+    sampling: ImageTextureSampling,
+}
+
+pub(super) struct ImportedImageBacking {
+    layout: ImportedImageLayout,
+    pub(super) resource: Mutex<Arc<ImportedImageResource>>,
 }
 
 struct ImportedImageRegistration {
     atlas: Weak<WgpuAtlas>,
     epoch: AtlasTextureLeaseEpoch,
     texture: AtlasTextureInstanceId,
-    _resource: Arc<ImportedImageResource>,
+    _backing: Arc<ImportedImageBacking>,
 }
 
 impl Drop for ImportedImageRegistration {
@@ -97,6 +135,11 @@ impl Drop for ImportedImageRegistration {
 }
 
 impl WgpuAtlas {
+    /// Returns the exact atlas used by a WGPU-backed window's image paint path.
+    pub fn for_window(window: &Window) -> Option<Arc<Self>> {
+        window.image_atlas()
+    }
+
     /// Registers a selected host texture subresource for ordinary retained image painting.
     ///
     /// Known unsupported descriptor choices are refused before creating a view or mutating
@@ -106,10 +149,10 @@ impl WgpuAtlas {
         self: &Arc<Self>,
         descriptor: WgpuImportedImageDescriptor,
     ) -> Result<ImageTexture> {
-        let (tile, epoch, sampled_transfer, resource) = {
+        let (tile, epoch, sampled_transfer, backing) = {
             let mut state = self.0.lock();
             let backend = &mut state.backend;
-            let sampled_transfer = validate_descriptor(
+            let layout = validate_descriptor(
                 &descriptor,
                 backend.device.features(),
                 backend.max_texture_size,
@@ -124,20 +167,6 @@ impl WgpuAtlas {
                 .copied()
                 .unwrap_or_else(|| backend.storage[AtlasTextureKind::Polychrome].textures.len());
             let index = u32::try_from(next_index).context("wgpu atlas texture slots exhausted")?;
-            let view = descriptor
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor {
-                    label: Some("imported GPUI image"),
-                    format: Some(descriptor.texture.format()),
-                    dimension: Some(wgpu::TextureViewDimension::D2),
-                    usage: Some(wgpu::TextureUsages::TEXTURE_BINDING),
-                    aspect: wgpu::TextureAspect::All,
-                    base_mip_level: descriptor.mip_level,
-                    mip_level_count: Some(1),
-                    base_array_layer: descriptor.array_layer,
-                    array_layer_count: Some(1),
-                    ..Default::default()
-                });
             let texture = AtlasTextureInstanceId {
                 texture_id: AtlasTextureId {
                     index,
@@ -145,18 +174,14 @@ impl WgpuAtlas {
                 },
                 generation,
             };
-            let resource = Arc::new(ImportedImageResource {
-                _texture: descriptor.texture.clone(),
-                _view: view.clone(),
-                _owner: descriptor.owner.clone(),
+            let sampled_transfer = layout.sampled_transfer;
+            let backing = Arc::new(ImportedImageBacking {
+                layout,
+                resource: Mutex::new(Arc::new(ImportedImageResource::new(&descriptor))),
             });
             let resident = WgpuAtlasTexture {
                 id: texture,
-                allocator: None,
-                texture: descriptor.texture.clone(),
-                view,
-                imported: Some(resource.clone()),
-                format: descriptor.texture.format(),
+                backing: WgpuAtlasTextureBacking::Imported(backing.clone()),
                 live_atlas_keys: 1,
                 live_visual_leases: 0,
                 retired_tiles: Vec::new(),
@@ -179,14 +204,14 @@ impl WgpuAtlas {
                 },
                 backend.epoch,
                 sampled_transfer,
-                resource,
+                backing,
             )
         };
         let owner = Arc::new(ImportedImageRegistration {
             atlas: Arc::downgrade(self),
             epoch,
             texture: tile.texture_instance(),
-            _resource: resource,
+            _backing: backing,
         });
         let atlas: Arc<dyn PlatformAtlas> = self.clone();
         ImageTexture::from_atlas(
@@ -198,13 +223,58 @@ impl WgpuAtlas {
             owner,
         )
     }
+
+    /// Replaces an imported image's backing in place for subsequent recordings and presentations.
+    ///
+    /// The selected mip extent, texel region, stored and sampled transfer, alpha, and sampling
+    /// must match the original import. The producer must use this atlas's device and order its
+    /// writes before GPUI samples the replacement. Existing recordings retain their own view
+    /// and owner. A reset invalidates the registration and requires a new import.
+    pub fn update_image(
+        &self,
+        image: &ImageTexture,
+        descriptor: WgpuImportedImageDescriptor,
+    ) -> Result<()> {
+        let registration = image
+            .atlas_owner::<ImportedImageRegistration>()
+            .filter(|registration| std::ptr::eq(registration.atlas.as_ptr(), self))
+            .context("image was not imported by this WGPU atlas")?;
+        let retired = {
+            let state = self.0.lock();
+            let backend = &state.backend;
+            ensure!(
+                registration.epoch == backend.epoch,
+                "imported image was invalidated by a WGPU atlas reset"
+            );
+            let resident = backend
+                .storage
+                .get(registration.texture)
+                .context("imported image is no longer resident")?;
+            let WgpuAtlasTextureBacking::Imported(backing) = &resident.backing else {
+                anyhow::bail!("atlas slot does not contain an imported image");
+            };
+            let layout = validate_descriptor(
+                &descriptor,
+                backend.device.features(),
+                backend.max_texture_size,
+            )?;
+            ensure!(
+                layout == backing.layout,
+                "replacement must match the imported image's mip extent, region, transfer, alpha, and sampling"
+            );
+            let replacement = Arc::new(ImportedImageResource::new(&descriptor));
+            std::mem::replace(&mut *backing.resource.lock(), replacement)
+        };
+        drop(retired);
+        Ok(())
+    }
 }
 
 fn validate_descriptor(
     descriptor: &WgpuImportedImageDescriptor,
     device_features: wgpu::Features,
     max_texture_size: u32,
-) -> Result<ImageTextureTransfer> {
+) -> Result<ImportedImageLayout> {
     let texture = &descriptor.texture;
     ensure!(
         texture.dimension() == wgpu::TextureDimension::D2 && texture.sample_count() == 1,
@@ -294,10 +364,17 @@ fn validate_descriptor(
             || descriptor.transfer == ImageTextureTransfer::Linear,
         "RGBA16Float imports require linear stored RGB; tone mapping is host-owned"
     );
-    Ok(if format.has_srgb_suffix() {
-        ImageTextureTransfer::Linear
-    } else {
-        descriptor.transfer
+    Ok(ImportedImageLayout {
+        mip_size,
+        region,
+        transfer: descriptor.transfer,
+        sampled_transfer: if format.has_srgb_suffix() {
+            ImageTextureTransfer::Linear
+        } else {
+            descriptor.transfer
+        },
+        alpha: descriptor.alpha,
+        sampling: descriptor.sampling,
     })
 }
 
@@ -400,9 +477,10 @@ mod tests {
             let state = atlas.0.lock();
             assert!(state.backend.pending_uploads.is_empty());
             let resident = state.backend.storage.get(instance).unwrap();
-            assert!(resident.allocator.is_none());
-            assert_eq!(resident.texture, source);
-            assert_eq!(resident.view.texture(), &source);
+            let WgpuAtlasTextureBacking::Imported(backing) = &resident.backing else {
+                panic!("the source must have an imported atlas slot");
+            };
+            assert_eq!(backing.resource.lock().view.texture(), &source);
         }
         let key = RenderImageParams {
             image_id: ImageId(830),
@@ -637,6 +715,82 @@ mod tests {
         assert!(owner.upgrade().is_none());
         assert_eq!(drops.load(Ordering::SeqCst), 1);
         assert!(dropped_unlocked.load(Ordering::SeqCst));
+        Ok(())
+    }
+
+    #[test]
+    fn imported_update_requires_the_current_atlas_and_matching_layout() -> Result<()> {
+        let (device, queue) = test_device_and_queue()?;
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let usage = wgpu::TextureUsages::TEXTURE_BINDING;
+        let atlas = Arc::new(WgpuAtlas::new(device.clone(), queue.clone(), format));
+        let foreign_atlas = Arc::new(WgpuAtlas::new(device.clone(), queue, format));
+        let mut original = descriptor(texture(&device, format, usage));
+        let original_texture = original.texture.clone();
+        let _foreign_image = foreign_atlas.import_image(original.clone())?;
+        let (owner, drops, dropped_unlocked) = attach_owner(&atlas, &mut original);
+        let image = atlas.import_image(original)?;
+        let instance = newest_instance(&atlas);
+        assert_eq!(instance, newest_instance(&foreign_atlas));
+        let replacement = descriptor(texture(&device, format, usage));
+        assert!(
+            foreign_atlas
+                .update_image(&image, replacement.clone())
+                .is_err()
+        );
+        for incompatible in [
+            WgpuImportedImageDescriptor {
+                mip_level: 0,
+                ..replacement.clone()
+            },
+            WgpuImportedImageDescriptor {
+                region: Bounds::new(
+                    point(DevicePixels(2), DevicePixels(0)),
+                    replacement.region.size,
+                ),
+                ..replacement.clone()
+            },
+            WgpuImportedImageDescriptor {
+                transfer: ImageTextureTransfer::Linear,
+                ..replacement.clone()
+            },
+            WgpuImportedImageDescriptor {
+                texture: texture(&device, wgpu::TextureFormat::Rgba8UnormSrgb, usage),
+                ..replacement.clone()
+            },
+            WgpuImportedImageDescriptor {
+                alpha: ImageTextureAlpha::Opaque,
+                ..replacement.clone()
+            },
+            WgpuImportedImageDescriptor {
+                sampling: ImageTextureSampling::Nearest,
+                ..replacement.clone()
+            },
+        ] {
+            assert!(atlas.update_image(&image, incompatible).is_err());
+        }
+        {
+            let receipt = atlas.prepare_presentation([instance])?;
+            assert_eq!(
+                receipt.texture_view(instance).unwrap().texture(),
+                &original_texture
+            );
+        }
+        assert!(owner.upgrade().is_some());
+        atlas.update_image(&image, replacement.clone())?;
+        image
+            .validate()
+            .expect("a compatible update must preserve the image lease");
+        let receipt = atlas.prepare_presentation([instance])?;
+        assert_eq!(
+            receipt.texture_view(instance).unwrap().texture(),
+            &replacement.texture
+        );
+        assert!(owner.upgrade().is_none());
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+        assert!(dropped_unlocked.load(Ordering::SeqCst));
+        atlas.clear();
+        assert!(atlas.update_image(&image, replacement).is_err());
         Ok(())
     }
 

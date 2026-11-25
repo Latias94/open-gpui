@@ -285,6 +285,7 @@ impl Window {
         let submission = candidate.submission.clone();
         if !candidate.delivered {
             candidate.delivered = true;
+            self.retained_presentation_requested = false;
             let elapsed = cx.background_executor().now() - cx.synced_animation_epoch;
             self.next_frame.scene.advance_animations(elapsed);
             let outcome = self

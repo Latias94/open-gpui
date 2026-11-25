@@ -131,14 +131,13 @@ impl WgpuSceneRenderer {
             limits.max_buffers_and_acceleration_structures_per_shader_stage >= 6,
             "GPUI recording requires six combined buffers per shader stage"
         );
-        let uniform_size = std::mem::size_of::<GlobalParams>()
-            .max(std::mem::size_of::<GammaParams>())
-            .max(std::mem::size_of::<SurfaceParams>()) as u64;
+        let uniform_size =
+            std::mem::size_of::<GlobalParams>().max(std::mem::size_of::<GammaParams>()) as u64;
         anyhow::ensure!(
             limits.max_uniform_buffer_binding_size >= uniform_size,
             "GPUI recording uniforms exceed the device's enabled binding size"
         );
-        let color_format = WgpuContext::select_color_texture_format(adapter)?;
+        let color_format = SharedWgpuContext::select_color_texture_format(adapter)?;
         let atlas = Arc::new(WgpuAtlas::new(device.clone(), queue.clone(), color_format));
         let core = WgpuRendererCore::from_device_with_color_space(
             adapter,
@@ -191,10 +190,6 @@ impl WgpuSceneRenderer {
                 && target.width() <= self.core.max_texture_size
                 && target.height() <= self.core.max_texture_size,
             "scene target extent exceeds renderer limits"
-        );
-        anyhow::ensure!(
-            scene.surfaces.is_empty(),
-            "external scene recording does not yet support platform video surfaces"
         );
         self.core.encoder_uploads = Some(EncoderUploads::default());
         let result = (|| {

@@ -7,6 +7,7 @@ deferred delivery paths; their scoped qualification and remaining platform limit
 
 | Capability | Interface | Owner |
 | --- | --- | --- |
+| Native windows on a shared device | `SharedWgpuContext`, `application_with_shared_wgpu` | The application requests one device and queue. GPUI owns native windows, frame scheduling and presentation. |
 | Scene recording | `WgpuSceneRenderer` | Application supplies adapter, enabled device, queue, target and encoder; submits and presents. |
 | Imported GPU image | `WgpuAtlas::import_image`, `Window::paint_image_texture` | Application orders producer work and retains its allocation; framework preserves UI ordering and leases. |
 | Win32 renderer selection | `WindowsPlatform::new_with_renderer` | Application supplies a synchronous renderer and text service; GPUI owns HWND, message loop, input/IME and retirement. |
@@ -19,6 +20,27 @@ necessary; supplying the same original device is an additional requirement. Neve
 handles from another WGPU source or device. Open-GPUI creates no device or device-wide callback
 for the recording interface. The application selects its device features/limits before construction;
 the renderer validates its documented requirements against the enabled device.
+
+## Use a shared device with native windows
+
+Request the device with the features and limits needed by every renderer, then supply the context to
+the platform application:
+
+```rust,ignore
+let shared = SharedWgpuContext::request_device(instance, adapter, device_descriptor).await?;
+let app = open_gpui_platform::application_with_shared_wgpu(shared.clone())?;
+```
+
+Every top-level window uses the injected device and queue with its own surface. Open-GPUI keeps
+native input, IME, accessibility and window lifecycles. The context owns the device error callbacks
+and lets participants observe the same error state through `shared.errors()`.
+
+Use `WgpuAtlas::for_window(window)` to import a producer's texture into a native window. Pass an
+owner that retains the allocation, then submit producer work before GPUI samples it on the shared
+queue. After the image has been painted, `atlas.update_image(&image, descriptor)` replaces its
+backing for later submissions. Call `window.request_retained_presentation()` to replay the retained
+scene. In-flight submissions keep their original backing until GPU completion. If the extent or
+sampling layout changes, import a new image and refresh the window to paint it.
 
 ## Record A Scene
 
@@ -347,6 +369,6 @@ external deferred modes. Its executed qualification is recorded separately; an a
 or this interface description is not evidence that a platform trajectory passed.
 
 See [the executable recording consumer](../crates/gpui_wgpu/tests/external_scene.rs),
-[the native supplied-renderer trajectory](../crates/gpui_windows/src/native_custom_renderer_tests.rs),
+[the native supplied-renderer trajectory](../crates/gpui_platform/src/windows/native_custom_renderer_tests.rs),
 [qualification and limits](verification.md), and the
 [renderer lifecycle decision](adr/0031-open-gpui-renderer-surface-lifecycle-authority.md).

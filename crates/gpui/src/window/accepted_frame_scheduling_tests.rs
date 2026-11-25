@@ -1,7 +1,8 @@
 use crate::{
     AnyWindowHandle, AppContext as _, Context, IntoElement, ParentElement as _,
-    PlatformWindowPresentOutcome, PrepaintPublicationId, Render, Styled as _, TestAppContext,
-    TestWindow, Window, WindowInitialPresentationStatus, blue, canvas, div, fill, red,
+    PlatformFrameDeliveryMode, PlatformWindowPresentOutcome, PrepaintPublicationId, Render,
+    Styled as _, TestAppContext, TestWindow, Window, WindowInitialPresentationStatus, blue, canvas,
+    div, fill, red,
 };
 use std::{
     cell::Cell,
@@ -127,6 +128,69 @@ fn deliver_scheduled_frame(cx: &TestAppContext, platform: &TestWindow) {
         "the wake must be consumed before drawing"
     );
     cx.run_until_parked();
+}
+
+#[crate::test]
+fn retained_presentation_coalesces_and_survives_a_pending_deferred_delivery(
+    cx: &mut TestAppContext,
+) {
+    let (handle, platform, controls) = open_parked_window(cx);
+    let draws = platform.draw_count();
+    let renders = controls.renders.get();
+    let (generation, submissions) = cx
+        .update_window(handle, |_, window, _| {
+            window.request_retained_presentation();
+            window.request_retained_presentation();
+            (
+                window.rendered_frame_revision(),
+                window.present_submission_count(),
+            )
+        })
+        .unwrap();
+    deliver_scheduled_frame(cx, &platform);
+    assert_eq!(platform.draw_count(), draws + 1);
+    // TestWindow schedules a compositor callback after each draw. With no retained demand
+    // remaining, that callback must neither draw again nor leave the frame pump armed.
+    deliver_scheduled_frame(cx, &platform);
+    assert_eq!(platform.draw_count(), draws + 1);
+    assert!(!platform.frame_scheduled());
+
+    platform.set_frame_delivery_mode(PlatformFrameDeliveryMode::Deferred);
+    cx.update_window(handle, |_, window, _| {
+        window.request_retained_presentation()
+    })
+    .unwrap();
+    deliver_scheduled_frame(cx, &platform);
+    let first = platform.pending_frame_submission().unwrap();
+    assert_eq!(first.frame_generation(), generation);
+    assert_eq!(platform.draw_count(), draws + 2);
+    deliver_scheduled_frame(cx, &platform);
+    assert_eq!(platform.draw_count(), draws + 2);
+
+    cx.update_window(handle, |_, window, _| {
+        window.request_retained_presentation()
+    })
+    .unwrap();
+    assert!(!platform.frame_scheduled());
+    assert!(first.complete(PlatformWindowPresentOutcome::Submitted));
+    cx.run_until_parked();
+    deliver_scheduled_frame(cx, &platform);
+    let second = platform.pending_frame_submission().unwrap();
+    assert_eq!(second.frame_generation(), generation);
+    assert!(second.attempt_id() > first.attempt_id());
+    deliver_scheduled_frame(cx, &platform);
+    assert!(second.complete(PlatformWindowPresentOutcome::Submitted));
+    cx.run_until_parked();
+
+    assert_eq!(platform.draw_count(), draws + 3);
+    assert_eq!(controls.renders.get(), renders);
+    assert!(!platform.frame_scheduled());
+    cx.update_window(handle, |_, window, _| {
+        assert_eq!(window.rendered_frame_revision(), generation);
+        assert_eq!(window.present_submission_count(), submissions + 3);
+        assert!(!window.invalidator.is_dirty());
+    })
+    .unwrap();
 }
 
 #[crate::test]

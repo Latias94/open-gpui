@@ -10,7 +10,7 @@ use open_gpui_collections::FxHashMap;
 use parking_lot::Mutex;
 use std::{borrow::Cow, ops, sync::Arc};
 
-use crate::WgpuContext;
+use crate::SharedWgpuContext;
 
 mod imported_image;
 
@@ -109,7 +109,7 @@ impl WgpuAtlas {
         })))
     }
 
-    pub fn from_context(context: &WgpuContext) -> Self {
+    pub fn from_context(context: &SharedWgpuContext) -> Self {
         Self::new(
             context.device.clone(),
             context.queue.clone(),
@@ -140,10 +140,16 @@ impl WgpuAtlas {
                         epoch: lock.backend.epoch,
                     },
                 )?;
-                texture_views.insert(texture, resident.view.clone());
-                if let Some(resource) = &resident.imported {
-                    imported_resources.push(resource.clone());
-                }
+                let view = match &resident.backing {
+                    WgpuAtlasTextureBacking::Packed { view, .. } => view.clone(),
+                    WgpuAtlasTextureBacking::Imported(backing) => {
+                        let resource = backing.resource.lock().clone();
+                        let view = resource.view.clone();
+                        imported_resources.push(resource);
+                        view
+                    }
+                };
+                texture_views.insert(texture, view);
             }
             (texture_views, imported_resources)
         };
@@ -169,7 +175,7 @@ impl WgpuAtlas {
 
     /// Handles device lost by clearing all textures and cached tiles.
     /// The atlas will lazily recreate textures as needed on subsequent frames.
-    pub fn handle_device_lost(&self, context: &WgpuContext) {
+    pub fn handle_device_lost(&self, context: &SharedWgpuContext) {
         let mut state = self.0.lock();
         let retired = std::mem::take(&mut state.backend.storage);
         state.clear(|backend| {
@@ -186,6 +192,10 @@ impl WgpuAtlas {
 }
 
 impl PlatformAtlas for WgpuAtlas {
+    fn into_image_atlas(self: Arc<Self>) -> Option<Box<dyn std::any::Any>> {
+        Some(Box::new(self))
+    }
+
     fn get_or_insert_with<'a>(
         &self,
         key: AtlasKey,
@@ -333,7 +343,7 @@ impl AtlasBackend for WgpuAtlasTextures {
         let mut resident = slot.take().expect("validated texture is resident");
         resident.decrement_ref_count();
         if resident.live_visual_leases == 0 {
-            if let Some(allocator) = &mut resident.allocator {
+            if let WgpuAtlasTextureBacking::Packed { allocator, .. } = &mut resident.backing {
                 allocator.deallocate(tile.tile_id.into());
             }
         } else {
@@ -355,7 +365,7 @@ impl WgpuAtlasTextures {
     fn release_visual_lease(
         &mut self,
         texture: AtlasTextureInstanceId,
-    ) -> Option<Arc<imported_image::ImportedImageResource>> {
+    ) -> Option<Arc<imported_image::ImportedImageBacking>> {
         let Self {
             storage,
             pending_uploads,
@@ -380,7 +390,7 @@ impl WgpuAtlasTextures {
             return None;
         }
         if resident.live_visual_leases == 0 {
-            if let Some(allocator) = &mut resident.allocator {
+            if let WgpuAtlasTextureBacking::Packed { allocator, .. } = &mut resident.backing {
                 for tile in resident.retired_tiles.drain(..) {
                     allocator.deallocate(tile.tile_id.into());
                 }
@@ -391,7 +401,10 @@ impl WgpuAtlasTextures {
             texture_list
                 .free_list
                 .push(resident.id.texture_id.index as usize);
-            resident.imported.take()
+            match resident.backing {
+                WgpuAtlasTextureBacking::Imported(backing) => Some(backing),
+                WgpuAtlasTextureBacking::Packed { .. } => None,
+            }
         } else {
             *texture_slot = Some(resident);
             None
@@ -474,11 +487,10 @@ impl WgpuAtlasTextures {
                 texture_id,
                 generation,
             },
-            allocator: Some(BucketedAtlasAllocator::new(device_size_to_etagere(size))),
-            format,
-            texture,
-            view,
-            imported: None,
+            backing: WgpuAtlasTextureBacking::Packed {
+                allocator: BucketedAtlasAllocator::new(device_size_to_etagere(size)),
+                view,
+            },
             live_atlas_keys: 0,
             live_visual_leases: 0,
             retired_tiles: Vec::new(),
@@ -511,7 +523,8 @@ impl WgpuAtlasTextures {
         let data = self
             .storage
             .get(texture)
-            .map(|texture| swizzle_upload_data(bytes, texture.format))
+            .and_then(WgpuAtlasTexture::packed_view)
+            .map(|view| swizzle_upload_data(bytes, view.texture().format()))
             .unwrap_or_else(|| bytes.to_vec());
 
         self.pending_uploads.push(PendingUpload {
@@ -524,12 +537,16 @@ impl WgpuAtlasTextures {
 
     fn flush_uploads(&mut self) {
         for upload in self.pending_uploads.drain(..) {
-            let Some(texture) = self.storage.get(upload.texture) else {
+            let Some(view) = self
+                .storage
+                .get(upload.texture)
+                .and_then(WgpuAtlasTexture::packed_view)
+            else {
                 continue;
             };
             self.queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
-                    texture: &texture.texture,
+                    texture: view.texture(),
                     mip_level: 0,
                     origin: wgpu::Origin3d {
                         x: upload.bounds.origin.x.0 as u32,
@@ -604,22 +621,33 @@ impl WgpuAtlasStorage {
 
 struct WgpuAtlasTexture {
     id: AtlasTextureInstanceId,
-    allocator: Option<BucketedAtlasAllocator>,
-    texture: wgpu::Texture,
-    view: wgpu::TextureView,
-    imported: Option<Arc<imported_image::ImportedImageResource>>,
-    format: wgpu::TextureFormat,
+    backing: WgpuAtlasTextureBacking,
     live_atlas_keys: u32,
     live_visual_leases: u32,
     retired_tiles: Vec<AtlasTile>,
 }
 
+enum WgpuAtlasTextureBacking {
+    Packed {
+        allocator: BucketedAtlasAllocator,
+        view: wgpu::TextureView,
+    },
+    Imported(Arc<imported_image::ImportedImageBacking>),
+}
+
 impl WgpuAtlasTexture {
+    fn packed_view(&self) -> Option<&wgpu::TextureView> {
+        match &self.backing {
+            WgpuAtlasTextureBacking::Packed { view, .. } => Some(view),
+            WgpuAtlasTextureBacking::Imported(_) => None,
+        }
+    }
+
     fn allocate(&mut self, size: Size<DevicePixels>) -> Option<AtlasTile> {
-        let allocation = self
-            .allocator
-            .as_mut()?
-            .allocate(device_size_to_etagere(size))?;
+        let WgpuAtlasTextureBacking::Packed { allocator, .. } = &mut self.backing else {
+            return None;
+        };
+        let allocation = allocator.allocate(device_size_to_etagere(size))?;
         let tile = AtlasTile {
             texture_id: self.id.texture_id,
             tile_id: allocation.id.into(),

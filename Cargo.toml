@@ -3,16 +3,12 @@ resolver = "2"
 members = [
     "crates/collections",
     "crates/gpui",
-    "crates/gpui_apple",
     "crates/gpui_docking",
-    "crates/gpui_linux",
-    "crates/gpui_macos",
     "crates/gpui_macros",
     "crates/gpui_platform",
     "crates/gpui_shared_string",
     "crates/gpui_util",
     "crates/gpui_wgpu",
-    "crates/gpui_windows",
     "crates/path",
     "crates/resource",
     "crates/ui_components",
@@ -51,15 +47,12 @@ publish = false
 
 [workspace.dependencies]
 open_gpui = { package = "open-gpui", version = "0.2.0", path = "crates/gpui", default-features = false }
-open_gpui_apple = { package = "open-gpui-apple", version = "0.2.0", path = "crates/gpui_apple", default-features = false }
 open_gpui_collections = { package = "open-gpui-collections", version = "0.2.0", path = "crates/collections" }
 open_gpui_docking = { package = "open-gpui-docking", version = "0.2.0", path = "crates/gpui_docking" }
 open_gpui_core_util = { package = "open-gpui-core-util", version = "0.2.0", path = "crates/gpui_util" }
 open_gpui_ui_components = { package = "open-gpui-ui-components", version = "0.2.0", path = "crates/ui_components" }
 open_gpui_ui_core = { package = "open-gpui-ui-core", version = "0.2.0", path = "crates/ui_core" }
-open_gpui_linux = { package = "open-gpui-linux", version = "0.2.0", path = "crates/gpui_linux", default-features = false }
 open_gpui_log = { package = "open-gpui-log", version = "0.2.0", path = "crates/zlog" }
-open_gpui_macos = { package = "open-gpui-macos", version = "0.2.0", path = "crates/gpui_macos", default-features = false }
 open_gpui_macros = { package = "open-gpui-macros", version = "0.2.0", path = "crates/gpui_macros" }
 open_gpui_path = { package = "open-gpui-path", version = "0.2.0", path = "crates/path" }
 open_gpui_platform = { package = "open-gpui-platform", version = "0.2.0", path = "crates/gpui_platform", default-features = false }
@@ -71,7 +64,6 @@ open_gpui_tracing_macro = { package = "open-gpui-tracing-macro", version = "0.2.
 open_gpui_util = { package = "open-gpui-util", version = "0.2.0", path = "crates/util" }
 open_gpui_util_macros = { package = "open-gpui-util-macros", version = "0.2.0", path = "crates/util_macros" }
 open_gpui_wgpu = { package = "open-gpui-wgpu", version = "0.2.0", path = "crates/gpui_wgpu" }
-open_gpui_windows = { package = "open-gpui-windows", version = "0.2.0", path = "crates/gpui_windows", default-features = false }
 
 accesskit = { version = "0.24.0", features = ["enumn"] }
 accesskit_macos = "0.26.0"
@@ -140,7 +132,6 @@ objc2-core-graphics = "0.3"
 objc2-core-text = "0.3"
 objc2-core-video = "0.3"
 objc2-foundation = "0.3"
-objc2-metal = "0.3"
 objc2-quartz-core = "0.3"
 objc2-security = { version = "0.3.2", default-features = false, features = ["std", "SecBase", "SecItem"] }
 parking_lot = "0.12.1"
@@ -204,18 +195,11 @@ features = [
     "Wdk_System_SystemServices",
     "Win32_Foundation",
     "Win32_Globalization",
-    "Win32_Graphics_Direct3D",
-    "Win32_Graphics_Direct3D11",
-    "Win32_Graphics_Direct3D_Fxc",
-    "Win32_Graphics_DirectComposition",
     "Win32_Graphics_DirectWrite",
     "Win32_Graphics_DirectManipulation",
     "Win32_Graphics_Dwm",
-    "Win32_Graphics_Dxgi",
-    "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Imaging",
-    "Win32_Graphics_Hlsl",
     "Win32_Networking_WinSock",
     "Win32_Security",
     "Win32_Security_Credentials",

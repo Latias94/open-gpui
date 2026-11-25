@@ -26,11 +26,11 @@ mod windows_example {
         WindowPresentationShutdownTicket, block_on, canvas, div, fill, measured_element, point,
         prelude::*, px, rgb, size,
     };
+    use open_gpui_platform::windows::{
+        WindowsPlatform, WindowsRenderer, WindowsRendererFactory, WindowsRendererWindow,
+    };
     use open_gpui_wgpu::{
         CosmicTextSystem, WgpuImportedImageDescriptor, WgpuSceneRecording, WgpuSceneRenderer, wgpu,
-    };
-    use open_gpui_windows::{
-        WindowsPlatform, WindowsRenderer, WindowsRendererFactory, WindowsRendererWindow,
     };
     use std::{
         cell::{Cell, RefCell},

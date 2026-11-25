@@ -646,10 +646,9 @@ impl Drop for HostImageOwner {
 fn produce_imported_images(
     device: &wgpu::Device,
     encoder: &mut wgpu::CommandEncoder,
-    atlas: &Arc<WgpuAtlas>,
     owner: &Arc<HostImageOwner>,
     alternate: bool,
-) -> Result<Vec<ImageTexture>> {
+) -> Vec<WgpuImportedImageDescriptor> {
     let cases = [
         (
             wgpu::TextureFormat::Rgba8Unorm,
@@ -776,7 +775,7 @@ fn produce_imported_images(
         if index >= 6 && !alternate {
             paint_host_texel_pattern(device, encoder, &texture);
         }
-        let descriptor = WgpuImportedImageDescriptor {
+        images.push(WgpuImportedImageDescriptor {
             texture,
             mip_level: 1,
             array_layer: 1,
@@ -792,10 +791,9 @@ fn produce_imported_images(
                 ImageTextureSampling::Nearest
             },
             owner: Some(owner.clone()),
-        };
-        images.push(atlas.import_image(descriptor)?);
+        });
     }
-    Ok(images)
+    images
 }
 
 fn paint_host_texel_pattern(
@@ -953,8 +951,7 @@ fn assert_imported_pixels(buffer: &wgpu::Buffer, alternate: bool) -> Result<()> 
 }
 
 #[test]
-fn host_produced_images_preserve_subresources_transfer_alpha_and_original_lifetimes() -> Result<()>
-{
+fn retained_imported_images_record_distinct_backings_in_one_host_submission() -> Result<()> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::PRIMARY,
         ..wgpu::InstanceDescriptor::new_without_display_handle()
@@ -990,15 +987,29 @@ fn host_produced_images_preserve_subresources_transfer_alpha_and_original_lifeti
     )?;
     let atlas = renderer.sprite_atlas().clone();
     let mut encoder = device.create_command_encoder(&Default::default());
+    let first_drops = Arc::new(AtomicUsize::new(0));
+    let first_owner = Arc::new(HostImageOwner(first_drops.clone()));
+    let images = produce_imported_images(&device, &mut encoder, &first_owner, false)
+        .into_iter()
+        .map(|descriptor| atlas.import_image(descriptor))
+        .collect::<Result<Vec<_>>>()?;
+    drop(first_owner);
+    let (app, scene) = imported_scene(&atlas, images.clone())?;
+    let second_drops = Arc::new(AtomicUsize::new(0));
     let mut recordings = Vec::new();
     let mut readbacks = Vec::new();
-    let mut counters = Vec::new();
     for alternate in [false, true] {
-        let counter = Arc::new(AtomicUsize::new(0));
-        let owner = Arc::new(HostImageOwner(counter.clone()));
-        let images = produce_imported_images(&device, &mut encoder, &atlas, &owner, alternate)?;
-        let stale_image = images[0].clone();
-        let (app, scene) = imported_scene(&atlas, images)?;
+        if alternate {
+            let owner = Arc::new(HostImageOwner(second_drops.clone()));
+            let replacements = produce_imported_images(&device, &mut encoder, &owner, true);
+            for (image, replacement) in images.iter().zip(replacements) {
+                atlas.update_image(image, replacement)?;
+                image
+                    .validate()
+                    .expect("a compatible update must preserve the image lease");
+            }
+            assert_eq!(first_drops.load(Ordering::SeqCst), 0);
+        }
         let target = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("host imported image composition"),
             size: wgpu::Extent3d {
@@ -1020,17 +1031,16 @@ fn host_produced_images_preserve_subresources_transfer_alpha_and_original_lifeti
             wgpu::LoadOp::Clear(wgpu::Color::BLACK),
         )?);
         readbacks.push(copy_to_readback(&device, &mut encoder, &target));
-        drop(app);
-        drop(scene);
-        drop(owner);
-        atlas.clear();
-        assert!(stale_image.validate().is_err());
-        drop(stale_image);
-        assert_eq!(counter.load(Ordering::SeqCst), 0);
-        counters.push(counter);
     }
+    atlas.clear();
+    assert!(images[0].validate().is_err());
+    drop(images);
+    drop(app);
+    drop(scene);
     drop(renderer);
     drop(atlas);
+    assert_eq!(first_drops.load(Ordering::SeqCst), 0);
+    assert_eq!(second_drops.load(Ordering::SeqCst), 0);
     let submission = queue.submit([encoder.finish()]);
     let mappings = readbacks
         .iter()
@@ -1058,10 +1068,10 @@ fn host_produced_images_preserve_subresources_transfer_alpha_and_original_lifeti
         readback.unmap();
     }
     drop(recordings.remove(0));
-    assert_eq!(counters[0].load(Ordering::SeqCst), 1);
-    assert_eq!(counters[1].load(Ordering::SeqCst), 0);
+    assert_eq!(first_drops.load(Ordering::SeqCst), 1);
+    assert_eq!(second_drops.load(Ordering::SeqCst), 0);
     drop(recordings);
-    assert_eq!(counters[1].load(Ordering::SeqCst), 1);
+    assert_eq!(second_drops.load(Ordering::SeqCst), 1);
     assert_eq!(errors.load(Ordering::SeqCst), 0);
     Ok(())
 }

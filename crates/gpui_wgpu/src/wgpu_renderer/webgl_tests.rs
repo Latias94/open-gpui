@@ -16,12 +16,11 @@ fn webgl_shader_is_valid_wgsl_without_storage_buffers() {
 #[test]
 fn webgl_uniform_bindings_preserve_downlevel_sixteen_byte_sizes() {
     let module = naga::front::wgsl::parse_str(WEBGL_SHADERS).expect("shader must parse");
-    let mut surface_params = None;
     for (_, global) in module.global_variables.iter() {
         if global.space != naga::AddressSpace::Uniform {
             continue;
         }
-        let naga::TypeInner::Struct { span, ref members } = module.types[global.ty].inner else {
+        let naga::TypeInner::Struct { span, .. } = module.types[global.ty].inner else {
             panic!("the renderer's uniform bindings must be complete parameter structs");
         };
         assert_eq!(
@@ -30,19 +29,7 @@ fn webgl_uniform_bindings_preserve_downlevel_sixteen_byte_sizes() {
             "WebGL uniform binding {:?} must occupy complete 16-byte blocks",
             global.name
         );
-        if module.types[global.ty].name.as_deref() == Some("SurfaceParams") {
-            surface_params = Some(span);
-            let offsets: Vec<_> = members
-                .iter()
-                .map(|member| (member.name.as_deref(), member.offset))
-                .collect();
-            assert_eq!(offsets, vec![(Some("bounds"), 0), (Some("clip"), 16)]);
-        }
     }
-    assert_eq!(
-        surface_params,
-        Some(std::mem::size_of::<SurfaceParams>() as u32)
-    );
 }
 
 #[test]

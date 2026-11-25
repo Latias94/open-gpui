@@ -75,9 +75,7 @@ and [docking guide](crates/gpui_docking/README.md).
 ## Repository Layout
 
 - `crates/gpui`: main `open-gpui` framework crate; see [crates/gpui/README.md](crates/gpui/README.md)
-- `crates/gpui_platform`: platform selector crate; see [crates/gpui_platform/README.md](crates/gpui_platform/README.md)
-- `crates/gpui_linux`, `crates/gpui_macos`, `crates/gpui_windows`: native platform backends
-- `crates/gpui_apple`: shared Apple renderer, dispatcher, text and system services; see [crates/gpui_apple/README.md](crates/gpui_apple/README.md)
+- `crates/gpui_platform`: native Windows, macOS, Linux, and FreeBSD backends. See the [platform guide](crates/gpui_platform/README.md).
 - `crates/gpui_wgpu`: renderer backend
 - `crates/gpui_macros`: Open GPUI proc macros
 - `crates/ui_core`: renderer-neutral UI contracts, geometry, virtualizer math, and component state helpers

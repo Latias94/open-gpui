@@ -1,0 +1,392 @@
+//! Exercises real AppKit layout after the normal Core App renderer-shutdown path.
+//!
+//! Run in a fresh macOS GUI process with:
+//! `cargo run -p open-gpui-platform --example native_layer_shutdown --locked`.
+//! For activation and submitted resize, use the built executable with
+//! `python3 scripts/run_macos_native_probe.py target/debug/examples/native_layer_shutdown -- --exercise-window`.
+//! The native view and window remain retained while their GPUI binding retires. This
+//! exposes AppKit requests for a backing layer during the native retirement tail.
+//! Add `-- --ancestor-backed` to keep the content view layer backed during retirement.
+//! Add `-- --exercise-window` to also require live rendering and a submitted resize.
+//! Add `-- --shared-wgpu` to launch with a caller-created WGPU instance and device.
+
+#[cfg(target_os = "macos")]
+fn main() {
+    macos::run();
+}
+
+#[cfg(not(target_os = "macos"))]
+fn main() -> std::process::ExitCode {
+    eprintln!("native_layer_shutdown requires a macOS GUI session and a WGPU Metal device");
+    std::process::ExitCode::FAILURE
+}
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use objc2::{
+        MainThreadMarker,
+        rc::Retained,
+        runtime::{AnyObject, Bool},
+    };
+    use objc2_app_kit::{NSView, NSWindow, NSWindowOcclusionState};
+    use objc2_quartz_core::CAMetalLayer;
+    use open_gpui::{
+        App, AppContext, Application, Bounds, Context, IntoElement, QuitMode, Render, Window,
+        WindowBounds, WindowId, WindowOptions, div, prelude::*, px, rgb, size,
+    };
+    use open_gpui_platform::macos::MacPlatform;
+    use open_gpui_wgpu::{SharedWgpuContext, wgpu};
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use std::{
+        cell::Cell,
+        io::Write as _,
+        rc::Rc,
+        sync::{Arc, Mutex},
+        time::{Duration, Instant},
+    };
+
+    struct ProbeContent;
+
+    impl Render for ProbeContent {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .bg(rgb(0xf5f6f8))
+                .child("Native layer shutdown probe")
+        }
+    }
+
+    fn rendering_snapshot(cx: &App, id: WindowId) -> serde_json::Value {
+        let debug = cx.debug_state();
+        let window = debug["windows"]
+            .as_array()
+            .expect("the app diagnostic lists its windows")
+            .iter()
+            .find(|window| window["id"].as_u64() == Some(id.as_u64()))
+            .expect("the live window has a diagnostic snapshot");
+        let native = &window["platform"];
+        serde_json::json!({
+            "app": {
+                "active": debug["platform"]["app_is_active"],
+                "hidden": debug["platform"]["app_is_hidden"],
+                "unoccluded": debug["platform"]["app_occlusion_state_visible"],
+            },
+            "window": {
+                "visible": native["is_visible"],
+                "unoccluded": native["occlusion_state_visible"],
+                "key": native["is_key_window"],
+                "on_active_space": native["is_on_active_space"],
+                "frame": native["frame"],
+            },
+            "content_size": window["content_size"],
+            "core_frame": window["frame"],
+            "frame_source": native["frame_source"],
+            "renderer": native["renderer"],
+        })
+    }
+
+    pub(super) fn run() {
+        MainThreadMarker::new().expect("the native layer probe requires the process main thread");
+        let ancestor_backed = std::env::args().any(|argument| argument == "--ancestor-backed");
+        let exercise_window = std::env::args().any(|argument| argument == "--exercise-window");
+        let shared_wgpu = std::env::args().any(|argument| argument == "--shared-wgpu");
+        let panic_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            panic_hook(info);
+            std::process::exit(1);
+        }));
+        let progress = Arc::new(Mutex::new("launching AppKit".to_owned()));
+        std::thread::spawn({
+            let progress = progress.clone();
+            move || {
+                std::thread::sleep(Duration::from_secs(10));
+                eprintln!(
+                    "NATIVE LAYER SHUTDOWN FAILED: the process remained alive after 10 seconds; {}",
+                    progress.lock().expect("probe progress"),
+                );
+                std::process::exit(1);
+            }
+        });
+        objc2::rc::autoreleasepool(|_| {
+            let platform = if shared_wgpu {
+                let context = futures::executor::block_on(async {
+                    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                        backends: wgpu::Backends::METAL,
+                        ..wgpu::InstanceDescriptor::new_without_display_handle()
+                    });
+                    let adapter = instance
+                        .request_adapter(&wgpu::RequestAdapterOptions::default())
+                        .await?;
+                    SharedWgpuContext::request_device(instance, adapter, Default::default()).await
+                })
+                .expect("the application can request a shared Metal device");
+                MacPlatform::new_with_shared_wgpu(context)
+            } else {
+                MacPlatform::new(false)
+            };
+            let platform = Rc::new(platform);
+            Application::with_platform(platform)
+                .with_quit_mode(QuitMode::Explicit)
+                .run(move |cx| {
+                    let complete = Rc::new(Cell::new(false));
+                    cx.on_app_quit({
+                        let complete = complete.clone();
+                        move |_| {
+                            if !complete.get() {
+                                eprintln!("NATIVE LAYER SHUTDOWN FAILED: application quit before retirement-tail verification completed");
+                                std::process::exit(1);
+                            }
+                            std::future::ready(())
+                        }
+                    })
+                    .detach();
+                    let bounds = Bounds::centered(None, size(px(320.0), px(200.0)), cx);
+                    let retained = Rc::new(std::cell::RefCell::new(None));
+                    let window = cx
+                        .open_window(
+                            WindowOptions {
+                                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                                ..Default::default()
+                            },
+                            {
+                                let retained = retained.clone();
+                                move |window, cx| {
+                                    let raw = HasWindowHandle::window_handle(window)
+                                        .expect("a real native window handle");
+                                    let RawWindowHandle::AppKit(raw) = raw.as_raw() else {
+                                        panic!("macOS must expose an AppKit view");
+                                    };
+                                    // SAFETY: The live platform window owns this native view.
+                                    let view = unsafe {
+                                        Retained::retain(raw.ns_view.cast::<NSView>().as_ptr())
+                                    }
+                                    .expect("the live native view");
+                                    let native_window: Retained<NSWindow> =
+                                        view.window().expect("the live native window");
+                                    *retained.borrow_mut() = Some((view, native_window));
+                                    cx.new(|_| ProbeContent)
+                                }
+                            },
+                        )
+                        .expect("a real AppKit window and WGPU renderer");
+                    let id = window.window_id();
+                    let terminal = Rc::new(Cell::new(false));
+                    cx.on_window_native_terminal({
+                        let terminal = terminal.clone();
+                        move |_, closed| {
+                            if closed == id {
+                                terminal.set(true);
+                            }
+                        }
+                    })
+                    .detach();
+                    if !exercise_window {
+                        cx.activate(true);
+                    }
+                    window
+                        .update(cx, |_, window, _| {
+                            if !exercise_window {
+                                let _ = window.activate_window();
+                            }
+                            window.refresh();
+                            *progress.lock().expect("probe progress") = format!(
+                                "window opened; {:?}",
+                                window.presentation_facts()
+                            );
+                        })
+                        .expect("the newly opened window can refresh");
+                    cx.spawn(async move |cx| {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(100))
+                            .await;
+                        let (view, native_window) = retained
+                            .borrow_mut()
+                            .take()
+                            .expect("the probe retained both native objects");
+                        assert!(view.wantsLayer(), "the initial GPUI view is layer backed");
+                        assert!(view.layer().is_some_and(|layer| layer.downcast::<CAMetalLayer>().is_ok()),
+                            "the live WGPU renderer presents through the AppKit CAMetalLayer");
+                        if exercise_window {
+                        let deadline = Instant::now() + Duration::from_secs(3);
+                        let initially_submitted = loop {
+                            let facts = window
+                                .update(cx, |_, window, _| window.presentation_facts())
+                                .expect("the native window remains live");
+                            *progress.lock().expect("probe progress") =
+                                format!("waiting for initial Submitted and an ordered native window; {facts:?}");
+                            assert!(
+                                Instant::now() < deadline,
+                                "initial rendering or native ordering timed out; {facts:?}; {}",
+                                cx.update(|cx| rendering_snapshot(cx, id)),
+                            );
+                            if facts.native_visible && native_window.isVisible() {
+                                if let Some(generation) = facts.present_submitted_generation {
+                                    break generation;
+                                }
+                            }
+                            cx.background_executor()
+                                .timer(Duration::from_millis(10))
+                                .await;
+                        };
+                        let activation = window
+                            .update(cx, |_, window, _| window.activate_window())
+                            .expect("the submitted visible window can request activation");
+                        cx.update(|cx| cx.activate(true));
+                        println!(
+                            "NATIVE LAYER SHUTDOWN: initial Submitted {initially_submitted}; requested window and application activation after native ordering",
+                        );
+                        let before = loop {
+                            let facts = window
+                                .update(cx, |_, window, _| window.presentation_facts())
+                                .expect("the native window remains live during activation");
+                            let native_unoccluded = native_window.isVisible()
+                                && native_window
+                                    .occlusionState()
+                                    .contains(NSWindowOcclusionState::Visible);
+                            let snapshot = cx.update(|cx| rendering_snapshot(cx, id));
+                            let frame_source_attached = snapshot["frame_source"]["attached"]
+                                .as_bool()
+                                .expect("the macOS frame source reports its attachment");
+                            *progress.lock().expect("probe progress") =
+                                format!("waiting for live-rendering prerequisites; native_unoccluded={native_unoccluded}, frame_source_attached={frame_source_attached}; {facts:?}");
+                            assert!(
+                                Instant::now() < deadline,
+                                "live-rendering prerequisites timed out before resize; native_unoccluded={native_unoccluded}, frame_source_attached={frame_source_attached}; activation={:?}; {facts:?}; {snapshot}",
+                                activation.snapshot(),
+                            );
+                            if facts.native_visible && native_unoccluded && frame_source_attached {
+                                if let Some(generation) = facts.present_submitted_generation {
+                                    break generation;
+                                }
+                            }
+                            cx.background_executor()
+                                .timer(Duration::from_millis(10))
+                                .await;
+                        };
+                        println!(
+                            "NATIVE LAYER SHUTDOWN: live-rendering prerequisites met; Submitted before resize={before}, activation={:?}; {}",
+                            activation.snapshot(),
+                            cx.update(|cx| rendering_snapshot(cx, id)),
+                        );
+                        let mut frame = native_window.frame();
+                        frame.origin.x += 12.0;
+                        frame.origin.y += 8.0;
+                        frame.size.width += 32.0;
+                        frame.size.height += 24.0;
+                        native_window.setFrame_display(frame, true);
+                        window.update(cx, |_, window, _| window.refresh())
+                            .expect("the resized window can refresh");
+                        println!(
+                            "NATIVE LAYER SHUTDOWN: resize requested; {}",
+                            cx.update(|cx| rendering_snapshot(cx, id)),
+                        );
+                        let deadline = Instant::now() + Duration::from_secs(3);
+                        loop {
+                            let facts = window
+                                .update(cx, |_, window, _| window.presentation_facts())
+                                .expect("the moved and resized native window remains live");
+                            *progress.lock().expect("probe progress") =
+                                format!("waiting for resized Submitted after {before}; {facts:?}");
+                            assert!(
+                                Instant::now() < deadline,
+                                "resize rendering timed out after {before}; {facts:?}; {}",
+                                cx.update(|cx| rendering_snapshot(cx, id)),
+                            );
+                            if facts
+                                .present_submitted_generation
+                                .is_some_and(|generation| generation > before)
+                            {
+                                break;
+                            }
+                            cx.background_executor()
+                                .timer(Duration::from_millis(10))
+                                .await;
+                        }
+                        let layer = view.layer().and_then(|layer| layer.downcast::<CAMetalLayer>().ok())
+                            .expect("the resized window retains its surface layer");
+                        let client_size = view.bounds().size;
+                        let scale = native_window.backingScaleFactor();
+                        let drawable_size = layer.drawableSize();
+                        assert_eq!(layer.contentsScale(), scale);
+                        assert_eq!(drawable_size.width, (client_size.width * scale).round());
+                        assert_eq!(drawable_size.height, (client_size.height * scale).round());
+                        #[cfg(feature = "test-support")]
+                        window.update(cx, |_, window, _| {
+                            let image = window.render_to_image().expect("the attached window supports offscreen WGPU readback");
+                            assert_eq!(image.dimensions(), (drawable_size.width as u32, drawable_size.height as u32));
+                            let pixel = image.get_pixel(image.width() / 2, image.height() / 2).0;
+                            assert!(pixel.into_iter().zip([0xf5, 0xf6, 0xf8, 0xff])
+                                .all(|(actual, expected)| actual.abs_diff(expected) <= 1), "unexpected sRGB chrome pixel {pixel:?}");
+                        }).expect("the resized window remains live for readback");
+                        println!("NATIVE LAYER SHUTDOWN: move/resize produced a newer real Submitted generation");
+                        }
+                        if ancestor_backed {
+                            native_window
+                                .contentView()
+                                .expect("the native content view")
+                                .setWantsLayer(true);
+                        }
+                        let facts = window.update(cx, |_, window, _| window.presentation_facts())
+                            .expect("the window remains live before shutdown");
+                        *progress.lock().expect("probe progress") =
+                            format!("removing real window; ancestor_backed={ancestor_backed}; {facts:?}");
+                        println!("NATIVE LAYER SHUTDOWN: removing the real window through Core App");
+                        std::io::stdout().flush().expect("flush probe phase");
+                        window
+                            .update(cx, |_, window, cx| window.remove_window(cx))
+                            .expect("the live window can be removed");
+                        *progress.lock().expect("probe progress") = "waiting for native terminal after remove_window".to_owned();
+                        while !terminal.get() {
+                            cx.background_executor()
+                                .timer(Duration::from_millis(10))
+                                .await;
+                        }
+                        *progress.lock().expect("probe progress") = "forcing retirement-tail AppKit layer/layout".to_owned();
+                        let layer: *mut AnyObject = unsafe { objc2::msg_send![&*view, layer] };
+                        println!(
+                            "NATIVE LAYER SHUTDOWN: native terminal observed; wantsLayer={}, layer={}; forcing retirement-tail layout",
+                            view.wantsLayer(),
+                            !layer.is_null(),
+                        );
+                        std::io::stdout().flush().expect("flush native observations");
+                        assert!(!view.wantsLayer(), "retirement disables explicit layer backing");
+                        if !layer.is_null() {
+                            let metal: Bool = unsafe {
+                                objc2::msg_send![layer, isKindOfClass: objc2::class!(CAMetalLayer)]
+                            };
+                            assert!(!metal.as_bool(), "the retired view must not retain its Metal layer");
+                        }
+                        let backing: Retained<AnyObject> =
+                            unsafe { objc2::msg_send![&*view, makeBackingLayer] };
+                        let metal: Bool = unsafe {
+                            objc2::msg_send![&*backing, isKindOfClass: objc2::class!(CAMetalLayer)]
+                        };
+                        assert!(!metal.as_bool(), "a retired renderer cannot recreate a Metal surface");
+                        view.setNeedsLayout(true);
+                        view.layoutSubtreeIfNeeded();
+                        view.setNeedsDisplay(true);
+                        view.displayIfNeeded();
+                        cx.background_executor()
+                            .timer(Duration::from_millis(30))
+                            .await;
+                        let layer: *mut AnyObject = unsafe { objc2::msg_send![&*view, layer] };
+                        if !layer.is_null() {
+                            let metal: Bool = unsafe {
+                                objc2::msg_send![layer, isKindOfClass: objc2::class!(CAMetalLayer)]
+                            };
+                            assert!(!metal.as_bool(), "retirement-tail layout must not restore a Metal layer");
+                        }
+                        complete.set(true);
+                        println!("NATIVE LAYER SHUTDOWN OK: real AppKit retirement-tail layout completed; requesting native quit");
+                        std::io::stdout().flush().expect("flush successful observations");
+                        drop(native_window);
+                        drop(view);
+                        *progress.lock().expect("probe progress") = "native layout passed; waiting for actual process exit".to_owned();
+                        cx.update(|cx| cx.quit());
+                    })
+                    .detach();
+                });
+        });
+        panic!("AppKit returned without terminating the probe process");
+    }
+}

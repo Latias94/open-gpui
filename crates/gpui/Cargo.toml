@@ -138,10 +138,6 @@ async-channel = { workspace = true, features = ["std"] }
 proptest = { workspace = true, optional = true, features = ["fork", "timeout"] }
 
 
-[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
-objc2-core-foundation.workspace = true
-objc2-core-video.workspace = true
-
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))'.dependencies]
 pathfinder_geometry = "0.5"
 

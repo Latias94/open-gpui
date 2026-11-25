@@ -25,7 +25,7 @@ mod native {
         Styled as _, Window, WindowBounds, WindowInitialPresentationStatus, WindowOptions, div, px,
         rgb, size,
     };
-    use open_gpui_windows::WindowsPlatform;
+    use open_gpui_platform::windows::WindowsPlatform;
     use serde_json::{Value, json};
     use std::{
         cell::{Cell, RefCell},
