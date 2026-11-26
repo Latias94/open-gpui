@@ -19,7 +19,7 @@ use open_gpui::{
 use open_gpui_docking::{
     dockspace::{
         geometry::PhysicalRect,
-        model::{DockAnchor, DockPlacement, DockspaceTabView},
+        model::{DockAnchor, DockPlacement, DockspaceTabView, ItemId, SurfaceId},
     },
     native::NativeReport,
 };
@@ -37,8 +37,8 @@ use windows::Win32::{
             KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY, VK_ESCAPE, VK_MENU, VK_SHIFT,
         },
         WindowsAndMessaging::{
-            GetCursorPos, GetForegroundWindow, HTTRANSPARENT, IsWindow, IsWindowVisible,
-            PostMessageW, SendMessageW, WM_CLOSE, WM_NCHITTEST,
+            GetForegroundWindow, HTTRANSPARENT, IsWindow, IsWindowVisible, PostMessageW,
+            SendMessageW, WM_CLOSE, WM_NCHITTEST,
         },
     },
 };
@@ -55,19 +55,43 @@ use super::shared_session::{
     three_window_bounds, two_window_bounds,
 };
 use super::{
-    INPUT_CANARY, NATIVE_SCENARIO_ENV, NATIVE_TEST_INPUT_CANARY, NativeDockBehavior,
-    NativeNoInputOverlay, NativeOpaqueBarrier, NativeReleasePointAuthority,
-    NativeScenarioRegistration, NativeWorkerCompletion, capture_worker_app_census_without_surface,
-    close_no_input_overlay, native_generation_label, native_system_mouse_message_observed,
-    native_test_display_at, native_test_displays, open_desktop_release_point,
+    INPUT_CANARY, NativeDockBehavior, NativeNoInputOverlay, NativeOpaqueBarrier,
+    NativeReleasePointAuthority, NativeScenarioRegistration, NativeWorkerCompletion,
+    capture_worker_app_census_without_surface, close_no_input_overlay, native_generation_label,
+    native_system_mouse_message_observed, native_test_display_at, open_desktop_release_point,
     open_desktop_release_point_away_from, open_desktop_release_point_away_from_all,
     open_desktop_release_point_on_display, open_no_input_overlay, panic_message,
-    panic_payload_message, point_is_open_desktop, process_harness, raise_native_window, raw_hwnd,
-    rect_contains, screen_point_lparam, shutdown_native_worker_application_without_surface,
+    panic_payload_message, process_harness, raise_native_window, raw_hwnd, rect_contains,
+    screen_point_lparam, shutdown_native_worker_application_without_surface,
     unique_matching_debug_bounds, wait_until, window_has_non_empty_frame, window_scale_factor,
 };
 
-const SHARED_SCENARIO_ENV: &str = "OPEN_GPUI_NATIVE_SHARED_SCENARIO";
+pub(super) const COMPLEX_WORKFLOW_STEPS: [(SurfaceId, ItemId, SurfaceId, ItemId); 4] = [
+    (
+        SHARED_SOURCE_SURFACE,
+        SHARED_SOURCE_ITEM,
+        SHARED_TARGET_SURFACE,
+        SHARED_TARGET_ITEM,
+    ),
+    (
+        SHARED_MIDDLE_SURFACE,
+        SHARED_MIDDLE_ITEM,
+        SHARED_TARGET_SURFACE,
+        SHARED_TARGET_SECONDARY_ITEM,
+    ),
+    (
+        SHARED_TARGET_SURFACE,
+        SHARED_SOURCE_ITEM,
+        SHARED_MIDDLE_SURFACE,
+        SHARED_MIDDLE_SECONDARY_ITEM,
+    ),
+    (
+        SHARED_TARGET_SURFACE,
+        SHARED_MIDDLE_ITEM,
+        SHARED_SOURCE_SURFACE,
+        SHARED_SOURCE_SECONDARY_ITEM,
+    ),
+];
 
 pub(super) fn run_worker(registration: NativeScenarioRegistration) -> ! {
     let (_observation_guard, observation) = begin_native_window_test_observation();
@@ -355,7 +379,11 @@ impl SharedScenarioWorker {
                 self.run_process_convergence(cx, worker_subcase).await
             }
             NativeDockBehavior::CommittedLossRecovery => self.run_committed_loss(cx).await,
-            NativeDockBehavior::SurfaceShutdown | NativeDockBehavior::TabDragLatencyBenchmark => {
+            #[cfg(feature = "legacy-docking")]
+            NativeDockBehavior::TabDragLatencyBenchmark => {
+                bail!("the legacy benchmark must use its own worker")
+            }
+            NativeDockBehavior::SurfaceShutdown => {
                 bail!("shared interactive worker received unsupported behavior {behavior:?}")
             }
         }
@@ -435,7 +463,7 @@ impl SharedScenarioWorker {
             .await?;
         wait_until(cx, "shared target gesture route", |cx| {
             Ok(cx.update(|app| app.has_active_drag())
-                && cx.update(|app| session.dock.has_active_gesture())
+                && cx.update(|_| session.dock.has_active_gesture())
                 && unsafe { GetCapture() } == source.hwnd
                 && native_system_mouse_message_observed(
                     &observation,
@@ -636,34 +664,8 @@ impl SharedScenarioWorker {
             .await?;
         let observation = session.observation.clone();
         super::shared_recovery::seed_source_view(cx, session).await?;
-        let steps = [
-            (
-                SHARED_SOURCE_SURFACE,
-                SHARED_SOURCE_ITEM,
-                SHARED_TARGET_SURFACE,
-                SHARED_TARGET_ITEM,
-            ),
-            (
-                SHARED_MIDDLE_SURFACE,
-                SHARED_MIDDLE_ITEM,
-                SHARED_TARGET_SURFACE,
-                SHARED_TARGET_SECONDARY_ITEM,
-            ),
-            (
-                SHARED_TARGET_SURFACE,
-                SHARED_SOURCE_ITEM,
-                SHARED_MIDDLE_SURFACE,
-                SHARED_MIDDLE_SECONDARY_ITEM,
-            ),
-            (
-                SHARED_TARGET_SURFACE,
-                SHARED_MIDDLE_ITEM,
-                SHARED_SOURCE_SURFACE,
-                SHARED_SOURCE_SECONDARY_ITEM,
-            ),
-        ];
         for (index, (source_surface, item, target_surface, target_item)) in
-            steps.into_iter().enumerate()
+            COMPLEX_WORKFLOW_STEPS.into_iter().enumerate()
         {
             let source = session.window(source_surface)?;
             let target = session.window(target_surface)?;
@@ -680,7 +682,7 @@ impl SharedScenarioWorker {
                 .await?;
             wait_until(cx, "shared workflow active target route", |cx| {
                 Ok(cx.update(|app| app.has_active_drag())
-                    && cx.update(|app| session.dock.has_active_gesture())
+                    && cx.update(|_| session.dock.has_active_gesture())
                     && native_system_mouse_message_observed(
                         &observation,
                         source.window,

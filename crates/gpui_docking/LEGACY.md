@@ -13,17 +13,15 @@ Do not attach both semantic runtimes to one workspace or use the old controller
 as recovery for a new surface. See the [migration guide](../../docs/ui/migration-v0.3.md#default-shared-docking-session)
 for the new lifecycle and persistence entry points.
 
-The feature retains the existing deterministic scenarios and native Windows input
-qualification. The browser unsupported-native-window probe uses the default shared
-session. Unused canonical-layout migration and detached payload experiments have
-been removed; the default one-way wire-format conversion remains independent.
-Old benchmarks
-require both `legacy-docking` and `test-support`. The native dogfood example also
-requires its package's `legacy-docking` feature:
+The feature retains the incumbent deterministic scenarios and benchmarks. The
+Windows physical-input manifest and browser smoke use the default shared session.
+The native dogfood example and the optional physical latency comparator require
+the example package's `legacy-docking` feature. Legacy CPU benchmarks also require
+`test-support`.
 
 ```sh
 cargo nextest run -p open-gpui-docking --all-features --lib --test-threads=1
-cargo nextest run -p open-gpui-docking-native --features legacy-docking --test-threads=1
+cargo nextest run -p open-gpui-docking-native --features legacy-docking --bin open-gpui-docking-native --test-threads=1
 cargo run -p open-gpui-docking-native --features legacy-docking
 ```
 
@@ -40,8 +38,7 @@ persistence conversion already lives in `persistence` and needs none of this
 runtime or its feature.
 
 The [shared-session migration record](../../docs/knowledge/engineering/verification/dockspace-shutdown-migration-20261115.md)
-records the ten Windows behavior commits and the exact fixed dependency. All ten
-interactive journey implementations now use the shared managed session while
-their physical Windows receipts remain pending. The package-wide dogfood and
-the explicit compatibility tests still consume legacy APIs, so this feature
-remains required until those consumers are separately retired.
+records the ten Windows behavior commits and the exact fixed dependency. The
+manifest runs all ten journeys on the shared managed session through
+`--test native_windows_interactive`. The dogfood and the explicit compatibility
+tests still consume legacy APIs.

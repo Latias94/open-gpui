@@ -100,7 +100,7 @@ See [docs/ui/command-ecosystem.md](docs/ui/command-ecosystem.md), [docs/ui/compo
 - `crates/canvas`: reusable `open-gpui-canvas` model and interaction primitives for infinite canvas applications
 - `examples/canvas-notes`: native JSON Canvas note-map example
 - `examples/docking-minimal`: minimal single-window docking example using common public APIs
-- `examples/docking-native`: explicit legacy native docking qualification and diagnostics
+- `examples/docking-native`: Windows shared-session integration tests and a legacy diagnostics demo
 - `examples/smoke-native`: native smoke example
 - `examples/ui-foundation-gallery`: native UI component gallery and conformance surface
 - `xtask`: workspace verification and import-boundary checks

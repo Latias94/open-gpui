@@ -7,7 +7,7 @@ use std::{
 use open_gpui::{
     App, Bounds, ClickEvent, Context, Entity, InteractiveElement, IntoElement, ParentElement,
     Pixels, PlatformWindowActivationSupport, PlatformWindowCapabilities,
-    PlatformWindowCreationCapabilities, PlatformWindowMutationCapabilities, Render, Rgba, Styled,
+    PlatformWindowCreationCapabilities, PlatformWindowMutationCapabilities, Render, Styled,
     TargetedEvent, Window, WindowBounds, WindowCoordinateSpace, WindowCreationSupport,
     WindowInitialPresentationOrder, WindowMutationRequest, WindowMutationSupport, WindowOptions,
     WindowPlatformFacts, div, point, prelude::*, px, rgb, size,
@@ -22,7 +22,7 @@ use open_gpui_docking::legacy::{
     DockItemId, DockLayout, DockPanel, DockPanelDescriptor, DockPanelPlacement, DockSpaceId,
     DockSurface, DockSurfacePrimaryWindowOpenOutcome, DockSurfaceViewportOpenOutcome,
     DockSurfaceWindowSessionStatus, DockViewportPlacement, DockViewportPlacementLayout,
-    DockViewportWindowBounds, DockVisualPalette, DockVisualStyle, DockVisualStyleResolver,
+    DockViewportWindowBounds,
     advanced::{
         DockViewportCoordinateSpaceRecord, DockViewportCoordinateStatusRecord,
         DockViewportDropOutcomeKind, DockViewportDropOutcomeRecord, DockViewportInputStatus,
@@ -49,14 +49,19 @@ use open_gpui_docking::legacy::{
     DockPanelOpenOutcome, model::DockActionApplyError, runtime::DockViewportRuntimeHandle,
 };
 use open_gpui_platform::application;
-use open_gpui_ui_components::{
-    ColorState,
-    theme::{
-        DARK_THEME_ID, HIGH_CONTRAST_THEME_ID, LIGHT_THEME_ID, ThemeResolver, ThemeSnapshot,
-        set_window_theme,
-    },
+use open_gpui_ui_components::theme::{
+    DARK_THEME_ID, HIGH_CONTRAST_THEME_ID, LIGHT_THEME_ID, set_window_theme,
 };
-use open_gpui_ui_core::{TokenKey, semantic};
+#[cfg(test)]
+use open_gpui_ui_components::{ColorState, theme::ThemeSnapshot};
+#[cfg(test)]
+use open_gpui_ui_core::semantic;
+
+mod legacy_style;
+
+#[cfg(test)]
+use legacy_style::dock_visual_style_from_theme;
+use legacy_style::dock_visual_style_resolver;
 
 const SPACE: &str = "docking-demo";
 const SECONDARY_SPACE: &str = "docking-preview";
@@ -2118,100 +2123,6 @@ fn viewport_title(space: &DockSpaceId) -> &'static str {
     }
 }
 
-fn dock_visual_style_from_theme(theme: &ThemeSnapshot) -> DockVisualStyle {
-    let mut palette = DockVisualPalette::built_in();
-    palette.surface = theme_color(
-        theme,
-        semantic::SURFACE,
-        ColorState::Default,
-        palette.surface,
-    );
-    palette.surface_muted = theme_color(
-        theme,
-        semantic::SURFACE_MUTED,
-        ColorState::Default,
-        palette.surface_muted,
-    );
-    palette.surface_hovered = theme_color(
-        theme,
-        semantic::SURFACE_MUTED,
-        ColorState::Hover,
-        palette.surface_hovered,
-    );
-    palette.surface_disabled = theme_color(
-        theme,
-        semantic::SURFACE_MUTED,
-        ColorState::Disabled,
-        palette.surface_disabled,
-    );
-    palette.border = theme_color(theme, semantic::BORDER, ColorState::Default, palette.border);
-    palette.text = theme_color(theme, semantic::TEXT, ColorState::Default, palette.text);
-    palette.text_muted = theme_color(
-        theme,
-        semantic::TEXT_MUTED,
-        ColorState::Default,
-        palette.text_muted,
-    );
-    palette.text_disabled = theme_color(
-        theme,
-        semantic::TEXT,
-        ColorState::Disabled,
-        palette.text_disabled,
-    );
-    palette.accent = theme_color(theme, semantic::ACCENT, ColorState::Default, palette.accent);
-    palette.accent_hovered = theme_color(
-        theme,
-        semantic::ACCENT,
-        ColorState::Hover,
-        palette.accent_hovered,
-    );
-    palette.accent_foreground = theme_color(
-        theme,
-        semantic::ACCENT_FOREGROUND,
-        ColorState::Default,
-        palette.accent_foreground,
-    );
-    palette.focus_ring = theme_color(
-        theme,
-        semantic::FOCUS_RING,
-        ColorState::FocusVisible,
-        palette.focus_ring,
-    );
-    palette.destructive = theme_color(
-        theme,
-        semantic::DESTRUCTIVE,
-        ColorState::Default,
-        palette.destructive,
-    );
-    palette.destructive_foreground = theme_color(
-        theme,
-        semantic::DESTRUCTIVE_FOREGROUND,
-        ColorState::Default,
-        palette.destructive_foreground,
-    );
-    let shadow = theme_color(
-        theme,
-        semantic::OVERLAY,
-        ColorState::Overlay,
-        palette.shadow,
-    );
-    palette.shadow = Rgba {
-        a: palette.shadow.a,
-        ..shadow
-    };
-    DockVisualStyle::from_palette(palette)
-}
-
-fn theme_color(theme: &ThemeSnapshot, token: TokenKey, state: ColorState, fallback: Rgba) -> Rgba {
-    theme.color_rgb(token, state).map(rgb).unwrap_or(fallback)
-}
-
-fn dock_visual_style_resolver() -> DockVisualStyleResolver {
-    DockVisualStyleResolver::new(|window, cx| {
-        dock_visual_style_from_theme(&ThemeResolver::current_snapshot(window, cx))
-    })
-}
-
 fn main() {
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info,open_gpui_docking=info,open_gpui=info"),
@@ -2296,9 +2207,6 @@ fn main() {
         log::info!("{DOCKING_DEBUG_PREFIX} application activated");
     });
 }
-
-#[cfg(all(test, target_os = "windows"))]
-mod native_interactive_tests;
 
 #[cfg(test)]
 mod tests {

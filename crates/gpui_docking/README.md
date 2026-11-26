@@ -315,9 +315,10 @@ repository's macOS probe runner.
 The displaced engine is available only through `open_gpui_docking::legacy` and
 its explicit `legacy-docking` feature. Enabling it never changes the root or
 prelude types. It is not a fallback or a second writer for a migrated workspace.
-The old Windows native dogfood example retains its compatibility qualification
-while the ten shared-session replacement scenarios receive physical Windows
-qualification:
+The Windows physical-input manifest runs its shared-session scenarios through the
+`native_windows_interactive` integration target with the default features. The
+legacy dogfood executable and the optional native latency comparator still use
+the compatibility feature.
 
 ```sh
 cargo run -p open-gpui-docking-native --features legacy-docking

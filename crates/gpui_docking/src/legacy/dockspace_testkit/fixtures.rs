@@ -52,7 +52,7 @@ pub(crate) enum DockspaceScenarioFixtureError {
 
 pub(crate) fn load_builtin_scenario_fixtures()
 -> Result<Vec<DockspaceScenario>, DockspaceScenarioFixtureError> {
-    let raw = include_str!("../fixtures/dockspace_scenarios_v2.json");
+    let raw = include_str!("../../../tests/fixtures/dockspace_scenarios_v2.json");
     load_scenario_fixtures(raw)
 }
 

@@ -25,8 +25,7 @@ DOCKSPACE_SCENARIO_FIXTURES = (
     ROOT
     / "crates"
     / "gpui_docking"
-    / "src"
-    / "legacy"
+    / "tests"
     / "fixtures"
     / "dockspace_scenarios_v2.json"
 )
@@ -1021,6 +1020,8 @@ def run_native_latency_benchmark() -> dict[str, Any]:
         "--locked",
         "-p",
         "open-gpui-docking-native",
+        "--test",
+        "native_windows_interactive",
         "--features",
         "legacy-docking",
         "--run-ignored",

@@ -5,12 +5,14 @@ use open_gpui_docking::legacy::native_scenario_support::{
     NativeDockspaceStep, NativeDockspaceTarget, NativeDockspaceZone,
     load_native_dockspace_scenario,
 };
-
-#[derive(Clone, Debug)]
-pub(super) struct NativeDockspaceRunBinding {
-    pub(super) scenario_id: String,
-    pub(super) oracles: BTreeSet<NativeDockspaceManifestOracle>,
-}
+use open_gpui_docking::legacy::{model::DockGraph, native_captured_release_observation_for_test};
+use open_gpui_windows::{
+    NativeWindowTestObservationCursor, native_test_inject_system_pointer as inject_system_pointer,
+};
+use windows::Win32::UI::{
+    Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON},
+    WindowsAndMessaging::IsWindowVisible,
+};
 
 pub(super) struct NativeDockspaceWorkflow {
     fixture: NativeDockspaceScenario,
@@ -18,6 +20,8 @@ pub(super) struct NativeDockspaceWorkflow {
     native_observation: NativeWindowTestObservation,
     lifecycle: Arc<Mutex<NativeLifecycleRecorder>>,
     windows: Vec<NativeDockspaceWindow>,
+    _mouse_interceptors: Vec<Subscription>,
+    _surface_change_subscription: Subscription,
 }
 
 struct NativeDockspaceWindow {
@@ -76,253 +80,193 @@ struct NativeDockspaceStepObservation {
     preview_generation: u64,
     committed_generation: u64,
     focused_window: WindowId,
-    lifecycle: Option<serde_json::Value>,
+    lifecycle: serde_json::Value,
 }
 
-pub(super) fn build_native_dockspace_workflow_scenario(
-    cx: &mut App,
-    native_observation: NativeWindowTestObservation,
-    binding: NativeDockspaceRunBinding,
-) -> Result<NativeDockScenario> {
-    let fixture = load_native_dockspace_scenario(&binding.scenario_id).with_context(|| {
-        format!(
-            "failed to load native dockspace fixture {}",
-            binding.scenario_id
-        )
-    })?;
-    let covered_oracles = BTreeSet::from([
-        ProjectedNativeDockspaceOracle::Graph,
-        ProjectedNativeDockspaceOracle::Layout,
-        ProjectedNativeDockspaceOracle::Presentation,
-        ProjectedNativeDockspaceOracle::FocusSelection,
-        ProjectedNativeDockspaceOracle::ViewportRoute,
-        ProjectedNativeDockspaceOracle::NativeLifetime,
-    ]);
-    let declared_oracles = binding
-        .oracles
-        .iter()
-        .copied()
-        .map(project_manifest_oracle)
-        .collect::<BTreeSet<_>>();
-    ensure!(
-        declared_oracles == covered_oracles,
-        "native workflow manifest oracles must exactly match runner coverage: declared={declared_oracles:?}, covered={covered_oracles:?}"
-    );
-    for required in &covered_oracles {
-        ensure!(
-            fixture.oracles().contains(required),
-            "native workflow fixture {} is missing required oracle {required:?}",
-            fixture.id()
-        );
-    }
-
-    let mut builder = DockSurface::builder(fixture.primary_space().clone())
-        .try_layout(fixture.layout())?
-        .allow_floating(true)
-        .allow_platform_viewports(true)
-        .platform_focus_sets_dock_focus(true)
-        .visual_style_resolver(dock_visual_style_resolver());
-    for item in fixture.items() {
-        builder = builder.panel(
-            item.clone(),
-            DockPanel::lazy(item.as_str().to_owned(), |cx| cx.new(|_| Empty).into()),
-        );
-    }
-    let surface = builder
-        .build(cx)
-        .context("native dockspace workflow surface should validate")?;
-    let display = cx
-        .primary_display()
-        .context("the native dockspace workflow requires a primary display")?;
-    let bounds = native_dockspace_window_bounds(
-        display.bounds(),
-        fixture.primary_space(),
-        fixture.spaces(),
-    )?;
-
-    let mut windows = Vec::with_capacity(fixture.spaces().len());
-    for (space, window_bounds) in bounds {
-        let window = if &space == fixture.primary_space() {
-            match surface.open_primary_window(viewport_window_options(window_bounds), cx) {
-                DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened.window(),
-                outcome => {
-                    bail!("native dockspace primary viewport {space} failed to open: {outcome:?}")
-                }
-            }
-        } else {
-            match surface.viewports().open(
-                space.clone(),
-                viewport_window_options(window_bounds),
-                cx,
-            ) {
-                DockSurfaceViewportOpenOutcome::Opened(opened) => opened.window(),
-                outcome => bail!("native dockspace viewport {space} failed to open: {outcome:?}"),
-            }
-        };
-        windows.push(NativeDockspaceWindow {
-            space,
-            window,
-            hwnd: raw_hwnd(cx, window)?,
-            bounds: window_bounds,
-        });
-    }
-    let unique_hwnds = windows
-        .iter()
-        .map(|window| window.hwnd.0 as isize)
-        .collect::<BTreeSet<_>>();
-    ensure!(
-        unique_hwnds.len() == fixture.spaces().len(),
-        "native dockspace workflow must create one distinct HWND per space: {unique_hwnds:?}"
-    );
-
-    let first_step = fixture
-        .steps()
-        .first()
-        .context("native dockspace workflow requires at least one operation")?;
-    let source = native_window_for_space(&windows, first_step.source_space())?;
-    let target = native_window_for_space(&windows, first_step.target().space())?;
-    let initial_revision = surface.export_snapshot(cx).revision();
-    let initial_window_count = cx.windows().len();
-    let initial_owned_window_count = surface
-        .viewports()
-        .runtime_status(cx)
-        .window_ownership
-        .owned_window_count;
-    let lifecycle = Arc::new(Mutex::new(NativeLifecycleRecorder::default()));
-    let mut mouse_interceptors = Vec::with_capacity(windows.len());
-    for native_window in &windows {
-        let lifecycle_for_window = Arc::clone(&lifecycle);
-        let window_id = native_window.window.window_id();
-        let source = format!("WindowMouseEvent::{}", native_window.space);
-        let interceptor = cx.update_window(native_window.window, move |_, window, _| {
-            window.intercept_window_mouse_events(move |event, _, _| {
-                let name = match event {
-                    WindowMouseEvent::Move(_) => "window_mouse_move",
-                    WindowMouseEvent::Down(_) => "window_mouse_down",
-                    WindowMouseEvent::Up(_) => "window_mouse_up",
-                    _ => return,
-                };
-                if let Ok(mut lifecycle) = lifecycle_for_window.lock() {
-                    lifecycle.record_raw(
-                        name,
-                        Instant::now(),
-                        NativeLifecycleTimingKind::ExactCallback,
-                        source.as_str(),
-                        None,
-                        None,
-                        None,
-                        format!("real GPUI mouse interceptor callback for {window_id:?}"),
-                    );
-                }
-            })
-        })?;
-        mouse_interceptors.push(interceptor);
-    }
-    let surface_changes = Rc::new(RefCell::new(Vec::new()));
-    let surface_changes_for_subscription = Rc::clone(&surface_changes);
-    let lifecycle_for_subscription = Arc::clone(&lifecycle);
-    let surface_change_subscription = surface.subscribe_changes(cx, move |event, _| {
-        surface_changes_for_subscription
-            .borrow_mut()
-            .push(event.clone());
-        if let Ok(mut lifecycle) = lifecycle_for_subscription.lock() {
-            let now = Instant::now();
-            lifecycle.record_raw(
-                "dock_surface_change",
-                now,
-                NativeLifecycleTimingKind::ExactCallback,
-                "DockSurface::subscribe_changes",
-                None,
-                None,
-                Some(event.revision()),
-                "durable surface change callback",
+impl NativeDockspaceWorkflow {
+    pub(super) fn open(
+        cx: &mut App,
+        native_observation: NativeWindowTestObservation,
+    ) -> Result<Self> {
+        let fixture = load_native_dockspace_scenario("three_dockspace_rehome_cycle")
+            .context("failed to load the legacy latency benchmark fixture")?;
+        let covered_oracles = BTreeSet::from([
+            ProjectedNativeDockspaceOracle::Graph,
+            ProjectedNativeDockspaceOracle::Layout,
+            ProjectedNativeDockspaceOracle::Presentation,
+            ProjectedNativeDockspaceOracle::FocusSelection,
+            ProjectedNativeDockspaceOracle::ViewportRoute,
+            ProjectedNativeDockspaceOracle::NativeLifetime,
+        ]);
+        for required in &covered_oracles {
+            ensure!(
+                fixture.oracles().contains(required),
+                "native workflow fixture {} is missing required oracle {required:?}",
+                fixture.id()
             );
-            if lifecycle.observes_new_revision(event.revision()) {
-                lifecycle.record_observed_boundary(
-                    NativeLifecycleBoundary::GraphReceipt,
+        }
+
+        let mut builder = DockSurface::builder(fixture.primary_space().clone())
+            .try_layout(fixture.layout())?
+            .allow_floating(true)
+            .allow_platform_viewports(true)
+            .platform_focus_sets_dock_focus(true)
+            .visual_style_resolver(dock_visual_style_resolver());
+        for item in fixture.items() {
+            builder = builder.panel(
+                item.clone(),
+                DockPanel::lazy(item.as_str().to_owned(), |cx| cx.new(|_| Empty).into()),
+            );
+        }
+        let surface = builder
+            .build(cx)
+            .context("native dockspace workflow surface should validate")?;
+        let display = cx
+            .primary_display()
+            .context("the native dockspace workflow requires a primary display")?;
+        let bounds = native_dockspace_window_bounds(
+            display.bounds(),
+            fixture.primary_space(),
+            fixture.spaces(),
+        )?;
+
+        let mut windows = Vec::with_capacity(fixture.spaces().len());
+        for (space, window_bounds) in bounds {
+            let options = viewport_window_options(window_bounds);
+            let window = if &space == fixture.primary_space() {
+                match surface.open_primary_window(options, cx) {
+                    DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened.window(),
+                    outcome => {
+                        bail!(
+                            "native dockspace primary viewport {space} failed to open: {outcome:?}"
+                        )
+                    }
+                }
+            } else {
+                match surface.viewports().open(space.clone(), options, cx) {
+                    DockSurfaceViewportOpenOutcome::Opened(opened) => opened.window(),
+                    outcome => {
+                        bail!("native dockspace viewport {space} failed to open: {outcome:?}")
+                    }
+                }
+            };
+            windows.push(NativeDockspaceWindow {
+                space,
+                window,
+                hwnd: raw_hwnd(cx, window)?,
+                bounds: window_bounds,
+            });
+        }
+        let unique_hwnds = windows
+            .iter()
+            .map(|window| window.hwnd.0 as isize)
+            .collect::<BTreeSet<_>>();
+        ensure!(
+            unique_hwnds.len() == fixture.spaces().len(),
+            "native dockspace workflow must create one distinct HWND per space: {unique_hwnds:?}"
+        );
+
+        let lifecycle = Arc::new(Mutex::new(NativeLifecycleRecorder::default()));
+        let mut mouse_interceptors = Vec::with_capacity(windows.len());
+        for native_window in &windows {
+            let lifecycle_for_window = Arc::clone(&lifecycle);
+            let window_id = native_window.window.window_id();
+            let source = format!("WindowMouseEvent::{}", native_window.space);
+            let interceptor = cx.update_window(native_window.window, move |_, window, _| {
+                window.intercept_window_mouse_events(move |event, _, _| {
+                    let name = match event {
+                        WindowMouseEvent::Move(_) => "window_mouse_move",
+                        WindowMouseEvent::Down(_) => "window_mouse_down",
+                        WindowMouseEvent::Up(_) => "window_mouse_up",
+                        _ => return,
+                    };
+                    if let Ok(mut lifecycle) = lifecycle_for_window.lock() {
+                        lifecycle.record_raw(
+                            name,
+                            Instant::now(),
+                            NativeLifecycleTimingKind::ExactCallback,
+                            source.as_str(),
+                            None,
+                            None,
+                            None,
+                            format!("real GPUI mouse interceptor callback for {window_id:?}"),
+                        );
+                    }
+                })
+            })?;
+            mouse_interceptors.push(interceptor);
+        }
+        let lifecycle_for_subscription = Arc::clone(&lifecycle);
+        let surface_change_subscription = surface.subscribe_changes(cx, move |event, _| {
+            if let Ok(mut lifecycle) = lifecycle_for_subscription.lock() {
+                let now = Instant::now();
+                lifecycle.record_raw(
+                    "dock_surface_change",
                     now,
+                    NativeLifecycleTimingKind::ExactCallback,
                     "DockSurface::subscribe_changes",
-                    "durable graph receipt callback observed after the sample base revision",
                     None,
                     None,
                     Some(event.revision()),
+                    "durable surface change callback",
                 );
+                if lifecycle.observes_new_revision(event.revision()) {
+                    lifecycle.record_observed_boundary(
+                        NativeLifecycleBoundary::GraphReceipt,
+                        now,
+                        "DockSurface::subscribe_changes",
+                        "durable graph receipt callback observed after the sample base revision",
+                        None,
+                        None,
+                        Some(event.revision()),
+                    );
+                }
             }
-        }
-    });
-    let live_undock_observation = surface.observe_live_undock_for_test(cx);
-    let shutdown_observation = surface.observe_shutdown_for_test(cx);
-    let renderer_payload_probe =
-        cx.new(|_| NativeRendererPayloadProbe::new(native_renderer_payload_image()));
-    let target_bounds = windows
-        .iter()
-        .find(|window| window.window == target.window)
-        .map(|window| window.bounds)
-        .context("native dockspace target window lost its planned bounds")?;
-
-    Ok(NativeDockScenario {
-        surface: surface.clone(),
-        process_convergence_surface: None,
-        renderer_payload_probe,
-        source_window: source.window,
-        target_window: target.window,
-        source_hwnd: source.hwnd,
-        target_hwnd: target.hwnd,
-        target_bounds,
-        mixed_dpi_displays: None,
-        initial_revision,
-        initial_window_count,
-        initial_owned_window_count,
-        trace: Arc::new(Mutex::new(NativeMouseTrace::default())),
-        surface_changes,
-        native_observation: native_observation.clone(),
-        native_identities: Rc::new(RefCell::new(BTreeMap::new())),
-        app_shutdown_probe: Rc::new(RefCell::new(NativeAppShutdownProbeState::default())),
-        live_undock_observation,
-        shutdown_observation,
-        dockspace_workflow: Some(NativeDockspaceWorkflow {
+        });
+        Ok(Self {
             fixture,
             surface,
             native_observation,
             lifecycle,
             windows,
-        }),
-        workflow_milestones: Vec::new(),
-        _mouse_interceptors: mouse_interceptors,
-        _surface_change_subscription: surface_change_subscription,
-    })
-}
-
-fn project_manifest_oracle(
-    oracle: NativeDockspaceManifestOracle,
-) -> ProjectedNativeDockspaceOracle {
-    match oracle {
-        NativeDockspaceManifestOracle::Graph => ProjectedNativeDockspaceOracle::Graph,
-        NativeDockspaceManifestOracle::Layout => ProjectedNativeDockspaceOracle::Layout,
-        NativeDockspaceManifestOracle::Presentation => ProjectedNativeDockspaceOracle::Presentation,
-        NativeDockspaceManifestOracle::FocusSelection => {
-            ProjectedNativeDockspaceOracle::FocusSelection
-        }
-        NativeDockspaceManifestOracle::ViewportRoute => {
-            ProjectedNativeDockspaceOracle::ViewportRoute
-        }
-        NativeDockspaceManifestOracle::NativeLifetime => {
-            ProjectedNativeDockspaceOracle::NativeLifetime
-        }
-        NativeDockspaceManifestOracle::Performance => ProjectedNativeDockspaceOracle::Performance,
+            _mouse_interceptors: mouse_interceptors,
+            _surface_change_subscription: surface_change_subscription,
+        })
     }
-}
 
-impl NativeDockspaceWorkflow {
-    pub(super) async fn run(
-        &mut self,
-        cx: &mut AsyncApp,
-        scenario_id: &str,
-    ) -> Result<Vec<String>> {
-        self.wait_until_ready(cx).await?;
-        let (milestones, _) = self.run_cycle(cx, scenario_id, 0, false).await?;
-        self.assert_cycle_terminal(cx)?;
-        Ok(milestones)
+    pub(super) fn census(&self, cx: &mut AsyncApp) -> process_harness::NativeWorkerAppCensus {
+        cx.update(|app| {
+            let status = self.surface.window_session_status(app);
+            process_harness::NativeWorkerAppCensus {
+                window_registry_count: app.windows().len(),
+                active_drag: app.has_active_drag(),
+                native_exit_authority_settled: app.native_exit_authority_is_settled_for_test(),
+                surface: process_harness::NativeWorkerSurfaceCensus::constructed(
+                    status.phase() == DockSurfaceWindowSessionPhase::Closed,
+                    status.runtime_empty(),
+                    status.pending_terminal_ticket_count(),
+                    status.failed_terminal_ticket_count(),
+                ),
+            }
+        })
+    }
+
+    pub(super) async fn shutdown(&self, cx: &mut AsyncApp) -> Result<()> {
+        cx.update(|app| app.shutdown_for_native_exit_test());
+        wait_until(cx, "legacy benchmark application shutdown", |cx| {
+            let census = self.census(cx);
+            Ok(census.window_registry_count == 0
+                && !census.active_drag
+                && census.native_exit_authority_settled
+                && census.surface.is_clean()
+                && unsafe { GetCapture() } == HWND::default()
+                && self
+                    .windows
+                    .iter()
+                    .all(|window| !unsafe { IsWindow(Some(window.hwnd)) }.as_bool())
+                && native_observation_is_terminal(&self.native_observation))
+        })
+        .await
     }
 
     pub(super) async fn run_latency_baseline(
@@ -335,7 +279,7 @@ impl NativeDockspaceWorkflow {
             self.windows.len() == 3,
             "native latency baseline requires exactly three real HWNDs"
         );
-        let (milestones, samples) = self.run_cycle(cx, scenario_id, 0, true).await?;
+        let (milestones, samples) = self.run_cycle(cx, scenario_id).await?;
         self.assert_cycle_terminal(cx)?;
         ensure!(
             !self
@@ -414,8 +358,6 @@ impl NativeDockspaceWorkflow {
         &mut self,
         cx: &mut AsyncApp,
         scenario_id: &str,
-        cycle_index: usize,
-        record_lifecycle: bool,
     ) -> Result<(Vec<String>, Vec<serde_json::Value>)> {
         let step_count = self.fixture.steps().len();
         ensure!(
@@ -423,17 +365,12 @@ impl NativeDockspaceWorkflow {
             "native dockspace workflow requires at least one fixture step"
         );
         let mut milestones = Vec::with_capacity(step_count * 2);
-        let mut samples = Vec::with_capacity(if record_lifecycle { step_count } else { 0 });
+        let mut samples = Vec::with_capacity(step_count);
         for index in 0..step_count {
             let step = self.fixture.steps()[index].clone();
-            let observation = self
-                .run_step(cx, cycle_index, index, &step, record_lifecycle)
-                .await?;
+            let observation = self.run_step(cx, index, &step).await?;
             milestones.push(format!("dockspace.{}.preview-submitted", step.id()));
             milestones.push(format!("dockspace.{}.committed", step.id()));
-            if let Some(lifecycle) = observation.lifecycle.clone() {
-                samples.push(lifecycle);
-            }
             log::info!(
                 "scenario={scenario_id} workflow={} step={} source={} target={} item={} preview={:?} revision={}..{} generation={}..{} focus={:?}",
                 self.fixture.id(),
@@ -448,6 +385,7 @@ impl NativeDockspaceWorkflow {
                 observation.committed_generation,
                 observation.focused_window,
             );
+            samples.push(observation.lifecycle);
         }
         Ok((milestones, samples))
     }
@@ -475,10 +413,8 @@ impl NativeDockspaceWorkflow {
     async fn run_step(
         &mut self,
         cx: &mut AsyncApp,
-        cycle_index: usize,
         index: usize,
         step: &NativeDockspaceStep,
-        record_lifecycle: bool,
     ) -> Result<NativeDockspaceStepObservation> {
         let source = self.window(step.source_space())?;
         let target = self.window(step.target().space())?;
@@ -551,7 +487,7 @@ impl NativeDockspaceWorkflow {
                 ))
         })
         .await?;
-        if record_lifecycle {
+        {
             let now = Instant::now();
             let mut lifecycle = self
                 .lifecycle
@@ -559,7 +495,7 @@ impl NativeDockspaceWorkflow {
                 .map_err(|_| anyhow!("native lifecycle recorder lock was poisoned"))?;
             lifecycle.begin_sample(
                 NativeLifecycleSampleContext {
-                    cycle_index,
+                    cycle_index: 0,
                     step_index: index,
                     step_id: step.id().to_owned(),
                     source_space: step.source_space().as_str().to_owned(),
@@ -585,11 +521,10 @@ impl NativeDockspaceWorkflow {
             Ok(cx.update(|app| app.has_active_drag()) && unsafe { GetCapture() } == source.hwnd)
         })
         .await?;
-        if record_lifecycle {
-            self.lifecycle
-                .lock()
-                .map_err(|_| anyhow!("native lifecycle recorder lock was poisoned"))?
-                .record_estimated_boundary(
+        self.lifecycle
+            .lock()
+            .map_err(|_| anyhow!("native lifecycle recorder lock was poisoned"))?
+            .record_estimated_boundary(
                 NativeLifecycleBoundary::DragActivation,
                 Instant::now(),
                 "wait_until(App::has_active_drag)",
@@ -598,7 +533,6 @@ impl NativeDockspaceWorkflow {
                 None,
                 None,
             );
-        }
 
         raise_native_window(target.hwnd)?;
         let routed_hwnd = native_test_non_shell_root_window_at(target_point);
@@ -608,17 +542,15 @@ impl NativeDockspaceWorkflow {
             step.id(),
             target.hwnd
         );
-        if record_lifecycle {
-            self.lifecycle
-                .lock()
-                .map_err(|_| anyhow!("native lifecycle recorder lock was poisoned"))?
-                .record_origin(
-                    NativeLifecycleOrigin::TargetRouteMove,
-                    Instant::now(),
-                    "native_test_inject_system_pointer",
-                    "captured pointer move toward the accepted target was requested",
-                );
-        }
+        self.lifecycle
+            .lock()
+            .map_err(|_| anyhow!("native lifecycle recorder lock was poisoned"))?
+            .record_origin(
+                NativeLifecycleOrigin::TargetRouteMove,
+                Instant::now(),
+                "native_test_inject_system_pointer",
+                "captured pointer move toward the accepted target was requested",
+            );
         inject_system_pointer(target_point, NativeTestPointerAction::Move)?;
         wait_for_cursor(cx, target_point, "native workflow target route").await?;
         let preview_wait = wait_until(cx, "native workflow preview submission", |cx| {
@@ -672,11 +604,12 @@ impl NativeDockspaceWorkflow {
             .selector_bounds
             .context("native workflow preview frame omitted its selector bounds")?;
         let preview_generation = preview_frame.generation;
-        if record_lifecycle {
-            self.lifecycle
+        {
+            let mut lifecycle = self
+                .lifecycle
                 .lock()
-                .map_err(|_| anyhow!("native lifecycle recorder lock was poisoned"))?
-                .record_estimated_boundary(
+                .map_err(|_| anyhow!("native lifecycle recorder lock was poisoned"))?;
+            lifecycle.record_estimated_boundary(
                 NativeLifecycleBoundary::AcceptedPreviewSubmitted,
                 Instant::now(),
                 "Window::submitted_frame_diagnostics_for_test",
@@ -685,18 +618,12 @@ impl NativeDockspaceWorkflow {
                 None,
                 None,
             );
-        }
-
-        if record_lifecycle {
-            self.lifecycle
-                .lock()
-                .map_err(|_| anyhow!("native lifecycle recorder lock was poisoned"))?
-                .record_origin(
-                    NativeLifecycleOrigin::PrimaryRelease,
-                    Instant::now(),
-                    "NativeTestSystemPointerGuard::inject",
-                    "primary-button release injection requested at the accepted target point",
-                );
+            lifecycle.record_origin(
+                NativeLifecycleOrigin::PrimaryRelease,
+                Instant::now(),
+                "NativeTestSystemPointerGuard::inject",
+                "primary-button release injection requested at the accepted target point",
+            );
         }
         pointer_guard.inject(target_point, NativeTestPointerAction::PrimaryUp)?;
         let expected_layout = self
@@ -722,26 +649,24 @@ impl NativeDockspaceWorkflow {
             Ok(settled && unsafe { GetCapture() } == HWND::default())
         })
         .await?;
-        if record_lifecycle {
-            let release = cx.update(|app| {
-                native_captured_release_observation_for_test(source.window.window_id(), app)
-            });
-            if let Some(release) = release.filter(|observation| {
-                Some((observation.generation(), observation.sequence())) != release_before
-            }) {
-                self.lifecycle
-                    .lock()
-                    .map_err(|_| anyhow!("native lifecycle recorder lock was poisoned"))?
-                    .record_estimated_boundary(
-                        NativeLifecycleBoundary::ReleaseLock,
-                        Instant::now(),
-                        "native_captured_release_observation_for_test",
-                        "exact callback-scoped release identity observed after delivery; timestamp is a polling upper bound",
-                        Some(release.generation()),
-                        Some(release.sequence()),
-                        None,
-                    );
-            }
+        let release = cx.update(|app| {
+            native_captured_release_observation_for_test(source.window.window_id(), app)
+        });
+        if let Some(release) = release.filter(|observation| {
+            Some((observation.generation(), observation.sequence())) != release_before
+        }) {
+            self.lifecycle
+                .lock()
+                .map_err(|_| anyhow!("native lifecycle recorder lock was poisoned"))?
+                .record_estimated_boundary(
+                    NativeLifecycleBoundary::ReleaseLock,
+                    Instant::now(),
+                    "native_captured_release_observation_for_test",
+                    "exact callback-scoped release identity observed after delivery; timestamp is a polling upper bound",
+                    Some(release.generation()),
+                    Some(release.sequence()),
+                    None,
+                );
         }
         let destination_semantics_observed_at = Instant::now();
         wait_until(cx, "native workflow target focus", |cx| {
@@ -806,7 +731,7 @@ impl NativeDockspaceWorkflow {
             "native workflow step {} lacks a newer submitted commit frame without its preview: preview={preview_generation}, committed={committed_frame:?}",
             step.id()
         );
-        let lifecycle = if record_lifecycle {
+        let lifecycle = {
             let mut lifecycle = self
                 .lifecycle
                 .lock()
@@ -834,13 +759,9 @@ impl NativeDockspaceWorkflow {
                 "native workflow step {} completed without an exact graph receipt callback",
                 step.id()
             );
-            Some(
-                lifecycle
-                    .finish_sample()
-                    .context("native lifecycle recorder had no active sample")?,
-            )
-        } else {
-            None
+            lifecycle
+                .finish_sample()
+                .context("native lifecycle recorder had no active sample")?
         };
 
         Ok(NativeDockspaceStepObservation {

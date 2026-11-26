@@ -17,8 +17,9 @@ pub(crate) const NATIVE_SCENARIO_SUITE: &str = "docking-native.windows.interacti
 
 const NATIVE_SCENARIO_SCHEMA: u16 = 7;
 const DOCKSPACE_SCENARIO_FIXTURES: &str =
-    include_str!("../../crates/gpui_docking/src/legacy/fixtures/dockspace_scenarios_v2.json");
+    include_str!("../../crates/gpui_docking/tests/fixtures/dockspace_scenarios_v2.json");
 const NATIVE_DOCK_PACKAGE: &str = "open-gpui-docking-native";
+const NATIVE_DOCK_TEST_TARGET: &str = "native_windows_interactive";
 const WINDOWS_PACKAGE: &str = "open-gpui-windows";
 const NATIVE_SCENARIO_ENV: &str = "OPEN_GPUI_NATIVE_SCENARIO_ID";
 const NATIVE_SCENARIO_BEHAVIOR_ENV: &str = "OPEN_GPUI_NATIVE_SCENARIO_BEHAVIOR";
@@ -552,16 +553,11 @@ fn validate_dockspace_binding(
 }
 
 fn load_dockspace_fixture_catalog() -> Result<BTreeMap<String, DockspaceFixtureScenario>, String> {
-    let suite: DockspaceFixtureSuite = serde_json::from_str(DOCKSPACE_SCENARIO_FIXTURES).map_err(
-        |error| {
-            format!(
-                "crates/gpui_docking/src/legacy/fixtures/dockspace_scenarios_v2.json: invalid fixture corpus: {error}"
-            )
-        },
-    )?;
+    let suite: DockspaceFixtureSuite = serde_json::from_str(DOCKSPACE_SCENARIO_FIXTURES)
+        .map_err(|error| format!("dockspace_scenarios_v2.json: invalid fixture corpus: {error}"))?;
     if suite.schema_version != 2 {
         return Err(format!(
-            "crates/gpui_docking/src/legacy/fixtures/dockspace_scenarios_v2.json: unsupported schema {}; expected 2",
+            "dockspace_scenarios_v2.json: unsupported schema {}; expected 2",
             suite.schema_version
         ));
     }
@@ -570,7 +566,7 @@ fn load_dockspace_fixture_catalog() -> Result<BTreeMap<String, DockspaceFixtureS
         let id = scenario.id.clone();
         if catalog.insert(id.clone(), scenario).is_some() {
             return Err(format!(
-                "crates/gpui_docking/src/legacy/fixtures/dockspace_scenarios_v2.json: duplicate scenario `{id}`"
+                "dockspace_scenarios_v2.json: duplicate scenario `{id}`"
             ));
         }
     }
@@ -675,8 +671,8 @@ pub(crate) fn native_windows_interactive(root: &Path) -> Result<(), ()> {
                 "run",
                 "-p",
                 NATIVE_DOCK_PACKAGE,
-                "--features",
-                "legacy-docking",
+                "--test",
+                NATIVE_DOCK_TEST_TARGET,
                 "--locked",
                 "--test-threads=1",
                 "--no-fail-fast",
@@ -712,7 +708,7 @@ fn run_exact_test(
         "--locked".to_owned(),
     ];
     if package == NATIVE_DOCK_PACKAGE {
-        args.extend(["--features".to_owned(), "legacy-docking".to_owned()]);
+        args.extend(["--test".to_owned(), NATIVE_DOCK_TEST_TARGET.to_owned()]);
     }
     if ignored {
         args.extend(["--run-ignored".to_owned(), "only".to_owned()]);

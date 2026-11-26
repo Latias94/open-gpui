@@ -32,9 +32,7 @@ use windows::Win32::{
     Foundation::{HWND, POINT},
     UI::{
         Input::KeyboardAndMouse::{GetAsyncKeyState, GetCapture, VK_LBUTTON},
-        WindowsAndMessaging::{
-            GetCursorPos, GetForegroundWindow, IsWindow, IsWindowVisible, WM_NCMOUSEMOVE,
-        },
+        WindowsAndMessaging::{GetCursorPos, GetForegroundWindow, IsWindowVisible, WM_NCMOUSEMOVE},
     },
 };
 
@@ -84,8 +82,6 @@ pub(super) struct SharedRootSnapshot {
 pub(super) struct SharedCapturedDrag {
     pub(super) generation: NativeCapturedDragGeneration,
     pub(super) source: SharedWindow,
-    pub(super) press_point: POINT,
-    pub(super) threshold_point: POINT,
 }
 
 pub(super) struct SharedSession {
@@ -712,7 +708,7 @@ impl SharedSession {
             self.pump(cx);
             self.check_health()?;
             Ok(cx.update(|app| app.has_active_drag())
-                && cx.update(|app| self.dock.has_active_gesture())
+                && cx.update(|_| self.dock.has_active_gesture())
                 && unsafe { GetCapture() } == source.hwnd)
         })
         .await;
@@ -754,12 +750,7 @@ impl SharedSession {
             .context("shared managed drag did not publish a native capture generation")?;
         self.pointer = Some(pointer);
         self.milestones.push("shared.drag-captured".to_owned());
-        Ok(SharedCapturedDrag {
-            generation,
-            source,
-            press_point,
-            threshold_point,
-        })
+        Ok(SharedCapturedDrag { generation, source })
     }
 
     pub(super) async fn move_captured_pointer(
@@ -953,10 +944,6 @@ pub(super) fn three_window_bounds(
             )
         })
         .collect())
-}
-
-pub(super) fn is_shared_window_live(window: SharedWindow) -> bool {
-    unsafe { IsWindow(Some(window.hwnd)).as_bool() }
 }
 
 pub(super) fn shared_surface_contains_item(
