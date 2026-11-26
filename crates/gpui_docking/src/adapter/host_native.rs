@@ -444,8 +444,12 @@ pub(super) fn wrap(shared: &SharedHost, element: open_gpui::AnyElement) -> open_
     else {
         return element;
     };
+    let guard_shared = shared.clone();
     div()
-        .id("dockspace-native-capture")
+        .id(format!(
+            "dockspace-native-capture-{:x}",
+            Rc::as_ptr(shared) as usize
+        ))
         .size_full()
         .hitbox_tag(tag)
         .on_drag(
@@ -459,7 +463,33 @@ pub(super) fn wrap(shared: &SharedHost, element: open_gpui::AnyElement) -> open_
                 cx.new(|_| open_gpui::Empty)
             },
         )
-        .child(element)
+        .child(
+            div()
+                .size_full()
+                .hitbox_tag(tag)
+                .on_mouse_down(open_gpui::MouseButton::Left, move |_, window, cx| {
+                    // Only allow dock-owned chrome/splitter presses to arm outer
+                    // native drag capture; pane content presses stay isolated.
+                    let allow_capture = {
+                        let host = guard_shared.borrow();
+                        host.native.as_ref().is_some_and(|native| {
+                            native
+                                .callbacks
+                                .get(&window.window_handle().window_id())
+                                .is_some_and(|callbacks| {
+                                    matches!(
+                                        native.transport.mouse_press_lane(callbacks.binding()),
+                                        Some(MousePressLane::Local | MousePressLane::Desktop)
+                                    )
+                                })
+                        })
+                    };
+                    if !allow_capture {
+                        cx.stop_propagation();
+                    }
+                })
+                .child(element),
+        )
         .into_any_element()
 }
 
@@ -500,6 +530,18 @@ fn start_drag(
             return;
         }
         callbacks.retain_capture_start(source, &consumer);
+        if !matches!(
+            transport.mouse_press_lane(binding),
+            Some(MousePressLane::Local | MousePressLane::Desktop)
+        ) {
+            // The initiating press was already settled (e.g. Escape before the
+            // drag threshold) or belongs to pane content; release capture now.
+            callbacks.cancel_capture(cx);
+            if let Some(shared) = weak.upgrade() {
+                pump(&shared, cx);
+            }
+            return;
+        }
         let Some(sample) = sample else {
             return;
         };
@@ -1107,16 +1149,24 @@ pub(super) fn prepare_window(shared: &SharedHost, window: &mut Window, cx: &mut 
     let Some(mut bridge) = native.bridge.take() else {
         return;
     };
-    let more = match collect_host(&mut host, &mut bridge, Some(window), cx) {
+    let mut deferred = DeferredHostWork::default();
+    let mut more = match collect_host(&mut host, &mut bridge, Some(window), &mut deferred, cx) {
         Ok(more) => more,
         Err(error) => {
             host.fail(error.as_ref());
             false
         }
     };
-    host.native.as_mut().unwrap().bridge = Some(bridge);
-    schedule_continuation(shared, &mut host, cx);
     drop(host);
+    if !deferred.root_binds.is_empty() {
+        more |= complete_deferred_root_binds(shared, &mut bridge, deferred.root_binds, cx);
+    }
+    {
+        let mut host = shared.borrow_mut();
+        host.native.as_mut().unwrap().bridge = Some(bridge);
+        schedule_continuation(shared, &mut host, cx);
+    }
+    presentation::withdraw_borrowed_submissions(shared, deferred.borrowed_submissions, cx);
     if more {
         schedule(shared, cx);
     }
@@ -1417,10 +1467,45 @@ fn local_sample(
         .ok()
 }
 
+#[derive(Default)]
+struct DeferredHostWork {
+    root_binds: Vec<(WindowId, NativeWindowBinding, AnyWindowHandle, bool)>,
+    borrowed_submissions: Vec<(AnyWindowHandle, open_gpui::WindowFrameSubmissionTicket)>,
+}
+
+fn complete_deferred_root_binds(
+    shared: &SharedHost,
+    bridge: &mut NativeBridge,
+    pending: Vec<(WindowId, NativeWindowBinding, AnyWindowHandle, bool)>,
+    cx: &mut App,
+) -> bool {
+    let mut bound = false;
+    for (owner, binding, window_handle, anchor) in pending {
+        let result = window_handle.update(cx, |_, window, cx| {
+            bridge.bind_window_current(binding, window, anchor, cx)
+        });
+        let mut host = shared.borrow_mut();
+        match result {
+            Ok(Ok(callbacks)) => {
+                if let Some(native) = host.native.as_mut() {
+                    native.callbacks.insert(owner, callbacks);
+                    native.roots.insert(owner);
+                    native.registrations.remove(&owner);
+                    bound = true;
+                }
+            }
+            Ok(Err(error)) => host.fail(&error),
+            Err(error) => host.fail(error.as_ref()),
+        }
+    }
+    bound
+}
+
 fn collect_host(
     host: &mut HostState,
     bridge: &mut NativeBridge,
     current: Option<&Window>,
+    deferred: &mut DeferredHostWork,
     cx: &mut App,
 ) -> Result<bool> {
     if host
@@ -1440,14 +1525,14 @@ fn collect_host(
     while let Some(report) = host.native.as_mut().unwrap().pending_reports.pop_front() {
         bridge.accept_report(report);
     }
-    recover_root_registrations(host, bridge, current, cx)?;
+    recover_root_registrations(host, bridge, current, &mut deferred.root_binds, cx)?;
     for _ in 0..4 {
         if let Err(error) = bridge.collect(&mut host.session) {
             if !host.session.has_pending_native_input() {
                 return Err(error.into());
             }
         }
-        process_reports(host, bridge, cx)?;
+        process_reports(host, bridge, &mut deferred.borrowed_submissions, cx)?;
         let pending_input = host.session.has_pending_native_input();
         if !pending_input && let Some(action) = bridge.transport().pending_surface_action() {
             // This semantic consequence follows its original release in the
@@ -1465,7 +1550,7 @@ fn collect_host(
             bridge.transport().commit_surface_action();
             host.invalidate_report(&report);
             bridge.accept_report(report);
-            process_reports(host, bridge, cx)?;
+            process_reports(host, bridge, &mut deferred.borrowed_submissions, cx)?;
             continue;
         }
         if !pending_input && let Some(terminal) = bridge.transport().take_presentation() {
@@ -1473,7 +1558,7 @@ fn collect_host(
             while let Some(report) = host.native.as_mut().unwrap().pending_reports.pop_front() {
                 bridge.accept_report(report);
             }
-            process_reports(host, bridge, cx)?;
+            process_reports(host, bridge, &mut deferred.borrowed_submissions, cx)?;
             continue;
         }
         let may_create = !host.native.as_ref().unwrap().transport.is_frozen()
@@ -1496,8 +1581,8 @@ fn collect_host(
         let progressed = advanced || !report.inputs().is_empty();
         host.invalidate_report(&report);
         bridge.accept_report(report);
-        recover_root_registrations(host, bridge, current, cx)?;
-        process_reports(host, bridge, cx)?;
+        recover_root_registrations(host, bridge, current, &mut deferred.root_binds, cx)?;
+        process_reports(host, bridge, &mut deferred.borrowed_submissions, cx)?;
         if !progressed {
             // Effect results can change the roster without a public input outcome.
             return Ok(bridge.republish_inventory_if_complete(&mut host.session)?);
@@ -1512,6 +1597,7 @@ fn recover_root_registrations(
     host: &mut HostState,
     bridge: &mut NativeBridge,
     current: Option<&Window>,
+    pending_root_binds: &mut Vec<(WindowId, NativeWindowBinding, AnyWindowHandle, bool)>,
     cx: &mut App,
 ) -> Result<()> {
     let owners: Vec<_> = host
@@ -1554,14 +1640,23 @@ fn recover_root_registrations(
         } else if let Some(callbacks) = bridge.callbacks_for_window(owner) {
             callbacks
         } else {
-            // The original construction Window cannot be checked out again.
-            // Successful synchronous binding handles that case directly.
+            // The original construction Window cannot be checked out again, and
+            // updating another window handle must run outside the SharedHost borrow.
             if current.is_some_and(|window| window.window_handle().window_id() == owner) {
                 continue;
             }
-            registration.window.update(cx, |_, window, cx| {
-                bridge.bind_window_current(binding, window, registration.anchor, cx)
-            })??
+            if !pending_root_binds
+                .iter()
+                .any(|(queued, _, _, _)| *queued == owner)
+            {
+                pending_root_binds.push((
+                    owner,
+                    binding,
+                    registration.window,
+                    registration.anchor,
+                ));
+            }
+            continue;
         };
         native.callbacks.insert(owner, callbacks);
         native.roots.insert(owner);
@@ -1570,7 +1665,12 @@ fn recover_root_registrations(
     Ok(())
 }
 
-fn process_reports(host: &mut HostState, bridge: &mut NativeBridge, cx: &mut App) -> Result<()> {
+fn process_reports(
+    host: &mut HostState,
+    bridge: &mut NativeBridge,
+    borrowed_submissions: &mut Vec<(AnyWindowHandle, open_gpui::WindowFrameSubmissionTicket)>,
+    cx: &mut App,
+) -> Result<()> {
     while let Some(mut report) = bridge.pop_report() {
         let mut deferred_close = false;
         match &report {
@@ -1620,7 +1720,9 @@ fn process_reports(host: &mut HostState, bridge: &mut NativeBridge, cx: &mut App
                             (callbacks.binding() == *binding).then_some(*owner)
                         })
                 {
-                    presentation::retire_mount(host, owner, cx);
+                    if let Some(borrowed) = presentation::retire_mount(host, owner, cx) {
+                        borrowed_submissions.push(borrowed);
+                    }
                 }
             }
             NativeReport::NativeTerminal(binding) => {
@@ -1675,7 +1777,8 @@ pub(super) fn pump(shared: &SharedHost, cx: &mut App) {
             || !(snapshot.quiesced() && snapshot.native_terminal())
     });
     let factory = native.factory.clone();
-    let mut more = match collect_host(&mut host, &mut bridge, None, cx) {
+    let mut deferred = DeferredHostWork::default();
+    let mut more = match collect_host(&mut host, &mut bridge, None, &mut deferred, cx) {
         Ok(more) => more,
         Err(error) => {
             host.fail(error.as_ref());
@@ -1686,6 +1789,14 @@ pub(super) fn pump(shared: &SharedHost, cx: &mut App) {
         bridge.accept_report(report);
     }
     drop(host);
+    if !deferred.root_binds.is_empty() {
+        more |= complete_deferred_root_binds(shared, &mut bridge, deferred.root_binds, cx);
+    }
+    presentation::withdraw_borrowed_submissions(
+        shared,
+        std::mem::take(&mut deferred.borrowed_submissions),
+        cx,
+    );
     let dock = DockSurface {
         host: shared.clone(),
     };
@@ -1723,7 +1834,7 @@ pub(super) fn pump(shared: &SharedHost, cx: &mut App) {
         bridge.accept_report(report);
         more = true;
     }
-    if let Err(error) = process_reports(&mut host, &mut bridge, cx) {
+    if let Err(error) = process_reports(&mut host, &mut bridge, &mut deferred.borrowed_submissions, cx) {
         host.fail(error.as_ref());
     }
     if !host.session.has_pending_native_input() && host.unavailable_surfaces.is_empty() {
@@ -1801,6 +1912,7 @@ pub(super) fn pump(shared: &SharedHost, cx: &mut App) {
             (Vec::new(), Vec::new())
         };
     drop(host);
+    presentation::withdraw_borrowed_submissions(shared, deferred.borrowed_submissions, cx);
     for window in windows {
         let _ = window.update(cx, |_, window, _| window.refresh());
     }
@@ -1831,18 +1943,18 @@ fn schedule_continuation(shared: &SharedHost, host: &mut HostState, cx: &App) {
         return;
     }
     native.blocked_continuation = None;
-    if native
-        .wake
-        .as_ref()
-        .is_some_and(|wake| wake.request == request)
-    {
-        return;
-    }
     let capture = native
         .callbacks
         .values()
         .find(|callbacks| callbacks.binding() == request.source_binding().window())
         .and_then(NativeCallbacks::active_capture);
+    if native
+        .wake
+        .as_ref()
+        .is_some_and(|wake| wake.request == request && wake.capture == capture)
+    {
+        return;
+    }
     let timer = host
         .clock
         .timer(request.deadline().saturating_sub(host.observed_at()));
@@ -1871,22 +1983,31 @@ fn continue_native_pointer(
 
     {
         let mut host = shared.borrow_mut();
-        let current = host.session.native_pointer_continuation() == Some(request)
-            && host.observed_at() >= request.deadline();
+        let request_current = host.session.native_pointer_continuation() == Some(request);
+        let overdue = host.observed_at() >= request.deadline();
         let Some(native) = host.native.as_mut() else {
             return;
         };
-        if !current
-            || !native
-                .wake
-                .as_ref()
-                .is_some_and(|wake| wake.request == request && wake.capture == capture)
+        if !native
+            .wake
+            .as_ref()
+            .is_some_and(|wake| wake.request == request && wake.capture == capture)
         {
             return;
         }
         native.wake = None;
+        let transport_ready = native.transport.is_empty() && !native.transport.is_frozen();
+        if !request_current {
+            return;
+        }
+        if !overdue {
+            // OS timers can wake slightly ahead of the monotonic deadline;
+            // re-arm for the remaining duration instead of stranding this wake.
+            schedule_continuation(shared, &mut host, cx);
+            return;
+        }
         // Earlier original input must commit before this finite observation.
-        if !native.transport.is_empty() || native.transport.is_frozen() {
+        if !transport_ready {
             return;
         }
     }

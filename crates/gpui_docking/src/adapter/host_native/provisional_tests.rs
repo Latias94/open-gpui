@@ -416,7 +416,15 @@ fn commit_input(dock: &DockSurface, cx: &mut App) {
 
 fn collect(dock: &DockSurface, bridge: &mut NativeBridge, cx: &mut TestAppContext) {
     cx.update(|cx| {
-        super::super::collect_host(&mut dock.host.borrow_mut(), bridge, None, cx).unwrap();
+        let mut deferred = super::super::DeferredHostWork::default();
+        super::super::collect_host(&mut dock.host.borrow_mut(), bridge, None, &mut deferred, cx)
+            .unwrap();
+        super::super::presentation::withdraw_borrowed_submissions(
+            &dock.host,
+            deferred.borrowed_submissions,
+            cx,
+        );
+        super::super::complete_deferred_root_binds(&dock.host, bridge, deferred.root_binds, cx);
     });
 }
 

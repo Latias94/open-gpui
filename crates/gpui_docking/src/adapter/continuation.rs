@@ -99,8 +99,23 @@ fn wake(
         PlatformHoveredWindow::Unavailable => window.is_window_hovered(),
     };
     let position = window.mouse_position();
-    if host.session.pointer_continuation() != Some(request)
-        || host.observed_at() < request.deadline()
+    let request_current = host.session.pointer_continuation() == Some(request);
+    let overdue = host.observed_at() >= request.deadline();
+    if request_current
+        && !overdue
+        && !pending
+        && host.inputs.is_empty()
+        && serial == current
+        && input::is_presented(&host, owner, frame.surface, serial)
+    {
+        // OS timers can wake slightly ahead of the monotonic deadline; re-arm
+        // for the remaining duration instead of dropping the continuation.
+        drop(host);
+        schedule(shared, window, cx);
+        return;
+    }
+    if !request_current
+        || !overdue
         || pending
         || !host.inputs.is_empty()
         || serial != current

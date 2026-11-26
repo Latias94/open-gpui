@@ -9,7 +9,7 @@ use dockspace::{
     },
 };
 use open_gpui::{
-    AcceptedFrameFence, App, GlobalElementId, PlatformFrameDeliveryMode,
+    AcceptedFrameFence, AnyWindowHandle, App, GlobalElementId, PlatformFrameDeliveryMode,
     PrepaintPublicationAttempt, Window, WindowFrameSubmissionOutcome, WindowFrameSubmissionTicket,
     WindowId, WindowInitialPresentationStatus, WindowVisibility,
 };
@@ -500,13 +500,14 @@ pub(super) fn discard(shared: &SharedHost, window: &mut Window, cx: &mut App) {
     if local_pointer_live.get() {
         input::retire_local_pointer(&mut host, owner, local_pointer_live);
     }
-    retire_input_source(&mut host, owner, cx);
+    let borrowed = retire_input_source(&mut host, owner);
     release_surfaces(&mut host, owner, surfaces, cx);
     if let Err(error) = settle_pending(&mut host, Some(window), cx) {
         host.fail(error.as_ref());
     }
     wake_waiting(&mut host, cx);
     drop(host);
+    withdraw_borrowed_submissions(shared, borrowed, cx);
     let _ = window.release_pointer(&capture);
     host_native::schedule(shared, cx);
 }
@@ -519,23 +520,43 @@ fn has_live_source(host: &HostState, input: &QueuedInput) -> bool {
             .is_some_and(|mount| mount.attached)
 }
 
-fn retire_input_source(host: &mut HostState, owner: WindowId, cx: &mut App) {
+fn retire_input_source(
+    host: &mut HostState,
+    owner: WindowId,
+) -> Option<(AnyWindowHandle, WindowFrameSubmissionTicket)> {
     host.inputs
         .retain(|input| input.owner() != owner || input.is_required_pointer_terminal());
     // A surviving window can hold the unaccepted update that borrowed this
-    // mount's input. Withdraw it if possible and retain the other inputs in order.
-    let borrowed = host.mounts.values_mut().find_map(|mount| {
+    // mount's input. Return its handle so withdrawal runs outside the host borrow.
+    host.mounts.values_mut().find_map(|mount| {
         let pending = mount.pending.as_mut()?;
         pending
             .revoke_inputs_from(owner)
             .then(|| (mount.window, pending.ticket.clone()))
-    });
-    if let Some((borrower, ticket)) = borrowed {
+    })
+}
+
+pub(super) fn withdraw_borrowed_submissions(
+    shared: &SharedHost,
+    borrowed: impl IntoIterator<Item = (AnyWindowHandle, WindowFrameSubmissionTicket)>,
+    cx: &mut App,
+) {
+    let mut schedule_native = false;
+    for (borrower, ticket) in borrowed {
         let _ = borrower.update(cx, |_, window, cx| {
             if window.withdraw_unaccepted_frame_submission(&ticket, cx) {
-                withdraw_pending(host, window, cx);
+                let mut host = shared.borrow_mut();
+                withdraw_pending(&mut host, window, cx);
+                if let Err(error) = settle_pending(&mut host, Some(window), cx) {
+                    host.fail(error.as_ref());
+                }
+                wake_waiting(&mut host, cx);
+                schedule_native = true;
             }
         });
+    }
+    if schedule_native {
+        host_native::schedule(shared, cx);
     }
 }
 
@@ -768,11 +789,17 @@ fn wake_waiting(host: &mut HostState, cx: &mut App) {
 }
 
 pub(super) fn close(shared: &SharedHost, owner: WindowId, cx: &mut App) {
-    retire_mount(&mut shared.borrow_mut(), owner, cx);
+    let borrowed = retire_mount(&mut shared.borrow_mut(), owner, cx);
+    withdraw_borrowed_submissions(shared, borrowed, cx);
     host_native::schedule(shared, cx);
 }
 
-pub(super) fn retire_mount(host: &mut HostState, owner: WindowId, cx: &mut App) {
+pub(super) fn retire_mount(
+    host: &mut HostState,
+    owner: WindowId,
+    cx: &mut App,
+) -> Option<(AnyWindowHandle, WindowFrameSubmissionTicket)> {
+    let mut borrowed = None;
     if let Some(mut mount) = host.mounts.remove(&owner) {
         if let Some(pending) = mount.pending.take() {
             retire_pending(host, owner, pending, SurfacePresentationResult::Dropped, cx);
@@ -780,13 +807,14 @@ pub(super) fn retire_mount(host: &mut HostState, owner: WindowId, cx: &mut App) 
         if mount.local_pointer_live.get() {
             input::retire_local_pointer(host, owner, mount.local_pointer_live);
         }
-        retire_input_source(host, owner, cx);
+        borrowed = retire_input_source(host, owner);
         release_surfaces(host, owner, mount.regions.into_keys().collect(), cx);
     }
     if let Err(error) = settle_pending(host, None, cx) {
         host.fail(error.as_ref());
     }
     wake_waiting(host, cx);
+    borrowed
 }
 
 fn release_surfaces(

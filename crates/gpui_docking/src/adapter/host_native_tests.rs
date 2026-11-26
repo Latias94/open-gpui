@@ -806,7 +806,9 @@ fn a_close_retired_by_the_same_native_reset_does_not_lose_the_terminal_suffix(
             .retained_native_surface_bindings_for_window(terminal)
             .collect();
         assert!(!retired.is_empty());
-        let result = super::process_reports(&mut host, &mut bridge, cx);
+        let mut borrowed_submissions = Vec::new();
+        let result =
+            super::process_reports(&mut host, &mut bridge, &mut borrowed_submissions, cx);
         assert!(result.is_ok(), "{result:?}");
         let native = host.native.as_mut().unwrap();
         assert!(native.reports.iter().any(|report| matches!(
@@ -830,6 +832,8 @@ fn a_close_retired_by_the_same_native_reset_does_not_lose_the_terminal_suffix(
                 .all(|binding| native.retired.contains(binding))
         );
         native.bridge = Some(bridge);
+        drop(host);
+        super::presentation::withdraw_borrowed_submissions(&dock.host, borrowed_submissions, cx);
     });
     finish(cx, &dock);
     cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();
@@ -884,7 +888,9 @@ fn a_failed_close_policy_preserves_the_current_report_and_terminal_suffix(cx: &m
         assert!(!retired.is_empty());
         let unavailable = DockspaceSession::from_layout(layout(), DockPolicy::default()).unwrap();
         let original = std::mem::replace(&mut host.session, unavailable);
-        let result = super::process_reports(&mut host, &mut bridge, cx);
+        let mut borrowed_submissions = Vec::new();
+        let result =
+            super::process_reports(&mut host, &mut bridge, &mut borrowed_submissions, cx);
         host.session = original;
         let error = result.unwrap_err();
         assert!(matches!(
@@ -899,7 +905,7 @@ fn a_failed_close_policy_preserves_the_current_report_and_terminal_suffix(cx: &m
             Some(NativeReport::LogicalClosed(binding)) if *binding == terminal
         ));
         assert!(native.retired.is_empty());
-        super::process_reports(&mut host, &mut bridge, cx).unwrap();
+        super::process_reports(&mut host, &mut bridge, &mut borrowed_submissions, cx).unwrap();
         let native = host.native.as_mut().unwrap();
         assert_eq!(native.reports.len(), 3);
         assert!(matches!(
@@ -916,6 +922,8 @@ fn a_failed_close_policy_preserves_the_current_report_and_terminal_suffix(cx: &m
                 .all(|binding| native.retired.contains(binding))
         );
         native.bridge = Some(bridge);
+        drop(host);
+        super::presentation::withdraw_borrowed_submissions(&dock.host, borrowed_submissions, cx);
     });
     finish(cx, &dock);
     cx.update(|cx| dock.begin_native_shutdown(cx)).unwrap();

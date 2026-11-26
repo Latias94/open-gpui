@@ -441,6 +441,12 @@ impl NativeCallbacks {
     pub(in crate::adapter::native) fn handle(&self) -> Option<AnyWindowHandle> {
         self.0.window.get()
     }
+    fn can_register_retirement_dependencies(&self) -> bool {
+        self.handle().is_some()
+            && !self.0.logical_closed.get()
+            && !self.0.native_terminal.get()
+            && self.0.open_retirement.borrow().is_none()
+    }
     pub(in crate::adapter::native) fn facts(&self) -> Option<NativeWindowFacts> {
         self.0.facts.get()
     }
@@ -456,6 +462,10 @@ impl NativeCallbacks {
             .borrow_mut()
             .confirm_observation(self.binding(), facts);
         self.set_facts(facts);
+    }
+    #[cfg(test)]
+    pub(in crate::adapter::native) fn confirmed_observation(&self) -> Option<NativeWindowFacts> {
+        self.0.observations.borrow().live()
     }
     pub(in crate::adapter::native) fn set_logical_closed(&self) {
         self.0.logical_closed.set(true);
@@ -695,8 +705,10 @@ impl NativeBridge {
         if let Some(anchor) = self
             .anchor
             .and_then(|binding| self.windows.get(binding))
+            .filter(|callbacks| callbacks.can_register_retirement_dependencies())
             .and_then(NativeCallbacks::window_id)
         {
+            let retirements = retirements.into_iter().filter(|&window| window != anchor);
             cx.register_native_window_retirement_dependencies(anchor, retirements)
                 .map_err(NativeBridgeError::Dependencies)?;
         }
@@ -745,13 +757,11 @@ impl NativeBridge {
             for (binding, owner, callbacks) in self.windows.iter() {
                 if Some(binding) != self.anchor
                     && !callbacks.is_child_window()
-                    && callbacks.handle().is_some()
-                    && !callbacks.0.logical_closed.get()
-                    && !callbacks.0.native_terminal.get()
+                    && callbacks.can_register_retirement_dependencies()
                 {
                     cx.register_native_window_retirement_dependencies(
                         owner,
-                        children.iter().copied(),
+                        children.iter().copied().filter(|&window| window != owner),
                     )
                     .map_err(NativeBridgeError::Dependencies)?;
                 }
@@ -760,12 +770,13 @@ impl NativeBridge {
         if let Some(anchor) = self
             .anchor
             .and_then(|binding| self.windows.get(binding))
+            .filter(|callbacks| callbacks.can_register_retirement_dependencies())
             .and_then(NativeCallbacks::window_id)
         {
             let dependents = self
                 .windows
                 .iter()
-                .filter(|(binding, _, _)| Some(*binding) != self.anchor)
+                .filter(|(binding, window, _)| Some(*binding) != self.anchor && *window != anchor)
                 .map(|(_, window, _)| window);
             cx.register_native_window_retirement_dependencies(anchor, dependents)
                 .map_err(NativeBridgeError::Dependencies)?;
