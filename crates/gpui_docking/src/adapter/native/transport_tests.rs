@@ -236,7 +236,10 @@ fn native_terminal_ahead_of_pre_native_create_failure_unblocks_without_deadlock(
     // Anchor closes before W2 opens: NativeTerminal(root) sits at the front of the FIFO.
     cx.update(|cx| {
         transport.push(Inbound::LogicalClosed(root), cx);
-        transport.push(Inbound::NativeTerminal(root, NativeWindowFacts::destroyed()), cx);
+        transport.push(
+            Inbound::NativeTerminal(root, NativeWindowFacts::destroyed()),
+            cx,
+        );
     });
     assert_eq!(bridge.collect(&mut session).unwrap(), 1);
     bridge.accept_report(commit(&mut session));

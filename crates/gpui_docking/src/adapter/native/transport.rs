@@ -496,8 +496,11 @@ impl NativeTransport {
         let mut queue = self.0.queue.borrow_mut();
         let mut seen_windows = Vec::new();
         let mut barrier_crossed = false;
-        let index = queue.iter().enumerate().skip(1).find_map(|(index, record)| {
-            match record {
+        let index = queue
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find_map(|(index, record)| match record {
                 Inbound::Effect(result) => {
                     let window = result.binding().window();
                     (windows.get(window).is_none() && missing_window(window)).then_some(index)
@@ -522,8 +525,7 @@ impl NativeTransport {
                     }
                     None
                 }
-            }
-        })?;
+            })?;
         let record = queue.remove(index)?;
         Some((index, record))
     }

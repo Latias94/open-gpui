@@ -807,8 +807,7 @@ fn a_close_retired_by_the_same_native_reset_does_not_lose_the_terminal_suffix(
             .collect();
         assert!(!retired.is_empty());
         let mut borrowed_submissions = Vec::new();
-        let result =
-            super::process_reports(&mut host, &mut bridge, &mut borrowed_submissions, cx);
+        let result = super::process_reports(&mut host, &mut bridge, &mut borrowed_submissions, cx);
         assert!(result.is_ok(), "{result:?}");
         let native = host.native.as_mut().unwrap();
         assert!(native.reports.iter().any(|report| matches!(
@@ -889,8 +888,7 @@ fn a_failed_close_policy_preserves_the_current_report_and_terminal_suffix(cx: &m
         let unavailable = DockspaceSession::from_layout(layout(), DockPolicy::default()).unwrap();
         let original = std::mem::replace(&mut host.session, unavailable);
         let mut borrowed_submissions = Vec::new();
-        let result =
-            super::process_reports(&mut host, &mut bridge, &mut borrowed_submissions, cx);
+        let result = super::process_reports(&mut host, &mut bridge, &mut borrowed_submissions, cx);
         host.session = original;
         let error = result.unwrap_err();
         assert!(matches!(

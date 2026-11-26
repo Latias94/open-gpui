@@ -236,6 +236,7 @@ fn sizing_metadata_keeps_an_unchanged_editor_focused(cx: &mut TestAppContext) {
 
 #[open_gpui::test]
 fn a_siblings_unaccepted_update_preserves_captured_drag_terminals(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_quit_mode(open_gpui::QuitMode::Explicit));
     for cancel in [false, true] {
         let (dock, _) = content_fixture_regions(cx, false, true);
         cx.defer_next_window_frame_requests();

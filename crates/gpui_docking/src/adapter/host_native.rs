@@ -1649,12 +1649,7 @@ fn recover_root_registrations(
                 .iter()
                 .any(|(queued, _, _, _)| *queued == owner)
             {
-                pending_root_binds.push((
-                    owner,
-                    binding,
-                    registration.window,
-                    registration.anchor,
-                ));
+                pending_root_binds.push((owner, binding, registration.window, registration.anchor));
             }
             continue;
         };
@@ -1834,7 +1829,12 @@ pub(super) fn pump(shared: &SharedHost, cx: &mut App) {
         bridge.accept_report(report);
         more = true;
     }
-    if let Err(error) = process_reports(&mut host, &mut bridge, &mut deferred.borrowed_submissions, cx) {
+    if let Err(error) = process_reports(
+        &mut host,
+        &mut bridge,
+        &mut deferred.borrowed_submissions,
+        cx,
+    ) {
         host.fail(error.as_ref());
     }
     if !host.session.has_pending_native_input() && host.unavailable_surfaces.is_empty() {
