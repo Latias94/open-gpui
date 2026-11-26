@@ -623,36 +623,46 @@ pub(super) fn drive(shared: &SharedHost, bridge: &NativeBridge, cx: &mut App) ->
             .clone();
         if let Some(state) = state {
             if let Some(pointer) = accepted.route {
-                let mut state = state.borrow_mut();
-                if state.preview != preview
-                    && state.reveal.as_ref().is_some_and(|ticket| {
-                        ticket.snapshot().outcome() == WindowProvisionalRevealOutcome::Revealed
-                    })
-                {
-                    if let Some(handle) = state.window {
-                        let result = handle.update(cx, |_, window, cx| -> Result<()> {
-                            let request = placement_request(
-                                &mut state,
-                                preview.placement,
-                                pointer,
-                                WindowProvisionalPlacementPurpose::LiveRoute,
-                                window,
-                                cx,
-                            )?;
-                            let (_, ticket) = window
-                                .request_provisional_live_placement(&state.session, request)?;
-                            state.placement = Some(ticket);
-                            state.preview = preview;
-                            state.route = pointer;
-                            wake_after_frame(shared, window);
-                            Ok(())
-                        });
-                        if let Err(error) = result.and_then(|placement| placement) {
-                            log::warn!("native docking preview placement failed: {error:#}");
-                            state.failure = Some(error.to_string());
-                            drop(state);
-                            super::schedule(shared, cx);
+                let handle = {
+                    let state = state.borrow();
+                    (state.preview != preview
+                        && state.reveal.as_ref().is_some_and(|ticket| {
+                            ticket.snapshot().outcome() == WindowProvisionalRevealOutcome::Revealed
+                        }))
+                    .then_some(state.window)
+                    .flatten()
+                };
+                if let Some(handle) = handle {
+                    let result = handle.update(cx, |_, window, cx| -> Result<()> {
+                        let mut state = state.borrow_mut();
+                        if state.preview == preview
+                            || !state.reveal.as_ref().is_some_and(|ticket| {
+                                ticket.snapshot().outcome()
+                                    == WindowProvisionalRevealOutcome::Revealed
+                            })
+                        {
+                            return Ok(());
                         }
+                        let request = placement_request(
+                            &mut state,
+                            preview.placement,
+                            pointer,
+                            WindowProvisionalPlacementPurpose::LiveRoute,
+                            window,
+                            cx,
+                        )?;
+                        let (_, ticket) =
+                            window.request_provisional_live_placement(&state.session, request)?;
+                        state.placement = Some(ticket);
+                        state.preview = preview;
+                        state.route = pointer;
+                        wake_after_frame(shared, window);
+                        Ok(())
+                    });
+                    if let Err(error) = result.and_then(|placement| placement) {
+                        log::warn!("native docking preview placement failed: {error:#}");
+                        state.borrow_mut().failure = Some(error.to_string());
+                        super::schedule(shared, cx);
                     }
                 }
             }

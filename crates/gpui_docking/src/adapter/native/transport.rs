@@ -247,7 +247,9 @@ impl NativeTransport {
     ) {
         if event.button() == open_gpui::MouseButton::Left
             && !matches!(event.phase(), open_gpui::NativeCapturedDragPhase::Moved)
-            && self.captured_mouse_press(binding) == Some(super::NativeCapture::from_event(&event))
+            && (self.captured_mouse_press(binding)
+                == Some(super::NativeCapture::from_event(&event))
+                || self.mouse_press_lane(binding) == Some(MousePressLane::Content))
         {
             self.retire_mouse_press(binding);
         }
@@ -468,6 +470,66 @@ impl NativeTransport {
         self.0.queue.borrow_mut().push_front(record);
     }
 
+    fn restore(&self, index: usize, record: Inbound) {
+        let mut queue = self.0.queue.borrow_mut();
+        let index = index.min(queue.len());
+        queue.insert(index, record);
+    }
+
+    /// Pulls a later record that can complete or shrink the expected native
+    /// window roster when the front observation is blocked waiting on that roster.
+    /// Never reorders two records belonging to the same physical window.
+    fn take_roster_unblocking_record(
+        &self,
+        session: &DockspaceSession,
+        windows: &dockspace::runtime::NativeWindows<open_gpui::WindowId, super::NativeCallbacks>,
+    ) -> Option<(usize, Inbound)> {
+        let missing_window = |binding: NativeWindowBinding| {
+            session
+                .native_window_bindings()
+                .any(|expected| expected == binding)
+                && windows
+                    .get(binding)
+                    .and_then(super::NativeCallbacks::facts)
+                    .is_none()
+        };
+        let mut queue = self.0.queue.borrow_mut();
+        let mut seen_windows = Vec::new();
+        let mut barrier_crossed = false;
+        let index = queue
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find_map(|(index, record)| match record {
+                Inbound::Effect(result) => {
+                    let window = result.binding().window();
+                    (windows.get(window).is_none() && missing_window(window)).then_some(index)
+                }
+                Inbound::Presentation(_) | Inbound::SurfaceAction(_) | Inbound::Desktop(_) => {
+                    barrier_crossed = true;
+                    None
+                }
+                Inbound::Observed(binding, _) | Inbound::NativeTerminal(binding, _)
+                    if !barrier_crossed
+                        && !seen_windows.contains(binding)
+                        && windows.get(*binding).is_some()
+                        && missing_window(*binding) =>
+                {
+                    Some(index)
+                }
+                _ => {
+                    if let Some(binding) = record.binding()
+                        && !seen_windows.contains(&binding)
+                    {
+                        seen_windows.push(binding);
+                    }
+                    None
+                }
+            })?;
+        let record = queue.remove(index)?;
+        Some((index, record))
+    }
+
     fn reject(&self, record: Inbound, error: &NativeBridgeError) {
         self.retry(record);
         *self.0.rejection.borrow_mut() = Some(crate::adapter::DockHostFailure::from_error(error));
@@ -661,6 +723,48 @@ impl NativeBridge {
                     Ok(true) => {}
                     Ok(false) => {
                         self.transport.retry(record);
+                        if let Some((index, unblocker)) = self
+                            .transport
+                            .take_roster_unblocking_record(session, &self.windows)
+                        {
+                            match unblocker {
+                                Inbound::Effect(result) => {
+                                    if let Err(error) = session.report_native_effect_result(result)
+                                    {
+                                        let (kind, result) = error.into_parts();
+                                        let error = NativeBridgeError::EffectReport(kind);
+                                        self.transport.reject(Inbound::Effect(result), &error);
+                                        return Err(error);
+                                    }
+                                    collected += 1;
+                                    continue;
+                                }
+                                unblocker => {
+                                    let unblocker_terminal =
+                                        matches!(unblocker, Inbound::NativeTerminal(..));
+                                    match self.collect_record(session, &unblocker) {
+                                        Ok(true) => {
+                                            collected += 1;
+                                            if unblocker_terminal
+                                                && session.has_pending_native_input()
+                                            {
+                                                self.roster_pending_commit = true;
+                                                break;
+                                            }
+                                            continue;
+                                        }
+                                        Ok(false) => {
+                                            self.transport.restore(index, unblocker);
+                                            break;
+                                        }
+                                        Err(error) => {
+                                            self.transport.reject(unblocker, &error);
+                                            return Err(error);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         break;
                     }
                     Err(error) => {
@@ -914,9 +1018,7 @@ impl NativeBridge {
             return Ok(false);
         }
         self.record_inventory(session, observations, &self.work_areas)?;
-        if complete {
-            callbacks.confirm_observation(facts);
-        } else {
+        if !complete {
             callbacks.set_facts(facts);
         }
         Ok(true)
@@ -930,7 +1032,12 @@ impl NativeBridge {
     ) -> Result<(), NativeBridgeError> {
         let incomplete = observations.is_none();
         if let Some(observations) = observations {
-            session.report_managed_native_snapshot(observations, areas.clone())?;
+            session.report_managed_native_snapshot(observations.iter().copied(), areas.clone())?;
+            for (window, facts) in observations {
+                if let Some(callbacks) = self.windows.get(window) {
+                    callbacks.confirm_observation(facts);
+                }
+            }
         } else {
             session.report_native_inventory_unknown()?;
         }

@@ -416,7 +416,10 @@ fn commit_input(dock: &DockSurface, cx: &mut App) {
 
 fn collect(dock: &DockSurface, bridge: &mut NativeBridge, cx: &mut TestAppContext) {
     cx.update(|cx| {
-        super::super::collect_host(&mut dock.host.borrow_mut(), bridge, None, cx).unwrap();
+        let mut deferred = super::super::DeferredHostWork::default();
+        super::super::collect_host(&mut dock.host.borrow_mut(), bridge, None, &mut deferred, cx)
+            .unwrap();
+        deferred.flush_pre_dispatch(&dock.host, bridge, cx);
     });
 }
 

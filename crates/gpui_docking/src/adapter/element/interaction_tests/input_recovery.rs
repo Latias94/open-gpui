@@ -1079,6 +1079,7 @@ fn managed_source_callback_releases_a_primary_press_from_either_ingress(cx: &mut
 
 #[open_gpui::test]
 fn closing_local_windows_retires_their_released_pointer_streams(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_quit_mode(open_gpui::QuitMode::Explicit));
     use dockspace::runtime::{
         HostPointerInput, HostPointerRoute, PointerDeviceKind, PointerEventMetadata,
         SurfacePointerCancelReason, SurfacePointerCapture, SurfacePointerEvent,
@@ -1139,6 +1140,7 @@ fn closing_local_windows_retires_their_released_pointer_streams(cx: &mut TestApp
 
 #[open_gpui::test]
 fn a_hidden_window_finishes_its_content_press_without_another_frame(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_quit_mode(open_gpui::QuitMode::Explicit));
     use open_gpui::{
         PlatformFrameDeliveryMode, PointerCancelEvent, PointerCancelReason, WindowVisibility,
     };
@@ -1185,6 +1187,7 @@ fn a_hidden_window_finishes_its_content_press_without_another_frame(cx: &mut Tes
 
 #[open_gpui::test]
 fn retiring_content_source_keeps_its_committed_pointer_terminal_in_order(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_quit_mode(open_gpui::QuitMode::Explicit));
     use open_gpui::{
         PlatformFrameDeliveryMode, PlatformInput, PointerCancelEvent, PointerCancelReason,
     };
