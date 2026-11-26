@@ -1561,6 +1561,17 @@ fn managed_stationary_drag_fixture(
     open_gpui::AnyWindowHandle,
     open_gpui::PlatformNativePointerPhysicalFrame,
 ) {
+    managed_stationary_drag_with_focus(cx, false)
+}
+
+fn managed_stationary_drag_with_focus(
+    cx: &mut TestAppContext,
+    sibling_has_focus: bool,
+) -> (
+    DockSurface,
+    open_gpui::AnyWindowHandle,
+    open_gpui::PlatformNativePointerPhysicalFrame,
+) {
     use open_gpui::{
         DevicePixels, MouseButton, MouseDownEvent, MouseMoveEvent, PlatformInput,
         PlatformNativeDragHysteresis, PlatformNativePointerCaptureOwner,
@@ -1604,6 +1615,13 @@ fn managed_stationary_drag_fixture(
     });
     frames(&mut source, &dock);
     frames(&mut sibling, &dock);
+    if sibling_has_focus {
+        sibling.update(|window, _| {
+            let _ = window.activate_window();
+        });
+        frames(&mut sibling, &dock);
+        assert!(sibling.update(|window, _| window.is_window_active()));
+    }
     assert_painted_pane(&dock, windows[0], FIRST, B);
     let pressed = source.debug_bounds("dockspace:tab:22").unwrap().center();
     let hovered = source.debug_bounds("dockspace:tab:21").unwrap().center();
@@ -1913,6 +1931,38 @@ fn managed_escape_releases_the_captured_drag_before_mouse_up(cx: &mut TestAppCon
     assert!(!dock.has_active_gesture());
     assert!(dock.native_pointer_continuation().is_none());
     assert!(dock.with_view(|view| view.item(B).unwrap().is_active()));
+}
+
+#[open_gpui::test]
+fn managed_capture_controls_follow_focus_to_a_sibling_window(cx: &mut TestAppContext) {
+    let (dock, source, _) = managed_stationary_drag_with_focus(cx, true);
+    let sibling = cx
+        .windows()
+        .into_iter()
+        .find(|window| *window != source)
+        .unwrap();
+    let mut visual = VisualTestContext::from_window(sibling, cx);
+    assert!(dock.has_active_gesture());
+    let recorded = dock.host.borrow().session.native_input_recorded_count();
+    visual.simulate_modifiers_change(Modifiers {
+        shift: true,
+        alt: true,
+        ..Modifiers::none()
+    });
+    frames(&mut visual, &dock);
+    assert!(dock.has_active_gesture());
+    assert_eq!(
+        dock.host.borrow().session.native_input_recorded_count(),
+        recorded + 2
+    );
+    visual.simulate_keystrokes("shift-escape");
+    frames(&mut visual, &dock);
+    assert!(!dock.has_active_gesture());
+    visual.update(|_, cx| assert!(!cx.has_active_drag()));
+    assert_eq!(
+        dock.with_view(|view| view.item(B).unwrap().surface()),
+        FIRST
+    );
 }
 
 #[open_gpui::test]

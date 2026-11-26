@@ -17,7 +17,8 @@ impl NativeCallbacks {
             bounds_observer: RefCell::new(None),
             subscriptions: RefCell::new(Vec::new()),
             facts: Cell::new(None),
-            observations: RefCell::default(),
+            queued_properties: Cell::new(None),
+            observations: RefCell::new(NativeWindowObservationOutbox::new(binding)),
             close_requested: Cell::new(false),
             close_sent: Cell::new(false),
             logical_closed: Cell::new(false),
@@ -27,6 +28,7 @@ impl NativeCallbacks {
             root_detached: Cell::new(false),
             capture: Cell::new(None),
             capture_start: Cell::new(None),
+            user_cancelled_capture: Cell::new(None),
             drag_tear_off: Cell::new(None),
             capture_releases: RefCell::new(Vec::new()),
             capture_failed: Cell::new(false),
@@ -79,6 +81,7 @@ impl NativeCallbacks {
             return Err(NativeBridgeError::UnknownBinding);
         }
         self.0.window.set(Some(handle));
+        self.0.facts.set(Some(NativeWindowFacts::live()));
         let weak = Rc::downgrade(&self.0);
         window.on_window_should_close(cx, move |_, cx| {
             let Some(state) = weak.upgrade() else {
@@ -131,13 +134,14 @@ impl NativeCallbacks {
             state.native_terminal.set(true);
             state.capture.set(None);
             state.capture_start.set(None);
+            state.user_cancelled_capture.set(None);
             state.capture_releases.borrow_mut().clear();
             state.capture_failed.set(false);
             state.capture_cancellations.borrow_mut().clear();
             if state.anchor.get() {
                 state.transport.freeze(cx);
             }
-            let facts = state.observations.borrow_mut().destroyed();
+            let facts = state.observations.borrow().destroyed();
             state
                 .transport
                 .push(Inbound::NativeTerminal(state.binding.get(), facts), cx);
@@ -220,8 +224,16 @@ impl NativeCallbacks {
     }
 
     fn publish_observation(&self, facts: NativeWindowFacts, cx: &mut App) {
-        let observation = self.0.observations.borrow_mut().observe(facts);
-        if let Some(facts) = observation {
+        // Redraws can observe the same properties while another window holds
+        // the update lease. Deduplicate the queued samples without treating
+        // their receipts as confirmed or suppressing a later change back.
+        let properties = facts.without_effect_acknowledgements();
+        let changed = self.0.queued_properties.get().map_or_else(
+            || self.0.observations.borrow().observe(facts).is_some(),
+            |queued| facts != properties || queued != properties,
+        );
+        if changed {
+            self.0.queued_properties.set(Some(properties));
             self.0
                 .transport
                 .push(Inbound::Observed(self.binding(), facts), cx);
@@ -312,6 +324,10 @@ impl NativeCallbacks {
     pub fn binding(&self) -> NativeWindowBinding {
         self.0.binding.get()
     }
+
+    pub(in crate::adapter) fn accepts_pointer_controls(&self) -> bool {
+        !self.0.sealed.get() && !self.0.logical_closed.get() && !self.0.native_terminal.get()
+    }
     pub(in crate::adapter) fn has_callback_custody(&self, original: &CallbackCustody) -> bool {
         Rc::downgrade(&self.0).ptr_eq(&original.0)
     }
@@ -365,6 +381,9 @@ impl NativeCallbacks {
         // Keep GPUI's original shutdown authority; never mint a receipt for it.
         let owner = ticket.snapshot().window_id();
         *self.0.open_retirement.borrow_mut() = Some(ticket);
+        if self.0.facts.get().is_none() {
+            self.0.facts.set(Some(NativeWindowFacts::live()));
+        }
         if self.0.window.get().is_none() {
             let weak = Rc::downgrade(&self.0);
             let subscription = cx.on_window_native_terminal(move |cx, terminal| {
@@ -390,10 +409,10 @@ impl NativeCallbacks {
             && snapshot.is_some_and(|snapshot| snapshot.native_terminal())
             && !self.0.native_terminal.replace(true)
         {
-            self.0.transport.push(
-                Inbound::NativeTerminal(self.binding(), NativeWindowFacts::destroyed()),
-                cx,
-            );
+            let facts = self.0.observations.borrow().destroyed();
+            self.0
+                .transport
+                .push(Inbound::NativeTerminal(self.binding(), facts), cx);
         }
     }
 
@@ -431,6 +450,14 @@ impl NativeCallbacks {
         self.0
             .facts
             .set(Some(facts.without_effect_acknowledgements()));
+    }
+
+    pub(in crate::adapter::native) fn confirm_observation(&self, facts: NativeWindowFacts) {
+        self.0
+            .observations
+            .borrow_mut()
+            .confirm_observation(self.binding(), facts);
+        self.set_facts(facts);
     }
     pub(in crate::adapter::native) fn set_logical_closed(&self) {
         self.0.logical_closed.set(true);
@@ -476,9 +503,8 @@ impl NativeCallbacks {
         } else {
             NativeWindowFacts::live()
         }));
-        self.0
-            .observations
-            .replace(NativeWindowObservationOutbox::default());
+        self.0.observations.borrow_mut().reset_for_binding(binding);
+        self.0.queued_properties.set(None);
     }
 
     pub(super) fn window_facts(
@@ -826,7 +852,7 @@ impl NativeBridge {
             || self
                 .effects
                 .pending()
-                .is_some_and(|(window, _)| window == binding.window())
+                .any(|(window, _)| window.same_window_lifetime(binding.window()))
             || self.windows.iter().any(|(_, _, callbacks)| {
                 callbacks
                     .0

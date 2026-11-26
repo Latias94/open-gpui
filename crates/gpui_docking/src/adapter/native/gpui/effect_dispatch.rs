@@ -13,12 +13,36 @@ enum PendingTicket {
     Focus(WindowActivationTicket),
 }
 
+enum PendingOutcome {
+    Retired,
+    Mutation(WindowMutationOutcome),
+    Focus(WindowActivationTerminal),
+}
+
+impl PendingDispatch {
+    fn outcome(&self, binding: NativeWindowBinding) -> Option<PendingOutcome> {
+        if binding != self.callbacks.binding() || !self.callbacks.accepts_pointer_controls() {
+            return Some(PendingOutcome::Retired);
+        }
+        match &self.ticket {
+            PendingTicket::Mutation(ticket) => ticket
+                .observation()
+                .map(|observation| PendingOutcome::Mutation(observation.outcome)),
+            PendingTicket::Focus(ticket) => ticket
+                .snapshot()
+                .status()
+                .terminal()
+                .map(PendingOutcome::Focus),
+        }
+    }
+}
+
 impl NativeBridge {
     /// Dispatches the exact core FIFO outside `SharedHost` and entity borrows.
     ///
     /// A queued placement or pointer-input mutation retains the original affine
-    /// request and blocks subsequent effects until its real observation arrives.
-    /// Invoke again on the owning mutation wake; no timer implies success.
+    /// request and blocks dependent work for that window until its real
+    /// observation arrives. Other windows and terminal cleanup can progress.
     pub fn dispatch_effects(
         &mut self,
         factory: &mut NativeWindowFactory<'_>,
@@ -39,9 +63,7 @@ impl NativeBridge {
         {
             self.remove_window(callbacks, cx);
         }
-        if !self.finish_pending(cx) {
-            return Ok(0);
-        }
+        self.finish_pending(cx);
         let mut dispatched = 0;
         while let Some(request) = self.effects.take_next() {
             let operation = request.operation().clone();
@@ -308,80 +330,71 @@ impl NativeBridge {
         }
     }
 
-    pub(super) fn finish_pending(&mut self, cx: &mut App) -> bool {
-        let Some((binding, pending)) = self.effects.pending() else {
-            return true;
-        };
-        if binding != pending.callbacks.binding()
-            || pending.callbacks.0.logical_closed.get()
-            || pending.callbacks.0.native_terminal.get()
-        {
-            if let Some(result) = self.effects.retire_pending(binding) {
-                self.transport.push(Inbound::Effect(result), cx);
-            }
-            return true;
-        }
-        let result = match &pending.ticket {
-            PendingTicket::Mutation(ticket) => {
-                let Some(observation) = ticket.observation() else {
-                    return false;
-                };
-                let Some((dispatch, pending)) = self.effects.take_pending() else {
-                    return true;
-                };
-                let create = matches!(
-                    dispatch.operation(),
-                    NativeEffectOperation::CreateWindow { .. }
-                        | NativeEffectOperation::RequestReplacement { .. }
-                );
-                if matches!(
-                    observation.outcome,
-                    WindowMutationOutcome::Exact | WindowMutationOutcome::Adjusted
-                ) && pending.callbacks.provisional_placement_settled()
-                {
-                    pending.callbacks.observe_completed_dispatch(dispatch, cx);
-                    return true;
-                }
-                if create {
+    pub(super) fn finish_pending(&mut self, cx: &mut App) {
+        let completed: Vec<_> = self
+            .effects
+            .pending()
+            .filter_map(|(binding, pending)| {
+                pending.outcome(binding).map(|outcome| (binding, outcome))
+            })
+            .collect();
+        for (binding, outcome) in completed {
+            let Some((dispatch, pending)) = self.effects.take_pending(binding) else {
+                continue;
+            };
+            let result = match outcome {
+                PendingOutcome::Retired => {
                     dispatch.indeterminate(NativeIndeterminateReason::AcknowledgementLost)
-                } else {
-                    match observation.outcome {
-                        WindowMutationOutcome::Unsupported => {
+                }
+                PendingOutcome::Mutation(outcome) => {
+                    let create = matches!(
+                        dispatch.operation(),
+                        NativeEffectOperation::CreateWindow { .. }
+                            | NativeEffectOperation::RequestReplacement { .. }
+                    );
+                    if matches!(
+                        outcome,
+                        WindowMutationOutcome::Exact | WindowMutationOutcome::Adjusted
+                    ) && pending.callbacks.provisional_placement_settled()
+                    {
+                        pending.callbacks.observe_completed_dispatch(dispatch, cx);
+                        continue;
+                    }
+                    if create {
+                        dispatch.indeterminate(NativeIndeterminateReason::AcknowledgementLost)
+                    } else {
+                        match outcome {
+                            WindowMutationOutcome::Unsupported => {
+                                dispatch.unsupported(NativeUnsupportedReason::BackendUnsupported)
+                            }
+                            WindowMutationOutcome::Rejected => {
+                                dispatch.not_applied(NativeDispatchFailure::AdapterRejected)
+                            }
+                            _ => dispatch
+                                .indeterminate(NativeIndeterminateReason::AcknowledgementLost),
+                        }
+                    }
+                }
+                PendingOutcome::Focus(terminal) => {
+                    match terminal {
+                        WindowActivationTerminal::Activated => {
+                            let _ = dispatch.accepted();
+                            // Success belongs to this activation. Report current focus independently.
+                            self.transport.focused_window(cx.focused_window(), cx);
+                            continue;
+                        }
+                        WindowActivationTerminal::Unsupported => {
                             dispatch.unsupported(NativeUnsupportedReason::BackendUnsupported)
                         }
-                        WindowMutationOutcome::Rejected => {
+                        WindowActivationTerminal::Rejected => {
                             dispatch.not_applied(NativeDispatchFailure::AdapterRejected)
                         }
                         _ => dispatch.indeterminate(NativeIndeterminateReason::AcknowledgementLost),
                     }
                 }
-            }
-            PendingTicket::Focus(ticket) => {
-                let Some(terminal) = ticket.snapshot().status().terminal() else {
-                    return false;
-                };
-                let Some((dispatch, _)) = self.effects.take_pending() else {
-                    return true;
-                };
-                match terminal {
-                    WindowActivationTerminal::Activated => {
-                        let _ = dispatch.accepted();
-                        // Success belongs to this activation. Report current focus independently.
-                        self.transport.focused_window(cx.focused_window(), cx);
-                        return true;
-                    }
-                    WindowActivationTerminal::Unsupported => {
-                        dispatch.unsupported(NativeUnsupportedReason::BackendUnsupported)
-                    }
-                    WindowActivationTerminal::Rejected => {
-                        dispatch.not_applied(NativeDispatchFailure::AdapterRejected)
-                    }
-                    _ => dispatch.indeterminate(NativeIndeterminateReason::AcknowledgementLost),
-                }
-            }
-        };
-        self.transport.push(Inbound::Effect(result), cx);
-        true
+            };
+            self.transport.push(Inbound::Effect(result), cx);
+        }
     }
 
     fn pointer_input_effect(
@@ -521,6 +534,12 @@ impl NativeBridge {
             );
             return;
         }
+        if let Some(close) = callbacks.0.observations.borrow_mut().take_pending_close() {
+            self.transport.push(
+                Inbound::Effect(close.not_applied(NativeDispatchFailure::AdapterRejected)),
+                cx,
+            );
+        }
         if let Some(NativeEffectAcknowledgement::Close(ack)) = request.begin_dispatch().accepted() {
             callbacks.0.close_requested.set(false);
             self.transport.push(
@@ -543,7 +562,10 @@ impl NativeBridge {
             );
             return;
         };
-        if callbacks.0.close_sent.get() || callbacks.0.observations.borrow().has_pending_close() {
+        if callbacks.0.native_terminal.get()
+            || callbacks.0.close_sent.get()
+            || callbacks.0.observations.borrow().has_pending_close()
+        {
             self.transport.push(
                 Inbound::Effect(
                     request.indeterminate(NativeIndeterminateReason::AcknowledgementLost),

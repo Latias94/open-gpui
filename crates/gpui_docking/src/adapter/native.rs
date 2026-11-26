@@ -175,7 +175,7 @@ pub struct NativeBridge {
     draining: bool,
     work_areas: NativeWorkAreaRoster,
     desktop: desktop::DesktopObservation,
-    desktop_pending_commit: bool,
+    roster_pending_commit: bool,
     // Original captured packet from the accepted FIFO prefix, never a later cursor query.
     captured_pointer: Option<CapturedPointer>,
 }
@@ -231,7 +231,7 @@ impl NativeBridge {
             draining: false,
             work_areas: NativeWorkAreaRoster::Unknown,
             desktop: desktop::DesktopObservation::default(),
-            desktop_pending_commit: false,
+            roster_pending_commit: false,
             captured_pointer: None,
         })
     }
@@ -385,6 +385,9 @@ impl NativeBridge {
             let before = continuation.predecessor();
             let after = continuation.successor();
             if matches!(self.windows.continue_root(*continuation), Ok(true)) {
+                // The committed replacement settles the old Root's effects.
+                // The predecessor ticket cannot publish facts for the successor.
+                drop(self.effects.retire_continued_window(*continuation));
                 if let Some(callbacks) = self.windows.get(after.window()) {
                     callbacks.continue_root(after.window());
                 }

@@ -47,7 +47,7 @@ impl Render for SubmissionView {
     }
 }
 
-fn layout() -> DockspaceLayout {
+pub(super) fn layout() -> DockspaceLayout {
     DockspaceLayout::new([1, 2].map(|value| {
         DockspaceSurfaceLayout::new(
             SurfaceId::new(value),
@@ -64,7 +64,7 @@ fn session() -> DockspaceSession {
     DockspaceSession::from_layout(layout(), DockPolicy::default()).unwrap()
 }
 
-fn commit(session: &mut DockspaceSession) -> HostFrameReport {
+pub(super) fn commit(session: &mut DockspaceSession) -> HostFrameReport {
     let mut frame = session
         .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
         .unwrap();
@@ -533,8 +533,16 @@ fn failed_opens_release_staging_and_transfer_original_rollback_custody(cx: &mut 
         NativeReport::OpenFailed { binding, retirement_ticket: Some(original), .. }
             if *binding == bindings[1] && original.same_authority(&ticket))));
     cx.run_until_parked();
-    bridge.collect(&mut session).unwrap();
-    commit(&mut session);
+    // The first failed factory has no physical owner. Commit its failure before
+    // allowing the second factory's terminal to publish the complete roster.
+    for _ in 0..4 {
+        bridge.collect(&mut session).unwrap();
+        bridge.accept_report(commit(&mut session));
+        if bridge.transport().is_empty() {
+            break;
+        }
+    }
+    assert!(bridge.transport().is_empty());
     assert!(ticket.snapshot().quiesced() && ticket.snapshot().native_terminal());
     assert!(bridge.take_reports().iter().any(|report| matches!(report,
         NativeReport::NativeTerminal(binding) if *binding == bindings[1].window())));

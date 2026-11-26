@@ -169,6 +169,12 @@ impl NativeCallbacks {
         };
         releases.swap_remove(index);
         drop(releases);
+        if self.0.user_cancelled_capture.get().is_some_and(|capture| {
+            capture.source == barrier.source_window()
+                && capture.generation == barrier.drag_generation()
+        }) {
+            self.0.user_cancelled_capture.set(None);
+        }
         self.0.capture_cancellations.borrow_mut().retain(|capture| {
             capture.source != barrier.source_window()
                 || capture.generation != barrier.drag_generation()
@@ -202,6 +208,28 @@ impl NativeCallbacks {
             self.request_capture_cancellation(capture);
         }
         self.dispatch_capture_cancellations(cx);
+    }
+
+    pub(in crate::adapter) fn cancel_capture_from_keyboard(&self, cx: &mut App) -> bool {
+        let Some(capture) = self.active_capture() else {
+            return false;
+        };
+        self.0.user_cancelled_capture.set(Some(capture));
+        self.cancel_capture(cx);
+        true
+    }
+
+    pub(in crate::adapter::native) fn is_user_capture_cancellation(
+        &self,
+        event: &open_gpui::NativeCapturedDragEvent,
+    ) -> bool {
+        self.0.user_cancelled_capture.get() == Some(NativeCapture::from_event(event))
+            && matches!(
+                event.phase(),
+                open_gpui::NativeCapturedDragPhase::Cancelled(
+                    open_gpui::PointerCancelReason::CaptureRevoked
+                )
+            )
     }
 
     pub(in crate::adapter::native) fn dispatch_capture_cancellations(&self, cx: &mut App) {

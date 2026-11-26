@@ -289,7 +289,14 @@ impl NativeBridge {
                 NativePointerEvent::ButtonReleased(pointer_button(event.button()))
             }
             NativeCapturedDragPhase::Cancelled(_) => NativePointerEvent::StreamCancelled(
-                NativePointerCancelReason::ExplicitPlatformCancellation,
+                if self
+                    .callbacks(binding)
+                    .is_some_and(|callbacks| callbacks.is_user_capture_cancellation(event))
+                {
+                    NativePointerCancelReason::ExplicitCancellation
+                } else {
+                    NativePointerCancelReason::ExplicitPlatformCancellation
+                },
             ),
         };
         let input = if let Some(local) = local {

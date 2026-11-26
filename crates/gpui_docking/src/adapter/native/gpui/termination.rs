@@ -122,7 +122,7 @@ impl NativeBridge {
     }
 
     pub(in crate::adapter) fn failed_shutdown_complete(&self) -> bool {
-        self.effects.pending().is_none()
+        self.effects.pending().len() == 0
             && self
                 .windows
                 .iter()

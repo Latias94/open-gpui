@@ -141,8 +141,14 @@ impl NativeTransport {
         &self,
         binding: NativeWindowBinding,
     ) -> Option<MousePressLane> {
+        self.mouse_press()
+            .filter(|(owner, _)| *owner == binding)
+            .map(|(_, lane)| lane)
+    }
+
+    pub(in crate::adapter) fn mouse_press(&self) -> Option<(NativeWindowBinding, MousePressLane)> {
         match self.0.mouse_primary.as_ref()?.get() {
-            MousePrimary::Pressed(press) if press.binding == binding => Some(press.lane),
+            MousePrimary::Pressed(press) => Some((press.binding, press.lane)),
             _ => None,
         }
     }
@@ -555,15 +561,16 @@ impl NativeBridge {
     /// Platform focus mapping also waits for earlier recorded input to commit so
     /// visibility and lifecycle changes determine whether known focus is valid.
     pub fn collect(&mut self, session: &mut DockspaceSession) -> Result<usize, NativeBridgeError> {
-        if self.desktop_pending_commit {
+        if self.roster_pending_commit {
             if session.has_pending_native_input() {
                 return Ok(0);
             }
-            self.desktop_pending_commit = false;
+            self.roster_pending_commit = false;
         }
         let mut collected = 0;
         while let Some(record) = self.transport.pop() {
             let desktop = matches!(record, Inbound::Desktop(_));
+            let terminal = matches!(record, Inbound::NativeTerminal(..));
             let platform_focus = matches!(record, Inbound::FocusedWindow(_))
                 && self
                     .capabilities
@@ -613,17 +620,23 @@ impl NativeBridge {
                         return Err(error);
                     }
                 }
-                record => {
-                    if let Err(error) = self.collect_record(session, &record) {
+                record => match self.collect_record(session, &record) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        self.transport.retry(record);
+                        break;
+                    }
+                    Err(error) => {
                         self.transport.reject(record, &error);
                         return Err(error);
                     }
-                }
+                },
             }
             collected += 1;
-            // A following pointer can use only the work-area binding minted by
-            // this publication's commit, never the preceding roster's binding.
-            if desktop && session.has_pending_native_input() {
+            // The next record must use the committed display or window roster
+            // after a display update or physical window terminal.
+            if (desktop || terminal) && session.has_pending_native_input() {
+                self.roster_pending_commit = true;
                 break;
             }
         }
@@ -634,13 +647,10 @@ impl NativeBridge {
         &mut self,
         session: &mut DockspaceSession,
         record: &Inbound,
-    ) -> Result<(), NativeBridgeError> {
+    ) -> Result<bool, NativeBridgeError> {
         match record {
             Inbound::Observed(binding, facts) => {
-                self.record_snapshot(session, Some((*binding, *facts)), None)?;
-                if let Some(callbacks) = self.windows.get(*binding) {
-                    callbacks.set_facts(*facts);
-                }
+                return self.record_window_observation(session, *binding, *facts, false);
             }
             Inbound::Close(binding, state, acknowledgement) => {
                 session.publish_native_close(*binding, *state, *acknowledgement)?;
@@ -669,9 +679,10 @@ impl NativeBridge {
                 }
             }
             Inbound::NativeTerminal(binding, facts) => {
-                self.record_snapshot(session, Some((*binding, *facts)), None)?;
+                if !self.record_window_observation(session, *binding, *facts, true)? {
+                    return Ok(false);
+                }
                 if let Some(callbacks) = self.windows.get(*binding) {
-                    callbacks.set_facts(*facts);
                     callbacks.set_native_terminal();
                 }
                 self.reports
@@ -735,7 +746,7 @@ impl NativeBridge {
                 if !callbacks.can_accept_capture_event(event) {
                     self.reports
                         .push_back(NativeReport::StaleCallback(*binding));
-                    return Ok(());
+                    return Ok(true);
                 }
                 let input = self.captured_pointer_input(
                     session, *binding, *capture, event, *pointer, *metadata,
@@ -781,7 +792,7 @@ impl NativeBridge {
                     .capabilities
                     .supports(dockspace::runtime::NativeHostCapability::GlobalFocusObservation)
                 {
-                    return Ok(());
+                    return Ok(true);
                 }
                 let focus = match focus {
                     open_gpui::PlatformFocusedWindow::Unavailable => NativeGlobalFocus::Unknown,
@@ -813,7 +824,6 @@ impl NativeBridge {
                     self.record_snapshot(session, None, Some(areas.clone()))?;
                     self.work_areas = areas;
                     self.desktop = desktop.clone();
-                    self.desktop_pending_commit = true;
                 }
             }
             Inbound::Freeze => {
@@ -825,7 +835,33 @@ impl NativeBridge {
             // prefix collected above; the bridge never consumes its outputs.
             Inbound::Presentation(_) | Inbound::SurfaceAction(_) | Inbound::Wake => {}
         }
-        Ok(())
+        Ok(true)
+    }
+
+    fn record_window_observation(
+        &self,
+        session: &mut DockspaceSession,
+        binding: NativeWindowBinding,
+        facts: NativeWindowFacts,
+        terminal: bool,
+    ) -> Result<bool, NativeBridgeError> {
+        let callbacks = self
+            .windows
+            .get(binding)
+            .ok_or(NativeBridgeError::UnknownBinding)?;
+        let Some(observations) = self.snapshot(session, Some((binding, facts))) else {
+            // An unknown inventory cannot acknowledge the original effect or
+            // prove destruction. Hold this exact record until the roster exists.
+            if terminal || facts != facts.without_effect_acknowledgements() {
+                return Ok(false);
+            }
+            session.report_native_inventory_unknown()?;
+            callbacks.set_facts(facts);
+            return Ok(true);
+        };
+        session.report_managed_native_snapshot(observations, self.work_areas.clone())?;
+        callbacks.confirm_observation(facts);
+        Ok(true)
     }
 
     fn record_snapshot(

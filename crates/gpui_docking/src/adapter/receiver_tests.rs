@@ -177,6 +177,57 @@ fn clipped_native_regions_leave_confirmed_window_background(cx: &mut TestAppCont
 }
 
 #[open_gpui::test]
+fn window_hit_waits_for_the_region_roster_and_reports_foreign_overlays(cx: &mut TestAppContext) {
+    let (dock, mut visual) = fixture(cx);
+    let position = point(px(24.0), px(550.0));
+    let (queries, result) = pointer_queries(
+        &dock,
+        &mut visual,
+        position,
+        NativePointerEvent::ButtonPressed(NativePointerButton::Primary),
+    );
+    result.unwrap();
+    let [(query @ NativeReceiverQuery::WindowHit(_), _)] = queries.as_slice() else {
+        panic!("expected a window hit query at the clipped edge: {queries:?}");
+    };
+    visual.update(|window, _| {
+        let mut host = dock.host.borrow_mut();
+        let mount = host
+            .mounts
+            .get_mut(&window.window_handle().window_id())
+            .unwrap();
+        let foreign_overlay = open_gpui::HitboxId::placeholder();
+        assert!(mount.input_frames.iter().all(|frame| {
+            !frame.hitboxes.contains(&foreign_overlay)
+                && !frame.content_hitboxes.contains(&foreign_overlay)
+        }));
+        // The point is outside the region's clip. It still hits a framework
+        // overlay, so it must not confirm that the pointer reached background.
+        assert_eq!(
+            resolve_in_window(*query, mount, |_| Some(Some(foreign_overlay))),
+            NativeReceiverAnswer::WindowHit(NativeWindowHit::Blocked),
+        );
+        let sibling = SurfaceId::new(2);
+        mount.regions.insert(sibling, Default::default());
+        assert_eq!(
+            resolve_in_window(*query, mount, |_| Some(None)),
+            NativeReceiverAnswer::WindowHit(NativeWindowHit::Unknown),
+            "an unpresented sibling cannot prove window background",
+        );
+        let (serial, artifact) = mount.regions[&SURFACE].presented.unwrap();
+        let mut stale = mount.input_frames[0].clone();
+        stale.surface = sibling;
+        mount.input_frames.push(stale);
+        mount.regions.get_mut(&sibling).unwrap().presented = Some((serial + 1, artifact));
+        assert_eq!(
+            resolve_in_window(*query, mount, |_| Some(None)),
+            NativeReceiverAnswer::WindowHit(NativeWindowHit::Unknown),
+            "a stale sibling hit graph cannot prove window background",
+        );
+    });
+}
+
+#[open_gpui::test]
 fn a_frontmost_drag_only_splitter_blocks_click_and_accepts_drag(cx: &mut TestAppContext) {
     let (dock, mut visual) = fixture(cx);
     let (descriptor, position) = visual.update(|window, _| {

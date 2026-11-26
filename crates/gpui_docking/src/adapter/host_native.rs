@@ -116,6 +116,7 @@ struct RootRegistration {
     surface: SurfaceId,
     window: AnyWindowHandle,
     anchor: bool,
+    retirement: termination::UnboundWindowRetirement,
 }
 
 struct NativeWake {
@@ -617,12 +618,18 @@ impl DockSurface {
             .register_native_root(surface, HostWindowToken::new(owner.as_u64()))?;
         // After append, retain custody even if preparation, commit or callback
         // binding fails. The normal pump retries the same recorder prefix.
-        host.native.as_mut().unwrap().registrations.insert(
+        let native = host.native.as_mut().unwrap();
+        native.registrations.insert(
             owner,
             RootRegistration {
                 surface,
                 window: window.window_handle(),
                 anchor,
+                retirement: termination::UnboundWindowRetirement::observe(
+                    owner,
+                    &native.transport,
+                    cx,
+                ),
             },
         );
         let HostState {
@@ -1516,8 +1523,13 @@ fn recover_root_registrations(
         }
         let native = host.native.as_mut().unwrap();
         let registration = &native.registrations[&owner];
-        let callbacks = if let Some(ticket) = native.retirements.get(&owner) {
-            bridge.retain_root_rollback(binding, ticket.clone(), registration.anchor, cx)?
+        let ticket = native
+            .retirements
+            .get(&owner)
+            .cloned()
+            .or_else(|| registration.retirement.ticket());
+        let callbacks = if let Some(ticket) = ticket {
+            bridge.retain_root_rollback(binding, ticket, registration.anchor, cx)?
         } else if let Some(callbacks) = bridge.callbacks_for_window(owner) {
             callbacks
         } else {

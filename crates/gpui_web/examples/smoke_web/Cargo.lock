@@ -1220,7 +1220,7 @@ dependencies = [
 [[package]]
 name = "dockspace"
 version = "0.1.0"
-source = "git+https://github.com/Latias94/dockspace?rev=8cf631f85eb91b04ad29dcd6031acceb48081c08#8cf631f85eb91b04ad29dcd6031acceb48081c08"
+source = "git+https://github.com/Latias94/dockspace?rev=8576097cad5a44771dd92f588a15f8bf837c5b15#8576097cad5a44771dd92f588a15f8bf837c5b15"
 dependencies = [
  "blake3",
  "serde",

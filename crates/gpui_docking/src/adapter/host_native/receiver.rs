@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use dockspace::geometry::PhysicalRect;
+use dockspace::geometry::{PhysicalPoint, PhysicalRect};
 use dockspace::runtime::{
     NativeReceiverAnswer, NativeReceiverPurpose, NativeReceiverQuery, NativeRegionWindowHit,
     NativeWindowHit, resolve_region_window_hit,
@@ -57,35 +57,7 @@ pub(super) fn resolve_in_window(
 ) -> NativeReceiverAnswer {
     match query {
         NativeReceiverQuery::WindowHit(query) => {
-            let mut regions = mount
-                .input_frames
-                .iter()
-                .filter_map(|frame| {
-                    let (serial, artifact) = mount.regions.get(&frame.surface)?.presented?;
-                    (serial == frame.serial).then_some((frame, artifact))
-                })
-                .peekable();
-            let Some((first, _)) = regions.peek() else {
-                return NativeReceiverAnswer::WindowHit(NativeWindowHit::Unknown);
-            };
-            let point = point(
-                px((query.point().x() / first.scale) as f32),
-                px((query.point().y() / first.scale) as f32),
-            );
-            let Some(target) = frontmost(point) else {
-                return NativeReceiverAnswer::WindowHit(NativeWindowHit::Unknown);
-            };
-            NativeReceiverAnswer::WindowHit(resolve_region_window_hit(
-                query.point(),
-                regions.filter_map(|(frame, artifact)| {
-                    let bounds = physical_rect(frame.geometry.displayed_bounds(), frame.scale)?;
-                    let clip = physical_rect(frame.clip, frame.scale)?;
-                    let exposed = target.is_some_and(|target| {
-                        frame.hitboxes.contains(&target) || frame.content_hitboxes.contains(&target)
-                    });
-                    Some(NativeRegionWindowHit::new(artifact, bounds, clip, exposed))
-                }),
-            ))
+            NativeReceiverAnswer::WindowHit(window_hit(query.point(), mount, frontmost))
         }
         NativeReceiverQuery::Surface(query) => {
             let Some(frame) = mount.input_frames.iter().find(|frame| {
@@ -143,6 +115,87 @@ pub(super) fn resolve_in_window(
                 NativeReceiverAnswer::Blocked(query.presented_surface())
             }
         }
+    }
+}
+
+fn window_hit(
+    physical: PhysicalPoint,
+    mount: &WindowMount,
+    frontmost: impl Fn(open_gpui::Point<Pixels>) -> Option<Option<HitboxId>>,
+) -> NativeWindowHit {
+    if !mount.attached {
+        return NativeWindowHit::Unknown;
+    }
+    let mut complete = true;
+    let mut last_hit = None;
+    let mut fallback = NativeWindowHit::Unknown;
+    let mut foreign = false;
+    for (&surface, region) in &mount.regions {
+        if region
+            .packet
+            .as_ref()
+            .is_some_and(|packet| packet.is_vacant())
+        {
+            continue;
+        }
+        let Some((serial, artifact)) = region.presented else {
+            complete = false;
+            continue;
+        };
+        let Some(frame) = mount
+            .input_frames
+            .iter()
+            .find(|frame| frame.surface == surface && frame.serial == serial)
+        else {
+            complete = false;
+            continue;
+        };
+        let (Some(bounds), Some(clip)) = (
+            physical_rect(frame.geometry.displayed_bounds(), frame.scale),
+            physical_rect(frame.clip, frame.scale),
+        ) else {
+            complete = false;
+            continue;
+        };
+        let target = if let Some((_, target)) = last_hit.filter(|(scale, _)| *scale == frame.scale)
+        {
+            target
+        } else {
+            let sample = point(
+                px((physical.x() / frame.scale) as f32),
+                px((physical.y() / frame.scale) as f32),
+            );
+            let Some(target) = frontmost(sample) else {
+                complete = false;
+                continue;
+            };
+            last_hit = Some((frame.scale, target));
+            target
+        };
+        let exposed = target.is_some_and(|target| {
+            frame.hitboxes.contains(&target) || frame.content_hitboxes.contains(&target)
+        });
+        // A real foreground hit picks the winning region even when two region
+        // rectangles overlap. An unpresented region cannot confer authority.
+        let hit = resolve_region_window_hit(
+            physical,
+            [NativeRegionWindowHit::new(artifact, bounds, clip, exposed)],
+            false,
+        );
+        if matches!(hit, NativeWindowHit::Surface(_)) {
+            return hit;
+        }
+        if fallback == NativeWindowHit::Unknown || hit == NativeWindowHit::Blocked {
+            fallback = hit;
+        }
+        foreign |= target.is_some();
+    }
+    if !complete {
+        NativeWindowHit::Unknown
+    } else if foreign {
+        resolve_region_window_hit(physical, [], true)
+    } else {
+        fallback
     }
 }
 

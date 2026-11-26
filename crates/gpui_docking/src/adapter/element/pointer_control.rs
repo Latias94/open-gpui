@@ -59,26 +59,34 @@ pub(super) fn install(
                 local_capture(&host, window),
             )
         };
-        if native.is_none() && local.is_none() {
-            return;
-        }
-        if let Some(callbacks) = native.filter(|callbacks| callbacks.active_capture().is_some()) {
-            callbacks.cancel_capture(cx);
-        } else {
-            settle_primary_terminal(
-                &shared,
-                &interaction,
-                SurfacePointerEvent::StreamCancelled(
-                    SurfacePointerCancelReason::ExplicitCancellation,
-                ),
-                event.keystroke.modifiers,
-                None,
-                window,
-                cx,
-            );
-            if let Some(capture) = local {
-                let _ = window.release_pointer(&capture);
+        let modifiers = event.keystroke.modifiers;
+        let event =
+            SurfacePointerEvent::StreamCancelled(SurfacePointerCancelReason::ExplicitCancellation);
+        if let Some(callbacks) = native {
+            if !callbacks.cancel_capture_from_keyboard(cx) {
+                if host_native::routes_captured_drag(&shared, cx) {
+                    // A platform capture already settling owns its real terminal.
+                    return;
+                }
+                let Some(source) = callbacks.window_id() else {
+                    return;
+                };
+                let mut host = shared.borrow_mut();
+                let metadata = host
+                    .config
+                    .input
+                    .pointer_metadata(host.observed_at(), Some(modifiers));
+                if !host_native::queue_mouse_terminal(&mut host, source, false, event, metadata) {
+                    return;
+                }
+                drop(host);
+                host_native::schedule(&shared, cx);
             }
+        } else if let Some(capture) = local {
+            settle_primary_terminal(&shared, &interaction, event, modifiers, None, window, cx);
+            let _ = window.release_pointer(&capture);
+        } else {
+            return;
         }
         interaction.splitter_press.borrow_mut().take();
         interaction.tab_list_press.borrow_mut().take();
@@ -93,9 +101,18 @@ fn managed_press<'a>(host: &'a HostState, window: &Window) -> Option<&'a native:
         .native
         .as_ref()
         .filter(|native| !native.transport.is_frozen())?;
-    let callbacks = native.callbacks.get(&window.window_handle().window_id())?;
-    let lane = native.transport.mouse_press_lane(callbacks.binding())?;
-    (lane != native::MousePressLane::Content).then_some(callbacks)
+    let delivery = native.callbacks.get(&window.window_handle().window_id())?;
+    let (source, lane) = native.transport.mouse_press()?;
+    if lane == native::MousePressLane::Content
+        || !delivery.accepts_pointer_controls()
+        || (source != delivery.binding() && !window.is_window_active())
+    {
+        return None;
+    }
+    native
+        .callbacks
+        .values()
+        .find(|callbacks| callbacks.binding() == source && callbacks.accepts_pointer_controls())
 }
 
 fn local_capture(host: &HostState, window: &Window) -> Option<open_gpui::PointerCaptureHandle> {
@@ -404,6 +421,9 @@ impl DockspaceElement {
                     );
                     refresh_menu(&shared, surface, window);
                 }
+                if shared.borrow().native.is_some() {
+                    host_native::schedule(&shared, cx);
+                }
                 window.refresh();
                 cx.stop_propagation();
             }
@@ -578,5 +598,10 @@ fn settle_primary_terminal(
         && let Err(error) = presentation::settle_pending(&mut host, Some(window), cx)
     {
         host.fail(error.as_ref());
+    }
+    let wake_native = handled && host.native.is_some();
+    drop(host);
+    if wake_native {
+        host_native::schedule(shared, cx);
     }
 }

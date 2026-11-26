@@ -263,6 +263,85 @@ fn failed_anchor_rollback_cannot_block_retirement_of_its_existing_root_dependenc
 }
 
 #[open_gpui::test]
+fn unbound_root_destroyed_before_retirement_does_not_block_failed_shutdown(
+    cx: &mut TestAppContext,
+) {
+    let dock = cx.update(workspace);
+    let anchor = cx
+        .update(|cx| dock.open_native_root(FIRST, true, WindowOptions::default(), cx))
+        .unwrap();
+    let root = cx
+        .update(|cx| {
+            cx.open_window_detailed(WindowOptions::default(), |window, cx| {
+                // Exercise the state after registration was recorded but before
+                // a native callback installation could claim the window.
+                let handle = window.window_handle();
+                let mut host = dock.host.borrow_mut();
+                let native = host.native.as_mut().unwrap();
+                native.registrations.insert(
+                    handle.window_id(),
+                    super::RootRegistration {
+                        surface: SECOND,
+                        window: handle,
+                        anchor: false,
+                        retirement: super::termination::UnboundWindowRetirement::observe(
+                            handle.window_id(),
+                            &native.transport,
+                            cx,
+                        ),
+                    },
+                );
+                cx.new(|_| Empty)
+            })
+        })
+        .unwrap()
+        .into();
+    // Keep pump callbacks from recovering the registration before its window
+    // goes away. The failed native generation still owns the same registration.
+    let bridge = dock
+        .host
+        .borrow_mut()
+        .native
+        .as_mut()
+        .unwrap()
+        .bridge
+        .take()
+        .unwrap();
+    let owner = cx
+        .update_window(root, |_, window, cx| {
+            let owner = window.window_handle().window_id();
+            window.remove_window(cx);
+            owner
+        })
+        .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert!(!cx.windows().contains(&root));
+        assert!(cx.native_window_retirement_ticket(owner).is_none());
+        let mut host = dock.host.borrow_mut();
+        assert!(
+            host.native
+                .as_ref()
+                .unwrap()
+                .registrations
+                .contains_key(&owner)
+        );
+        host.native.as_mut().unwrap().bridge = Some(bridge);
+        host.fail(&NativeBridgeError::EffectReport(
+            NativeHostErrorKind::InvalidFacts,
+        ));
+        drop(host);
+        dock.begin_failed_native_shutdown(cx).unwrap();
+    });
+    cx.run_until_parked();
+    assert!(matches!(
+        dock.native_termination(),
+        Some(crate::DockNativeTermination::Failed(_))
+    ));
+    assert!(cx.update_window(anchor, |_, _, _| ()).is_err());
+}
+
+#[open_gpui::test]
 fn failed_shutdown_retries_the_original_window_borrow_without_another_external_wake(
     cx: &mut TestAppContext,
 ) {

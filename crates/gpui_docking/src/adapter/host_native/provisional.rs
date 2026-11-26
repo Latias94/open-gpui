@@ -30,7 +30,7 @@ use open_gpui::{
 
 use super::{
     DockSurface, HostState, NativeBridge, NativeCallbacks, NativeGeometry, NativeOpenFailure,
-    NativeRoot, NativeWindowRequest, SharedHost,
+    NativeRoot, NativeWindowRequest, SharedHost, termination::UnboundWindowRetirement,
 };
 use crate::adapter::element::Packet;
 use crate::adapter::native::NativeCapture;
@@ -84,6 +84,7 @@ pub(super) struct ProvisionalWindow {
     peers: Vec<WindowId>,
     placement_generation: u64,
     _initial: Option<Subscription>,
+    retirement: Option<UnboundWindowRetirement>,
 }
 
 impl Provisional {
@@ -322,10 +323,23 @@ fn advance_presentation(
 }
 
 fn retire(shared: &SharedHost, state: Rc<RefCell<ProvisionalWindow>>, cx: &mut App) {
-    let handle = state.borrow().window;
+    let (handle, ticket, terminal) = {
+        let state = state.borrow();
+        (
+            state.window,
+            state
+                .retirement
+                .as_ref()
+                .and_then(UnboundWindowRetirement::ticket),
+            state
+                .retirement
+                .as_ref()
+                .is_some_and(UnboundWindowRetirement::is_terminal),
+        )
+    };
     let Some(handle) = handle else { return };
-    let ticket = cx
-        .native_window_retirement_ticket(handle.window_id())
+    let ticket = ticket
+        .or_else(|| cx.native_window_retirement_ticket(handle.window_id()))
         .or_else(|| {
             handle
                 .update(cx, |_, window, cx| window.remove_window_with_retirement(cx))
@@ -333,9 +347,14 @@ fn retire(shared: &SharedHost, state: Rc<RefCell<ProvisionalWindow>>, cx: &mut A
         });
     let mut host = shared.borrow_mut();
     let provisional = &mut host.native.as_mut().unwrap().provisional;
-    if let Some(ticket) = ticket {
+    if terminal || ticket.is_some() {
         provisional.awaiting_retirement.remove(&handle.window_id());
-        provisional.retirements.insert(handle.window_id(), ticket);
+        if let Some(ticket) = ticket {
+            let snapshot = ticket.snapshot();
+            if !(snapshot.quiesced() && snapshot.native_terminal()) {
+                provisional.retirements.insert(handle.window_id(), ticket);
+            }
+        }
     } else {
         // A borrowed or already removed Window is not a native terminal. Retain
         // the original owner until GPUI publishes its real shutdown authority.
@@ -379,6 +398,7 @@ fn open_preview(
         peers,
         placement_generation: 0,
         _initial: None,
+        retirement: None,
     }));
     let root_state = state.clone();
     let dock = DockSurface {
@@ -404,16 +424,17 @@ fn open_preview(
                 super::schedule(&shared, cx);
             }
         });
-        let weak = Rc::downgrade(&dock.host);
         let owner = window.window_handle().window_id();
-        let closed = cx.on_window_closed(move |cx, closed| {
-            if closed == owner
-                && let Some(shared) = weak.upgrade()
-            {
-                super::schedule(&shared, cx);
-            }
-        });
-        root_state.borrow_mut()._initial = Some(Subscription::join(initial, closed));
+        let mut state = root_state.borrow_mut();
+        let host = dock.host.borrow();
+        state.retirement = Some(UnboundWindowRetirement::observe(
+            owner,
+            &host.native.as_ref().unwrap().transport,
+            cx,
+        ));
+        state._initial = Some(initial);
+        drop(host);
+        drop(state);
         window.on_window_should_close(cx, |_, _| false);
         cx.new(|_| NativeRoot {
             dock,
@@ -626,10 +647,10 @@ pub(super) fn drive(shared: &SharedHost, bridge: &NativeBridge, cx: &mut App) ->
                             wake_after_frame(shared, window);
                             Ok(())
                         });
-                        if let Ok(Err(error)) = result {
+                        if let Err(error) = result.and_then(|placement| placement) {
+                            log::warn!("native docking preview placement failed: {error:#}");
                             state.failure = Some(error.to_string());
                             drop(state);
-                            shared.borrow_mut().fail(error.as_ref());
                             super::schedule(shared, cx);
                         }
                     }
