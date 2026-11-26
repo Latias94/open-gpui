@@ -7,7 +7,7 @@ without inheriting the repository workspace's dependency resolution or lockfile.
 This full consumer declares Rust 1.95 because it directly depends on `open-gpui-docking`,
 whose pinned dockspace dependency declares that minimum. Disabling fixture features does
 not remove its docking dependency. CI checks this application with Rust 1.95 separately
-from the Rust 1.93 gates for core, macros, components, and the independent test-support
+from the Rust 1.93 gates for core, macros, base controls, and the independent test-support
 and hot-reload consumers. Use the named compiler in each minimum-version check.
 
 Archived benchmark, Web, HTTP, and Tokio targets are available at `legacy/v0-pre-slim`.
@@ -18,19 +18,9 @@ are deliberately unexecuted; actual candidate publication and native GPU submiss
 the framework's ordinary App and external WGPU consumers. Run
 `cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test deferred_frames --target-dir target --test-threads=1 --no-fail-fast --no-tests fail`.
 
-The `portable_paths` target directly consumes `open-gpui-path` with serde. Its public workflows
-compose portable Unix/Windows drive/UNC/verbatim normalization and prefix/join operations,
-persist checked relative paths, resolve them against a local absolute base and pass the same
-types through utility matching, extension ordering and file-position navigation. Host-native
-non-Unicode bytes round-trip separately from checked Unicode relative paths. It does not read
-or modify external files, launch an App or exercise a native file dialog. Run
-`cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --test portable_paths --target-dir target --test-threads=1 --no-fail-fast --no-tests fail`.
-
 The `support_primitives` target executes public character conversion and SharedString serde.
-Uninvoked native closures type-check DedicatedExecutor construction and command spawning; they
-do not execute a native task or process. Its direct `smol`/`async-process` type identity assertion
-requires the exact shared process implementation. On Darwin it also checks the public
-`smol::Async<File>` stdout type. Run it with
+It type-checks DedicatedExecutor construction and the `smol` and `async-process` package identity.
+Run it with
 `cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --test support_primitives --target-dir target --test-threads=1 --no-fail-fast --no-tests fail`.
 
 The application root selects the official process reaper explicitly:
@@ -78,7 +68,7 @@ Other dependencies retain their own binding versions. Review this edge when refr
 lock and run the locked all-features gate below; no allocator source patch or compatibility
 conversion is introduced.
 
-The source composes a GPUI `Render` view, a semantic button activation handler, custom canvas
+The source composes a GPUI `Render` view, an unstyled `open_gpui_base::Button`, custom canvas
 painting, and one retained View mounted through `adapter::DockSurface` and the
 shared `DockspaceSession`. Its original managed native root supplies GPUI's actual
 window/submission owners without enabling test support. Taffy's size type supplies the preview dimensions;
@@ -1049,9 +1039,9 @@ and uncaptured errors remain checked. The tests do not assume a minimum GPU exec
 or simulate physical device loss.
 
 Combining `vulkan-surface,wgpu-renderer` adds an ordinary public `WgpuRenderer` trajectory.
-It creates the first real HWND surface/context with a zero requested drawable size, resumes
-to a nonempty submitted Scene,
-shares the same device/queue with a second real surface, suspends/resumes that surface and
+It requests an application-owned Vulkan device and queue, opens the first real HWND surface with
+a zero requested drawable size, and resumes to a nonempty submitted Scene. A second real surface
+joins the shared context, suspends and resumes. The test observes the shared device error state and
 quiesces both exact shutdown tickets before destroying either HWND. It uses borrowed handle
 values without an unsafe Send/Sync implementation. This qualifies initialization, sharing and
 native retirement on the executed adapter, not the number of configuration calls, hybrid-GPU

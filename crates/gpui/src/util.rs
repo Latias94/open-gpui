@@ -1,11 +1,121 @@
 use crate::{BackgroundExecutor, Task};
 use std::{
+    fmt,
     future::Future,
+    ops::AddAssign,
+    panic::Location,
     pin::Pin,
     sync::atomic::{AtomicUsize, Ordering::SeqCst},
     task,
     time::Duration,
 };
+
+pub(crate) fn post_inc<T: From<u8> + AddAssign<T> + Copy>(value: &mut T) -> T {
+    let previous = *value;
+    *value += T::from(1);
+    previous
+}
+
+macro_rules! debug_panic {
+    ($($message:tt)*) => {
+        if cfg!(debug_assertions) {
+            panic!($($message)*);
+        } else {
+            let backtrace = std::backtrace::Backtrace::capture();
+            log::error!("{}\n{backtrace:?}", format_args!($($message)*));
+        }
+    };
+}
+pub(crate) use debug_panic;
+
+/// Logs errors at their call site and returns successful values.
+pub trait ResultExt {
+    /// The successful value of the result.
+    type Ok;
+
+    /// Logs at error level and converts the result to an option.
+    fn log_err(self) -> Option<Self::Ok>;
+
+    /// Logs at the supplied level and converts the result to an option.
+    fn log_with_level(self, level: log::Level) -> Option<Self::Ok>;
+}
+
+impl<T, E: fmt::Display> ResultExt for Result<T, E> {
+    type Ok = T;
+
+    #[track_caller]
+    fn log_err(self) -> Option<T> {
+        self.log_with_level(log::Level::Error)
+    }
+
+    #[track_caller]
+    fn log_with_level(self, level: log::Level) -> Option<T> {
+        match self {
+            Ok(value) => Some(value),
+            Err(error) => {
+                log_error_with_caller(Location::caller(), format_args!("{error:#}"), level);
+                None
+            }
+        }
+    }
+}
+
+#[inline(never)]
+pub(crate) fn log_error_with_caller(
+    caller: &Location<'_>,
+    arguments: fmt::Arguments<'_>,
+    level: log::Level,
+) {
+    #[cfg(not(windows))]
+    let file = caller.file();
+    #[cfg(windows)]
+    let file = caller.file().replace('\\', "/");
+    let file = file.split_once("crates/");
+    let target = file.as_ref().and_then(|(_, path)| path.split_once("/src/"));
+    let module_path = target.map(|(package, module)| {
+        let module_path = module.trim_end_matches(".rs").replace('/', "::");
+        if module.starts_with(package) {
+            module_path
+        } else {
+            format!("{package}::{module_path}")
+        }
+    });
+    let file = file.map(|(_, file)| format!("crates/{file}"));
+    log::logger().log(
+        &log::Record::builder()
+            .target(module_path.as_deref().unwrap_or(""))
+            .module_path(file.as_deref())
+            .args(arguments)
+            .file(Some(caller.file()))
+            .line(Some(caller.line()))
+            .level(level)
+            .build(),
+    );
+}
+
+/// Runs a callback on drop unless cancelled.
+pub struct Deferred<F: FnOnce()>(Option<F>);
+
+impl<F: FnOnce()> Deferred<F> {
+    /// Drops the guard without running its callback.
+    pub fn abort(mut self) {
+        self.0.take();
+    }
+}
+
+impl<F: FnOnce()> Drop for Deferred<F> {
+    fn drop(&mut self) {
+        if let Some(callback) = self.0.take() {
+            callback();
+        }
+    }
+}
+
+/// Returns a guard that runs `callback` when dropped.
+#[must_use]
+pub fn defer<F: FnOnce()>(callback: F) -> Deferred<F> {
+    Deferred(Some(callback))
+}
 
 /// A helper trait for building complex objects with imperative conditionals in a fluent style.
 pub trait FluentBuilder {

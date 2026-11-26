@@ -1,5 +1,6 @@
 #[cfg(any(test, feature = "test-support"))]
 use crate::Bounds;
+use crate::collections::{FxHashMap, FxHashSet};
 use crate::element::ElementIdStack;
 use crate::{
     AccessibilityTreeScope, AnyElement, AnyTooltip, App, AtlasAccessDiagnostic,
@@ -11,7 +12,6 @@ use crate::{
 };
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
-use open_gpui_collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},

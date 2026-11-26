@@ -1,6 +1,6 @@
 use std::{any::TypeId, cell::RefCell, rc::Rc};
 
-use open_gpui_collections::FxHashMap;
+use crate::collections::FxHashMap;
 
 use crate::{
     CommittedWindowHitTestSnapshot, HitboxId, HitboxTag, Pixels, Point, WindowControlArea, WindowId,

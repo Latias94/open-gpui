@@ -4,8 +4,8 @@ mod context;
 pub use binding::*;
 pub use context::*;
 
+use crate::collections::{HashSet, TypeIdHashMap};
 use crate::{Action, AsKeystroke, Keystroke, Unbind, is_no_action, is_unbind};
-use open_gpui_collections::{HashSet, TypeIdHashMap};
 use smallvec::SmallVec;
 
 /// An opaque identifier of which version of the keymap is currently active.

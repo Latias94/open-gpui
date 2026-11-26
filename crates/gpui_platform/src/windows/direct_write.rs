@@ -4,9 +4,9 @@ use std::{
     mem::ManuallyDrop,
 };
 
-use ::open_gpui_util::{ResultExt, maybe};
+use ::open_gpui::util::ResultExt;
 use anyhow::{Context, Result};
-use open_gpui_collections::HashMap;
+use open_gpui::collections::HashMap;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
 use windows::{
@@ -495,7 +495,7 @@ impl DirectWriteState {
         };
         let total_number = unsafe { font.GetFontCount() };
         for index in 0..total_number {
-            let res = maybe!({
+            let res = (|| {
                 let font_face_ref = unsafe { font.GetFontFaceReference(index).log_err()? };
                 let font_face = unsafe { font_face_ref.CreateFontFace().log_err()? };
                 let direct_write_features =
@@ -513,7 +513,7 @@ impl DirectWriteState {
                     font_collection: collection.clone(),
                 };
                 Some(font_info)
-            });
+            })();
             if res.is_some() {
                 return res;
             }

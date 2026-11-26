@@ -12,10 +12,9 @@ use std::{
     time::Duration,
 };
 
-use ::open_gpui_util::{ResultExt, paths::SanitizedPath};
 use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot::Receiver;
-use itertools::Itertools;
+use open_gpui::util::ResultExt;
 use open_gpui_wgpu::SharedWgpuContext;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
@@ -26,10 +25,8 @@ use windows::{
             Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute},
             Gdi::*,
         },
-        Security::Credentials::*,
         System::{
-            Com::*, LibraryLoader::*, Ole::*, Power::*, SystemInformation::*,
-            SystemServices::GUID_POWER_SAVING_STATUS,
+            Com::*, LibraryLoader::*, Ole::*, Power::*, SystemServices::GUID_POWER_SAVING_STATUS,
         },
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
@@ -146,7 +143,7 @@ impl RegisteredWindows {
     pub(crate) fn record_frame_signal(
         &self,
         registration: RegisteredWindow,
-        at: Option<open_gpui_scheduler::Instant>,
+        at: Option<open_gpui::scheduler::Instant>,
         source: FrameRequestSource,
     ) {
         let windows = self.windows.read();
@@ -289,9 +286,6 @@ pub struct WindowsPlatform {
     suspend_resume_notification: RefCell<Option<HPOWERNOTIFY>>,
     power_saving_notification: RefCell<Option<HPOWERNOTIFY>>,
     terminal_shutdown_complete: Cell<bool>,
-    has_package_identity: bool,
-    app_identity: RefCell<Option<(String, String)>>,
-    system_notifications: RefCell<SystemNotificationState>,
     #[cfg(test)]
     lifecycle_test_probe: Rc<NativeWindowLifecycleTestProbe>,
 }
@@ -512,7 +506,6 @@ impl WindowsNativeRetirementCoordinator {
 pub(crate) struct WindowsPlatformState {
     callbacks: PlatformCallbacks,
     menus: RefCell<Vec<OwnedMenu>>,
-    jump_list: RefCell<JumpList>,
     /// Shared with each window so `WM_SETCURSOR` can read it directly.
     pub(crate) cursor_visible: Arc<AtomicBool>,
     windowing_connected: Cell<bool>,
@@ -880,10 +873,8 @@ struct PlatformCallbacks {
 impl WindowsPlatformState {
     fn new() -> Self {
         let callbacks = PlatformCallbacks::default();
-        let jump_list = JumpList::new();
         Self {
             callbacks,
-            jump_list: RefCell::new(jump_list),
             cursor_visible: Arc::new(AtomicBool::new(true)),
             windowing_connected: Cell::new(false),
             power_mode: Cell::new(PowerMode::Unknown),
@@ -1175,9 +1166,6 @@ impl WindowsPlatform {
             suspend_resume_notification: RefCell::new(None),
             power_saving_notification: RefCell::new(None),
             terminal_shutdown_complete: Cell::new(false),
-            has_package_identity: has_package_identity(),
-            app_identity: RefCell::new(None),
-            system_notifications: RefCell::new(SystemNotificationState::new()),
             drop_target_helper,
             #[cfg(test)]
             lifecycle_test_probe,
@@ -1224,7 +1212,6 @@ impl WindowsPlatform {
         if self.inner.native_finalization_started.replace(true) {
             return;
         }
-        self.system_notifications.borrow_mut().retire();
         self.stop_vsync_thread();
         self.inner.begin_platform_native_finalization(
             self.raw_window_handles.clone(),
@@ -1379,55 +1366,6 @@ impl WindowsPlatform {
         Ok(Box::new(window))
     }
 
-    fn set_dock_menus(&self, menus: Vec<MenuItem>) {
-        let mut actions = Vec::new();
-        menus.into_iter().for_each(|menu| {
-            if let Some(dock_menu) = DockMenuItem::new(menu).log_err() {
-                actions.push(dock_menu);
-            }
-        });
-        self.inner.state.jump_list.borrow_mut().dock_menus = actions;
-        let borrow = self.inner.state.jump_list.borrow();
-        let dock_menus = borrow
-            .dock_menus
-            .iter()
-            .map(|menu| (menu.name.clone(), menu.description.clone()))
-            .collect::<Vec<_>>();
-        let recent_workspaces = borrow.recent_workspaces.clone();
-        self.background_executor
-            .spawn(async move {
-                update_jump_list(&recent_workspaces, &dock_menus).log_err();
-            })
-            .detach();
-    }
-
-    fn update_jump_list(
-        &self,
-        menus: Vec<MenuItem>,
-        entries: Vec<SmallVec<[PathBuf; 2]>>,
-    ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
-        let mut actions = Vec::new();
-        menus.into_iter().for_each(|menu| {
-            if let Some(dock_menu) = DockMenuItem::new(menu).log_err() {
-                actions.push(dock_menu);
-            }
-        });
-        let mut jump_list = self.inner.state.jump_list.borrow_mut();
-        jump_list.dock_menus = actions;
-        jump_list.recent_workspaces = entries.into();
-        let dock_menus = jump_list
-            .dock_menus
-            .iter()
-            .map(|menu| (menu.name.clone(), menu.description.clone()))
-            .collect::<Vec<_>>();
-        let recent_workspaces = jump_list.recent_workspaces.clone();
-        self.background_executor.spawn(async move {
-            update_jump_list(&recent_workspaces, &dock_menus)
-                .log_err()
-                .unwrap_or_default()
-        })
-    }
-
     fn find_current_active_window(&self) -> Option<HWND> {
         let active_window_hwnd = unsafe { GetActiveWindow() };
         if active_window_hwnd.is_invalid() {
@@ -1559,7 +1497,8 @@ impl WindowsPlatform {
                 let vsync_provider = VSyncProvider::new();
                 loop {
                     let signal_source = vsync_provider.wait_for_vsync();
-                    let signal_at = PlatformFrameSignal::capture(open_gpui_scheduler::Instant::now);
+                    let signal_at =
+                        PlatformFrameSignal::capture(open_gpui::scheduler::Instant::now);
                     if !*thread_owner_live.read() {
                         break;
                     }
@@ -2726,7 +2665,7 @@ impl Platform for WindowsPlatform {
         let Some(app_path) = binary_path.or(self.app_path().log_err()) else {
             return;
         };
-        let powershell = ::open_gpui_util::get_powershell().map(PathBuf::from);
+        let powershell = super::powershell::get_powershell().map(PathBuf::from);
 
         // Defer spawning to the foreground executor so it runs after the
         // current `AppCell` borrow is released. On Windows, `Command::spawn()`
@@ -3035,57 +2974,6 @@ impl Platform for WindowsPlatform {
         self.ensure_power_saving_notification();
     }
 
-    fn set_app_identity(&self, identifier: &str, name: &str) {
-        if self.has_package_identity || self.inner.native_finalization_started.get() {
-            return;
-        }
-
-        let identifier_utf16 = windows::core::HSTRING::from(identifier);
-        // SAFETY: `identifier_utf16` outlives the call and is null-terminated.
-        if let Err(error) = unsafe {
-            windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(
-                windows::core::PCWSTR(identifier_utf16.as_ptr()),
-            )
-        } {
-            log::warn!("failed to set the process AppUserModelID: {error}");
-        }
-        *self.app_identity.borrow_mut() = Some((identifier.to_string(), name.to_string()));
-    }
-
-    fn show_system_notification(&self, notification: SystemNotification) {
-        if self.inner.native_finalization_started.get() {
-            return;
-        }
-        let app_identity = self.app_identity.borrow().clone();
-        self.system_notifications
-            .borrow_mut()
-            .show(
-                self.has_package_identity,
-                app_identity
-                    .as_ref()
-                    .map(|(identifier, name)| (identifier.as_str(), name.as_str())),
-                notification,
-            )
-            .log_err();
-    }
-
-    fn dismiss_system_notification(&self, tag: &str) -> Task<()> {
-        self.system_notifications.borrow_mut().dismiss(tag);
-        Task::ready(())
-    }
-
-    fn on_system_notification_response(
-        &self,
-        callback: Box<dyn FnMut(SystemNotificationResponse)>,
-    ) {
-        if self.inner.native_finalization_started.get() {
-            return;
-        }
-        self.system_notifications
-            .borrow_mut()
-            .on_response(&self.foreground_executor, callback);
-    }
-
     fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
         *self.inner.state.menus.borrow_mut() = menus.into_iter().map(|menu| menu.owned()).collect();
     }
@@ -3094,9 +2982,7 @@ impl Platform for WindowsPlatform {
         Some(self.inner.state.menus.borrow().clone())
     }
 
-    fn set_dock_menu(&self, menus: Vec<MenuItem>, _keymap: &Keymap) {
-        self.set_dock_menus(menus);
-    }
+    fn set_dock_menu(&self, _menus: Vec<MenuItem>, _keymap: &Keymap) {}
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
         self.inner
@@ -3168,128 +3054,8 @@ impl Platform for WindowsPlatform {
         read_from_clipboard()
     }
 
-    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
-        if let Err(err) = validate_credential_blob_size(password.len()) {
-            return Task::ready(Err(err));
-        }
-
-        let password = password.to_vec();
-        let mut username = username.encode_utf16().chain(Some(0)).collect_vec();
-        let mut target_name = windows_credentials_target_name(url)
-            .encode_utf16()
-            .chain(Some(0))
-            .collect_vec();
-        self.background_executor().spawn(async move {
-            #[cfg(test)]
-            native_test_support::native_credentials_tests::record_io(
-                native_test_support::native_credentials_tests::CredentialIoOperation::Write,
-            );
-            let credentials = CREDENTIALW {
-                LastWritten: unsafe { GetSystemTimeAsFileTime() },
-                Flags: CRED_FLAGS(0),
-                Type: CRED_TYPE_GENERIC,
-                TargetName: PWSTR::from_raw(target_name.as_mut_ptr()),
-                CredentialBlobSize: password.len() as u32,
-                CredentialBlob: password.as_ptr() as *mut _,
-                Persist: CRED_PERSIST_LOCAL_MACHINE,
-                UserName: PWSTR::from_raw(username.as_mut_ptr()),
-                ..CREDENTIALW::default()
-            };
-            unsafe {
-                CredWriteW(&credentials, 0).map_err(|err| {
-                    anyhow!(
-                        "Failed to write credentials to Windows Credential Manager: {}",
-                        err,
-                    )
-                })?;
-            }
-            Ok(())
-        })
-    }
-
-    fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
-        let target_name = windows_credentials_target_name(url)
-            .encode_utf16()
-            .chain(Some(0))
-            .collect_vec();
-        self.background_executor().spawn(async move {
-            #[cfg(test)]
-            native_test_support::native_credentials_tests::record_io(
-                native_test_support::native_credentials_tests::CredentialIoOperation::Read,
-            );
-            let mut credentials: *mut CREDENTIALW = std::ptr::null_mut();
-            let result = unsafe {
-                CredReadW(
-                    PCWSTR::from_raw(target_name.as_ptr()),
-                    CRED_TYPE_GENERIC,
-                    None,
-                    &mut credentials,
-                )
-            };
-
-            if let Err(err) = result {
-                // ERROR_NOT_FOUND means the credential doesn't exist.
-                // Return Ok(None) to match macOS and Linux behavior.
-                if err.code() == ERROR_NOT_FOUND.to_hresult() {
-                    return Ok(None);
-                }
-                return Err(err.into());
-            }
-
-            if credentials.is_null() {
-                return Ok(None);
-            }
-
-            // SAFETY: `CredReadW` succeeded, so this points to a valid `CREDENTIALW` until `CredFree` below.
-            let result = unsafe { username_and_password(&*credentials) };
-            unsafe { CredFree(credentials as *const _ as _) };
-            result.map(Some)
-        })
-    }
-
-    fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
-        let target_name = windows_credentials_target_name(url)
-            .encode_utf16()
-            .chain(Some(0))
-            .collect_vec();
-        self.background_executor().spawn(async move {
-            #[cfg(test)]
-            native_test_support::native_credentials_tests::record_io(
-                native_test_support::native_credentials_tests::CredentialIoOperation::Delete,
-            );
-            unsafe {
-                CredDeleteW(
-                    PCWSTR::from_raw(target_name.as_ptr()),
-                    CRED_TYPE_GENERIC,
-                    None,
-                )?
-            };
-            Ok(())
-        })
-    }
-
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
         Task::ready(Err(anyhow!("register_url_scheme unimplemented")))
-    }
-
-    fn perform_dock_menu_action(&self, action: usize) {
-        unsafe {
-            PostMessageW(
-                Some(self.handle),
-                WM_GPUI_DOCK_MENU_ACTION,
-                WPARAM(self.inner.validation_number),
-                LPARAM(action as isize),
-            )
-            .log_err();
-        }
-    }
-
-    fn update_jump_list(
-        &self,
-        menus: Vec<MenuItem>,
-        entries: Vec<SmallVec<[PathBuf; 2]>>,
-    ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
-        self.update_jump_list(menus, entries)
     }
 }
 
@@ -3998,11 +3764,10 @@ impl WindowsPlatformInner {
     ) -> LRESULT {
         let handled = match msg {
             WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
-            | WM_GPUI_DOCK_MENU_ACTION
             | WM_GPUI_KEYBOARD_LAYOUT_CHANGED
             | WM_GPUI_REFRESH_DISPLAY_TOPOLOGY
             | WM_GPUI_DISPLAYS_CHANGED
-            | WM_GPUI_END_SESSION => self.handle_gpui_events(msg, wparam, lparam),
+            | WM_GPUI_END_SESSION => self.handle_gpui_events(msg, wparam),
             WM_TIMER if wparam.0 == DISPLAY_TOPOLOGY_RETRY_TIMER_ID => {
                 self.handle_display_topology_retry()
             }
@@ -4032,19 +3797,13 @@ impl WindowsPlatformInner {
         }
     }
 
-    fn handle_gpui_events(
-        self: &Rc<Self>,
-        message: u32,
-        wparam: WPARAM,
-        lparam: LPARAM,
-    ) -> Option<isize> {
+    fn handle_gpui_events(self: &Rc<Self>, message: u32, wparam: WPARAM) -> Option<isize> {
         if wparam.0 != self.validation_number {
             log::error!("Wrong validation number while processing message: {message}");
             return None;
         }
         match message {
             WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
-            WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
             WM_GPUI_KEYBOARD_LAYOUT_CHANGED => self.handle_keyboard_layout_change(),
             WM_GPUI_REFRESH_DISPLAY_TOPOLOGY => self.handle_display_topology_refresh(),
             WM_GPUI_DISPLAYS_CHANGED => self.handle_displays_changed(),
@@ -4143,25 +3902,6 @@ impl WindowsPlatformInner {
         }
 
         self.drive_native_retirement();
-        Some(0)
-    }
-
-    fn handle_dock_action_event(&self, action_idx: usize) -> Option<isize> {
-        let Some(action) = self
-            .state
-            .jump_list
-            .borrow()
-            .dock_menus
-            .get(action_idx)
-            .map(|dock_menu| dock_menu.action.boxed_clone())
-        else {
-            log::error!("Dock menu for index {action_idx} not found");
-            return Some(1);
-        };
-        self.with_callback(
-            |callbacks| &callbacks.app_menu_action,
-            |callback| callback(&*action),
-        );
         Some(0)
     }
 
@@ -4327,24 +4067,6 @@ struct PlatformWindowCreateContext {
     lifecycle_test_probe: Rc<NativeWindowLifecycleTestProbe>,
 }
 
-fn has_package_identity() -> bool {
-    let mut package_full_name_length = 0;
-    let result = unsafe {
-        windows::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName(
-            &mut package_full_name_length,
-            None,
-        )
-    };
-    if result == ERROR_INSUFFICIENT_BUFFER {
-        true
-    } else if result == APPMODEL_ERROR_NO_PACKAGE {
-        false
-    } else {
-        log::warn!("failed to determine whether the process has package identity: {result:?}");
-        false
-    }
-}
-
 fn open_target(target: impl AsRef<OsStr>) -> Result<()> {
     let target = target.as_ref();
     let ret = unsafe {
@@ -4467,10 +4189,8 @@ fn file_save_dialog(
             .context("failed to canonicalize directory")
             .log_err()
     {
-        let full_path = SanitizedPath::new(&full_path);
-        let full_path_string = full_path.to_string();
-        let path_item: IShellItem =
-            unsafe { SHCreateItemFromParsingName(&HSTRING::from(full_path_string), None)? };
+        let path = HSTRING::from(dunce::simplified(&full_path).as_os_str());
+        let path_item: IShellItem = unsafe { SHCreateItemFromParsingName(&path, None)? };
         unsafe {
             dialog
                 .SetFolder(&path_item)
@@ -4609,45 +4329,6 @@ fn registered_window_is_current(
         .any(|registered| registered.matches(candidate))
 }
 
-fn validate_credential_blob_size(size: usize) -> Result<()> {
-    if size > CRED_MAX_CREDENTIAL_BLOB_SIZE as usize {
-        anyhow::bail!(
-            "credential blob is {size} bytes, which exceeds the Windows Credential Manager limit of {CRED_MAX_CREDENTIAL_BLOB_SIZE} bytes"
-        );
-    }
-
-    Ok(())
-}
-
-/// Copies the username and password out of a Windows credential.
-///
-/// # Safety
-///
-/// A non-null `UserName` must point to a NUL-terminated wide string and a
-/// non-null `CredentialBlob` must be readable for `CredentialBlobSize` bytes,
-/// as is the case for credentials returned by `CredReadW`.
-unsafe fn username_and_password(credential: &CREDENTIALW) -> Result<(String, Vec<u8>)> {
-    let username = if credential.UserName.is_null() {
-        String::new()
-    } else {
-        // SAFETY: guaranteed by the caller.
-        unsafe { credential.UserName.to_string()? }
-    };
-    let password = if credential.CredentialBlob.is_null() {
-        Vec::new()
-    } else {
-        // SAFETY: guaranteed by the caller.
-        unsafe {
-            std::slice::from_raw_parts(
-                credential.CredentialBlob,
-                credential.CredentialBlobSize as usize,
-            )
-        }
-        .to_vec()
-    };
-    Ok((username, password))
-}
-
 const PLATFORM_WINDOW_CLASS_NAME: PCWSTR = w!("OpenGPUI::PlatformWindow");
 
 fn register_platform_window_class() {
@@ -4755,10 +4436,6 @@ unsafe fn release_platform_window_owner(hwnd: HWND, ptr: *mut Weak<WindowsPlatfo
 #[cfg(test)]
 #[path = "native_test_support.rs"]
 mod native_test_support;
-
-#[cfg(test)]
-#[path = "credential_tests.rs"]
-mod credential_tests;
 
 #[cfg(test)]
 mod tests {
@@ -4870,25 +4547,6 @@ mod tests {
                 vec![12],
             )),
         );
-    }
-
-    #[test]
-    fn credential_blob_size_error_omits_secret_context() {
-        let secret_url = "https://example.test/callback?token=secret-token";
-        let username = "secret-user@example.test";
-        let password = b"secret-password";
-        let oversized = super::CRED_MAX_CREDENTIAL_BLOB_SIZE as usize + 1;
-
-        super::validate_credential_blob_size(password.len()).unwrap();
-
-        let error = super::validate_credential_blob_size(oversized).unwrap_err();
-        let message = error.to_string();
-
-        assert!(message.contains(&oversized.to_string()));
-        assert!(message.contains(&super::CRED_MAX_CREDENTIAL_BLOB_SIZE.to_string()));
-        assert!(!message.contains(secret_url));
-        assert!(!message.contains(username));
-        assert!(!message.contains("secret-password"));
     }
 
     #[test]

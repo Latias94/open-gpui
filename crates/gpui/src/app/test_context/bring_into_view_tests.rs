@@ -1,9 +1,9 @@
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
-use accesskit::{Action as AccessibleAction, ActionRequest, Role, TreeId};
-use open_gpui_core_util::motion::{
+use crate::motion::{
     MotionDuration, MotionEasing, MotionIntent, MotionPreference, MotionTransition,
 };
+use accesskit::{Action as AccessibleAction, ActionRequest, Role, TreeId};
 
 use super::accessibility_tests::accessibility_scope;
 

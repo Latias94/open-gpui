@@ -100,7 +100,7 @@ mod tests {
 
     impl TestBus {
         fn start() -> anyhow::Result<(Self, String)> {
-            let child = open_gpui_util::command::new_std_command("dbus-daemon")
+            let child = std::process::Command::new("dbus-daemon")
                 .args(["--session", "--nofork", "--print-address=1"])
                 .stdout(Stdio::piped())
                 .spawn()?;

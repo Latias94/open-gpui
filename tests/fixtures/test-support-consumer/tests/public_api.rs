@@ -1,27 +1,13 @@
-use open_gpui::{App, AsyncApp, BackgroundExecutor};
+use open_gpui::{App, AsyncApp, BackgroundExecutor, scheduler};
 
 #[test]
 fn ordinary_identity_apis_are_available_without_test_support() {
     let _: fn(&App) -> bool = App::is_test;
     let _: fn(&AsyncApp) -> bool = AsyncApp::is_test;
     let _: fn(&BackgroundExecutor) -> bool = BackgroundExecutor::is_test;
-    let _: fn(&open_gpui_scheduler::LocalExecutor) -> bool =
-        open_gpui_scheduler::LocalExecutor::is_test;
-    let _: fn(&open_gpui_scheduler::BackgroundExecutor) -> bool =
-        open_gpui_scheduler::BackgroundExecutor::is_test;
-    let _: fn() -> bool = open_gpui_scheduler::test_scheduler_created;
-}
-
-#[test]
-fn ordinary_home_directory_consumer_runs_with_the_selected_features() {
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_open-gpui-test-support-consumer"))
-        .output()
-        .expect("the downstream home-directory consumer must launch");
-    assert!(
-        output.status.success(),
-        "the downstream application failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let _: fn(&scheduler::LocalExecutor) -> bool = scheduler::LocalExecutor::is_test;
+    let _: fn(&scheduler::BackgroundExecutor) -> bool = scheduler::BackgroundExecutor::is_test;
+    let _: fn() -> bool = scheduler::test_scheduler_created;
 }
 
 #[cfg(feature = "test-support")]
@@ -58,7 +44,7 @@ mod deterministic {
         assert!(cx.executor().is_test());
         assert!(cx.executor().scheduler_executor().is_test());
         assert!(cx.foreground_executor().scheduler_executor().is_test());
-        assert!(open_gpui_scheduler::test_scheduler_created());
+        assert!(scheduler::test_scheduler_created());
         let tracking = tracking_expected();
         let empty = LeakDetectorSnapshot::default();
         cx.read(|app| app.assert_no_new_leaks(&empty));

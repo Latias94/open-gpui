@@ -41,7 +41,7 @@ jobs:
           cache-on-failure: true
 
       - name: Check framework on minimum Rust
-        run: cargo +1.93.0 check --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-platform -p open-gpui-macros -p open-gpui-ui-core -p open-gpui-ui-components --all-features --all-targets -j 1
+        run: cargo +1.93.0 check --locked -p open-gpui -p open-gpui-base -p open-gpui-wgpu -p open-gpui-platform -p open-gpui-macros --all-features --all-targets -j 1
 
       - name: Check independent test-support consumer on minimum Rust
         run: cargo +1.93.0 check --locked --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --all-targets --all-features --target-dir target -j 1
@@ -99,23 +99,19 @@ jobs:
           cargo check -p open-gpui-smoke-native --locked
 
       - name: Resolve a single WGPU package
-        run: cargo tree --locked -d -p wgpu
+        run: cargo tree --locked --workspace --all-features --invert wgpu --depth 1
 
       - name: Test default Core without additive support
         run: cargo nextest run --locked -p open-gpui --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test default libraries and default docking
-        run: cargo nextest run --locked -p open-gpui-resource -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-docking -p open-gpui-dockspace-editor --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui-base -p open-gpui-docking -p open-gpui-dockspace-editor --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Check repository contracts
         run: |
           cargo run --locked -p xtask -- verify-release-docs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo run --locked -p xtask -- scan-doc-links
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo run --locked -p xtask -- scan-theme-drift
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo run --locked -p xtask -- scan-theme-schema
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo run --locked -p xtask -- scan-import-boundary
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -138,13 +134,7 @@ jobs:
           cache-on-failure: true
 
       - name: Test complete libraries and shared docking
-        run: cargo nextest run --locked -p open-gpui-resource -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-docking -p open-gpui-macros -p xtask --all-features --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
-
-      - name: Test public library documentation
-        run: cargo test --locked -p open-gpui-ui-core -p open-gpui-ui-components --all-features --doc
-
-      - name: Test release embedded assets
-        run: cargo nextest run --locked -p open-gpui-util --release --test embedded_assets --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui-base -p open-gpui-docking -p open-gpui-macros -p xtask --all-features --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
 
   verify:
     name: verify (${{ matrix.name }})
@@ -176,7 +166,7 @@ jobs:
           sudo apt-get install -y libdbus-1-dev dbus libfontconfig1-dev libfreetype6-dev libwayland-dev libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev xvfb pkg-config
 
       - name: Test complete Core and utility contracts
-        run: cargo nextest run --locked -p open-gpui -p open-gpui-scheduler -p open-gpui-core-util -p open-gpui-util -p open-gpui-path -p open-gpui-log --all-features --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui --all-features --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test Core without optional instrumentation
         run: cargo nextest run --locked -p open-gpui --no-default-features --features test-support --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
@@ -187,8 +177,8 @@ jobs:
       - name: Test WGPU text and font fallback
         run: cargo nextest run --locked -p open-gpui-wgpu --lib -E 'test(glyph_cache::) | test(run_replacements::) | test(text_edit::) | test(cosmic_text_system::font_installation_tests::)' --test-threads=1 --no-fail-fast --no-tests fail
 
-      - name: Test component motion consumers
-        run: cargo nextest run --locked -p open-gpui-ui-components -p open-gpui-docking --all-features --lib --test app_motion -E 'test(app_reduced_) | test(app_motion_) | test(list_theme_reduced_) | binary(app_motion)' --test-threads=1 --no-fail-fast --no-tests fail
+      - name: Test base controls without default features
+        run: cargo nextest run --locked -p open-gpui-base --no-default-features --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Check Linux backend feature boundaries
         if: matrix.name == 'linux'
@@ -261,9 +251,6 @@ jobs:
       - name: Test complete independent API
         run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-features --tests -E 'not binary(wgpu_atlas)' --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 
-      - name: Test independent logging without Tracy
-        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features logging --test logging --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
-
       - name: Test minimal optional feature boundaries
         if: matrix.name == 'windows'
         shell: pwsh
@@ -271,10 +258,6 @@ jobs:
           cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features profiler --test debug_overlay --test send_foreground --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features avif-encoding --test images --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features debug-embed --test utility_support --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features logging-tracy --test logging --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test independent support and dedicated execution
         run: cargo nextest run --locked --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --features test-support --tests --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
@@ -305,8 +288,8 @@ jobs:
           GPUI_LEAK_DETECTION: '1'
         run: cargo nextest run --locked -p open-gpui-platform --all-features --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
 
-      - name: Test desktop pixels, credentials and native retirement
-        run: cargo nextest run --locked -p open-gpui-platform --all-features --lib -E 'test(native_frame_overlay_modes_reset_resize_preserve_input_and_retirement) | test(native_runtime_os_loads_routes_labels_text_and_exact_window_retirement) | test(credential) | test(native_send_foreground_) | test(native_springs_retarget_playback_reduce_motion_and_retire_active_frames) | test(native_randomized_tree_cached_color_hide_restore_click_and_retire)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
+      - name: Test desktop pixels and native retirement
+        run: cargo nextest run --locked -p open-gpui-platform --all-features --lib -E 'test(native_frame_overlay_modes_reset_resize_preserve_input_and_retirement) | test(native_runtime_os_loads_routes_labels_text_and_exact_window_retirement) | test(native_send_foreground_) | test(native_springs_retarget_playback_reduce_motion_and_retire_active_frames) | test(native_randomized_tree_cached_color_hide_restore_click_and_retire)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test additive support without handle tracking
         shell: pwsh

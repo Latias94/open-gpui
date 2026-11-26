@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 use std::mem;
 use std::time::Duration;
 
-use open_gpui_scheduler::Instant;
+use crate::scheduler::Instant;
 use smallvec::SmallVec;
 
 use crate::{
@@ -521,7 +521,7 @@ const VELOCITY_MAX_SAMPLES: usize = 20;
 /// [`TouchEvent`] stream for one touch at a time and resolves it into either
 /// a tap or a pan, following the competition model described in the module
 /// docs. Pans continue into post-release momentum when the touch lifts at
-/// speed; the window drives that phase through [`Self::tick_momentum`].
+/// speed; the window drives that phase through [`Self::tick_momentum_at`].
 ///
 /// Taps are currently surfaced as synthesized mouse presses rather than
 /// [`ClickEvent::Touch`](crate::ClickEvent), which keeps every existing
@@ -626,6 +626,7 @@ impl TouchGestureRecognizer {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn handle_event(
         &mut self,
         event: &TouchEvent,
@@ -943,10 +944,6 @@ impl TouchGestureRecognizer {
         recognized
     }
 
-    pub(crate) fn pending_long_press(&self) -> Option<(TouchId, Duration)> {
-        self.pending_long_press_at(Instant::now())
-    }
-
     pub(crate) fn pending_long_press_at(&self, now: Instant) -> Option<(TouchId, Duration)> {
         let TouchGestureState::Pending {
             touch,
@@ -1095,10 +1092,6 @@ impl TouchGestureRecognizer {
     /// Advances post-fling momentum by one frame, returning the scroll step
     /// to dispatch, or `None` when no momentum is in progress. The final step
     /// carries [`TouchPhase::Ended`] to close the synthetic scroll stream.
-    pub(crate) fn tick_momentum(&mut self) -> Option<RecognizedTouchGesture> {
-        self.tick_momentum_at(Instant::now())
-    }
-
     pub(crate) fn tick_momentum_at(&mut self, now: Instant) -> Option<RecognizedTouchGesture> {
         let momentum = self.momentum.as_mut()?;
         let elapsed = now.duration_since(momentum.started_at);

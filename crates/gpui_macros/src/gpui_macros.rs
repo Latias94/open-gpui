@@ -13,7 +13,29 @@ mod test;
 mod derive_inspector_reflection;
 
 use proc_macro::TokenStream;
-use syn::{DeriveInput, Ident};
+use proc_macro_crate::{FoundCrate, crate_name};
+use proc_macro2::{Ident, Span, TokenStream as TokenStream2};
+use quote::quote;
+use syn::DeriveInput;
+
+fn gpui_path() -> TokenStream2 {
+    let name = dependency_name("open-gpui", "open_gpui");
+    let name = Ident::new_raw(&name, Span::call_site());
+    quote!(::#name)
+}
+
+#[cfg(any(feature = "inspector", debug_assertions))]
+fn is_style_macro_crate(name: &str) -> bool {
+    name == dependency_name("open-gpui-macros", "open_gpui_macros")
+        || name == dependency_name("open-gpui", "open_gpui")
+}
+
+fn dependency_name(package: &str, default: &str) -> String {
+    match crate_name(package) {
+        Ok(FoundCrate::Name(name)) => name,
+        Ok(FoundCrate::Itself) | Err(_) => default.to_owned(),
+    }
+}
 
 /// `Action` derive macro - see the trait documentation for details.
 #[proc_macro_derive(Action, attributes(action))]

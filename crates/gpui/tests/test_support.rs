@@ -7,11 +7,11 @@ fn identity_queries_are_public_without_test_support() {
     let _: fn(&open_gpui::App) -> bool = open_gpui::App::is_test;
     let _: fn(&open_gpui::AsyncApp) -> bool = open_gpui::AsyncApp::is_test;
     let _: fn(&open_gpui::BackgroundExecutor) -> bool = open_gpui::BackgroundExecutor::is_test;
-    let _: fn(&open_gpui_scheduler::LocalExecutor) -> bool =
-        open_gpui_scheduler::LocalExecutor::is_test;
-    let _: fn(&open_gpui_scheduler::BackgroundExecutor) -> bool =
-        open_gpui_scheduler::BackgroundExecutor::is_test;
-    let _: fn() -> bool = open_gpui_scheduler::test_scheduler_created;
+    let _: fn(&open_gpui::scheduler::LocalExecutor) -> bool =
+        open_gpui::scheduler::LocalExecutor::is_test;
+    let _: fn(&open_gpui::scheduler::BackgroundExecutor) -> bool =
+        open_gpui::scheduler::BackgroundExecutor::is_test;
+    let _: fn() -> bool = open_gpui::scheduler::test_scheduler_created;
 }
 
 #[cfg(feature = "test-support")]
@@ -247,7 +247,7 @@ mod test_contexts {
 
         let cx = TestAppContext::single();
         let other_app = cx.new_app();
-        assert!(open_gpui_scheduler::test_scheduler_created());
+        assert!(open_gpui::scheduler::test_scheduler_created());
         assert!(cx.read(App::is_test));
         assert!(other_app.read(App::is_test));
         assert!(cx.to_async().is_test());
@@ -282,7 +282,7 @@ mod test_contexts {
         dispatcher.run_until_idle();
         other_app.quit();
         cx.quit();
-        assert!(open_gpui_scheduler::test_scheduler_created());
+        assert!(open_gpui::scheduler::test_scheduler_created());
         assert!(!real_background.is_test());
     }
 }

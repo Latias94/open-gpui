@@ -6,8 +6,8 @@ use std::{
 };
 
 use futures::channel::oneshot;
+use open_gpui::scheduler::{LocalExecutor, SendLocalExecutor};
 use open_gpui::{BackgroundExecutor, ForegroundExecutor, PriorityQueueReceiver};
-use open_gpui_scheduler::{LocalExecutor, SendLocalExecutor};
 
 use super::*;
 
@@ -196,7 +196,7 @@ fn win32_pool_rejection_does_not_fire_the_timer_or_cancel_the_task() {
     let task = executor.spawn(async move {
         let _ = complete.send(());
     });
-    let mut timer = std::pin::pin!(open_gpui_scheduler::Timer::new(waiting));
+    let mut timer = std::pin::pin!(open_gpui::scheduler::Timer::new(waiting));
     let mut cx = std::task::Context::from_waker(futures::task::noop_waker_ref());
     let runnable = queued
         .try_recv()

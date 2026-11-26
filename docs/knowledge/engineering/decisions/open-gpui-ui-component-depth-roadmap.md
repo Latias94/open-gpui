@@ -88,7 +88,7 @@ shared product contract layer before opening another large component-family spli
 [1] [Current State](../current-state.md)
 [2] [UI component productization roadmap](open-gpui-ui-productization-roadmap.md)
 [3] [UI component roadmap reference research](../subagents/ui-component-roadmap-reference-research.md)
-[4] [Component contract](../../../ui/component-contract.md)
+[4] [Historical component contract](https://github.com/Latias94/open-gpui/blob/legacy/v0-pre-slim/docs/ui/component-contract.md)
 [5] [API and overlay productization plan](../../../plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md)
 [6] [ADR 0014: Remove Open GPUI Native UI Hybrid Registry](../../../adr/0014-remove-native-ui-hybrid-registry.md)
 [7] [Semantic accessibility and final-tree authority](semantic-accessibility-final-tree-authority.md)

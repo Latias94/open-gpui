@@ -1,6 +1,6 @@
+use crate::collections::FxHashMap;
 use crate::{FontId, GlyphId, Pixels, PlatformTextSystem, Point, SharedString, Size, point, px};
 use itertools::Itertools as _;
-use open_gpui_collections::FxHashMap;
 use smallvec::SmallVec;
 use std::{
     borrow::Borrow,
@@ -932,7 +932,7 @@ mod tests {
         let text = SharedString::from("let value = compute_something(argument_one, argument_two);");
         let runs = [TextRun {
             len: text.len(),
-            font: font(".ZedMono"),
+            font: font("Lilex"),
             ..Default::default()
         }];
 
@@ -968,7 +968,7 @@ mod tests {
         let conversions = std::cell::Cell::new(0);
         let runs = [TextRun {
             len: source.len(),
-            font: font(".ZedMono"),
+            font: font("Lilex"),
             ..Default::default()
         }];
         let lookup = || {

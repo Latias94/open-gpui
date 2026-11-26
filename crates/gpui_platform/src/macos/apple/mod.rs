@@ -3,7 +3,6 @@
 //! Native platform backends retain application lifecycle, windowing and input ownership.
 
 mod dispatcher;
-pub mod keychain;
 pub mod process_info;
 
 #[cfg(feature = "font-kit")]

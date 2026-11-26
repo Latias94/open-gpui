@@ -1,10 +1,10 @@
+use crate::collections::FxHashSet;
 use crate::{
     AnyElement, AnyEntity, AnyWeakEntity, App, Bounds, Context, Element, Entity, EntityId,
     IntoElement, PaintIndex, Pixels, PrepaintStateIndex, Render, RenderOnce, StyleRefinement,
     SubtreePresentation, TextStyle, WeakEntity, Window, geometry::ResolvedSubtreeTransform,
 };
 use anyhow::Result;
-use open_gpui_collections::FxHashSet;
 use std::{
     any::{TypeId, type_name},
     fmt,

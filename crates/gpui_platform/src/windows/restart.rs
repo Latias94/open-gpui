@@ -1,7 +1,10 @@
 use anyhow::{Context as _, Result};
 use std::{
     ffi::{OsStr, OsString},
-    os::windows::ffi::{OsStrExt as _, OsStringExt as _},
+    os::windows::{
+        ffi::{OsStrExt as _, OsStringExt as _},
+        process::CommandExt as _,
+    },
     path::{Path, PathBuf},
     process::Command,
 };
@@ -68,7 +71,8 @@ fn restart_command(
     app_path: &Path,
     arguments: &[OsString],
 ) -> Command {
-    let mut command = ::open_gpui_util::command::new_std_command(powershell);
+    let mut command = Command::new(powershell);
+    command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
     command
         .arg("-command")
         .arg(RESTART_SCRIPT)

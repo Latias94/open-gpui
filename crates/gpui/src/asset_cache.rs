@@ -1,6 +1,6 @@
+use crate::collections::FxHashSet;
 use crate::{App, EntityId, SharedString, Task};
 use futures::{Future, TryFutureExt};
-use open_gpui_collections::FxHashSet;
 
 use std::cell::RefCell;
 use std::fmt::Debug;
@@ -130,7 +130,7 @@ where
 
 /// Use a quick, non-cryptographically secure hash function to get an identifier from data
 pub fn hash<T: Hash>(data: &T) -> u64 {
-    open_gpui_collections::FxBuildHasher.hash_one(data)
+    crate::collections::FxBuildHasher.hash_one(data)
 }
 
 #[cfg(test)]

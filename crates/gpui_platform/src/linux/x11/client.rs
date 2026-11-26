@@ -7,6 +7,8 @@ use calloop::{
 use core::str;
 use log::Level;
 use open_gpui::GraphicalEnvironment;
+use open_gpui::collections::HashMap;
+use open_gpui::util::ResultExt as _;
 use open_gpui::{
     Capslock, PlatformFocusedWindow, PlatformHoveredWindow, PlatformViewportCapabilities,
     PlatformWindowActivationSupport, PlatformWindowActiveStatusObservation,
@@ -14,8 +16,6 @@ use open_gpui::{
     PlatformWindowMutationCapabilities, WindowCoordinateSpace, WindowCreationSupport,
     WindowInitialPresentationOrder, WindowMutationSupport,
 };
-use open_gpui_collections::HashMap;
-use open_gpui_util::ResultExt as _;
 use smallvec::SmallVec;
 use std::{
     cell::{RefCell, RefMut},

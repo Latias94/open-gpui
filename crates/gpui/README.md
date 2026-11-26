@@ -151,7 +151,7 @@ for actual consumers and platform limits.
 Native backends cover macOS, Windows, Linux, and FreeBSD through platform crates. Feature
 availability varies by platform and compositor.
 
-Use `open-gpui-ui-components` for higher-level controls and `open-gpui-docking` for retained dock
+Use `open-gpui-base` for unstyled controls and `open-gpui-docking` for retained dock
 spaces. Shared motion primitives live in `open_gpui_core_util::motion`. `img()` loads local paths
 or application assets and accepts decoded images and custom loaders.
 

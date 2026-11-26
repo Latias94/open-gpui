@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use open_gpui::{
-    Modifiers, PlatformWindowPresentOutcome, QuitMode, RequestFrameOptions, TestAppContext,
-    VisualTestContext, WindowMutationDomain,
+    Focusable as _, Modifiers, PlatformWindowPresentOutcome, QuitMode, RequestFrameOptions,
+    TestAppContext, VisualTestContext, WindowMutationDomain,
 };
 use open_gpui_docking::dockspace::{
     geometry::PhysicalRect,
@@ -58,6 +58,54 @@ fn edit_and_move(cx: &mut TestAppContext, recovery: &Entity<Recovery>) {
         .unwrap();
     });
     settle(cx, recovery);
+}
+
+#[open_gpui::test]
+fn composed_text_is_applied_on_submit_and_kept_by_the_rebuilt_view(cx: &mut TestAppContext) {
+    let recovery = editor(cx);
+    let (root, input) = cx.update(|cx| {
+        let owner = recovery.read(cx);
+        (
+            owner.roots[&EDITOR],
+            owner.workspace.views[0].read(cx).input.clone(),
+        )
+    });
+    cx.update_window(root, |_, window, cx| {
+        window.focus(&input.focus_handle(cx), cx);
+    })
+    .unwrap();
+    assert!(
+        VisualTestContext::from_window(root, cx).simulate_frame(RequestFrameOptions {
+            force_render: true,
+            require_presentation: true,
+            ..Default::default()
+        })
+    );
+    cx.simulate_marked_text(root, None, "かんじ", Some(3..3));
+    cx.simulate_keystrokes(root, "enter");
+    cx.update(|cx| {
+        assert_eq!(input.read(cx).value(), "");
+        assert_eq!(recovery.read(cx).workspace.document.borrow().edits, 0);
+    });
+    cx.with_window_input_handler(root, |handler| handler.replace_text_in_range(None, "漢字"))
+        .expect("the focused input should receive the IME commit");
+    cx.simulate_keystrokes(root, "enter");
+    cx.update(|cx| recovery.update(cx, |owner, cx| owner.rebuild(cx)));
+    settle(cx, &recovery);
+    cx.update(|cx| {
+        let owner = recovery.read(cx);
+        assert_eq!(owner.phase, Phase::Running);
+        assert_ne!(owner.roots[&EDITOR], root);
+        assert_eq!(owner.workspace.views[0].read(cx).input, input);
+        assert_eq!(input.read(cx).value(), "漢字");
+        assert_eq!(owner.workspace.views[1].read(cx).input.read(cx).value(), "");
+        let document = owner.workspace.document.borrow();
+        assert_eq!(document.edits, 1);
+        assert_eq!(document.text.as_ref(), "漢字");
+    });
+    cx.update(|cx| recovery.update(cx, |owner, cx| owner.close(cx)));
+    settle(cx, &recovery);
+    assert!(cx.windows().is_empty());
 }
 
 #[open_gpui::test]

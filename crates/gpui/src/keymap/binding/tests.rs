@@ -1,6 +1,6 @@
 use super::*;
+use crate::collections::HashMap;
 use crate::{NoAction, OperatingSystem, PlatformInfo, PlatformTarget, TestAppContext};
-use open_gpui_collections::HashMap;
 use std::cell::RefCell;
 
 #[derive(Default)]

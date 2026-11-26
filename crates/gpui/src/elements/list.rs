@@ -10,13 +10,13 @@
 #[cfg(test)]
 use crate::IntoElement;
 use crate::Refineable as _;
+use crate::collections::VecDeque;
 use crate::{
     Along as _, AnyElement, App, AvailableSpace, Axis, Bounds, DispatchPhase, Edges, Element,
     EntityId, FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, Overflow,
     Pixels, Point, PreparedSubtreeClip, ScrollDelta, ScrollEvent, Size, Style, StyleRefinement,
     Styled, SubtreeClip, Window, point, px, size,
 };
-use open_gpui_collections::VecDeque;
 use std::{
     cell::{Cell, RefCell},
     ops::Range,

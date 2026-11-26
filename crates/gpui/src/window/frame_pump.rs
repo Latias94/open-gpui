@@ -1,5 +1,5 @@
+use crate::scheduler::Instant;
 use crate::{PowerMode, ThermalState};
-use open_gpui_scheduler::Instant;
 use std::time::Duration;
 
 const FRAME_INTERVAL_TOLERANCE: Duration = Duration::from_millis(1);

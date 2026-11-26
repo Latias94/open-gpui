@@ -1,4 +1,4 @@
-use open_gpui_collections::HashMap;
+use open_gpui::collections::HashMap;
 use std::ffi::c_void;
 
 use objc2::msg_send;

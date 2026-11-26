@@ -1,5 +1,6 @@
 #![cfg(all(feature = "test-support", feature = "profiler"))]
 
+use open_gpui::scheduler::Instant;
 use open_gpui::{
     Context, InteractiveElement as _, IntoElement, Modifiers, MouseButton, Render,
     RequestFrameOptions, Styled as _, TestAppContext, VisualTestContext, Window, WindowHandle,
@@ -13,7 +14,6 @@ use open_gpui::{
     },
     px, size,
 };
-use open_gpui_scheduler::Instant;
 use std::{cell::Cell, rc::Rc, time::Duration};
 
 #[derive(Default)]

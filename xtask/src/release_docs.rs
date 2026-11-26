@@ -14,14 +14,9 @@ const REQUIRED_CRATE_READMES: &[RequiredCrateReadme] = &[
         readme: "crates/gpui/README.md",
     },
     RequiredCrateReadme {
-        package: "open-gpui-ui-components",
-        manifest: "crates/ui_components/Cargo.toml",
-        readme: "crates/ui_components/README.md",
-    },
-    RequiredCrateReadme {
-        package: "open-gpui-resource",
-        manifest: "crates/resource/Cargo.toml",
-        readme: "crates/resource/README.md",
+        package: "open-gpui-base",
+        manifest: "crates/gpui_base/Cargo.toml",
+        readme: "crates/gpui_base/README.md",
     },
     RequiredCrateReadme {
         package: "open-gpui-docking",

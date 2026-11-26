@@ -1,6 +1,6 @@
 use crate::SharedString;
+use crate::collections::FxHashSet;
 use itertools::Itertools as _;
-use open_gpui_collections::FxHashSet;
 use std::{
     collections::VecDeque,
     sync::{

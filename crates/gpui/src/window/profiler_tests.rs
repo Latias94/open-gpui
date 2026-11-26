@@ -4,6 +4,7 @@ mod overlay;
 mod refresh;
 
 use super::cached_paint_atlas_tests::RejectOnceAtlas;
+use crate::scheduler::Instant;
 use crate::{
     AnyWindowHandle, App, AppCell, AppContext as _, AtlasTextureKind, Context, FocusHandle, Hsla,
     InteractiveElement as _, IntoElement, KeyDownEvent, Keystroke, MonochromeSprite, MouseButton,
@@ -15,7 +16,6 @@ use crate::{
     },
     px, red,
 };
-use open_gpui_scheduler::Instant;
 use std::{
     cell::Cell,
     panic::{AssertUnwindSafe, catch_unwind},

@@ -1,11 +1,11 @@
 use super::{AtlasBackend, AtlasState};
+use crate::collections::HashMap;
 use crate::{
     AtlasAccess, AtlasKey, AtlasRemoveDiagnostic, AtlasRemoveOutcome, AtlasTextureId,
     AtlasTextureInstanceId, AtlasTextureKind, AtlasTextureLeaseEpoch, AtlasTextureLeaseError,
     AtlasTile, Bounds, DevicePixels, PlatformAtlas, Point, Size, TileId,
 };
 use anyhow::{Context as _, Result};
-use open_gpui_collections::HashMap;
 use parking_lot::Mutex;
 use std::borrow::Cow;
 

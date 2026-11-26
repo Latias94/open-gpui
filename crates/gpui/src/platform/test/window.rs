@@ -1,4 +1,5 @@
 use super::display::TestDisplayChangeCallback;
+use crate::collections::{HashMap, VecDeque};
 use crate::{
     A11yCallbacks, AnyWindowHandle, AtlasTextureLeaseError, Bounds, CursorStyle, DevicePixels,
     DispatchEventResult, DisplayId, GpuSpecs, HeadlessAtlas, Pixels, Platform, PlatformAtlas,
@@ -27,7 +28,6 @@ use crate::{
     NativePointerCancelReservation, PointerCancelReason, WindowProvisionalPlacementPurpose,
 };
 use image::RgbaImage;
-use open_gpui_collections::{HashMap, VecDeque};
 use parking_lot::Mutex;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::{

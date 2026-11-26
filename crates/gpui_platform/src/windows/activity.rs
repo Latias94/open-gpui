@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result};
 use open_gpui::ActivityGuard;
-use open_gpui_util::ResultExt as _;
+use open_gpui::util::ResultExt as _;
 use windows::{
     Win32::{
         Foundation::{CloseHandle, HANDLE},

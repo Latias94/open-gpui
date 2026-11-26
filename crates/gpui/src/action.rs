@@ -1,6 +1,6 @@
+use crate::collections::{HashMap, TypeIdHashMap};
 use anyhow::{Context as _, Result};
 pub use no_action::{NoAction, Unbind, is_no_action, is_unbind};
-use open_gpui_collections::{HashMap, TypeIdHashMap};
 pub use open_gpui_macros::Action;
 use serde_json::json;
 use std::{

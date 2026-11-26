@@ -1,4 +1,4 @@
-use super::{new_std_command, restart_command};
+use super::{Command, restart_command};
 use std::{
     ffi::OsString,
     fs,
@@ -26,7 +26,7 @@ impl RestartFixture {
     }
 
     fn command(&self, app_path: &Path, arguments: Vec<OsString>) -> Command {
-        let mut child = new_std_command("/bin/sh")
+        let mut child = Command::new("/bin/sh")
             .args(["-c", "exit 0"])
             .spawn()
             .unwrap();

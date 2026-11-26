@@ -8,13 +8,13 @@ use super::{
     FocusClaimResolution, PendingFocusClaim, PreparedCandidateFrame, ProvisionalFocusClaim, Window,
     WindowRemovalState,
 };
+use crate::collections::FxHashSet;
 use crate::{
     App, AtlasTextureLeaseEpoch, EntityId, FocusId, Pixels, PlatformFrameSubmission,
     PlatformFrameSubmissionStatus, PlatformWindowPhysicalGeometry, PlatformWindowPresentOutcome,
     Size, Subscription, WindowFrameSubmissionOutcome, WindowFrameSubmissionTicket,
     WindowPresentAttemptFacts,
 };
-use open_gpui_collections::FxHashSet;
 use std::{mem, rc::Rc, sync::atomic::Ordering::SeqCst};
 
 #[cfg(test)]
@@ -296,7 +296,7 @@ impl Window {
             if outcome == PlatformWindowPresentOutcome::Deferred
                 && submission.status() == PlatformFrameSubmissionStatus::Pending
             {
-                let at = open_gpui_scheduler::Instant::now();
+                let at = crate::scheduler::Instant::now();
                 self.window_profiler.record_present_outcome(
                     outcome,
                     at,

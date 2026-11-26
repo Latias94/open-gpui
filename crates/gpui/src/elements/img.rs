@@ -7,10 +7,10 @@ use crate::{
 };
 use anyhow::Result;
 
+use crate::scheduler::Instant;
+use crate::util::ResultExt;
 use futures::Future;
 use image::{ImageError, ImageFormat};
-use open_gpui_core_util::ResultExt;
-use open_gpui_scheduler::Instant;
 #[cfg(test)]
 use smallvec::SmallVec;
 use std::{

@@ -31,7 +31,7 @@ use crate::{
     PlatformFrameSubmission, PlatformInput, PlatformWindowActiveStatusObservation,
     PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowMutationObservation,
     PlatformWindowPresentOutcome, PointerCancelEvent, PointerCancelReason, RequestFrameOptions,
-    SystemNotificationResponse, SystemWindowTabController, Task, Window, WindowId,
+    SystemWindowTabController, Task, Window, WindowId,
 };
 
 pub(super) const MAX_NATIVE_WORK_PER_DRAIN: u8 = 64;
@@ -2005,7 +2005,6 @@ impl NativeEventEnvelope {
 pub(super) enum NativeAppEvent {
     OpenUrls(Vec<String>),
     Reopen,
-    SystemNotificationResponse(SystemNotificationResponse),
     SystemSleep,
     SystemWake,
     AppLifecycle(AppLifecyclePhase),
@@ -2031,12 +2030,6 @@ impl NativeAppEvent {
             Self::Reopen => {
                 if let Some(app_cell) = app.this.upgrade() {
                     app_cell.dispatch_reopen(app);
-                }
-                NativeEventDrainControl::Continue
-            }
-            Self::SystemNotificationResponse(response) => {
-                if let Some(app_cell) = app.this.upgrade() {
-                    app_cell.dispatch_system_notification_response(response, app);
                 }
                 NativeEventDrainControl::Continue
             }
@@ -2112,7 +2105,6 @@ impl NativeAppEvent {
             Self::DisplaysChanged => Some(NativeAppEventCoalesceDomain::Displays),
             Self::OpenUrls(_)
             | Self::Reopen
-            | Self::SystemNotificationResponse(_)
             | Self::SystemSleep
             | Self::SystemWake
             | Self::AppLifecycle(_)
@@ -2127,7 +2119,6 @@ impl NativeAppEvent {
         match self {
             Self::OpenUrls(_) => NativeCallbackKind::OpenUrls,
             Self::Reopen => NativeCallbackKind::Reopen,
-            Self::SystemNotificationResponse(_) => NativeCallbackKind::SystemNotificationResponse,
             Self::SystemSleep => NativeCallbackKind::SystemSleep,
             Self::SystemWake => NativeCallbackKind::SystemWake,
             Self::AppLifecycle(_) => NativeCallbackKind::AppLifecycle,
@@ -2502,8 +2493,8 @@ fn deliver_window_event_if(
 mod tests {
     use super::*;
     use crate::FrameRequestSource;
+    use crate::scheduler::Instant;
     use accesskit::{Action as AccessibleAction, ActionRequest, NodeId, TreeId};
-    use open_gpui_scheduler::Instant;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
 

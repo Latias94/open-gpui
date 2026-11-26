@@ -16,6 +16,7 @@ use crate::windows::{
     },
     with_windows_shared_callback,
 };
+use open_gpui::scheduler::test_scheduler_created;
 use open_gpui::{
     AnyElement, AnyView, AnyWeakView, App, AppContext as _, Application, Bounds, Context,
     DispatchEventResult, Entity, EntityId, FocusHandle, Global, InteractiveElement as _,
@@ -26,7 +27,6 @@ use open_gpui::{
     Styled, TestAppContext, View, ViewElement, WeakEntity, Window, WindowBounds, WindowHandle,
     WindowId, WindowInitialPresentationStatus, WindowOptions, canvas, div, fill, px, rgb, size,
 };
-use open_gpui_scheduler::test_scheduler_created;
 use std::{
     cell::{Cell, RefCell},
     rc::{Rc, Weak},

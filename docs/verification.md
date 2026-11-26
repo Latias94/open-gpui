@@ -21,8 +21,19 @@ cargo +1.95.0 run --locked -p xtask -- native-windows-interactive
 The examples document their recovery modes, GPU requirements and pass conditions.
 [Dockspace editor](../examples/dockspace-editor/README.md) · [Windows WGPU](../examples/wgpu-native/README.md)
 
+The portable base-control suite and deterministic editor recovery tests exercise input behavior
+without a physical desktop. The independent consumer builds with base controls as an ordinary
+path dependency and with GPUI default features disabled.
+
+```text
+cargo nextest run --locked -p open-gpui-base --no-default-features --lib --tests --test-threads=1
+cargo nextest run --locked -p open-gpui-dockspace-editor --test-threads=1
+cargo check --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --all-targets --target-dir target
+```
+
 The records below describe the revisions at which each suite ran. The retired browser, iOS,
-benchmark and legacy docking source and test commands are available at `legacy/v0-pre-slim`.
+benchmark, legacy docking and UI component source and test commands are available at
+`legacy/v0-pre-slim`.
 
 ## November 25 Phase 2 shared WGPU and platform consolidation
 

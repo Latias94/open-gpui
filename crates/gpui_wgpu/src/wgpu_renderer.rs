@@ -9,6 +9,7 @@ use crate::{
 use anyhow::Context as _;
 use bytemuck::{Pod, Zeroable};
 use log::warn;
+use open_gpui::collections::FxHashMap;
 use open_gpui::{
     AtlasTextureInstanceId, AtlasTextureLeaseError, DevicePixels, GpuClipShape, GpuSpecs,
     PaintedPath, PathCurve, PathPaint, PathTile, PlatformWindowPresentOutcome, PrimitiveBatch,
@@ -17,7 +18,6 @@ use open_gpui::{
 };
 #[cfg(test)]
 use open_gpui::{Bounds, ClipEnvelope, PrimitiveTransform, ScaledPixels};
-use open_gpui_collections::FxHashMap;
 #[cfg(not(target_family = "wasm"))]
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::cell::RefCell;
@@ -3330,20 +3330,20 @@ impl RenderingParameters {
     fn new() -> Self {
         use std::env;
 
-        let gamma = env::var("ZED_FONTS_GAMMA")
+        let gamma = env::var("OPEN_GPUI_FONTS_GAMMA")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(1.8_f32)
             .clamp(1.0, 2.2);
         let gamma_ratios = get_gamma_correction_ratios(gamma);
 
-        let grayscale_enhanced_contrast = env::var("ZED_FONTS_GRAYSCALE_ENHANCED_CONTRAST")
+        let grayscale_enhanced_contrast = env::var("OPEN_GPUI_FONTS_GRAYSCALE_ENHANCED_CONTRAST")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(1.0_f32)
             .max(0.0);
 
-        let subpixel_enhanced_contrast = env::var("ZED_FONTS_SUBPIXEL_ENHANCED_CONTRAST")
+        let subpixel_enhanced_contrast = env::var("OPEN_GPUI_FONTS_SUBPIXEL_ENHANCED_CONTRAST")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(0.5_f32)

@@ -1,12 +1,12 @@
 use anyhow::{Context as _, Result};
 use etagere::{BucketedAtlasAllocator, size2};
+use open_gpui::collections::FxHashMap;
 use open_gpui::{
     AtlasAccess, AtlasBackend, AtlasKey, AtlasRemoveDiagnostic, AtlasRemoveOutcome, AtlasState,
     AtlasTextureId, AtlasTextureInstanceId, AtlasTextureKind, AtlasTextureLease,
     AtlasTextureLeaseEpoch, AtlasTextureLeaseError, AtlasTextureList, AtlasTile, Bounds,
     DevicePixels, PlatformAtlas, Point, Size,
 };
-use open_gpui_collections::FxHashMap;
 use parking_lot::Mutex;
 use std::{borrow::Cow, ops, sync::Arc};
 

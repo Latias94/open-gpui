@@ -5,8 +5,8 @@
 //! [`crate::Window::debug_a11y_tree_json`]). In `cfg(debug_assertions)` builds,
 //! we capture extra info.
 
+use crate::collections::FxHashMap;
 use accesskit::{Action, NodeId, TreeUpdate};
-use open_gpui_collections::FxHashMap;
 
 use crate::{Pixels, SharedString, Size};
 

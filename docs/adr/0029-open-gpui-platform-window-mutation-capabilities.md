@@ -524,6 +524,6 @@ The decision is accepted only while all of these measurable criteria hold:
 
 ## Related documents
 
-- [Open GPUI Component Contract](../ui/component-contract.md#native-window-callback-boundary)
+- [Historical component contract](https://github.com/Latias94/open-gpui/blob/legacy/v0-pre-slim/docs/ui/component-contract.md#native-window-callback-boundary)
 - [Open GPUI v0.3 UI Migration](../ui/migration-v0.3.md#native-window-callback-and-command-boundary)
 - [UI framework authority convergence plan, U24](../plans/2026-07-10-001-refactor-ui-framework-authority-convergence-plan.md#u24-make-platform-event-delivery-reentrancy-safe)

@@ -68,6 +68,7 @@ pub(crate) struct PathTiles {
 }
 
 impl PathTiles {
+    #[cfg(test)]
     pub(crate) fn bounds(&self) -> Bounds<ScaledPixels> {
         self.bounds
     }
@@ -825,7 +826,7 @@ mod tests {
             ("dashed stroke", dashed),
         ] {
             let (curves, _) = builder.outline().unwrap();
-            let mut balance = open_gpui_collections::HashMap::<(u32, u32), i32>::default();
+            let mut balance = crate::collections::HashMap::<(u32, u32), i32>::default();
             for curve in &curves {
                 for (endpoint, step) in curve.endpoints() {
                     *balance

@@ -5,6 +5,7 @@
 //! the headless renderer records CPU Scenes without GPU, native or performance evidence.
 
 use anyhow::Result;
+use open_gpui::scheduler::Instant;
 use open_gpui::{
     AnimationExt as _, AnimationPhase, App, AppContext, Bounds, Context, DevicePixels, Entity,
     Global, HeadlessAppContext, HeadlessAtlas, InteractiveElement as _, IntoElement,
@@ -13,7 +14,6 @@ use open_gpui::{
     SpringConfig, SpringPlayback, SpringState, SpringTarget, StyleRefinement, Styled as _,
     TestAppContext, Window, WindowBounds, WindowHandle, WindowOptions, div, point, px, rgb, size,
 };
-use open_gpui_scheduler::Instant;
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,

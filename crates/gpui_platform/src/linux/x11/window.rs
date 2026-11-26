@@ -23,7 +23,7 @@ use open_gpui_wgpu::{
     CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, WgpuSurfaceShutdownProgress,
 };
 
-use open_gpui_util::{ResultExt, maybe};
+use open_gpui::util::ResultExt;
 use raw_window_handle as rwh;
 use x11rb::{
     connection::Connection,
@@ -1229,7 +1229,7 @@ impl X11WindowState {
         let mut created_sync_counter = None;
         // Collect errors during setup, so that every created native resource can be retired on
         // failure.
-        let setup_result = maybe!({
+        let setup_result = (|| {
             let pid = std::process::id();
             check_reply(
                 || "X11 ChangeProperty for _NET_WM_PID failed.",
@@ -1556,7 +1556,7 @@ impl X11WindowState {
                 sync_acknowledgement_task: None,
                 observation: X11WindowObservationCoordinator::default(),
             })
-        });
+        })();
 
         if setup_result.is_err() {
             if let Some(sync_request_counter) = created_sync_counter {

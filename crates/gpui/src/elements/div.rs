@@ -16,6 +16,8 @@
 //! constructed by combining these two systems into an all-in-one element.
 
 use crate::Refineable;
+use crate::collections::HashMap;
+use crate::util::ResultExt;
 use crate::{
     AcceptedFrameFence, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, BackGestureEvent,
     Bounds, ClickEvent, DispatchPhase, Display, Element, ElementId, Entity, EntityId,
@@ -29,8 +31,6 @@ use crate::{
     Size, Style, StyleRefinement, Styled, TargetedEvent, Task, TooltipId, TouchPhase, Window,
     WindowControlArea, point, px, size,
 };
-use open_gpui_collections::HashMap;
-use open_gpui_core_util::ResultExt;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},

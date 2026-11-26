@@ -21,7 +21,8 @@ const NOTO_EMOJI: &[u8] =
 
 #[test]
 fn loading_an_alias_preserves_the_first_observed_face_identity() -> Result<()> {
-    let platform = DirectWriteTextSystem::new()?;
+    let mut platform = DirectWriteTextSystem::new()?;
+    platform.components.system_ui_font_name = "IBM Plex Sans".into();
     platform.add_fonts(vec![Cow::Borrowed(IBM_PLEX)])?;
     let descriptor = font("IBM Plex Sans");
     let original = platform.font_id(&descriptor)?;
@@ -32,7 +33,7 @@ fn loading_an_alias_preserves_the_first_observed_face_identity() -> Result<()> {
     let before = platform.layout_line("mi", px(18.), &runs);
     assert_eq!(before.runs.len(), 1);
     assert_eq!(before.runs[0].font_id, original);
-    let alias = platform.font_id(&font(".ZedSans"))?;
+    let alias = platform.font_id(&font(".OpenGpuiSans"))?;
     assert_ne!(alias, original);
     assert_eq!(platform.font_id(&descriptor)?, original);
     let after = platform.layout_line("mi", px(18.), &runs);

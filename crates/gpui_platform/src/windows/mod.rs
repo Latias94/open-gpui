@@ -3,7 +3,6 @@
 mod color_glyph_bitmap;
 
 mod clipboard;
-mod destination_list;
 mod dialog;
 mod direct_manipulation;
 mod direct_write;
@@ -24,8 +23,8 @@ mod native_test_scenario;
 #[cfg(any(test, feature = "test-support"))]
 mod native_test_window;
 mod platform;
+mod powershell;
 mod renderer;
-mod system_notifications;
 mod system_settings;
 mod util;
 mod vsync;
@@ -33,7 +32,6 @@ mod window;
 mod wrapper;
 
 pub(crate) use clipboard::*;
-pub(crate) use destination_list::*;
 pub(crate) use direct_write::*;
 pub(crate) use dispatcher::*;
 pub(crate) use display::*;
@@ -41,7 +39,6 @@ pub(crate) use events::*;
 pub(crate) use keyboard::*;
 pub(crate) use platform::*;
 pub(crate) use renderer::{WindowsRendererSource, WindowsWindowRenderer};
-pub(crate) use system_notifications::*;
 pub(crate) use system_settings::*;
 pub(crate) use util::*;
 pub(crate) use vsync::*;

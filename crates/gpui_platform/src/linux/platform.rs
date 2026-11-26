@@ -26,8 +26,8 @@ use ashpd::{
 use calloop::channel::Sender;
 use calloop::{EventLoop, LoopHandle, LoopSignal, RegistrationToken};
 use futures::channel::oneshot;
-use open_gpui_util::ResultExt as _;
-use open_gpui_util::command::new_std_command;
+use open_gpui::util::ResultExt as _;
+use std::process::Command;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
@@ -117,8 +117,6 @@ pub(crate) struct LinuxCommon {
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
     pub(crate) menus: Vec<OwnedMenu>,
-    app_name: Option<String>,
-    system_notifications: crate::linux::system_notifications::SystemNotificationState,
     #[cfg(any(feature = "wayland", feature = "x11"))]
     power_sender: Sender<SystemPowerEvent>,
     #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
@@ -166,9 +164,6 @@ impl LinuxCommon {
             callbacks,
             signal,
             menus: Vec::new(),
-            app_name: None,
-            system_notifications: crate::linux::system_notifications::SystemNotificationState::new(
-            ),
             #[cfg(any(feature = "wayland", feature = "x11"))]
             power_sender,
             #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
@@ -910,7 +905,7 @@ fn restart_command(
         clippy::disallowed_methods,
         reason = "We are restarting ourselves, using std command thus is fine"
     )]
-    let mut command = new_std_command("/usr/bin/env");
+    let mut command = Command::new("/usr/bin/env");
     command
         .arg("bash")
         .arg("-c")
@@ -1343,7 +1338,7 @@ impl Platform for LinuxPlatform {
         let environment = self.connection.borrow().graphical_environment();
         self.background_executor()
             .spawn(async move {
-                let mut command = new_std_command("xdg-open");
+                let mut command = Command::new("xdg-open");
                 command.arg(path);
                 command
                     .env_remove("WAYLAND_SOCKET")
@@ -1389,33 +1384,6 @@ impl Platform for LinuxPlatform {
             }
             common.callbacks.system_wake = Some(callback);
             common.start_power_listener();
-        });
-    }
-
-    fn set_app_identity(&self, _identifier: &str, name: &str) {
-        self.with_common(|common| common.app_name = Some(name.to_string()));
-    }
-
-    fn show_system_notification(&self, notification: open_gpui::SystemNotification) {
-        self.with_common(|common| {
-            common
-                .system_notifications
-                .show(common.app_name.as_deref(), notification)
-        });
-    }
-
-    fn dismiss_system_notification(&self, tag: &str) -> Task<()> {
-        self.with_common(|common| common.system_notifications.dismiss(tag));
-        Task::ready(())
-    }
-
-    fn on_system_notification_response(
-        &self,
-        callback: Box<dyn FnMut(open_gpui::SystemNotificationResponse)>,
-    ) {
-        self.with_common(|common| {
-            let executor = common.foreground_executor.clone();
-            common.system_notifications.on_response(&executor, callback)
         });
     }
 

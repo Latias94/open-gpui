@@ -1,5 +1,5 @@
+use crate::collections::HashMap;
 use crate::{Font, FontId, Pixels, SharedString, TextRun, TextSystem, px};
-use open_gpui_collections::HashMap;
 use std::{borrow::Cow, iter, sync::Arc};
 use unicode_segmentation::UnicodeSegmentation;
 

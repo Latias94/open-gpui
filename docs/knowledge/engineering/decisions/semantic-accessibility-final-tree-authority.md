@@ -210,6 +210,6 @@ the chosen design.
 # Supporting Documents
 
 - [Authority convergence plan](../../../plans/2026-07-10-001-refactor-ui-framework-authority-convergence-plan.md)
-- [UI component contract](../../../ui/component-contract.md)
+- [Historical UI component contract](https://github.com/Latias94/open-gpui/blob/legacy/v0-pre-slim/docs/ui/component-contract.md)
 - [v0.3 migration guide](../../../ui/migration-v0.3.md)
 - [Verification guide](../../../verification.md)

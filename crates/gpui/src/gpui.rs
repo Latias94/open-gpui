@@ -26,10 +26,13 @@ mod seeds;
 #[cfg(any(test, feature = "test-support"))]
 pub use seeds::calculate_seeds;
 
+mod arc_cow;
 mod arena;
 mod asset_cache;
 mod assets;
 mod bounds_tree;
+#[doc(hidden)]
+pub mod collections;
 mod color;
 #[cfg(feature = "profiler")]
 mod debug_overlay;
@@ -53,6 +56,8 @@ mod inspector;
 mod interactive;
 mod key_dispatch;
 mod keymap;
+/// Animation timing and spring configuration for scroll transitions.
+pub mod motion;
 mod path_builder;
 mod path_winding;
 mod platform;
@@ -71,6 +76,9 @@ pub mod queue;
 #[cfg(any(test, feature = "test-support"))]
 pub mod randomized_element_tree;
 mod scene;
+#[doc(hidden)]
+pub mod scheduler;
+mod shared_string;
 mod spring;
 mod style;
 mod styled;
@@ -81,7 +89,8 @@ mod taffy;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 mod text_system;
-mod util;
+#[doc(hidden)]
+pub mod util;
 mod view;
 #[doc(hidden)]
 pub mod view_presentation_window;
@@ -121,6 +130,7 @@ pub use accesskit::{Orientation, Role, Toggled};
 pub use action::*;
 pub use anyhow::Result;
 pub use app::*;
+pub use arc_cow::ArcCow;
 pub(crate) use arena::*;
 pub use asset_cache::*;
 pub use assets::*;
@@ -142,8 +152,6 @@ pub use inspector::*;
 pub use interactive::*;
 use key_dispatch::*;
 pub use keymap::*;
-pub use open_gpui_core_util::arc_cow::ArcCow;
-pub use open_gpui_shared_string::*;
 pub use path_builder::*;
 pub(crate) use path_winding::PathTiles;
 pub use platform::*;
@@ -157,6 +165,7 @@ pub use profiler::*;
 ))]
 pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
 pub use scene::*;
+pub use shared_string::*;
 pub use spring::*;
 use std::{any::Any, future::Future};
 pub use style::*;

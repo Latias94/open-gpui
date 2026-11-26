@@ -40,13 +40,13 @@ fn physical_attachment_extents_round_trip_at_fractional_scales() {
         .is_err()
     );
 }
+use crate::scheduler::Instant;
 use crate::{
     HeadlessAtlas, MouseMoveEvent, PlatformFrameDeliveryMode, PlatformFrameSubmissionStatus,
     PlatformInputCallback, PlatformNativeWindowRetirementOutcome,
     PlatformPresentationShutdownOutcome, PlatformWindowCommand, PlatformWindowCommandOutcome,
     PointerCancelEvent, PointerCancelReason, WindowHandle,
 };
-use open_gpui_scheduler::Instant;
 use raw_window_handle::HandleError;
 use slotmap::SlotMap;
 use std::time::Duration;

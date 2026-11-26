@@ -19,6 +19,7 @@ use missing_glyphs::{MissingGlyphReceiver, MissingGlyphReporter, missing_glyph_c
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::collections::FxHashMap;
 use crate::{
     Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
     StrikethroughStyle, TextRenderingMode, UnderlineStyle, px,
@@ -27,7 +28,6 @@ use anyhow::Context as _;
 use core::fmt;
 use derive_more::{Add, Deref, FromStr, Sub};
 use itertools::Itertools;
-use open_gpui_collections::FxHashMap;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::{SmallVec, smallvec};
 use std::{
@@ -1123,34 +1123,24 @@ impl FontMetrics {
 }
 
 /// Maps well-known virtual font names to their concrete equivalents.
-#[allow(unused)]
 pub fn font_name_with_fallbacks<'a>(name: &'a str, system: &'a str) -> &'a str {
-    // The Zed names are kept as compatibility aliases for code written
-    // against upstream GPUI. New code should prefer the Open GPUI aliases.
     match name {
         ".SystemUIFont" => system,
         ".OpenGpuiSans" | ".UiSans" => system,
         ".OpenGpuiMono" | ".UiMono" => "JetBrains Mono",
-        ".ZedSans" | "Zed Plex Sans" => "IBM Plex Sans",
-        ".ZedMono" | "Zed Plex Mono" => "Lilex",
         _ => name,
     }
 }
 
 /// Like [`font_name_with_fallbacks`] but accepts and returns [`SharedString`] references.
-#[allow(unused)]
 pub fn font_name_with_fallbacks_shared<'a>(
     name: &'a SharedString,
     system: &'a SharedString,
 ) -> &'a SharedString {
-    // The Zed names are kept as compatibility aliases for code written
-    // against upstream GPUI. New code should prefer the Open GPUI aliases.
     match name.as_str() {
         ".SystemUIFont" => system,
         ".OpenGpuiSans" | ".UiSans" => system,
         ".OpenGpuiMono" | ".UiMono" => const { &SharedString::new_static("JetBrains Mono") },
-        ".ZedSans" | "Zed Plex Sans" => const { &SharedString::new_static("IBM Plex Sans") },
-        ".ZedMono" | "Zed Plex Mono" => const { &SharedString::new_static("Lilex") },
         _ => name,
     }
 }
@@ -1171,14 +1161,5 @@ mod tests {
             font_name_with_fallbacks(".UiMono", "Inter"),
             "JetBrains Mono"
         );
-    }
-
-    #[test]
-    fn keeps_upstream_zed_virtual_font_aliases() {
-        assert_eq!(
-            font_name_with_fallbacks(".ZedSans", "Inter"),
-            "IBM Plex Sans"
-        );
-        assert_eq!(font_name_with_fallbacks(".ZedMono", "Inter"), "Lilex");
     }
 }

@@ -244,7 +244,7 @@ pub(crate) const EMPTY_PATH_HASH: u64 = 0;
 /// The hash of the path `prefix` + `id`, given the hash of `prefix`.
 pub(crate) fn extend_path_hash(prefix: u64, id: &ElementId) -> u64 {
     use std::hash::{Hash, Hasher};
-    let mut hasher = open_gpui_collections::FxHasher::with_seed(prefix as usize);
+    let mut hasher = crate::collections::FxHasher::with_seed(prefix as usize);
     id.hash(&mut hasher);
     hasher.finish()
 }

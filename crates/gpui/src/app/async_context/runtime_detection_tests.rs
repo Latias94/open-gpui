@@ -8,7 +8,7 @@ use std::{rc::Rc, sync::Arc};
 fn async_app_detection_does_not_borrow_or_retain_the_app() {
     let threaded_dispatcher = Arc::new(ThreadedDispatcher::new());
     let test_dispatcher = Arc::new(TestDispatcher::new(17));
-    assert!(open_gpui_scheduler::test_scheduler_created());
+    assert!(crate::scheduler::test_scheduler_created());
 
     let dispatchers: [(Arc<dyn PlatformDispatcher>, bool); 2] = [
         (threaded_dispatcher.clone(), false),

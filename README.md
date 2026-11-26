@@ -8,13 +8,11 @@ The project keeps the GPUI framework lineage while separating it from the Zed ed
 
 Open GPUI is pre-1.0 and in active fork cleanup. The workspace package names are prepared for crates.io as `open-gpui-*`, and Rust crate names use the corresponding underscore form such as `open_gpui`, `open_gpui_platform`, and `open_gpui_wgpu`.
 
-GPUI core, desktop backends, renderers and UI components require Rust 1.93 or newer. Docking, its
+GPUI core, desktop backends, renderers and base controls require Rust 1.93 or newer. Docking, its
 examples, and workspace tooling require Rust 1.95. Use Rust 1.95.0 for local workspace verification.
 
 Desktop backends use DirectWrite on Windows, CoreText on macOS and the Open GPUI-maintained
 `open-gpui-font-kit` fork where enabled.
-
-The workspace is published in dependency order: leaf crates such as `open-gpui-core-util` must be published before crates that depend on them, such as `open-gpui-collections` and `open-gpui`.
 
 ## Usage
 
@@ -53,8 +51,7 @@ During local development, use workspace path dependencies instead of registry ve
 ## First-Party Add-Ons
 
 - Use `open-gpui-platform` to start desktop applications.
-- Use `open-gpui-ui-components` for the official GPUI component library, including typed action projection, host-controlled `VirtualizedList`, and component contract evidence.
-- Use `open-gpui-resource` for renderer-neutral async query and mutation ownership: deterministic query keys, observers, stale/invalidate state, retry policy, pagination snapshots, mutation lifecycle, and redacted cache diagnostics. Fetching stays protocol-agnostic.
+- Use `open-gpui-base` for unstyled controls such as `TextInput`, `Button`, `Checkbox`, and virtualized lists and trees. [Base control guide](docs/architecture/native-ui-framework-strategy.md)
 - Use `open-gpui-docking` for a shared `DockspaceSession` with retained tab Views, weighted splits, floating content and native windows. Start with the minimal example, then multiviewport or the editor example.
 - Use `open-gpui-wgpu` for [application-owned Scene recording and retained GPU images](docs/external-wgpu.md). The recording module reuses your device and encoder; complete external window/event-loop hosting remains in development.
 
@@ -65,12 +62,9 @@ Open GPUI is pre-1.0, so the framework favors explicit product contracts over co
 - Scroll surfaces return typed `ScrollWheelIntent` values, publish committed `ScrollViewportSnapshot` facts, and expose test probes such as `TestInputDispatchSnapshot` for final input outcomes.
 - Native window placement and independent flag requests expose property-specific capabilities, seven generation domains, typed dispatch, generation-bound terminal observations, and one committed `WindowPlatformFacts` cache; a queued request is never treated as an applied OS fact.
 - Docking apps retain one shared session and use its revision-bound `DockPlacement` actions; each View has a distinct pane identity and entity while documents and history remain application-owned.
-- Component apps project command/action metadata through `ActionDescriptor` and `ResolvedActionState`, then reuse that resolved state across buttons, toolbars, menus, command palettes, and sidebars.
-- `VirtualizedList` keeps stable-key state in `VirtualizedListState`; GPUI shells opt into host-owned `ScrollHandle` and custom row rendering through `gpui_adapter::VirtualizedListGpuiExt`. `bring_key_into_view` materializes the keyed row before GPUI performs final nested physical alignment through its window-owned reveal authority.
-- Resource-backed components project app-owned snapshots through `ResourceCollectionProjection` and `ResourceMutationProjection`.
+- Base controls use GPUI's native pointer, focus, keyboard, text input and accessibility paths. Applications own style, documents, validation and application commands.
 
-See the [component guide](crates/ui_components/README.md), [resource guide](crates/resource/README.md),
-and [docking guide](crates/gpui_docking/README.md).
+See the [base controls](crates/gpui_base/README.md) and [docking guide](crates/gpui_docking/README.md).
 
 ## Repository Layout
 
@@ -78,11 +72,7 @@ and [docking guide](crates/gpui_docking/README.md).
 - `crates/gpui_platform`: native Windows, macOS, Linux, and FreeBSD backends. See the [platform guide](crates/gpui_platform/README.md).
 - `crates/gpui_wgpu`: renderer backend
 - `crates/gpui_macros`: Open GPUI proc macros
-- `crates/ui_core`: renderer-neutral UI contracts, geometry, virtualizer math, and component state helpers
-- `crates/ui_components`: official component library surfaces such as Listbox, Command, Table,
-  Tree, and VirtualizedList; see [crates/ui_components/README.md](crates/ui_components/README.md)
-- `crates/resource`: renderer-neutral async query/mutation state, observers, retry policy, pagination, and redacted snapshots; see [crates/resource/README.md](crates/resource/README.md)
-- `crates/gpui_util`: core utilities and shared motion primitives
+- `crates/gpui_base`: unstyled GPUI interaction controls
 - `crates/gpui_docking`: shared DockspaceSession, retained Views and GPUI native transport; see
   [crates/gpui_docking/README.md](crates/gpui_docking/README.md)
 - `examples/docking-minimal`: minimal single-window docking example using common public APIs

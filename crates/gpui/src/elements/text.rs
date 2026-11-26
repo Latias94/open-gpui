@@ -1,3 +1,4 @@
+use crate::util::ResultExt;
 use crate::{
     ActiveTooltip, AnyView, App, Bounds, CommittedHitbox, DispatchPhase, Element, ElementId,
     GlobalElementId, HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement,
@@ -8,7 +9,6 @@ use crate::{
 };
 use anyhow::Context as _;
 use itertools::Itertools;
-use open_gpui_core_util::ResultExt;
 use smallvec::SmallVec;
 use std::{
     borrow::Cow,

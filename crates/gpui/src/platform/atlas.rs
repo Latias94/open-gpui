@@ -2,12 +2,12 @@ mod headless;
 
 pub use headless::*;
 
+use crate::collections::FxHashMap;
 use crate::{
     AtlasAccess, AtlasAccessDiagnostic, AtlasAccessOutcome, AtlasKey, AtlasRemoveDiagnostic,
     AtlasRemoveOutcome, AtlasTextureKind, AtlasTile, DevicePixels, Size,
 };
 use anyhow::Result;
-use open_gpui_collections::FxHashMap;
 use std::{borrow::Cow, collections::hash_map::Entry};
 
 #[doc(hidden)]

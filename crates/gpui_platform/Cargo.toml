@@ -44,10 +44,6 @@ test = true
 required-features = ["test-support"]
 
 [[example]]
-name = "system_notifications"
-path = "examples/system_notifications.rs"
-
-[[example]]
 name = "svg_animation"
 path = "examples/svg_animation.rs"
 
@@ -179,23 +175,7 @@ objc2-core-text = { workspace = true, optional = true }
 objc2-core-video.workspace = true
 objc2-foundation.workspace = true
 objc2-quartz-core.workspace = true
-objc2-security.workspace = true
 objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = ["std", "UTCoreTypes", "UTType"] }
-objc2-user-notifications = { version = "0.3", default-features = false, features = [
-    "std",
-    "block2",
-    "UNNotification",
-    "UNNotificationAction",
-    "UNNotificationCategory",
-    "UNNotificationContent",
-    "UNNotificationRequest",
-    "UNNotificationResponse",
-    "UNNotificationTrigger",
-    "UNUserNotificationCenter",
-] }
-open_gpui_collections.workspace = true
-open_gpui_scheduler.workspace = true
-open_gpui_util.workspace = true
 parking_lot.workspace = true
 pathfinder_geometry = { version = "0.5", optional = true }
 raw-window-handle = "0.6"
@@ -209,19 +189,18 @@ uuid.workspace = true
 [target.'cfg(target_os = "windows")'.dependencies]
 accesskit.workspace = true
 accesskit_windows.workspace = true
+dunce.workspace = true
 futures.workspace = true
 image.workspace = true
 itertools.workspace = true
 log.workspace = true
 open_gpui = { workspace = true, features = ["windows-manifest"] }
-open_gpui_collections.workspace = true
-open_gpui_scheduler.workspace = true
-open_gpui_util.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
 raw-window-handle = { version = "0.6", features = ["std"] }
 smallvec.workspace = true
 uuid.workspace = true
+which.workspace = true
 windows.workspace = true
 windows-core.workspace = true
 windows-numerics = "0.3"
@@ -241,10 +220,7 @@ image.workspace = true
 itertools.workspace = true
 libc.workspace = true
 log.workspace = true
-notify-rust = "4"
 open = { version = "5.3.6", optional = true }
-open_gpui_collections.workspace = true
-open_gpui_util.workspace = true
 open_gpui_wgpu = { workspace = true, optional = true, features = ["font-kit"] }
 parking_lot.workspace = true
 pollster.workspace = true
@@ -299,6 +275,9 @@ open_gpui = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dev-dependencies]
 open_gpui_wgpu = { workspace = true, features = ["test-support"] }
+
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+tempfile.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 zbus = { version = "=5.16.0", default-features = false, features = ["async-io"] }

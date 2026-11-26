@@ -6,6 +6,7 @@ use open_gpui::{
     Subscription, TitlebarOptions, Window, WindowBounds, WindowOptions, div, point, prelude::*, px,
     rgb, size,
 };
+use open_gpui_base::Button;
 use open_gpui_docking::{
     DockNativeTermination,
     dockspace::{model::DockspaceLayout, runtime::DockspaceRuntimeErrorKind},
@@ -279,6 +280,12 @@ impl Render for Recovery {
             Phase::Closing => "Closing",
         };
         let failure = self.workspace.dock.failure();
+        let rebuild_label = match self.phase {
+            Phase::Running => "Rebuild docking windows",
+            Phase::Retiring(_) => "Retry window shutdown",
+            Phase::Ready => "Retry reconstruction",
+            Phase::Closing => "Closing",
+        };
         div()
             .id("workspace-recovery")
             .size_full()
@@ -295,25 +302,25 @@ impl Render for Recovery {
                 self.workspace.document.borrow().edits
             ))
             .child(
-                div()
-                    .id("rebuild-workspace")
-                    .debug_selector(|| "rebuild-workspace".into())
-                    .px_3()
-                    .py_2()
-                    .bg(rgb(0xe2edfc))
-                    .on_click(cx.listener(|recovery, _, _, cx| recovery.rebuild(cx)))
-                    .child(match self.phase {
-                        Phase::Running => "Rebuild docking windows",
-                        Phase::Retiring(_) => "Retry window shutdown",
-                        Phase::Ready => "Retry reconstruction",
-                        Phase::Closing => "Closing",
-                    }),
+                Button::with_content(
+                    "rebuild-workspace",
+                    rebuild_label,
+                    div()
+                        .debug_selector(|| "rebuild-workspace".into())
+                        .child(rebuild_label),
+                )
+                .px_3()
+                .py_2()
+                .bg(rgb(0xe2edfc))
+                .disabled(matches!(
+                    self.phase,
+                    Phase::Retiring(AfterRetirement::Close) | Phase::Closing
+                ))
+                .on_click(cx.listener(|recovery, _, _, cx| recovery.rebuild(cx))),
             )
             .child(
-                div()
-                    .id("inspect-workspace")
-                    .on_click(cx.listener(|_, _, _, cx| cx.notify()))
-                    .child("Inspect workspace status"),
+                Button::new("inspect-workspace", "Refresh workspace status")
+                    .on_click(cx.listener(|_, _, _, cx| cx.notify())),
             )
             .child(self.notice.clone())
             .when_some(failure, |element, failure| {

@@ -1,10 +1,10 @@
 //! Profiling utilities for task, input, frame, and presentation performance tracking.
 
+use crate::scheduler::{Instant, SpawnTime};
 #[cfg(feature = "profiler")]
 use hdrhistogram::Histogram;
 #[cfg(feature = "profiler")]
 use itertools::Itertools;
-use open_gpui_scheduler::{Instant, SpawnTime};
 #[cfg(feature = "profiler")]
 use smallvec::SmallVec;
 #[cfg(feature = "profiler")]
@@ -873,14 +873,14 @@ pub fn set_trace_enabled(enabled: bool) -> bool {
 }
 
 /// Keeps trace collection enabled until this guard is dropped.
-#[cfg(all(feature = "profiler", any(test, feature = "test-support")))]
+#[cfg(all(feature = "profiler", test))]
 #[must_use]
 pub(crate) struct TraceGuard {
     _private: (),
 }
 
 /// Starts a reference-counted trace scope, independent of the manual setting.
-#[cfg(all(feature = "profiler", any(test, feature = "test-support")))]
+#[cfg(all(feature = "profiler", test))]
 pub(crate) fn trace_scope() -> TraceGuard {
     let _lifecycle = TRACE_LIFECYCLE_LOCK.lock();
     #[allow(
@@ -894,7 +894,7 @@ pub(crate) fn trace_scope() -> TraceGuard {
     TraceGuard { _private: () }
 }
 
-#[cfg(all(feature = "profiler", any(test, feature = "test-support")))]
+#[cfg(all(feature = "profiler", test))]
 impl Drop for TraceGuard {
     fn drop(&mut self) {
         let _lifecycle = TRACE_LIFECYCLE_LOCK.lock();

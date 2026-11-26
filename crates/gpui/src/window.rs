@@ -4,9 +4,13 @@ use crate::Inspector;
 use crate::MouseButton;
 use crate::Refineable;
 use crate::app::{AppCell, PlatformWindowCommandSink};
+use crate::collections::{FxHashSet, TypeIdHashMap};
 use crate::element::ElementIdStack;
 #[cfg(feature = "profiler")]
 use crate::profiler;
+use crate::scheduler::Instant;
+use crate::util::ResultExt;
+use crate::util::post_inc;
 use crate::{
     Action, AnyElement, AnyEntity, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena,
     Asset, AsyncWindowContext, AtlasAccessDiagnostic, AtlasRemoveDiagnostic,
@@ -57,10 +61,6 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
-use open_gpui_collections::{FxHashSet, TypeIdHashMap};
-use open_gpui_core_util::post_inc;
-use open_gpui_core_util::{ResultExt, measure};
-use open_gpui_scheduler::Instant;
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
 use smallvec::SmallVec;
 use std::{
@@ -7994,19 +7994,17 @@ impl Window {
 
         let should_draw = self.invalidator.is_dirty() || force_render;
         if should_draw {
-            measure("frame duration", || {
-                if force_render {
-                    self.refresh();
-                }
-                let accepted_generation = self.presentation_state.frame_accepted_generation;
-                let arena_clear_needed = self.draw(cx);
-                if self.presentation_state.frame_accepted_generation != accepted_generation
-                    || self.needs_present.get()
-                {
-                    self.present(cx);
-                }
-                arena_clear_needed.clear(cx);
-            })
+            if force_render {
+                self.refresh();
+            }
+            let accepted_generation = self.presentation_state.frame_accepted_generation;
+            let arena_clear_needed = self.draw(cx);
+            if self.presentation_state.frame_accepted_generation != accepted_generation
+                || self.needs_present.get()
+            {
+                self.present(cx);
+            }
+            arena_clear_needed.clear(cx);
         } else if needs_present {
             if self.fresh_initial_presentation_is_pending()
                 && !self.fresh_initial_presentation_frame_is_required()

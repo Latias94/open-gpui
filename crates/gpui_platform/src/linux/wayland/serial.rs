@@ -1,4 +1,4 @@
-use open_gpui_collections::HashMap;
+use open_gpui::collections::HashMap;
 use wayland_client::{Proxy, protocol::wl_surface};
 
 #[derive(Debug, Hash, PartialEq, Eq)]

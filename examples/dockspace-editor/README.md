@@ -7,9 +7,10 @@ cargo run --locked -p open-gpui-dockspace-editor
 ```
 
 The two docking windows share a document while retaining separate View entities
-and local drafts. Edit a View, move its tab, then choose **Rebuild docking
-windows** in the recovery control window. The same View entities and their edits
-reappear in the last committed layout under a fresh docking session.
+and local text fields. Enter a draft in either View and press Enter or click
+**Apply draft** to update the shared document. Move its tab, then choose
+**Rebuild docking windows** in the recovery control window. The original Views
+and their text fields reappear in the last committed layout under a fresh session.
 
 On Windows, this example reserves 8 MiB of virtual main-thread stack space through
 its binary's linker options. The unoptimized dockspace frame/reducer call chain
@@ -59,7 +60,8 @@ adapter's document persistence interface and retain their own business state.
 ## Verification
 
 The deterministic lifecycle tests use GPUI's TestPlatform and can run on hosted
-CI without an interactive desktop:
+CI without an interactive desktop. They include a platform text-handler probe
+that submits composed text and checks the retained field after reconstruction.
 
 ```text
 cargo nextest run --locked -p open-gpui-dockspace-editor --test-threads=1
@@ -83,3 +85,8 @@ records are programmatic fault injection, not physical pointer input or an OS
 capture qualification. Neither smoke is part of GitHub-hosted CI.
 Both smoke modes use explicit process exit so closing the last native window
 cannot end the process before its final success receipt is checked.
+
+For a physical IME check, compose text in either View on the local desktop. The
+candidate text stays in that field during composition. Confirm the candidate and
+press Enter to update both Views, then move and rebuild the edited View to check
+that its field retains the text.

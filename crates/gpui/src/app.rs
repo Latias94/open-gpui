@@ -1,4 +1,4 @@
-use open_gpui_scheduler::Instant;
+use crate::scheduler::Instant;
 use std::{
     any::{TypeId, type_name},
     cell::{Cell, RefCell},
@@ -19,6 +19,8 @@ use itertools::Itertools;
 use parking_lot::RwLock;
 use slotmap::SlotMap;
 
+use crate::collections::{FxHashMap, FxHashSet, HashMap, TypeIdHashMap, TypeIdHashSet, VecDeque};
+use crate::util::debug_panic;
 pub use async_context::*;
 pub use context::*;
 pub use entity_map::*;
@@ -26,10 +28,6 @@ pub use external_drag::PlatformExternalDragSession;
 use external_drag::PlatformOwnedDrag;
 #[cfg(any(test, feature = "test-support"))]
 pub use headless_app_context::*;
-use open_gpui_collections::{
-    FxHashMap, FxHashSet, HashMap, TypeIdHashMap, TypeIdHashSet, VecDeque,
-};
-use open_gpui_core_util::debug_panic;
 use smallvec::SmallVec;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_app::*;
@@ -51,10 +49,9 @@ use crate::{
     PlatformViewportCapabilities, PlatformWindow, PlatformWindowCapabilities,
     PlatformWindowProfile, Point, PointerCaptureHandle, PowerMode, Priority, PromptBuilder,
     PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
-    Reservation, SharedString, SubscriberSet, Subscription, SvgRenderer, SystemNotification,
-    SystemNotificationResponse, Task, TextRenderingMode, TextSystem, ThermalState, Window,
-    WindowAppearance, WindowBounds, WindowButtonLayout, WindowHandle, WindowId, WindowInvalidator,
-    WindowKind, WindowParams, WindowTransientOwner,
+    Reservation, SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextRenderingMode,
+    TextSystem, ThermalState, Window, WindowAppearance, WindowBounds, WindowButtonLayout,
+    WindowHandle, WindowId, WindowInvalidator, WindowKind, WindowParams, WindowTransientOwner,
     asset_cache::CachedLoad,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
@@ -95,8 +92,6 @@ mod power_tests;
 mod quit_tests;
 #[cfg(test)]
 mod restart_tests;
-#[cfg(test)]
-mod system_notification_tests;
 #[cfg(any(test, feature = "test-support"))]
 mod test_app;
 #[cfg(any(test, feature = "test-support"))]
@@ -2484,44 +2479,6 @@ impl App {
         self.platform.write_to_find_pasteboard(item)
     }
 
-    /// Writes credentials to the platform keychain.
-    pub fn write_credentials(
-        &self,
-        url: &str,
-        username: &str,
-        password: &[u8],
-    ) -> Task<Result<()>> {
-        self.platform.write_credentials(url, username, password)
-    }
-
-    /// Atomically writes credentials unless an item with this URL and username exists.
-    ///
-    /// Returns `true` if written, or `false` if the existing item was left unchanged.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if Keychain access fails or the platform lacks support.
-    #[cfg(target_os = "macos")]
-    pub fn write_credentials_if_not_exists(
-        &self,
-        url: &str,
-        username: &str,
-        password: &[u8],
-    ) -> Task<Result<bool>> {
-        self.platform
-            .write_credentials_if_not_exists(url, username, password)
-    }
-
-    /// Reads credentials from the platform keychain.
-    pub fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
-        self.platform.read_credentials(url)
-    }
-
-    /// Deletes credentials from the platform keychain.
-    pub fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
-        self.platform.delete_credentials(url)
-    }
-
     /// Directs the platform's default browser to open the given URL.
     pub fn open_url(&self, url: &str) {
         self.platform.open_url(url);
@@ -2535,57 +2492,6 @@ impl App {
     /// schemes at runtime.
     pub fn register_url_scheme(&self, scheme: &str) -> Task<Result<()>> {
         self.platform.register_url_scheme(scheme)
-    }
-
-    /// Sets the application's process-wide identity and user-visible name.
-    ///
-    /// The identifier is used for platform identity mechanisms such as the Windows
-    /// AppUserModelID. Call this once, early in startup, before opening windows or
-    /// posting notifications.
-    pub fn set_app_identity(&self, identifier: &str, name: &str) {
-        self.platform.set_app_identity(identifier, name);
-    }
-
-    /// Posts a notification to the operating system's notification center.
-    ///
-    /// A matching tag replaces an earlier notification where supported. This is a
-    /// no-op when notification support or delivery is unavailable.
-    pub fn show_system_notification(&self, notification: SystemNotification) {
-        self.platform.show_system_notification(notification);
-    }
-
-    /// Removes the delivered or pending notification with this tag, where supported.
-    ///
-    /// Retraction is best-effort; some platforms only let notifications age out.
-    /// The task completes after the platform calls return, not after any
-    /// asynchronous work inside the operating system. Dropping it does not
-    /// cancel dismissal.
-    pub fn dismiss_system_notification(&self, tag: &str) -> Task<()> {
-        self.platform.dismiss_system_notification(tag)
-    }
-
-    /// Registers the handler for system notification body or action-button activation.
-    ///
-    /// Subsequent registrations replace the handler. Responses enter the ordered App
-    /// callback queue and run in a complete update after active App borrows are released.
-    pub fn on_system_notification_response<F>(&self, callback: F)
-    where
-        F: 'static + FnMut(SystemNotificationResponse, &mut App),
-    {
-        if let Some(app) = self.this.upgrade() {
-            app.set_system_notification_response_handler(Box::new(callback));
-            let app = Rc::downgrade(&app);
-            self.platform
-                .on_system_notification_response(Box::new(move |response| {
-                    if let Some(app) = app.upgrade() {
-                        app.enqueue_native_app_event(
-                            native_event_ingress::NativeAppEvent::SystemNotificationResponse(
-                                response,
-                            ),
-                        );
-                    }
-                }));
-        }
     }
 
     /// Returns the full pathname of the current app bundle.
@@ -3820,14 +3726,9 @@ impl App {
         self.platform.get_menus()
     }
 
-    /// Sets the right click menu for the app icon in the dock
+    /// Sets the macOS application Dock menu.
     pub fn set_dock_menu(&self, menus: Vec<MenuItem>) {
         self.platform.set_dock_menu(menus, &self.keymap.borrow())
-    }
-
-    /// Performs the action associated with the given dock menu item, only used on Windows for now.
-    pub fn perform_dock_menu_action(&self, action: usize) {
-        self.platform.perform_dock_menu_action(action);
     }
 
     /// Adds given path to the bottom of the list of recent paths for the application.
@@ -3836,16 +3737,6 @@ impl App {
     /// If the path is already in the list, it will be moved to the bottom of the list.
     pub fn add_recent_document(&self, path: &Path) {
         self.platform.add_recent_document(path);
-    }
-
-    /// Updates the jump list with the updated list of recent paths for the application, only used on Windows for now.
-    /// Note that this also sets the dock menu on Windows.
-    pub fn update_jump_list(
-        &self,
-        menus: Vec<MenuItem>,
-        entries: Vec<SmallVec<[PathBuf; 2]>>,
-    ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
-        self.platform.update_jump_list(menus, entries)
     }
 
     /// Dispatch an action to the currently focused window or global action handler

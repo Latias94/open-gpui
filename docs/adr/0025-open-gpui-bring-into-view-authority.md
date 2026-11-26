@@ -117,6 +117,6 @@ handoff retries only while no newer claim has replaced it.
 - [Interactive subtree transform authority](0021-open-gpui-interactive-subtree-transform-authority.md)
 - [Subtree presentation authority](0022-open-gpui-subtree-presentation-authority.md)
 - [Typed committed portal anchor authority](0024-open-gpui-typed-committed-portal-anchor-authority.md)
-- [UI component contract](../ui/component-contract.md)
+- [Historical UI component contract](https://github.com/Latias94/open-gpui/blob/legacy/v0-pre-slim/docs/ui/component-contract.md)
 - [Open GPUI v0.3 UI migration guide](../ui/migration-v0.3.md)
 - [Bring-into-view verification ledger](../knowledge/engineering/verification/bring-into-view-authority-20260722.md)

@@ -22,14 +22,13 @@ workspace = true
 [features]
 default = ["font-kit", "wayland", "x11", "windows-manifest"]
 test-support = [
-    "open_gpui_collections/test-support",
     "wayland",
     "x11",
     "proptest",
 ]
 inspector = ["open_gpui_macros/inspector"]
 leak-detection = []
-wasm-threads = ["open_gpui_scheduler/wasm-threads"]
+wasm-threads = ["dep:wasm_thread", "flume/spin"]
 font-kit = []
 wayland = []
 x11 = []
@@ -54,14 +53,13 @@ anyhow.workspace = true
 async-task.workspace = true
 backtrace.workspace = true
 bitflags.workspace = true
-open_gpui_collections.workspace = true
 ctor.workspace = true
 derive_more.workspace = true
 etagere = "0.3"
+flume = "0.12"
 futures.workspace = true
 futures-concurrency.workspace = true
 open_gpui_macros.workspace = true
-open_gpui_shared_string.workspace = true
 image.workspace = true
 icu_segmenter.workspace = true
 inventory.workspace = true
@@ -72,12 +70,11 @@ parking = "2.0.0"
 parking_lot.workspace = true
 postage.workspace = true
 proptest = { workspace = true, optional = true }
-chrono.workspace = true
+chrono = { workspace = true, features = ["now", "wasmbind"] }
 profiling.workspace = true
 rand.workspace = true
 raw-window-handle = "0.6"
 regex.workspace = true
-open_gpui_scheduler.workspace = true
 resvg = { version = "0.46.0", default-features = false, features = [
     "text",
     "system-fonts",
@@ -86,17 +83,16 @@ resvg = { version = "0.46.0", default-features = false, features = [
 ] }
 usvg = { version = "0.46.0", default-features = false }
 ttf-parser = "0.25"
-open_gpui_util_macros.workspace = true
+rustc-hash.workspace = true
 schemars.workspace = true
 seahash = "4.1"
 serde.workspace = true
 serde_json.workspace = true
 slotmap.workspace = true
 smallvec.workspace = true
+smol_str = { version = "0.3.6", default-features = false, features = ["serde"] }
 stacksafe = { workspace = true, optional = true }
 strum.workspace = true
-open_gpui_tracing.workspace = true
-rayon.workspace = true
 tracing.workspace = true
 taffy = { version = "0.15", default-features = false, features = [
     "std",
@@ -108,7 +104,6 @@ taffy = { version = "0.15", default-features = false, features = [
     "content_size",
 ] }
 thiserror.workspace = true
-open_gpui_core_util.workspace = true
 hdrhistogram = { workspace = true, optional = true }
 waker-fn = "1.2.0"
 lyon_path = "1.0.19"
@@ -132,6 +127,7 @@ subsecond = { version = "=0.7.10", optional = true }
 async-channel.workspace = true
 getrandom = { version = "0.4.3", features = ["wasm_js"] }
 uuid = { workspace = true, features = ["js"] }
+wasm_thread = { workspace = true, optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 async-channel = { workspace = true, features = ["std"] }
@@ -151,12 +147,10 @@ windows = { workspace = true, features = ["Win32_System_WindowsProgramming"] }
 
 [dev-dependencies]
 backtrace.workspace = true
-open_gpui_collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
-open_gpui_core_util = { workspace = true }
 lyon_extra = "1.1.0"
 rand.workspace = true
-open_gpui_scheduler = { workspace = true, features = ["test-support"] }
+rayon.workspace = true
 syn.workspace = true
 tempfile.workspace = true
 trybuild.workspace = true

@@ -1,3 +1,4 @@
+use crate::collections::{FxHashMap, FxHashSet};
 use crate::{
     AbsoluteLength, App, Bounds, DefiniteLength, Edges, GridTemplate, Length, Pixels, Point, Size,
     Style, Window, size,
@@ -6,7 +7,6 @@ use crate::{
         round_to_device_pixel,
     },
 };
-use open_gpui_collections::{FxHashMap, FxHashSet};
 use std::{fmt::Debug, ops::Range};
 use taffy::{
     TaffyTree, TraversePartialTree as _,

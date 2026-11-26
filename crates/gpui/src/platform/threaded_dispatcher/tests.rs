@@ -373,7 +373,7 @@ fn detached_runnable(future: impl Future<Output = ()> + Send + 'static) -> Runna
     let (runnable, task) = async_task::Builder::new()
         .metadata(crate::RunnableMeta {
             location: std::panic::Location::caller(),
-            spawned: open_gpui_scheduler::SpawnTime(open_gpui_scheduler::Instant::now()),
+            spawned: crate::scheduler::SpawnTime(crate::scheduler::Instant::now()),
         })
         .spawn(move |_| future, |_| {});
     task.detach();
@@ -595,7 +595,7 @@ fn record_foreground_activity() {
     use crate::profiler::journal;
 
     let _turn = journal::foreground_turn();
-    let now = open_gpui_scheduler::Instant::now();
+    let now = crate::scheduler::Instant::now();
     journal::record_input(journal::InputTiming {
         kind: "test",
         start: now,
@@ -707,7 +707,7 @@ fn worker_and_timer_polls_preserve_unrelated_foreground_queue_counts() {
         dispatcher.run_until_idle();
         let (mut collector, counter, running) =
             receiver.recv_timeout(Duration::from_secs(10)).unwrap();
-        let _settle = open_gpui_util::defer(|| counter.finished());
+        let _settle = defer(|| counter.finished());
         assert_eq!(running.spawned.0, metadata.spawned.0);
         assert_eq!(running.location, metadata.location);
         let entries = collector.collect_unseen();

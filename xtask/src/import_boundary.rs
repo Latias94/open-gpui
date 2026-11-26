@@ -17,21 +17,6 @@ const DISALLOWED_ZED_GIT_SOURCES: &[&str] = &[
     "zed-industries/wgpu",
     "zed-industries/xim",
 ];
-const CORE_UTIL_MANIFEST_PATH: &str = "crates/gpui_util/Cargo.toml";
-const DISALLOWED_CORE_UTIL_DEPENDENCY_NAMES: &[&str] = &[
-    "open-gpui",
-    "open-gpui-docking",
-    "open-gpui-platform",
-    "open-gpui-ui-components",
-    "open-gpui-ui-core",
-    "open-gpui-wgpu",
-    "open_gpui",
-    "open_gpui_docking",
-    "open_gpui_platform",
-    "open_gpui_ui_components",
-    "open_gpui_ui_core",
-    "open_gpui_wgpu",
-];
 
 pub(crate) fn scan_import_boundary(root: &Path) -> Result<(), ()> {
     println!("==> scan import boundary");
@@ -138,25 +123,11 @@ fn scan_manifest_dependency_table(
                 "{relative}:{section}.{alias}: disallowed dependency name `{alias_name}`"
             ));
         }
-        if relative == CORE_UTIL_MANIFEST_PATH
-            && is_disallowed_core_util_dependency_name(alias_name)
-        {
-            failures.push(format!(
-                "{relative}:{section}.{alias}: core utilities must not depend on UI/domain/platform crate `{alias_name}`"
-            ));
-        }
 
         if let Some(package_name) = dependency_package_field(spec) {
             if package_name != alias_name && is_disallowed_dependency_name(package_name) {
                 failures.push(format!(
                     "{relative}:{section}.{alias}: disallowed dependency package `{package_name}`"
-                ));
-            }
-            if relative == CORE_UTIL_MANIFEST_PATH
-                && is_disallowed_core_util_dependency_name(package_name)
-            {
-                failures.push(format!(
-                    "{relative}:{section}.{alias}: core utilities must not depend on UI/domain/platform package `{package_name}`"
                 ));
             }
         }
@@ -234,10 +205,6 @@ fn dependency_git_source(spec: &toml::Value) -> Option<&str> {
 
 fn is_disallowed_dependency_name(name: &str) -> bool {
     DISALLOWED_DEPENDENCY_NAMES.contains(&name)
-}
-
-fn is_disallowed_core_util_dependency_name(name: &str) -> bool {
-    DISALLOWED_CORE_UTIL_DEPENDENCY_NAMES.contains(&name)
 }
 
 fn is_zed_monorepo_source(source: &str) -> bool {
@@ -429,43 +396,6 @@ scap = { git = 'https://github.com/zed-industries/scap.git', package = 'zed-scap
 
         assert!(has_failure(&failures, "zed-scap"));
         assert!(has_failure(&failures, "zed-industries/scap.git"));
-    }
-
-    #[test]
-    fn manifest_scan_rejects_core_util_ui_domain_and_platform_dependencies() {
-        let failures = manifest_failures_at(
-            CORE_UTIL_MANIFEST_PATH,
-            r#"
-[dependencies]
-open_gpui_ui_core.workspace = true
-renderer = { package = "open-gpui-wgpu", workspace = true }
-
-[dev-dependencies]
-open_gpui_docking.workspace = true
-"#,
-        );
-
-        assert!(has_failure(&failures, "open_gpui_ui_core"));
-        assert!(has_failure(&failures, "open-gpui-wgpu"));
-        assert!(has_failure(&failures, "open_gpui_docking"));
-    }
-
-    #[test]
-    fn manifest_scan_allows_core_util_without_ui_domain_or_platform_dependencies() {
-        let failures = manifest_failures_at(
-            CORE_UTIL_MANIFEST_PATH,
-            r#"
-[package]
-name = "open-gpui-core-util"
-
-[dependencies]
-"#,
-        );
-
-        assert!(
-            failures.is_empty(),
-            "expected headless utility manifest to be allowed, got: {failures:?}"
-        );
     }
 
     #[test]

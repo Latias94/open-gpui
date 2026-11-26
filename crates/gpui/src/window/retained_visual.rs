@@ -1,9 +1,9 @@
+use crate::collections::FxHashMap;
 use crate::{
     AnyElement, App, AtlasAccessDiagnostic, AtlasTextureLease, AtlasTextureLeaseError, Bounds,
     Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, Pixels, Scene,
     SharedString, WindowId,
 };
-use open_gpui_collections::FxHashMap;
 use std::{any::Any, fmt, ops::Range, rc::Rc};
 
 use super::{

@@ -1,4 +1,4 @@
-use open_gpui_core_util::ResultExt;
+use crate::util::ResultExt;
 
 use crate::{Action, AnyWindowHandle, DispatchPhase, PlatformFocusedWindow};
 

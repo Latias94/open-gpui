@@ -1,15 +1,15 @@
+use crate::scheduler::Instant;
+use crate::scheduler::Scheduler;
+use crate::util::log_error_with_caller;
 use crate::{ActivityGuard, App, PlatformDispatcher, PlatformScheduler};
 #[cfg(not(target_family = "wasm"))]
 use futures::channel::mpsc;
 use futures::prelude::*;
-use open_gpui_core_util::{TryFutureExt, TryFutureExtBacktrace};
-use open_gpui_scheduler::Instant;
-use open_gpui_scheduler::Scheduler;
 use std::{future::Future, marker::PhantomData, rc::Rc, sync::Arc, time::Duration};
 #[cfg(not(target_family = "wasm"))]
 use std::{mem, pin::Pin};
 
-pub use open_gpui_scheduler::{
+pub use crate::scheduler::{
     DedicatedExecutor, FallibleTask, LocalExecutor as SchedulerLocalExecutor, Priority, Task,
 };
 
@@ -23,7 +23,7 @@ mod send_foreground_tests;
 /// for spawning background tasks.
 #[derive(Clone)]
 pub struct BackgroundExecutor {
-    inner: open_gpui_scheduler::BackgroundExecutor,
+    inner: crate::scheduler::BackgroundExecutor,
     dispatcher: Arc<dyn PlatformDispatcher>,
 }
 
@@ -31,7 +31,7 @@ pub struct BackgroundExecutor {
 /// for spawning tasks on the main thread.
 #[derive(Clone)]
 pub struct ForegroundExecutor {
-    inner: open_gpui_scheduler::LocalExecutor,
+    inner: crate::scheduler::LocalExecutor,
     dispatcher: Arc<dyn PlatformDispatcher>,
     #[cfg(feature = "profiler")]
     foreground_runnables: Option<crate::profiler::journal::ForegroundRunnableCounter>,
@@ -41,7 +41,7 @@ pub struct ForegroundExecutor {
 /// A thread-safe handle for spawning `Send` futures on the main thread.
 #[derive(Clone)]
 pub struct SendForegroundExecutor {
-    inner: open_gpui_scheduler::SendLocalExecutor,
+    inner: crate::scheduler::SendLocalExecutor,
 }
 
 impl SendForegroundExecutor {
@@ -75,15 +75,23 @@ where
     fn detach_and_log_err(self, cx: &App) {
         let location = core::panic::Location::caller();
         cx.foreground_executor()
-            .spawn(self.log_tracked_err(*location))
+            .spawn(async move {
+                if let Err(error) = self.await {
+                    log_error_with_caller(location, format_args!("{error:#}"), log::Level::Error);
+                }
+            })
             .detach();
     }
 
     #[track_caller]
     fn detach_and_log_err_with_backtrace(self, cx: &App) {
-        let location = *core::panic::Location::caller();
+        let location = core::panic::Location::caller();
         cx.foreground_executor()
-            .spawn(self.log_tracked_err_with_backtrace(location))
+            .spawn(async move {
+                if let Err(error) = self.await {
+                    log_error_with_caller(location, format_args!("{error:?}"), log::Level::Error);
+                }
+            })
             .detach();
     }
 }
@@ -102,15 +110,15 @@ impl BackgroundExecutor {
         let scheduler: Arc<dyn Scheduler> = Arc::new(PlatformScheduler::new(dispatcher.clone()));
 
         Self {
-            inner: open_gpui_scheduler::BackgroundExecutor::new(scheduler),
+            inner: crate::scheduler::BackgroundExecutor::new(scheduler),
             dispatcher,
         }
     }
 
-    /// Returns the underlying open_gpui_scheduler::BackgroundExecutor.
+    /// Returns the underlying crate::scheduler::BackgroundExecutor.
     ///
     /// This is used by Ex to pass the executor to thread/worktree code.
-    pub fn scheduler_executor(&self) -> open_gpui_scheduler::BackgroundExecutor {
+    pub fn scheduler_executor(&self) -> crate::scheduler::BackgroundExecutor {
         self.inner.clone()
     }
 
@@ -276,7 +284,7 @@ impl BackgroundExecutor {
 
     /// In tests, returns the rng used by the dispatcher.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn rng(&self) -> open_gpui_scheduler::SharedRng {
+    pub fn rng(&self) -> crate::scheduler::SharedRng {
         self.dispatcher.as_test().unwrap().scheduler().rng()
     }
 
@@ -358,7 +366,7 @@ impl ForegroundExecutor {
         #[cfg(any(test, feature = "test-support"))]
         let inner = {
             let scheduler_for_dispatch = Arc::downgrade(&scheduler);
-            open_gpui_scheduler::LocalExecutor::new(session_id, scheduler, move |runnable| {
+            crate::scheduler::LocalExecutor::new(session_id, scheduler, move |runnable| {
                 if let Some(scheduler) = scheduler_for_dispatch.upgrade() {
                     scheduler.schedule_local(session_id, runnable);
                 }

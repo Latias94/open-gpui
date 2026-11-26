@@ -14,7 +14,7 @@ use futures::{
     lock::{Mutex, MutexGuard},
 };
 use open_gpui::ForegroundExecutor;
-use open_gpui_util::ResultExt;
+use open_gpui::util::ResultExt;
 use windows::{
     Win32::{
         Foundation::*,

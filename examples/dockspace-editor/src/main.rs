@@ -3,8 +3,9 @@ use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 use anyhow::{Context as _, Result};
 use open_gpui::{
     App, AppContext as _, Context, Entity, EntityId, HitboxTag, IntoElement, PrepaintPublicationId,
-    Render, Window, WindowId, WindowOptions, div, prelude::*, rgb,
+    Render, SharedString, Subscription, Window, WindowId, WindowOptions, div, prelude::*, rgb,
 };
+use open_gpui_base::{TextInput, TextInputEvent};
 
 mod recovery;
 mod smoke;
@@ -25,12 +26,16 @@ const INSPECTOR: SurfaceId = SurfaceId::new(2);
 const FIRST: ItemId = ItemId::new(1);
 const SECOND: ItemId = ItemId::new(2);
 
+#[derive(Default)]
 struct Document {
     edits: usize,
+    text: SharedString,
 }
 struct EditorView {
     document: Rc<RefCell<Document>>,
     draft: usize,
+    input: Entity<TextInput>,
+    _input_subscription: Subscription,
     name: &'static str,
     publication: PrepaintPublicationId,
     content_receiver: HitboxTag,
@@ -46,9 +51,53 @@ struct ViewFrame {
 }
 
 impl EditorView {
+    fn new(document: Rc<RefCell<Document>>, name: &'static str, cx: &mut Context<Self>) -> Self {
+        let input = cx.new(|cx| {
+            let mut input = TextInput::new("", cx);
+            input.set_label("Local draft text", cx);
+            input.set_placeholder("Type a draft, then press Enter", cx);
+            input.set_style(
+                div()
+                    .px_3()
+                    .py_2()
+                    .bg(rgb(0xffffff))
+                    .border_1()
+                    .border_color(rgb(0xb4bcc8))
+                    .style()
+                    .clone(),
+                cx,
+            );
+            input
+        });
+        let subscription = cx.subscribe(&input, |view, _, event, cx| {
+            if let TextInputEvent::Submit(text) = event {
+                view.commit(text.clone(), cx);
+            }
+        });
+        Self {
+            document,
+            draft: 0,
+            input,
+            _input_subscription: subscription,
+            name,
+            publication: PrepaintPublicationId::new(),
+            content_receiver: HitboxTag::new(),
+            frames: Rc::default(),
+        }
+    }
+
     fn edit(&mut self, cx: &mut Context<Self>) {
+        let text = SharedString::from(self.input.read(cx).value());
+        self.commit(text, cx);
+    }
+
+    fn commit(&mut self, text: SharedString, cx: &mut Context<Self>) {
         self.draft += 1;
-        self.document.borrow_mut().edits += 1;
+        {
+            let mut document = self.document.borrow_mut();
+            document.edits += 1;
+            document.text = text;
+        }
         cx.notify();
         cx.refresh_windows();
     }
@@ -59,7 +108,8 @@ impl Render for EditorView {
         let frames = self.frames.clone();
         let entity = cx.entity().entity_id();
         let draft = self.draft;
-        let document_edits = self.document.borrow().edits;
+        let document = self.document.borrow();
+        let document_edits = document.edits;
         div()
             .size_full()
             .flex()
@@ -70,8 +120,10 @@ impl Render for EditorView {
             .text_color(rgb(0x29313d))
             .child(self.name)
             .child(format!(
-                "Local draft: {draft} · Shared document edits: {document_edits}"
+                "View edits: {draft} · Shared document edits: {document_edits}"
             ))
+            .child(format!("Shared document: {}", document.text))
+            .child(self.input.clone())
             .child(
                 div()
                     .id("edit-document")
@@ -80,7 +132,7 @@ impl Render for EditorView {
                     .py_2()
                     .bg(rgb(0xe2edfc))
                     .on_click(cx.listener(|view, _, _, cx| view.edit(cx)))
-                    .child("Edit this View"),
+                    .child("Apply draft"),
             )
             .child("Each tab retains its original entity when moved between windows.")
             .record_prepaint_window_transaction(
@@ -108,23 +160,9 @@ struct Workspace {
 }
 
 fn workspace(cx: &mut App) -> Result<Workspace> {
-    let document = Rc::new(RefCell::new(Document { edits: 0 }));
-    let first = cx.new(|_| EditorView {
-        document: document.clone(),
-        draft: 0,
-        name: "Document / Editing View",
-        publication: PrepaintPublicationId::new(),
-        content_receiver: HitboxTag::new(),
-        frames: Rc::default(),
-    });
-    let second = cx.new(|_| EditorView {
-        document: document.clone(),
-        draft: 0,
-        name: "Document / Inspector View",
-        publication: PrepaintPublicationId::new(),
-        content_receiver: HitboxTag::new(),
-        frames: Rc::default(),
-    });
+    let document = Rc::new(RefCell::new(Document::default()));
+    let first = cx.new(|cx| EditorView::new(document.clone(), "Document / Editing View", cx));
+    let second = cx.new(|cx| EditorView::new(document.clone(), "Document / Inspector View", cx));
     let layout = DockspaceLayout::new([(EDITOR, FIRST), (INSPECTOR, SECOND)].map(
         |(surface, item)| {
             DockspaceSurfaceLayout::new(

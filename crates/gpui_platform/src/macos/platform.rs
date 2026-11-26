@@ -1,14 +1,10 @@
-use crate::macos::apple::{
-    keychain,
-    process_info::{self, ProcessInfoObserver},
-};
+use crate::macos::apple::process_info::{self, ProcessInfoObserver};
 use crate::macos::{
     AppleActivity, AppleDispatcher, BoolExt, MacDisplayTopologyHandle, MacDisplayTopologyRefresh,
     MacDisplayTopologyRetry, MacKeyboardLayout, MacKeyboardMapper, MacWindow, MacWindowRegistry,
     events::key_to_menu_equivalent,
     main_thread_marker,
     pasteboard::Pasteboard,
-    system_notifications::NotificationCommand,
     window::{
         macos_supports_focus_on_appearing, macos_supports_toplevel_creation_state,
         validate_macos_window_kind,
@@ -39,6 +35,7 @@ use objc2_foundation::{
     NSActivityOptions, NSArray, NSBundle, NSError, NSInteger, NSNotificationCenter, NSNumber,
     NSProcessInfo, NSString, NSURL, NSUserDefaults,
 };
+use open_gpui::util::ResultExt;
 use open_gpui::{
     Action, ActivationPolicy, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem,
     CursorStyle, DisplayId, ForegroundExecutor, GraphicalEnvironment, KeyContext, Keymap, Menu,
@@ -51,13 +48,10 @@ use open_gpui::{
     WindowAppearance, WindowCoordinateSpace, WindowCreationSupport, WindowInitialPresentationOrder,
     WindowKind, WindowMutationSupport, WindowParams, WindowingRequest,
 };
-use open_gpui_util::{
-    ResultExt,
-    command::{new_command, new_std_command},
-};
 use open_gpui_wgpu::{GpuContext, SharedWgpuContext};
 use parking_lot::Mutex;
 use semver::Version;
+use std::process::Command;
 use std::{
     cell::Cell,
     ffi::{CStr, c_void},
@@ -229,7 +223,6 @@ pub(crate) struct MacPlatformState {
     keyboard_mapper: Rc<MacKeyboardMapper>,
     /// Mirrors `[NSCursor setHiddenUntilMouseMoves:]` state, which AppKit doesn't expose.
     cursor_visible: Arc<AtomicBool>,
-    system_notifications: crate::macos::system_notifications::SystemNotificationState,
 }
 
 /// The activation policy that stands for a windowing mode: an app is headless while it has no
@@ -318,8 +311,6 @@ impl MacPlatform {
                 menus: None,
                 keyboard_mapper,
                 cursor_visible: Arc::new(AtomicBool::new(true)),
-                system_notifications:
-                    crate::macos::system_notifications::SystemNotificationState::new(),
             }),
             MacNativeNotificationCallbacks::default(),
             marker,
@@ -796,7 +787,7 @@ fn restart_command(
         clippy::disallowed_methods,
         reason = "We are restarting ourselves, using std command thus is fine"
     )]
-    let mut command = new_std_command("/bin/bash");
+    let mut command = Command::new("/bin/bash");
     command
         .arg("-c")
         .arg(script)
@@ -1314,14 +1305,13 @@ impl Platform for MacPlatform {
             .lock()
             .background_executor
             .spawn(async move {
-                if let Some(mut child) = new_command("open")
-                    .arg("--")
-                    .arg(path)
-                    .spawn()
-                    .context("invoking open command")
-                    .log_err()
-                {
-                    child.status().await.log_err();
+                let url = if path.is_dir() {
+                    NSURL::from_directory_path(&path)
+                } else {
+                    NSURL::from_file_path(&path)
+                };
+                if !url.is_some_and(|url| NSWorkspace::sharedWorkspace().openURL(&url)) {
+                    log::error!("failed to open {} with the system", path.display());
                 }
             })
             .detach();
@@ -1421,40 +1411,6 @@ impl Platform for MacPlatform {
         drop(previous);
     }
 
-    fn show_system_notification(&self, notification: open_gpui::SystemNotification) {
-        let mut state = self.0.lock();
-        let foreground_executor = state.foreground_executor.clone();
-        let background_executor = state.background_executor.clone();
-        state
-            .system_notifications
-            .send(
-                &foreground_executor,
-                &background_executor,
-                NotificationCommand::Show(notification),
-            )
-            .detach();
-    }
-
-    fn dismiss_system_notification(&self, tag: &str) -> Task<()> {
-        let mut state = self.0.lock();
-        let foreground_executor = state.foreground_executor.clone();
-        let background_executor = state.background_executor.clone();
-        state.system_notifications.send(
-            &foreground_executor,
-            &background_executor,
-            NotificationCommand::Dismiss(open_gpui::SharedString::from(tag.to_owned())),
-        )
-    }
-
-    fn on_system_notification_response(
-        &self,
-        callback: Box<dyn FnMut(open_gpui::SystemNotificationResponse)>,
-    ) {
-        let mut state = self.0.lock();
-        let executor = state.foreground_executor.clone();
-        state.system_notifications.on_response(&executor, callback);
-    }
-
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         Box::new(MacKeyboardLayout::new())
     }
@@ -1551,42 +1507,6 @@ impl Platform for MacPlatform {
         if let Some(pasteboard) = &state.find_pasteboard {
             pasteboard.write(item);
         }
-    }
-
-    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
-        let url = url.to_string();
-        let username = username.to_string();
-        let password = password.to_vec();
-        self.background_executor()
-            .spawn(async move { Ok(keychain::write_credentials(&url, &username, &password)?) })
-    }
-
-    fn write_credentials_if_not_exists(
-        &self,
-        url: &str,
-        username: &str,
-        password: &[u8],
-    ) -> Task<Result<bool>> {
-        let url = url.to_string();
-        let username = username.to_string();
-        let password = password.to_vec();
-        self.background_executor().spawn(async move {
-            Ok(keychain::write_credentials_if_not_exists(
-                &url, &username, &password,
-            )?)
-        })
-    }
-
-    fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
-        let url = url.to_string();
-        self.background_executor()
-            .spawn(async move { Ok(keychain::read_credentials(&url)?) })
-    }
-
-    fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
-        let url = url.to_string();
-        self.background_executor()
-            .spawn(async move { Ok(keychain::delete_credentials(&url)?) })
     }
 }
 

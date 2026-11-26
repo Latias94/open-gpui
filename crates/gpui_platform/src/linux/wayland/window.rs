@@ -10,7 +10,7 @@ use std::{
 use anyhow::Context as _;
 use calloop::ping::Ping;
 use futures::channel::oneshot::Receiver;
-use open_gpui_collections::HashMap;
+use open_gpui::collections::HashMap;
 
 use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;

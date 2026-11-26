@@ -3,13 +3,13 @@ use cosmic_text::{
     Attrs, AttrsList, Ellipsize, Family, Font as CosmicTextFont,
     FontFeatures as CosmicFontFeatures, FontSystem, ShapeBuffer, ShapeLine, Stretch, Style, Weight,
 };
+use open_gpui::collections::HashMap;
 use open_gpui::{
     Bounds, DevicePixels, FallbackFontClass, Font, FontFallbacks, FontFeatures, FontId,
     FontMetrics, FontRun, GlyphId, LineLayout, MissingGlyph, MissingGlyphSink, Pixels,
     PlatformTextSystem, RenderGlyphParams, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ShapedGlyph,
     ShapedRun, SharedString, Size, TextRenderingMode, point, size,
 };
-use open_gpui_collections::HashMap;
 
 use itertools::Itertools;
 use parking_lot::RwLock;

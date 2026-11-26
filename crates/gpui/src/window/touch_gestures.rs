@@ -1,7 +1,7 @@
 use std::{any::Any, panic::AssertUnwindSafe};
 
+use crate::util::ResultExt;
 use anyhow::Context as _;
-use open_gpui_core_util::ResultExt;
 
 use crate::{
     App, LongPressEvent, RecognizedTouchGesture, ScrollEvent, ScrollSource, TouchDragEvent,

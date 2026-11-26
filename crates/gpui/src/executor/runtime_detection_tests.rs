@@ -15,7 +15,7 @@ fn deterministic_and_threaded_executors_keep_distinct_runtime_identity() {
     let test_dispatcher = Arc::new(TestDispatcher::new(17));
     let test_background = BackgroundExecutor::new(test_dispatcher.clone());
     let test_foreground = ForegroundExecutor::new(test_dispatcher.clone());
-    assert!(open_gpui_scheduler::test_scheduler_created());
+    assert!(crate::scheduler::test_scheduler_created());
 
     let threaded_inner = threaded_background.scheduler_executor();
     let test_inner = test_background.scheduler_executor();
@@ -93,5 +93,5 @@ fn deterministic_and_threaded_executors_keep_distinct_runtime_identity() {
     assert!(weak_test_scheduler.upgrade().is_none());
     assert!(weak_threaded_dispatcher.upgrade().is_none());
     assert!(weak_test_dispatcher.upgrade().is_none());
-    assert!(open_gpui_scheduler::test_scheduler_created());
+    assert!(crate::scheduler::test_scheduler_created());
 }

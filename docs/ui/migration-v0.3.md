@@ -7,19 +7,34 @@ Open GPUI v0.3 is an intentionally breaking, pre-release architecture release.
 - Native docking uses the shared `DockSurface` and `DockspaceSession`. The old feature and
   example are retired. Import existing v2/v3 session documents through `persistence`.
 - The platform selector covers Windows, macOS, Linux and FreeBSD. Screen capture APIs are retired.
-  Applications can supply their own CoreVideo buffers to the Surface element. Linux credential
-  storage returns an unavailable error.
+  Applications can supply their own CoreVideo buffers to the Surface element.
 - Provide an image through `AssetSource`, a file path, or a custom source. Applications own their
   HTTP clients and any downloads.
-- Build command lists and menus from application data using component descriptors. Application
-  code owns command providers and form lifecycle. GPUI actions, keymaps, and field controls remain
-  available.
+- Use GPUI actions and keymaps with application-owned command and form state.
 - Import `Refineable` from `open_gpui` and the shared motion primitives from
-  `open_gpui_core_util::motion`. Use `test-support` and `headless_test_platform` for tests that
+  `open_gpui::motion`. Use `test-support` and `headless_test_platform` for tests that
   open an ordinary headless App.
 
 The retired packages, examples and their earlier migration instructions are available at
 [`legacy/v0-pre-slim`](https://github.com/Latias94/open-gpui/blob/legacy/v0-pre-slim/docs/ui/migration-v0.3.md).
+
+## Base Controls
+
+Remove the `open-gpui-ui-components` and `open-gpui-ui-core` dependencies. Add `open-gpui-base`
+for the controls you use, and apply layout and color through GPUI's `Styled` methods. Bind
+buttons through `on_click`. Mount `TextInput` as an entity, and handle `TextInputEvent::Submit`
+in the application to apply committed text. The base control guide links to the retained dockspace
+editor and the current exports. [Base controls](../architecture/native-ui-framework-strategy.md)
+
+Older sections about themes, overlays, table state and component contracts describe the packages
+at [`legacy/v0-pre-slim`](https://github.com/Latias94/open-gpui/tree/legacy/v0-pre-slim).
+
+## Consolidated Helpers
+
+Import `SharedString` and `ArcCow` from `open_gpui`. The retained collections, scheduler, motion,
+and utility functions live under `open_gpui::{collections,scheduler,motion,util}`. Applications
+that used the old logging or portable path crates can use their own tracing subscriber and path
+library. Applications also own async resource state and its presentation.
 
 ## Default Shared Docking Session
 
@@ -156,18 +171,11 @@ the checkpoint grants no authority to reuse them. See the
 [adoption record](../knowledge/engineering/verification/dockspace-remote-adoption-20261114.md)
 for the fixed source inventory and remaining legacy-platform boundary.
 
-## System Notification Completion
+## Application-Owned Desktop Services
 
-`App::dismiss_system_notification` and `Platform::dismiss_system_notification`
-now return `Task<()>`. Await the task when subsequent application work depends
-on completion, or call `.detach()` for fire-and-forget use. Custom platform
-implementations can return `Task::ready(())` after their existing dismissal.
-
-On macOS, one dedicated worker serializes notification posting and dismissal so
-the UI thread does not wait for the notification service. Completion means the
-native platform calls returned, not that asynchronous OS work finished. Dropping
-the returned task does not cancel an already queued dismissal. Response handlers
-still run through the foreground executor.
+Applications that used GPUI to store credentials, post system notifications, or register Windows
+Jump List destinations now call their chosen OS services directly. Custom platform implementations
+can remove the corresponding implementations from their GPUI trait implementations.
 
 ## Native Docking Reports
 
@@ -921,9 +929,6 @@ become visible during a later command drain. Handle the new
 `WindowProvisionalRevealOutcome::Cancelled` variant in exhaustive matches. Logical window removal
 is terminal for an uncommitted provisional reveal even when native retirement still retains the
 window root; do not wait for entity release or the HWND terminal callback to begin compensation.
-
-The component-side constraints are also recorded in the
-[Open GPUI Component Contract](component-contract.md#native-window-callback-boundary).
 
 ## Renderer-Submitted Provisional Semantics
 

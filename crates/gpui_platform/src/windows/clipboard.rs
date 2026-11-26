@@ -2,7 +2,7 @@ use std::{borrow::Cow, sync::LazyLock};
 
 use anyhow::Result;
 use itertools::Itertools;
-use open_gpui_collections::FxHashMap;
+use open_gpui::collections::FxHashMap;
 use windows::Win32::{
     Foundation::{HANDLE, HGLOBAL},
     System::{

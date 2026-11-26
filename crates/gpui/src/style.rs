@@ -4,6 +4,7 @@ use std::{
     ops::Range,
 };
 
+use crate::collections::HashSet;
 use crate::{
     AbsoluteLength, App, Background, BackgroundTag, BorderStyle, Bounds, Corners,
     CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges, EdgesRefinement, Font,
@@ -11,7 +12,6 @@ use crate::{
     PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, SubtreeClip,
     SubtreeClipError, TextRun, Window, black, phi, point, px, quad, rems, size,
 };
-use open_gpui_collections::HashSet;
 mod refinement;
 
 pub use open_gpui_macros::Refineable;
@@ -1341,9 +1341,7 @@ mod tests {
 
     use super::*;
 
-    use open_gpui_util_macros::perf;
-
-    #[perf]
+    #[test]
     fn test_basic_highlight_style_combination() {
         let style_a = HighlightStyle::default();
         let style_b = HighlightStyle::default();
@@ -1428,7 +1426,7 @@ mod tests {
         );
     }
 
-    #[perf]
+    #[test]
     fn test_combine_highlights() {
         assert_eq!(
             combine_highlights(
@@ -1517,7 +1515,7 @@ mod tests {
         );
     }
 
-    #[perf]
+    #[test]
     fn test_text_style_refinement() {
         let mut style = Style::default();
         style.refine(&StyleRefinement::default().text_size(px(20.0)));

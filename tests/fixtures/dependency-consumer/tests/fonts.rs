@@ -122,7 +122,7 @@ mod cosmic {
             ])),
             ..font("IBM Plex Sans")
         };
-        let aliases = [".SystemUIFont", ".OpenGpuiSans", ".UiSans", ".ZedSans"].map(font);
+        let aliases = [".SystemUIFont", ".OpenGpuiSans", ".UiSans"].map(font);
         text_system.prewarm_fonts(&aliases);
         let primary_id = text_system.resolve_font(&primary);
         let primary_m = platform
@@ -226,7 +226,7 @@ mod cosmic {
                 600.,
             );
             assert_eq!(text_system.resolve_font(&primary), primary_id);
-            let mono_alias = font(".ZedMono");
+            let mono_alias = font("Lilex");
             let alias_id = platform
                 .font_id(&mono_alias)
                 .expect("the installed Lilex family must also resolve through its virtual alias");

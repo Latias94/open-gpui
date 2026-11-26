@@ -138,7 +138,7 @@ fn timed_out_private_session_retires_its_runner_and_bus() {
         .spawn()
         .expect("start the dedicated blocked private session");
     let runner = child.id();
-    let cleanup = open_gpui_util::defer(|| {
+    let cleanup = open_gpui::util::defer(|| {
         terminate_session(&mut child);
     });
     let children_path = format!("/proc/{runner}/task/{runner}/children");

@@ -1,0 +1,19 @@
+[package]
+name = "open-gpui-base"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+description = "Unstyled interaction primitives for Open GPUI."
+readme = "README.md"
+
+[dependencies]
+open_gpui.workspace = true
+unicode-segmentation.workspace = true
+
+[lints]
+workspace = true

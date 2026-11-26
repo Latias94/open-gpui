@@ -26,7 +26,6 @@ test-support = ["open_gpui/test-support", "dep:image"]
 open_gpui.workspace = true
 anyhow.workspace = true
 bytemuck = "1"
-open_gpui_collections.workspace = true
 cosmic-text = "0.19.0"
 etagere = "0.3"
 itertools.workspace = true
@@ -39,7 +38,6 @@ smallvec.workspace = true
 swash = "0.2.6"
 unicode-bidi.workspace = true
 unicode-segmentation.workspace = true
-open_gpui_core_util.workspace = true
 
 # Optional: only needed on platforms with multiple font sources (e.g. Linux)
 font-kit = { package = "open-gpui-font-kit", version = "0.14.3", optional = true }

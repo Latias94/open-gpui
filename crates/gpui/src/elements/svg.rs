@@ -7,13 +7,13 @@ use std::{
     time::Duration,
 };
 
+use crate::util::ResultExt;
 use crate::{
     App, Asset, Bounds, Element, GlobalElementId, Hitbox, InspectorElementId, InteractiveElement,
     Interactivity, LayoutId, Pixels, Point, PreparedSubtreeClip, Radians, SharedString, Size,
     SpriteAnimation, StyleRefinement, Styled, TransformationMatrix, Window, ease_in_out,
     ease_out_quint, heartbeat, linear, point, px, quadratic, radians, size,
 };
-use open_gpui_core_util::ResultExt;
 
 /// An SVG element.
 pub struct Svg {

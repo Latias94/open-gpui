@@ -3,10 +3,11 @@
 
 use heck::ToSnakeCase as _;
 use proc_macro::TokenStream;
-use proc_macro2::{Span, TokenStream as TokenStream2};
+use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{
-    Attribute, Expr, FnArg, Ident, Item, ItemTrait, Lit, Meta, Path, ReturnType, TraitItem, Type,
+    Attribute, Expr, FnArg, Ident, Item, ItemTrait, Lit, Meta, ReturnType, TraitItem, Type,
+    ext::IdentExt as _,
     parse_macro_input, parse_quote,
     visit_mut::{self, VisitMut},
 };
@@ -40,14 +41,8 @@ pub fn derive_inspector_reflection(_args: TokenStream, input: TokenStream) -> To
 fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
     let trait_name = &trait_item.ident;
     let vis = &trait_item.vis;
-
-    // Determine if we're being called from within the gpui crate
-    let call_site = Span::call_site();
-    let inspector_reflection_path = if is_called_from_gpui_crate(call_site) {
-        quote! { crate::inspector_reflection }
-    } else {
-        quote! { ::open_gpui::inspector_reflection }
-    };
+    let gpui = crate::gpui_path();
+    let inspector_reflection_path = quote!(#gpui::inspector_reflection);
 
     // Collect method information for methods of form fn name(self) -> Self or fn name(mut self) -> Self
     let mut method_infos = Vec::new();
@@ -186,12 +181,6 @@ fn extract_cfg_attributes(attrs: &[Attribute]) -> Vec<Attribute> {
         .collect()
 }
 
-fn is_called_from_gpui_crate(_span: Span) -> bool {
-    // Check if we're being called from within the gpui crate by examining the call site
-    // This is a heuristic approach - we check if the current crate name is "gpui"
-    std::env::var("CARGO_PKG_NAME").is_ok_and(|name| name == "gpui")
-}
-
 struct MacroExpander;
 
 impl VisitMut for MacroExpander {
@@ -226,63 +215,62 @@ impl VisitMut for MacroExpander {
 }
 
 fn try_expand_macro(macro_item: &syn::TraitItemMacro) -> Option<Vec<TraitItem>> {
-    let path = &macro_item.mac.path;
-
-    // Check if this is one of our known style macros
-    let macro_name = path_to_string(path);
-
-    // Handle the known macros by calling their implementations
+    let mut segments = macro_item.mac.path.segments.iter();
+    let first = &segments.next()?.ident;
+    let macro_name = match segments.next() {
+        None => first.unraw(),
+        Some(macro_segment)
+            if segments.next().is_none()
+                && crate::is_style_macro_crate(&first.unraw().to_string()) =>
+        {
+            macro_segment.ident.unraw()
+        }
+        Some(_) => return None,
+    };
+    let macro_name = macro_name.to_string();
     match macro_name.as_str() {
-        "open_gpui_macros::style_helpers" | "style_helpers" => {
+        "style_helpers" => {
             let tokens = macro_item.mac.tokens.clone();
             let expanded = crate::styles::style_helpers(TokenStream::from(tokens));
             parse_expanded_items(expanded)
         }
-        "open_gpui_macros::margin_style_methods" | "margin_style_methods" => {
+        "margin_style_methods" => {
             let tokens = macro_item.mac.tokens.clone();
             let expanded = crate::styles::margin_style_methods(TokenStream::from(tokens));
             parse_expanded_items(expanded)
         }
-        "open_gpui_macros::padding_style_methods" | "padding_style_methods" => {
+        "padding_style_methods" => {
             let tokens = macro_item.mac.tokens.clone();
             let expanded = crate::styles::padding_style_methods(TokenStream::from(tokens));
             parse_expanded_items(expanded)
         }
-        "open_gpui_macros::position_style_methods" | "position_style_methods" => {
+        "position_style_methods" => {
             let tokens = macro_item.mac.tokens.clone();
             let expanded = crate::styles::position_style_methods(TokenStream::from(tokens));
             parse_expanded_items(expanded)
         }
-        "open_gpui_macros::overflow_style_methods" | "overflow_style_methods" => {
+        "overflow_style_methods" => {
             let tokens = macro_item.mac.tokens.clone();
             let expanded = crate::styles::overflow_style_methods(TokenStream::from(tokens));
             parse_expanded_items(expanded)
         }
-        "open_gpui_macros::cursor_style_methods" | "cursor_style_methods" => {
+        "cursor_style_methods" => {
             let tokens = macro_item.mac.tokens.clone();
             let expanded = crate::styles::cursor_style_methods(TokenStream::from(tokens));
             parse_expanded_items(expanded)
         }
-        "open_gpui_macros::border_style_methods" | "border_style_methods" => {
+        "border_style_methods" => {
             let tokens = macro_item.mac.tokens.clone();
             let expanded = crate::styles::border_style_methods(TokenStream::from(tokens));
             parse_expanded_items(expanded)
         }
-        "open_gpui_macros::box_shadow_style_methods" | "box_shadow_style_methods" => {
+        "box_shadow_style_methods" => {
             let tokens = macro_item.mac.tokens.clone();
             let expanded = crate::styles::box_shadow_style_methods(TokenStream::from(tokens));
             parse_expanded_items(expanded)
         }
         _ => None,
     }
-}
-
-fn path_to_string(path: &Path) -> String {
-    path.segments
-        .iter()
-        .map(|seg| seg.ident.to_string())
-        .collect::<Vec<_>>()
-        .join("::")
 }
 
 fn parse_expanded_items(expanded: TokenStream) -> Option<Vec<TraitItem>> {

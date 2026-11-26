@@ -10,7 +10,7 @@ fn path(depth: usize, leaf: u64) -> Vec<ElementId> {
 }
 
 fn fx_hash(value: &impl Hash) -> u64 {
-    let mut hasher = open_gpui_collections::FxHasher::default();
+    let mut hasher = crate::collections::FxHasher::default();
     value.hash(&mut hasher);
     hasher.finish()
 }

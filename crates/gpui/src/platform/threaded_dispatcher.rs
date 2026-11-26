@@ -10,7 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use open_gpui_core_util as open_gpui_util;
+use crate::util::defer;
 use parking_lot::{Condvar, Mutex};
 
 use crate::{
@@ -64,7 +64,7 @@ impl IdleTracker {
     /// Returns a guard that decrements the in-flight count when dropped, so
     /// the count stays correct even if the runnable being executed panics.
     fn decrement_on_drop(&self) -> impl Drop + '_ {
-        open_gpui_util::defer(|| self.decrement())
+        defer(|| self.decrement())
     }
 
     /// Notifies waiters while holding the in-flight lock. `run_until_idle`
@@ -335,7 +335,7 @@ impl ThreadedDispatcher {
         ran_any
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(test)]
     pub(crate) fn run_until_with_frames<R>(
         &self,
         mut ready: impl FnMut() -> Option<R>,
@@ -386,10 +386,6 @@ impl ThreadedDispatcher {
         canceled
     }
 
-    pub(crate) fn has_pending_timers(&self) -> bool {
-        !self.timers.state.lock().heap.is_empty()
-    }
-
     /// Describes the dispatcher's idle-tracking state, for diagnosing
     /// workloads that fail to reach quiescence.
     pub fn debug_state(&self) -> String {
@@ -405,7 +401,7 @@ impl ThreadedDispatcher {
     /// Whether no main-thread work is queued, no background or timer
     /// runnables are queued or running, and no armed timer is due. Timers
     /// that aren't due yet are ignored, as in [`Self::run_until_idle`].
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(test)]
     pub(crate) fn is_idle(&self) -> bool {
         !self.main_queue_has_work() && !self.has_due_timer() && *self.idle.inflight.lock() == 0
     }
@@ -448,7 +444,7 @@ impl PlatformDispatcher for ThreadedDispatcher {
 
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority) {
         self.idle.increment();
-        let rollback = open_gpui_util::defer(|| self.idle.decrement());
+        let rollback = defer(|| self.idle.decrement());
         self.background_sender
             .send(priority, runnable)
             .unwrap_or_else(|_| panic!("threaded dispatcher workers are no longer running"));

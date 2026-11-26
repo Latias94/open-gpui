@@ -6,8 +6,8 @@ use objc2::{
 use objc2_app_kit::NSView;
 use objc2_foundation::{NSObject, NSObjectProtocol, NSRunLoop, NSRunLoopCommonModes};
 use objc2_quartz_core::CADisplayLink;
+use open_gpui::scheduler::Instant;
 use open_gpui::{FrameRequestSource, PlatformFrameSignal, RequestFrameOptions};
-use open_gpui_scheduler::Instant;
 use std::cell::{Cell, RefCell};
 
 struct DisplayLinkTargetIvars(Box<dyn Fn()>);

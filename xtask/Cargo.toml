@@ -18,7 +18,6 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
-open_gpui_ui_components.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml = "1.1.2"

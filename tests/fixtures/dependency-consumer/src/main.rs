@@ -2,6 +2,7 @@ use open_gpui::{
     App, AppContext as _, Context, IntoElement, ParentElement as _, Render, Styled as _, Window,
     WindowOptions, canvas, div, fill, px, rgb,
 };
+use open_gpui_base::Button;
 use open_gpui_docking::{
     DockPane, DockSurface, GpuiDockspaceConfig,
     dockspace::{
@@ -13,7 +14,6 @@ use open_gpui_docking::{
         runtime::DockspaceSession,
     },
 };
-use open_gpui_ui_components::button::{Button, ButtonVariant};
 
 struct PreviewPanel {
     extent: taffy::Size<f32>,
@@ -24,6 +24,11 @@ struct PreviewPanel {
 impl Render for PreviewPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let color = rgb(if self.highlighted { 0x2563eb } else { 0x334155 });
+        let toggle_label = if self.highlighted {
+            "Clear highlight"
+        } else {
+            "Highlight preview"
+        };
         div()
             .flex()
             .flex_col()
@@ -32,10 +37,11 @@ impl Render for PreviewPanel {
             .p_4()
             .child(format!("Preview format: {:?}", self.format))
             .child(
-                Button::new("toggle-highlight", "Toggle highlight")
-                    .variant(ButtonVariant::Secondary)
-                    .selected(self.highlighted)
-                    .on_activate(cx.processor(|panel, _, _, cx| {
+                Button::new("toggle-highlight", toggle_label)
+                    .px_3()
+                    .py_2()
+                    .bg(rgb(0xe2edfc))
+                    .on_click(cx.listener(|panel, _, _, cx| {
                         panel.highlighted = !panel.highlighted;
                         cx.notify();
                     })),

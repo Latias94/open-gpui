@@ -1,7 +1,6 @@
 #![cfg(all(target_os = "windows", feature = "vulkan-surface"))]
 
-//! Public native Vulkan lifetime controls for upstream
-//! `3b3506ea31154edc04de64debda0e780cba2639c`.
+//! Public native Vulkan lifetime controls for the workspace WGPU revision.
 //!
 //! The clear control submits before dropping the surface and waits afterward;
 //! it does not assume a minimum GPU execution time or require presentation.
@@ -322,12 +321,11 @@ fn native_wgpu_renderer_initializes_shares_resumes_and_retires_real_surfaces() {
         WindowPresentationShutdownTicket, point, rgb, size,
     };
     use open_gpui_wgpu::{
-        GpuContext, WgpuRenderer, WgpuSurfaceConfig, WgpuSurfaceShutdownProgress,
+        GpuContext, SharedWgpuContext, WgpuRenderer, WgpuSurfaceConfig, WgpuSurfaceShutdownProgress,
     };
     use raw_window_handle::{
         DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle,
     };
-    use std::{cell::RefCell, rc::Rc};
 
     /// Borrows handle values; the test retains both native owners on this thread until all
     /// renderers, shared contexts, devices, queues, and surface factories have been dropped.
@@ -372,11 +370,37 @@ fn native_wgpu_renderer_initializes_shares_resumes_and_retires_real_surfaces() {
     let first_handle = borrowed_handle(&first_window);
     let second_handle = borrowed_handle(&second_window);
     let zero_size = size(DevicePixels(0), DevicePixels(0));
-    let gpu_context: GpuContext = Rc::new(RefCell::new(None));
-    let context_lifetime = Rc::downgrade(&gpu_context);
-    assert!(gpu_context.borrow().is_none());
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::VULKAN,
+        flags: wgpu::InstanceFlags::DEBUG | wgpu::InstanceFlags::VALIDATION,
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
+    });
+    let surface = instance
+        .create_surface(first_handle)
+        .expect("create the adapter probe surface");
+    let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        compatible_surface: Some(&surface),
+        ..Default::default()
+    }))
+    .expect("request a Vulkan adapter that supports the first HWND");
+    drop(surface);
+    assert_eq!(adapter.get_info().backend, wgpu::Backend::Vulkan);
+    eprintln!(
+        "ordinary native WgpuRenderer regression adapter: {:?}",
+        adapter.get_info()
+    );
+    let shared = block_on(SharedWgpuContext::request_device(
+        instance,
+        adapter,
+        wgpu::DeviceDescriptor::default(),
+    ))
+    .expect("request an application-owned WGPU device");
+    let device = shared.device().clone();
+    let device_errors = Arc::clone(shared.errors());
+    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let gpu_context = GpuContext::shared(shared);
     let mut first_renderer = WgpuRenderer::new(
-        Rc::clone(&gpu_context),
+        gpu_context.clone(),
         &first_handle,
         WgpuSurfaceConfig {
             size: zero_size,
@@ -385,22 +409,8 @@ fn native_wgpu_renderer_initializes_shares_resumes_and_retires_real_surfaces() {
         },
         None,
     )
-    .expect("the first zero-size renderer must initialize a context using the real surface");
-    let (device, queue, device_errors) = {
-        let context = gpu_context.borrow();
-        let context = context
-            .as_ref()
-            .expect("the first renderer must publish its initialized GPU context");
-        let adapter_info = context.adapter.get_info();
-        assert_eq!(adapter_info.backend, wgpu::Backend::Vulkan);
-        eprintln!("ordinary native WgpuRenderer regression adapter: {adapter_info:?}");
-        (
-            Arc::clone(&context.device),
-            Arc::clone(&context.queue),
-            Arc::clone(context.errors()),
-        )
-    };
-    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    .expect("the first zero-size renderer must join the shared context");
+    assert!(Arc::ptr_eq(first_renderer.device_errors(), &device_errors));
     let mut scene = Scene::default();
     let mut quad = Quad::default();
     quad.bounds = Bounds::new(
@@ -430,7 +440,7 @@ fn native_wgpu_renderer_initializes_shares_resumes_and_retires_real_surfaces() {
 
     let second_size = drawable_size(&second_window);
     let mut second_renderer = WgpuRenderer::new(
-        Rc::clone(&gpu_context),
+        gpu_context,
         &second_handle,
         WgpuSurfaceConfig {
             size: second_size,
@@ -440,15 +450,7 @@ fn native_wgpu_renderer_initializes_shares_resumes_and_retires_real_surfaces() {
         None,
     )
     .expect("the second real surface must initialize its renderer using the shared context");
-    {
-        let context = gpu_context.borrow();
-        let context = context
-            .as_ref()
-            .expect("the shared renderer must preserve the initialized context");
-        assert!(Arc::ptr_eq(&context.device, &device));
-        assert!(Arc::ptr_eq(&context.queue, &queue));
-        assert!(Arc::ptr_eq(context.errors(), &device_errors));
-    }
+    assert!(Arc::ptr_eq(second_renderer.device_errors(), &device_errors));
     let second_atlas_lifetime = Arc::downgrade(second_renderer.sprite_atlas());
     assert_eq!(second_renderer.viewport_size(), second_size);
     assert_eq!(
@@ -500,8 +502,6 @@ fn native_wgpu_renderer_initializes_shares_resumes_and_retires_real_surfaces() {
     drop(first_renderer);
     assert!(second_atlas_lifetime.upgrade().is_none());
     assert!(first_atlas_lifetime.upgrade().is_none());
-    drop(gpu_context);
-    assert!(context_lifetime.upgrade().is_none());
     device
         .poll(wgpu::PollType::Wait {
             submission_index: None,
@@ -513,7 +513,6 @@ fn native_wgpu_renderer_initializes_shares_resumes_and_retires_real_surfaces() {
         validation_error.is_none(),
         "initial and shared-context native surface rendering failed validation: {validation_error:?}"
     );
-    drop(queue);
     drop(device);
     let mut error_generation = 0;
     let uncaptured_error = device_errors.observe_error(&mut error_generation);

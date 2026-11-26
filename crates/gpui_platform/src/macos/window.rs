@@ -89,7 +89,7 @@ use objc2_foundation::{
     NSNotFound, NSNumber, NSOperatingSystemVersion, NSPoint, NSProcessInfo, NSRect, NSSize,
     NSString, NSUInteger, NSUserDefaults,
 };
-use open_gpui_scheduler::Instant;
+use open_gpui::scheduler::Instant;
 use open_gpui_wgpu::{GpuContext, WgpuRenderer, WgpuSurfaceConfig, WgpuSurfaceShutdownProgress};
 use parking_lot::Mutex;
 use raw_window_handle as rwh;

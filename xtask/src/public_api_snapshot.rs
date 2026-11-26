@@ -1,7 +1,5 @@
 use std::{collections::BTreeSet, fs, path::Path};
 
-use open_gpui_ui_components::component_contract::common_public_exports;
-
 pub(crate) fn scan_public_api(root: &Path, args: &[String]) -> Result<(), ()> {
     for arg in args {
         if arg != "--check" {
@@ -10,54 +8,20 @@ pub(crate) fn scan_public_api(root: &Path, args: &[String]) -> Result<(), ()> {
         }
     }
 
-    println!("==> scan public API tiers");
+    println!("==> scan public docking API");
 
-    let failures = public_api_failures(root);
+    let mut failures = Vec::new();
+    scan_docking_public_api(root, &mut failures);
     if failures.is_empty() {
-        println!("public API tier scan passed");
+        println!("public docking API scan passed");
         Ok(())
     } else {
-        eprintln!("public API tier scan failed:");
+        eprintln!("public docking API scan failed:");
         for failure in failures {
             eprintln!("  {failure}");
         }
         Err(())
     }
-}
-
-fn public_api_failures(root: &Path) -> Vec<String> {
-    let mut failures = Vec::new();
-    for surface in public_api_surfaces() {
-        let start = failures.len();
-        (surface.scan)(root, &mut failures);
-        for failure in &mut failures[start..] {
-            *failure = format!("{}: {failure}", surface.name);
-        }
-    }
-    failures
-}
-
-#[derive(Clone, Copy, Debug)]
-struct PublicApiSurface {
-    name: &'static str,
-    scan: fn(&Path, &mut Vec<String>),
-}
-
-fn public_api_surfaces() -> &'static [PublicApiSurface] {
-    &[
-        PublicApiSurface {
-            name: "docking",
-            scan: scan_docking_public_api,
-        },
-        PublicApiSurface {
-            name: "ui-components",
-            scan: scan_ui_components_public_api,
-        },
-        PublicApiSurface {
-            name: "ui-core",
-            scan: scan_ui_core_public_api,
-        },
-    ]
 }
 
 fn scan_docking_public_api(root: &Path, failures: &mut Vec<String>) {
@@ -93,7 +57,10 @@ fn scan_docking_public_api(root: &Path, failures: &mut Vec<String>) {
     ];
 
     for file_name in ["lib.rs", "prelude.rs"] {
-        let exports = default_reexport_tokens(&source_dir, file_name, failures);
+        let Some(source) = read_to_string(&source_dir.join(file_name), failures) else {
+            continue;
+        };
+        let exports = reexport_tokens_from_source(&source);
         reject_tokens(
             "crates/gpui_docking",
             file_name,
@@ -130,57 +97,6 @@ fn scan_docking_public_api(root: &Path, failures: &mut Vec<String>) {
             "DockSurface facade signatures must stay semantic",
             failures,
         );
-    }
-}
-
-fn scan_ui_components_public_api(_root: &Path, failures: &mut Vec<String>) {
-    let common_exports = common_public_exports()
-        .map(|export| export.name().to_owned())
-        .collect::<BTreeSet<_>>();
-
-    let forbidden_prelude = [
-        "GpuiOverlayAdapterConfig",
-        "GpuiOverlayState",
-        "TextInputController",
-        "VirtualizedListGpuiExt",
-        "TableGlobalFilter",
-        "TablePredicateFilter",
-        "TableFacetedFilter",
-        "TableColumnVisibility",
-        "TableRangeFilter",
-        "TableToolbar",
-        "ToolbarItem",
-        "SidebarItem",
-        "ListboxOption",
-    ];
-    reject_tokens(
-        "crates/ui_components",
-        "prelude.rs",
-        &common_exports,
-        &forbidden_prelude,
-        "component prelude must not export adapter-only, recipe, or internal anatomy surfaces",
-        failures,
-    );
-}
-
-fn scan_ui_core_public_api(root: &Path, failures: &mut Vec<String>) {
-    let source_dir = root.join("crates/ui_core/src");
-    let prelude_exports = default_reexport_tokens(&source_dir, "prelude.rs", failures);
-    let expected = ui_core_prelude_allowlist();
-    let extra = prelude_exports
-        .difference(&expected)
-        .cloned()
-        .collect::<Vec<_>>();
-    let missing = expected
-        .difference(&prelude_exports)
-        .cloned()
-        .collect::<Vec<_>>();
-    if !extra.is_empty() || !missing.is_empty() {
-        failures.push(format!(
-            "crates/ui_core/src/prelude.rs: prelude allowlist drifted; extra [{}], missing [{}]",
-            extra.join(", "),
-            missing.join(", ")
-        ));
     }
 }
 
@@ -228,27 +144,7 @@ fn is_public_module_declaration(line: &str, module: &str) -> bool {
     matches!(rest.trim_start().chars().next(), Some(';') | Some('{'))
 }
 
-fn default_reexport_tokens(
-    source_dir: &Path,
-    file_name: &str,
-    failures: &mut Vec<String>,
-) -> BTreeSet<String> {
-    let Some(source) = read_to_string(&source_dir.join(file_name), failures) else {
-        return BTreeSet::new();
-    };
-    let source = if file_name == "lib.rs" {
-        source_without_public_module(&source, "gpui_adapter")
-    } else {
-        source
-    };
-    reexport_tokens_from_source(&source, source_dir, failures)
-}
-
-fn reexport_tokens_from_source(
-    source: &str,
-    base_dir: &Path,
-    failures: &mut Vec<String>,
-) -> BTreeSet<String> {
+fn reexport_tokens_from_source(source: &str) -> BTreeSet<String> {
     let mut exports = BTreeSet::new();
     let mut statement = String::new();
     let mut collecting = false;
@@ -258,38 +154,20 @@ fn reexport_tokens_from_source(
         if collecting {
             statement.push(' ');
             statement.push_str(trimmed);
-        } else if trimmed.starts_with("pub use ") {
+        } else if let Some(expression) = trimmed.strip_prefix("pub use ") {
             statement.clear();
-            statement.push_str(trimmed);
+            statement.push_str(expression);
             collecting = true;
         }
 
         if collecting && trimmed.ends_with(';') {
-            collect_public_reexport_tokens(&statement, base_dir, failures, &mut exports);
+            collect_reexport_expression_tokens(statement.trim_end_matches(';'), &mut exports);
             statement.clear();
             collecting = false;
         }
     }
 
     exports
-}
-
-fn collect_public_reexport_tokens(
-    statement: &str,
-    base_dir: &Path,
-    failures: &mut Vec<String>,
-    exports: &mut BTreeSet<String>,
-) {
-    let statement = statement.trim().trim_end_matches(';');
-    let Some(rest) = statement.strip_prefix("pub use ") else {
-        return;
-    };
-    if rest.contains("::*") {
-        collect_curated_wildcard_reexport_tokens(rest, base_dir, failures, exports);
-        return;
-    }
-
-    collect_reexport_expression_tokens(rest, exports);
 }
 
 fn collect_reexport_expression_tokens(expression: &str, exports: &mut BTreeSet<String>) {
@@ -338,33 +216,6 @@ fn split_top_level_commas(source: &str) -> Vec<&str> {
     }
     items.push(&source[start..]);
     items
-}
-
-fn collect_curated_wildcard_reexport_tokens(
-    rest: &str,
-    base_dir: &Path,
-    failures: &mut Vec<String>,
-    exports: &mut BTreeSet<String>,
-) {
-    let Some(module_path) = rest.strip_suffix("::*") else {
-        return;
-    };
-    let relative_module_path = module_path
-        .strip_prefix("public_api::")
-        .or_else(|| module_path.strip_prefix("crate::public_api::"));
-    let Some(relative_module_path) = relative_module_path else {
-        return;
-    };
-    let relative_module_path = relative_module_path.replace("::", "/");
-    let Some(source) = read_to_string(
-        &base_dir
-            .join("public_api")
-            .join(format!("{relative_module_path}.rs")),
-        failures,
-    ) else {
-        return;
-    };
-    exports.extend(reexport_tokens_from_source(&source, base_dir, failures));
 }
 
 fn collect_public_reexport_token(item: &str, exports: &mut BTreeSet<String>) {
@@ -471,27 +322,6 @@ fn read_to_string(path: &Path, failures: &mut Vec<String>) -> Option<String> {
     )
 }
 
-fn source_without_public_module(source: &str, module_name: &str) -> String {
-    let Some((module_start, close_brace)) = public_module_bounds(source, module_name) else {
-        return source.to_owned();
-    };
-
-    let mut stripped = String::with_capacity(source.len());
-    stripped.push_str(&source[..module_start]);
-    stripped.push_str(&source[close_brace + 1..]);
-    stripped
-}
-
-fn public_module_bounds(source: &str, module_name: &str) -> Option<(usize, usize)> {
-    let module_marker = format!("pub mod {module_name}");
-    let module_start = source.find(&module_marker)?;
-    let open_brace = source[module_start..]
-        .find('{')
-        .map(|offset| module_start + offset)?;
-    let close_brace = matching_brace(source, open_brace)?;
-    Some((module_start, close_brace))
-}
-
 fn matching_brace(source: &str, open_brace: usize) -> Option<usize> {
     let mut depth = 0usize;
 
@@ -511,124 +341,22 @@ fn matching_brace(source: &str, open_brace: usize) -> Option<usize> {
     None
 }
 
-fn ui_core_prelude_allowlist() -> BTreeSet<String> {
-    [
-        "AccessibleAction",
-        "AccessibleTextPosition",
-        "AccessibleTextSelection",
-        "ActiveDescendant",
-        "AdaptiveQuerySource",
-        "CollectionPosition",
-        "ControllableState",
-        "Density",
-        "DeviceAdaptiveClass",
-        "DeviceAdaptivePolicy",
-        "DeviceAdaptiveSnapshot",
-        "DeviceShellMode",
-        "DeviceShellSwitchPolicy",
-        "DismissReason",
-        "EscapeKeyPolicy",
-        "EscapeKeyResolution",
-        "FocusResolution",
-        "FocusRestoreInput",
-        "FocusRestoreIntent",
-        "FocusScopeId",
-        "FocusScopeMode",
-        "FocusScopePolicy",
-        "FocusTargetAvailability",
-        "FocusTargetCandidate",
-        "FocusTargetId",
-        "InitialFocusIntent",
-        "LivePoliteness",
-        "Orientation",
-        "OutsidePressOutcome",
-        "OutsidePressParticipation",
-        "OutsidePressPolicy",
-        "OutsidePressResolution",
-        "OverlayAnchorInput",
-        "OverlayEdges",
-        "OverlayLayer",
-        "OverlayLayerId",
-        "OverlayLayerKind",
-        "OverlayLayerPolicy",
-        "OverlayLayerState",
-        "OverlayPlacementAlignment",
-        "OverlayPlacementInput",
-        "OverlayPlacementSide",
-        "OverlayPresence",
-        "OverlayResolvedState",
-        "OverlaySize",
-        "PanelAdaptiveClass",
-        "PanelAdaptivePolicy",
-        "Rect",
-        "Role",
-        "SemanticDescriptor",
-        "Sizable",
-        "Size",
-        "SizeScale",
-        "SortDirection",
-        "ThemeDesignScales",
-        "ThemeElevationLayer",
-        "ThemeElevationScale",
-        "ThemeRadiusScale",
-        "ThemeSpacingScale",
-        "ThemeTokens",
-        "ThemeTypographyScale",
-        "Toggled",
-        "TokenKey",
-        "UiEdges",
-        "UiPoint",
-        "UiPx",
-        "UiRect",
-        "UiSize",
-        "anchor_rect_from_point",
-        "device_adaptive_class",
-        "device_adaptive_snapshot",
-        "device_shell_mode",
-        "inset_rect",
-        "outer_bounds_with_window_margin",
-        "panel_adaptive_class",
-        "prefer_visual_bounds",
-        "rect",
-        "resolve_focus_scope_restore",
-        "resolve_outside_press",
-        "semantic",
-        "ui_edges",
-        "ui_point",
-        "ui_px",
-        "ui_rect",
-        "ui_size",
-    ]
-    .into_iter()
-    .map(ToOwned::to_owned)
-    .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn reexport_parser_follows_curated_public_api_wildcards() {
-        let root = temp_root("wildcard");
-        let public_api = root.join("public_api");
-        fs::create_dir_all(&public_api).unwrap();
-        fs::write(root.join("lib.rs"), "pub use public_api::default::*;\n").unwrap();
-        fs::write(
-            public_api.join("default.rs"),
-            "pub use crate::button::{Button, ButtonState as RenamedState};\n",
-        )
-        .unwrap();
-        let mut failures = Vec::new();
-        let tokens = default_reexport_tokens(&root, "lib.rs", &mut failures);
-        assert!(failures.is_empty(), "{failures:?}");
+    fn reexport_parser_reads_grouped_docking_exports() {
+        let tokens = reexport_tokens_from_source(
+            "pub use dockspace::{model::{DockAnchor, DockPlacement}, policy::DockPolicy};\n",
+        );
         assert_eq!(
             tokens,
-            ["Button".to_owned(), "RenamedState".to_owned()]
+            ["DockAnchor", "DockPlacement", "DockPolicy"]
                 .into_iter()
+                .map(ToOwned::to_owned)
                 .collect()
         );
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

@@ -84,8 +84,6 @@ mod native_cache_dependency_tests;
 mod native_clipboard_tests;
 #[path = "native_composite_focus_tests.rs"]
 mod native_composite_focus_tests;
-#[path = "native_credentials_tests.rs"]
-pub(super) mod native_credentials_tests;
 #[path = "native_custom_renderer_tests.rs"]
 mod native_custom_renderer_tests;
 #[path = "native_deferred_frame_tests.rs"]
@@ -127,8 +125,6 @@ mod native_scene_color_tests;
 mod native_send_executor_tests;
 #[path = "native_spring_tests.rs"]
 mod native_spring_tests;
-#[path = "native_system_notification_tests.rs"]
-mod native_system_notification_tests;
 #[path = "native_text_layout_tests.rs"]
 mod native_text_layout_tests;
 #[path = "native_text_pool_tests.rs"]

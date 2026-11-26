@@ -9,7 +9,6 @@ use crate::{
     dependency_health::dependency_health, doc_links::scan_doc_links,
     import_boundary::scan_import_boundary, native_windows_interactive::native_windows_interactive,
     public_api_snapshot::scan_public_api, release_docs::verify_release_docs,
-    theme_drift::scan_theme_drift, theme_schema::scan_theme_schema,
 };
 
 #[derive(Parser, Debug)]
@@ -34,13 +33,9 @@ enum XtaskCommand {
     VerifyReleaseDocs(ForwardArgs),
     /// Scan public documentation relative links.
     ScanDocLinks,
-    /// Scan theme token and recipe drift.
-    ScanThemeDrift,
-    /// Scan theme JSON schema artifact drift.
-    ScanThemeSchema,
     /// Scan for disallowed import residue.
     ScanImportBoundary,
-    /// Scan public API tier drift.
+    /// Scan the retained docking API boundary.
     ScanPublicApi(ForwardArgs),
 }
 
@@ -72,8 +67,6 @@ pub fn run_from_env() -> ExitCode {
         XtaskCommand::NativeWindowsInteractive => native_windows_interactive(root),
         XtaskCommand::VerifyReleaseDocs(args) => verify_release_docs(root, &args.args),
         XtaskCommand::ScanDocLinks => scan_doc_links(root),
-        XtaskCommand::ScanThemeDrift => scan_theme_drift(root),
-        XtaskCommand::ScanThemeSchema => scan_theme_schema(root),
         XtaskCommand::ScanImportBoundary => scan_import_boundary(root),
         XtaskCommand::ScanPublicApi(args) => scan_public_api(root, &args.args),
     };
@@ -103,13 +96,7 @@ fn verify(root: &Path) -> Result<(), ()> {
             "-p",
             "open-gpui",
             "-p",
-            "open-gpui-core-util",
-            "-p",
-            "open-gpui-resource",
-            "-p",
-            "open-gpui-ui-core",
-            "-p",
-            "open-gpui-ui-components",
+            "open-gpui-base",
             "-p",
             "open-gpui-docking",
             "-p",
@@ -121,8 +108,6 @@ fn verify(root: &Path) -> Result<(), ()> {
     verify_release_docs(root, &[])?;
     scan_doc_links(root)?;
     dependency_health(root)?;
-    scan_theme_drift(root)?;
-    scan_theme_schema(root)?;
     scan_import_boundary(root)?;
     scan_public_api(root, &[])
 }

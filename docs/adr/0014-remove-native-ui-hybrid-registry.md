@@ -73,7 +73,7 @@ Negative:
 
 - [ADR 0013: Open GPUI Native UI Hybrid Registry](0013-open-gpui-native-ui-hybrid-registry.md)
 - [Native UI Framework Strategy](../architecture/native-ui-framework-strategy.md)
-- [UI component contract](../ui/component-contract.md)
+- [Historical UI component contract](https://github.com/Latias94/open-gpui/blob/legacy/v0-pre-slim/docs/ui/component-contract.md)
 - [Verification guide](../verification.md)
 
 ## Related Decisions

@@ -194,7 +194,7 @@ fn refused_native_close_after_activation_failure_preserves_the_reason() {
         probe.fail_set.set(true);
         probe.protect_close.set(true);
     });
-    let _cleanup = open_gpui_util::defer(|| {
+    let _cleanup = open_gpui::util::defer(|| {
         TEST_ACQUISITION.with(|probe| {
             if let Some(handle) = probe.created.get()
                 && probe.closed.borrow().contains(&(handle.0 as usize, false))

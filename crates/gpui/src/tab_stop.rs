@@ -1,6 +1,6 @@
 use std::{cell::RefCell, fmt::Debug};
 
-use open_gpui_collections::FxHashMap;
+use crate::collections::FxHashMap;
 
 use crate::{FocusHandle, FocusId, geometry::SubtreeGeometryValidity};
 

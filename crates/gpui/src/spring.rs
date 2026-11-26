@@ -2,7 +2,7 @@ use std::ops::RangeInclusive;
 
 use crate::{Hsla, Pixels, Rems, Rgba};
 
-pub use open_gpui_core_util::motion::{SpringConfig, SpringState, sampled_easing};
+pub use crate::motion::{SpringConfig, SpringState, sampled_easing};
 
 const DEFAULT_SPRING_EPSILON: f32 = 0.001;
 

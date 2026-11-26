@@ -1,9 +1,9 @@
+use crate::collections::HashMap;
 use crate::{
     AssetSource, DevicePixels, IsZero, RenderImage, Result, SharedString, Size,
     swap_rgba_pa_to_bgra,
 };
 use image::Frame;
-use open_gpui_collections::HashMap;
 use parking_lot::Mutex;
 use resvg::tiny_skia::Pixmap;
 use smallvec::SmallVec;

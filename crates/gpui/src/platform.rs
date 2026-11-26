@@ -29,6 +29,8 @@ mod test;
 #[cfg(any(test, feature = "test-support"))]
 mod visual_test;
 
+use crate::scheduler::Instant;
+pub use crate::scheduler::RunnableMeta;
 use crate::{
     Action, AnyWindowHandle, App, AppCell, AsyncApp, AsyncWindowContext, BackgroundExecutor,
     Bounds, Corners, DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, FocusId, Font,
@@ -49,8 +51,6 @@ use futures::channel::oneshot;
 use image::RgbaImage;
 use image::codecs::{gif::GifDecoder, webp::WebPDecoder};
 use image::{DynamicImage, Frame, Rgba};
-use open_gpui_scheduler::Instant;
-pub use open_gpui_scheduler::RunnableMeta;
 use parking_lot::Mutex as ParkingMutex;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use schemars::JsonSchema;
@@ -116,14 +116,14 @@ pub use visual_test::VisualTestPlatform;
 
 /// Keeps an operating system activity, such as an idle sleep inhibitor, alive until dropped.
 pub struct ActivityGuard {
-    _release: open_gpui_core_util::Deferred<Box<dyn FnOnce() + Send>>,
+    _release: crate::util::Deferred<Box<dyn FnOnce() + Send>>,
 }
 
 impl ActivityGuard {
     /// Runs `release` when the guard is dropped.
     pub fn new(release: impl FnOnce() + Send + 'static) -> Self {
         Self {
-            _release: open_gpui_core_util::defer(Box::new(release)),
+            _release: crate::util::defer(Box::new(release)),
         }
     }
 
@@ -3813,10 +3813,6 @@ impl PlatformFocusedWindow {
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[inline]
 pub fn guess_compositor() -> &'static str {
-    if std::env::var_os("ZED_HEADLESS").is_some() {
-        return "headless";
-    }
-
     GraphicalEnvironment::detect().guess_compositor()
 }
 
@@ -4020,15 +4016,7 @@ pub trait Platform: 'static {
     }
 
     fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap);
-    fn perform_dock_menu_action(&self, _action: usize) {}
     fn add_recent_document(&self, _path: &Path) {}
-    fn update_jump_list(
-        &self,
-        _menus: Vec<MenuItem>,
-        _entries: Vec<SmallVec<[PathBuf; 2]>>,
-    ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
-        Task::ready(Vec::new())
-    }
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
@@ -4050,42 +4038,6 @@ pub trait Platform: 'static {
 
     /// Registers a callback invoked when the reported power mode changes.
     fn on_power_mode_change(&self, _callback: NativeAppNotificationHandler) {}
-
-    /// Sets the application's process-wide identity and user-visible name.
-    ///
-    /// The identifier is used for platform identity mechanisms such as the Windows
-    /// AppUserModelID. Call this once, early in startup, before opening windows or
-    /// posting notifications.
-    fn set_app_identity(&self, identifier: &str, name: &str) {
-        _ = (identifier, name);
-    }
-
-    /// Posts a notification to the operating system's notification center.
-    ///
-    /// A matching tag replaces an earlier notification where supported. This is a
-    /// no-op when notification support or delivery is unavailable.
-    fn show_system_notification(&self, notification: SystemNotification) {
-        _ = notification;
-    }
-
-    /// Removes the delivered or pending notification with this tag, where supported.
-    ///
-    /// Retraction is best-effort; some platforms only let notifications age out.
-    /// The task completes after the platform calls return, not after any
-    /// asynchronous work inside the operating system. Dropping it does not
-    /// cancel dismissal.
-    fn dismiss_system_notification(&self, tag: &str) -> Task<()> {
-        _ = tag;
-        Task::ready(())
-    }
-
-    /// Registers the main-thread callback for body or action-button activation.
-    fn on_system_notification_response(
-        &self,
-        callback: Box<dyn FnMut(SystemNotificationResponse)>,
-    ) {
-        _ = callback;
-    }
 
     fn compositor_name(&self) -> &'static str {
         ""
@@ -4125,39 +4077,6 @@ pub trait Platform: 'static {
     fn read_from_find_pasteboard(&self) -> Option<ClipboardItem>;
     #[cfg(target_os = "macos")]
     fn write_to_find_pasteboard(&self, item: ClipboardItem);
-
-    fn write_credentials(&self, _url: &str, _username: &str, _password: &[u8]) -> Task<Result<()>> {
-        Task::ready(Err(anyhow::anyhow!(
-            "credential storage is unavailable on this platform"
-        )))
-    }
-
-    /// Atomically writes credentials unless an item with this URL and username exists.
-    ///
-    /// Returns `true` if written, or `false` if the existing item was left unchanged.
-    #[cfg(target_os = "macos")]
-    fn write_credentials_if_not_exists(
-        &self,
-        _url: &str,
-        _username: &str,
-        _password: &[u8],
-    ) -> Task<Result<bool>> {
-        Task::ready(Err(anyhow::anyhow!(
-            "this platform does not support atomic credential writes"
-        )))
-    }
-
-    fn read_credentials(&self, _url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
-        Task::ready(Err(anyhow::anyhow!(
-            "credential storage is unavailable on this platform"
-        )))
-    }
-
-    fn delete_credentials(&self, _url: &str) -> Task<Result<()>> {
-        Task::ready(Err(anyhow::anyhow!(
-            "credential storage is unavailable on this platform"
-        )))
-    }
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
     fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper>;
@@ -4329,39 +4248,6 @@ pub trait PlatformDisplay: Debug {
         let origin = point(center.x - offset.width, center.y - offset.height);
         Bounds::new(origin, clipped_window_size)
     }
-}
-
-/// A notification posted to the operating system's notification center,
-/// rather than rendered as in-app UI.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SystemNotification {
-    /// Stable notification identity, returned with responses. Matching tags
-    /// replace earlier notifications where the platform supports it.
-    pub tag: SharedString,
-    /// The notification's headline.
-    pub title: SharedString,
-    /// Additional text displayed below the title.
-    pub body: SharedString,
-    /// Action buttons, omitted on platforms that cannot display them.
-    pub actions: Vec<SystemNotificationAction>,
-}
-
-/// A button offered on a [`SystemNotification`].
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct SystemNotificationAction {
-    /// Identifies the pressed button in [`SystemNotificationResponse::action_id`].
-    pub id: SharedString,
-    /// The button's user-visible label.
-    pub label: SharedString,
-}
-
-/// The user's activation of a [`SystemNotification`].
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SystemNotificationResponse {
-    /// The activated notification's tag.
-    pub tag: SharedString,
-    /// The action ID, or `None` when the notification body was activated.
-    pub action_id: Option<SharedString>,
 }
 
 /// The operating system's preference for energy use versus performance.
@@ -6558,7 +6444,7 @@ pub trait PlatformHeadlessRenderer {
 pub type RunnableVariant = Runnable<RunnableMeta>;
 
 #[doc(hidden)]
-pub type TimerResolutionGuard = open_gpui_core_util::Deferred<Box<dyn FnOnce() + Send>>;
+pub type TimerResolutionGuard = crate::util::Deferred<Box<dyn FnOnce() + Send>>;
 
 #[doc(hidden)]
 pub enum TasksIncluded {
@@ -6605,7 +6491,7 @@ pub trait PlatformDispatcher: Send + Sync {
     }
 
     fn increase_timer_resolution(&self) -> TimerResolutionGuard {
-        open_gpui_core_util::defer(Box::new(|| {}))
+        crate::util::defer(Box::new(|| {}))
     }
 
     fn prevent_app_nap(&self, _reason: &str) -> ActivityGuard {

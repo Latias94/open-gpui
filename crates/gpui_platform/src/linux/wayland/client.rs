@@ -18,8 +18,8 @@ use calloop::{
 };
 use calloop_wayland_source::WaylandSource;
 use filedescriptor::Pipe;
-use open_gpui_collections::HashMap;
-use open_gpui_util::ResultExt as _;
+use open_gpui::collections::HashMap;
+use open_gpui::util::ResultExt as _;
 use smallvec::SmallVec;
 use url::Url;
 use wayland_backend::client::ObjectId;

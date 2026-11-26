@@ -418,7 +418,7 @@ impl<T> FusedIterator for TryIter<T> {}
 
 #[cfg(test)]
 mod tests {
-    use open_gpui_collections::HashSet;
+    use crate::collections::HashSet;
 
     use super::*;
 

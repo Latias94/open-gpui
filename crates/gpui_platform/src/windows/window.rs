@@ -15,7 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ::open_gpui_util::ResultExt;
+use ::open_gpui::util::ResultExt;
 use anyhow::{Context as _, Result};
 use futures::channel::oneshot::{self, Receiver};
 use raw_window_handle as rwh;
@@ -1272,7 +1272,7 @@ impl WindowsWindowInner {
                     return;
                 };
                 let this = &authority.window;
-                let finish_report = open_gpui_util::defer(|| {
+                let finish_report = open_gpui::util::defer(|| {
                     this.state.visibility_report_pending.set(false);
                     if this.state.last_visibility.get().is_none()
                         || this.presentation_shutdown_claimed()
@@ -1616,7 +1616,7 @@ impl WindowsWindowInner {
 
     pub(crate) fn request_frame(&self, mut options: RequestFrameOptions) {
         if options.signal_at.is_none() {
-            options.signal_at = PlatformFrameSignal::capture(open_gpui_scheduler::Instant::now);
+            options.signal_at = PlatformFrameSignal::capture(open_gpui::scheduler::Instant::now);
             options.signal_source = FrameRequestSource::LocalSchedule;
         }
         if !self.accepts_generation_bound_message(self.registration.generation())
@@ -10309,9 +10309,10 @@ unsafe extern "system" fn attached_window_procedure(
 fn get_module_handle() -> HMODULE {
     unsafe {
         let mut h_module = std::mem::zeroed();
+        let address = get_module_handle as *const ();
         GetModuleHandleExW(
             GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            windows::core::w!("ZedModule"),
+            PCWSTR(address.cast()),
             &mut h_module,
         )
         .expect("Unable to get module handle"); // this should never fail

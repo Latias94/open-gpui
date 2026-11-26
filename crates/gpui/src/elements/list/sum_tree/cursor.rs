@@ -1,6 +1,5 @@
 use super::*;
 use heapless::Vec as ArrayVec;
-use open_gpui_tracing::instrument;
 use std::{cmp::Ordering, mem, sync::Arc};
 
 #[derive(Clone)]
@@ -83,17 +82,6 @@ where
         &self.position
     }
 
-    #[track_caller]
-    pub fn end(&self) -> D {
-        if let Some(item_summary) = self.item_summary() {
-            let mut end = self.start().clone();
-            end.add_summary(item_summary, self.cx);
-            end
-        } else {
-            self.start().clone()
-        }
-    }
-
     /// Item is None, when the list is empty, or this cursor is at the end of the list.
     #[track_caller]
     pub fn item(&self) -> Option<&'a T> {
@@ -136,6 +124,7 @@ where
     }
 
     #[track_caller]
+    #[cfg(test)]
     pub fn next_item(&self) -> Option<&'a T> {
         self.assert_did_seek();
         if let Some(entry) = self.stack.last() {
@@ -159,6 +148,7 @@ where
     }
 
     #[track_caller]
+    #[cfg(test)]
     fn next_leaf(&self) -> Option<&'a SumTree<T>> {
         for entry in self.stack.iter().rev().skip(1) {
             if entry.index() < entry.tree.0.child_trees().len() - 1 {
@@ -174,6 +164,7 @@ where
     }
 
     #[track_caller]
+    #[cfg(test)]
     pub fn prev_item(&self) -> Option<&'a T> {
         self.assert_did_seek();
         if let Some(entry) = self.stack.last() {
@@ -197,6 +188,7 @@ where
     }
 
     #[track_caller]
+    #[cfg(test)]
     fn prev_leaf(&self) -> Option<&'a SumTree<T>> {
         for entry in self.stack.iter().rev().skip(1) {
             if entry.index() != 0 {
@@ -212,7 +204,7 @@ where
     }
 
     #[track_caller]
-    #[instrument(skip_all)]
+    #[cfg_attr(feature = "profiler", tracing::instrument(level = "trace", skip_all))]
     pub fn prev(&mut self) {
         self.search_backward(|_| true)
     }
@@ -391,10 +383,6 @@ where
             "Must call `seek`, `next` or `prev` before calling this method"
         );
     }
-
-    pub fn did_seek(&self) -> bool {
-        self.did_seek
-    }
 }
 
 impl<'a, 'b, T, D> Cursor<'a, 'b, T, D>
@@ -404,7 +392,7 @@ where
 {
     /// Returns whether we found the item you were seeking for.
     #[track_caller]
-    #[instrument(skip_all)]
+    #[cfg_attr(feature = "profiler", tracing::instrument(level = "trace", skip_all))]
     pub fn seek<Target>(&mut self, pos: &Target, bias: Bias) -> bool
     where
         Target: SeekTarget<'a, T::Summary, D>,
@@ -419,7 +407,7 @@ where
     ///
     /// If we did not seek before, use seek instead in that case.
     #[track_caller]
-    #[instrument(skip_all)]
+    #[cfg_attr(feature = "profiler", tracing::instrument(level = "trace", skip_all))]
     pub fn seek_forward<Target>(&mut self, pos: &Target, bias: Bias) -> bool
     where
         Target: SeekTarget<'a, T::Summary, D>,
@@ -461,7 +449,7 @@ where
 
     /// Returns whether we found the item you were seeking for.
     #[track_caller]
-    #[instrument(skip_all)]
+    #[cfg_attr(feature = "profiler", tracing::instrument(level = "trace", skip_all))]
     fn seek_internal(
         &mut self,
         target: &dyn SeekTarget<'a, T::Summary, D>,
@@ -703,22 +691,15 @@ where
         self.cursor.start()
     }
 
-    pub fn end(&self) -> D {
-        self.cursor.end()
-    }
-
     pub fn item(&self) -> Option<&'a T> {
         self.cursor.item()
-    }
-
-    pub fn item_summary(&self) -> Option<&'a T::Summary> {
-        self.cursor.item_summary()
     }
 
     pub fn next(&mut self) {
         self.cursor.search_forward(&mut self.filter_node);
     }
 
+    #[cfg(test)]
     pub fn prev(&mut self) {
         self.cursor.search_backward(&mut self.filter_node);
     }

@@ -1,7 +1,7 @@
 mod cursor;
 pub use cursor::{Cursor, FilterCursor, Iter};
 use heapless::Vec as ArrayVec;
-use open_gpui_tracing::instrument;
+#[cfg(test)]
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator as _};
 use std::marker::PhantomData;
 use std::mem;
@@ -168,15 +168,6 @@ pub enum Bias {
     Right,
 }
 
-impl Bias {
-    pub fn invert(self) -> Self {
-        match self {
-            Self::Left => Self::Right,
-            Self::Right => Self::Left,
-        }
-    }
-}
-
 /// A B+ tree in which each leaf node contains `Item`s of type `T` and a `Summary`s for each `Item`.
 /// Each internal node contains a `Summary` of the items in its subtree.
 ///
@@ -203,21 +194,6 @@ impl<T: Item> SumTree<T> {
             items: ArrayVec::new(),
             item_summaries: ArrayVec::new(),
         }))
-    }
-
-    /// Useful in cases where the item type has a non-trivial context type, but the zero value of the summary type doesn't depend on that context.
-    pub fn from_summary(summary: T::Summary) -> Self {
-        SumTree(Arc::new(Node::Leaf {
-            summary,
-            items: ArrayVec::new(),
-            item_summaries: ArrayVec::new(),
-        }))
-    }
-
-    pub fn from_item(item: T, cx: <T::Summary as Summary>::Context<'_>) -> Self {
-        let mut tree = Self::new(cx);
-        tree.push(item, cx);
-        tree
     }
 
     pub fn from_iter<I: IntoIterator<Item = T>>(
@@ -289,6 +265,7 @@ impl<T: Item> SumTree<T> {
         }
     }
 
+    #[cfg(test)]
     pub fn from_par_iter<I, Iter>(iter: I, cx: <T::Summary as Summary>::Context<'_>) -> Self
     where
         I: IntoParallelIterator<Iter = Iter>,
@@ -351,7 +328,7 @@ impl<T: Item> SumTree<T> {
         }
     }
 
-    #[allow(unused)]
+    #[cfg(test)]
     pub fn items<'a>(&'a self, cx: <T::Summary as Summary>::Context<'a>) -> Vec<T> {
         let mut items = Vec::new();
         let mut cursor = self.cursor::<()>(cx);
@@ -367,36 +344,8 @@ impl<T: Item> SumTree<T> {
         Iter::new(self)
     }
 
-    /// A more efficient version of `Cursor::new()` + `Cursor::seek()` + `Cursor::item()`.
-    ///
-    /// Only returns the item that exactly has the target match.
-    #[instrument(skip_all)]
-    pub fn find_exact<'a, 'slf, D, Target>(
-        &'slf self,
-        cx: <T::Summary as Summary>::Context<'a>,
-        target: &Target,
-        bias: Bias,
-    ) -> (D, D, Option<&'slf T>)
-    where
-        D: Dimension<'slf, T::Summary>,
-        Target: SeekTarget<'slf, T::Summary, D>,
-    {
-        let tree_end = D::zero(cx).with_added_summary(self.summary(), cx);
-        let comparison = target.cmp(&tree_end, cx);
-        if comparison == Ordering::Greater || (comparison == Ordering::Equal && bias == Bias::Right)
-        {
-            return (tree_end.clone(), tree_end, None);
-        }
-
-        let mut pos = D::zero(cx);
-        return match Self::find_iterate::<_, _, true>(cx, target, bias, &mut pos, self) {
-            Some((item, end)) => (pos, end, Some(item)),
-            None => (pos.clone(), pos, None),
-        };
-    }
-
     /// A more efficient version of `Cursor::new()` + `Cursor::seek()` + `Cursor::item()`
-    #[instrument(skip_all)]
+    #[cfg_attr(feature = "profiler", tracing::instrument(level = "trace", skip_all))]
     pub fn find<'a, 'slf, D, Target>(
         &'slf self,
         cx: <T::Summary as Summary>::Context<'a>,
@@ -480,94 +429,6 @@ impl<T: Item> SumTree<T> {
         }
     }
 
-    /// A more efficient version of `Cursor::new()` + `Cursor::seek()` + `Cursor::item()`
-    #[instrument(skip_all)]
-    pub fn find_with_prev<'a, 'slf, D, Target>(
-        &'slf self,
-        cx: <T::Summary as Summary>::Context<'a>,
-        target: &Target,
-        bias: Bias,
-    ) -> (D, D, Option<(Option<&'slf T>, &'slf T)>)
-    where
-        D: Dimension<'slf, T::Summary>,
-        Target: SeekTarget<'slf, T::Summary, D>,
-    {
-        let tree_end = D::zero(cx).with_added_summary(self.summary(), cx);
-        let comparison = target.cmp(&tree_end, cx);
-        if comparison == Ordering::Greater || (comparison == Ordering::Equal && bias == Bias::Right)
-        {
-            return (tree_end.clone(), tree_end, None);
-        }
-
-        let mut pos = D::zero(cx);
-        return match Self::find_with_prev_iterate::<_, _, false>(cx, target, bias, &mut pos, self) {
-            Some((prev, item, end)) => (pos, end, Some((prev, item))),
-            None => (pos.clone(), pos, None),
-        };
-    }
-
-    fn find_with_prev_iterate<'tree, 'a, D, Target, const EXACT: bool>(
-        cx: <T::Summary as Summary>::Context<'a>,
-        target: &Target,
-        bias: Bias,
-        position: &mut D,
-        mut this: &'tree SumTree<T>,
-    ) -> Option<(Option<&'tree T>, &'tree T, D)>
-    where
-        D: Dimension<'tree, T::Summary>,
-        Target: SeekTarget<'tree, T::Summary, D>,
-    {
-        let mut prev = None;
-        'iterate: loop {
-            match &*this.0 {
-                Node::Internal {
-                    child_summaries,
-                    child_trees,
-                    ..
-                } => {
-                    for (child_tree, child_summary) in child_trees.iter().zip(child_summaries) {
-                        let child_end = position.clone().with_added_summary(child_summary, cx);
-
-                        let comparison = target.cmp(&child_end, cx);
-                        let target_in_child = comparison == Ordering::Less
-                            || (comparison == Ordering::Equal && bias == Bias::Left);
-                        if target_in_child {
-                            this = child_tree;
-                            continue 'iterate;
-                        }
-                        prev = child_tree.last();
-                        *position = child_end;
-                    }
-                }
-                Node::Leaf {
-                    items,
-                    item_summaries,
-                    ..
-                } => {
-                    for (item, item_summary) in items.iter().zip(item_summaries) {
-                        let mut child_end = position.clone();
-                        child_end.add_summary(item_summary, cx);
-
-                        let comparison = target.cmp(&child_end, cx);
-                        let entry_found = if EXACT {
-                            comparison == Ordering::Equal
-                        } else {
-                            comparison == Ordering::Less
-                                || (comparison == Ordering::Equal && bias == Bias::Left)
-                        };
-                        if entry_found {
-                            return Some((prev, item, child_end));
-                        }
-
-                        prev = Some(item);
-                        *position = child_end;
-                    }
-                }
-            }
-            return None;
-        }
-    }
-
     pub fn cursor<'a, 'b, D>(
         &'a self,
         cx: <T::Summary as Summary>::Context<'b>,
@@ -592,7 +453,7 @@ impl<T: Item> SumTree<T> {
         FilterCursor::new(self, cx, filter_node)
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn first(&self) -> Option<&T> {
         self.leftmost_leaf().0.items().first()
     }
@@ -601,99 +462,7 @@ impl<T: Item> SumTree<T> {
         self.rightmost_leaf().0.items().last()
     }
 
-    pub fn last_summary(&self) -> Option<&T::Summary> {
-        self.rightmost_leaf().0.child_summaries().last()
-    }
-
-    pub fn update_last(
-        &mut self,
-        f: impl FnOnce(&mut T),
-        cx: <T::Summary as Summary>::Context<'_>,
-    ) {
-        self.update_last_recursive(f, cx);
-    }
-
-    fn update_last_recursive(
-        &mut self,
-        f: impl FnOnce(&mut T),
-        cx: <T::Summary as Summary>::Context<'_>,
-    ) -> Option<T::Summary> {
-        match Arc::make_mut(&mut self.0) {
-            Node::Internal {
-                summary,
-                child_summaries,
-                child_trees,
-                ..
-            } => {
-                let last_summary = child_summaries.last_mut().unwrap();
-                let last_child = child_trees.last_mut().unwrap();
-                *last_summary = last_child.update_last_recursive(f, cx).unwrap();
-                *summary = sum(child_summaries.iter(), cx);
-                Some(summary.clone())
-            }
-            Node::Leaf {
-                summary,
-                items,
-                item_summaries,
-            } => {
-                if let Some((item, item_summary)) = items.last_mut().zip(item_summaries.last_mut())
-                {
-                    (f)(item);
-                    *item_summary = item.summary(cx);
-                    *summary = sum(item_summaries.iter(), cx);
-                    Some(summary.clone())
-                } else {
-                    None
-                }
-            }
-        }
-    }
-
-    pub fn update_first(
-        &mut self,
-        f: impl FnOnce(&mut T),
-        cx: <T::Summary as Summary>::Context<'_>,
-    ) {
-        self.update_first_recursive(f, cx);
-    }
-
-    fn update_first_recursive(
-        &mut self,
-        f: impl FnOnce(&mut T),
-        cx: <T::Summary as Summary>::Context<'_>,
-    ) -> Option<T::Summary> {
-        match Arc::make_mut(&mut self.0) {
-            Node::Internal {
-                summary,
-                child_summaries,
-                child_trees,
-                ..
-            } => {
-                let first_summary = child_summaries.first_mut().unwrap();
-                let first_child = child_trees.first_mut().unwrap();
-                *first_summary = first_child.update_first_recursive(f, cx).unwrap();
-                *summary = sum(child_summaries.iter(), cx);
-                Some(summary.clone())
-            }
-            Node::Leaf {
-                summary,
-                items,
-                item_summaries,
-            } => {
-                if let Some((item, item_summary)) =
-                    items.first_mut().zip(item_summaries.first_mut())
-                {
-                    (f)(item);
-                    *item_summary = item.summary(cx);
-                    *summary = sum(item_summaries.iter(), cx);
-                    Some(summary.clone())
-                } else {
-                    None
-                }
-            }
-        }
-    }
-
+    #[cfg(test)]
     pub fn extent<'a, D: Dimension<'a, T::Summary>>(
         &'a self,
         cx: <T::Summary as Summary>::Context<'_>,
@@ -728,6 +497,7 @@ impl<T: Item> SumTree<T> {
         self.append(Self::from_iter(iter, cx), cx);
     }
 
+    #[cfg(test)]
     pub fn par_extend<I, Iter>(&mut self, iter: I, cx: <T::Summary as Summary>::Context<'_>)
     where
         I: IntoParallelIterator<Iter = Iter>,
@@ -737,18 +507,6 @@ impl<T: Item> SumTree<T> {
         for<'a> <T::Summary as Summary>::Context<'a>: Sync,
     {
         self.append(Self::from_par_iter(iter, cx), cx);
-    }
-
-    pub fn push(&mut self, item: T, cx: <T::Summary as Summary>::Context<'_>) {
-        let summary = item.summary(cx);
-        self.append(
-            SumTree(Arc::new(Node::Leaf {
-                summary: summary.clone(),
-                items: ArrayVec::from_iter(Some(item)),
-                item_summaries: ArrayVec::from_iter(Some(summary)),
-            })),
-            cx,
-        );
     }
 
     pub fn append(&mut self, mut other: Self, cx: <T::Summary as Summary>::Context<'_>) {
@@ -1093,6 +851,7 @@ impl<T: Item> SumTree<T> {
         }))
     }
 
+    #[cfg(test)]
     fn leftmost_leaf(&self) -> &Self {
         match *self.0 {
             Node::Leaf { .. } => self,

@@ -570,7 +570,7 @@ impl HostedSurfaceState {
             return;
         }
         if options.signal_at.is_none() {
-            options.signal_at = PlatformFrameSignal::capture(open_gpui_scheduler::Instant::now);
+            options.signal_at = PlatformFrameSignal::capture(crate::scheduler::Instant::now);
             options.signal_source = FrameRequestSource::LocalSchedule;
         }
         {

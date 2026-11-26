@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use ::open_gpui_util::ResultExt;
+use ::open_gpui::util::ResultExt;
 use windows::{
     UI::{
         Color,
@@ -83,10 +83,6 @@ pub(crate) unsafe fn set_window_long(
     unsafe {
         SetWindowLongW(hwnd, nindex, dwnewlong as i32) as isize
     }
-}
-
-pub(crate) fn windows_credentials_target_name(url: &str) -> String {
-    format!("open-gpui:url={}", url)
 }
 
 pub(crate) fn load_cursor(style: CursorStyle) -> Option<HCURSOR> {

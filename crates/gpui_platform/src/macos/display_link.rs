@@ -13,8 +13,8 @@ use core_graphics::display::CGDirectDisplayID;
 use dispatch2::{
     _dispatch_source_type_data_add, DispatchObject, DispatchQueue, DispatchRetained, DispatchSource,
 };
+use open_gpui::scheduler::Instant;
 use open_gpui::{FrameRequestSource, PlatformFrameSignal};
-use open_gpui_scheduler::Instant;
 use std::{
     collections::{BTreeMap, btree_map},
     error::Error,

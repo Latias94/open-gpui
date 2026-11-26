@@ -9,7 +9,6 @@ mod keyboard;
 mod platform;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 mod power;
-mod system_notifications;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 mod text_system;
 #[cfg(feature = "wayland")]
@@ -42,7 +41,7 @@ use open_gpui::WindowingModes;
 /// headless when it names none, and can switch between those modes later. A headless platform
 /// stays headless.
 pub fn current_platform(headless: bool) -> Rc<dyn open_gpui::Platform> {
-    if headless || std::env::var_os("ZED_HEADLESS").is_some() {
+    if headless {
         linux_platform(WindowingModes::HEADLESS)
     } else {
         linux_platform(WindowingModes::all())

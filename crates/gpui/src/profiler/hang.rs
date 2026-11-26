@@ -10,7 +10,7 @@
 
 use std::time::Duration;
 
-use open_gpui_scheduler::Instant;
+use crate::scheduler::Instant;
 use serde::Serialize;
 
 #[cfg(not(target_family = "wasm"))]
@@ -670,7 +670,7 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
-    use open_gpui_scheduler::SpawnTime;
+    use crate::scheduler::SpawnTime;
     use proptest::prelude::*;
     use rand::Rng as _;
     use rand::prelude::*;
@@ -707,7 +707,7 @@ mod tests {
 
     #[test]
     fn completed_skips_preserve_real_hangs_and_serialize_their_boundary() {
-        let startup = open_gpui_scheduler::Instant::now();
+        let startup = crate::scheduler::Instant::now();
         let at = |ms: u64| startup + Duration::from_millis(ms);
         let window_id = WindowId::from(1);
         for discontinuous in [false, true] {
@@ -760,7 +760,7 @@ mod tests {
 
     #[test]
     fn delayed_platform_signals_without_work_are_not_hangs() {
-        let start = open_gpui_scheduler::Instant::now();
+        let start = crate::scheduler::Instant::now();
         let window_id = WindowId::from(1);
         let mut sealer = IntervalSealer::new(start);
         let snapshots = sealer.push_entries([
@@ -788,7 +788,7 @@ mod tests {
     /// dirty-to-present association.
     #[test]
     fn a_hang_outliving_the_frame_deadline_keeps_its_frame_association() {
-        let start = open_gpui_scheduler::Instant::now();
+        let start = crate::scheduler::Instant::now();
         let window_id = WindowId::from(0x51E17);
         let hang_end = start + FRAME_DEADLINE * 5;
         let presented_at = hang_end + Duration::from_millis(16);
@@ -834,7 +834,7 @@ mod tests {
 
     #[test]
     fn serialized_incident_reports_presented_seal_fields() {
-        let startup = open_gpui_scheduler::Instant::now();
+        let startup = crate::scheduler::Instant::now();
         let at = |ms: u64| startup + Duration::from_millis(ms);
         let window_id = WindowId::from(0xF1E1D);
 
@@ -1027,7 +1027,7 @@ mod tests {
 
     #[test]
     fn serialized_incident_reports_idle_seal_fields() {
-        let startup = open_gpui_scheduler::Instant::now();
+        let startup = crate::scheduler::Instant::now();
         let at = |ms: u64| startup + Duration::from_millis(ms);
 
         let idle = FrameSnapshot {
@@ -1053,7 +1053,7 @@ mod tests {
 
     #[test]
     fn phase_is_startup_until_the_first_present() {
-        let startup = open_gpui_scheduler::Instant::now();
+        let startup = crate::scheduler::Instant::now();
         let at = |ms: u64| startup + Duration::from_millis(ms);
         let snapshot = FrameSnapshot {
             interval_start: at(500),
@@ -1091,7 +1091,7 @@ mod tests {
         let mut detector = HangDetector::new(journal, HANG_THRESHOLD, FRAME_BUDGET);
         let window_id = WindowId::from(0x1A7C4);
 
-        let first_present_end = open_gpui_scheduler::Instant::now();
+        let first_present_end = crate::scheduler::Instant::now();
         record_present(
             presentation(window_id, first_present_end),
             Some(frame(window_id, first_present_end)),
@@ -1119,7 +1119,7 @@ mod tests {
     /// (PR #62779 review finding 5).
     #[test]
     fn busy_fraction_excludes_small_polls_outside_the_active_window() {
-        let startup = open_gpui_scheduler::Instant::now();
+        let startup = crate::scheduler::Instant::now();
         let at = |ms: u64| startup + Duration::from_millis(ms);
         let snapshot = FrameSnapshot {
             interval_start: at(0),
@@ -1153,7 +1153,7 @@ mod tests {
     /// what filled the interval.
     #[test]
     fn an_interval_of_small_work_over_budget_is_an_incident() {
-        let startup = open_gpui_scheduler::Instant::now();
+        let startup = crate::scheduler::Instant::now();
         let at = |ms: u64| startup + Duration::from_millis(ms);
         let window_id = WindowId::from(0xB0D6E7);
         let snapshot = FrameSnapshot {
@@ -1203,7 +1203,7 @@ mod tests {
 
     #[test]
     fn a_journal_gap_suppresses_budget_inference_but_retains_observed_hangs() {
-        let start = open_gpui_scheduler::Instant::now();
+        let start = crate::scheduler::Instant::now();
         let at = |ms: u64| start + Duration::from_millis(ms);
         let mut sealer = super::super::journal::IntervalSealer::new(start);
         let snapshots = sealer.push_entries([
@@ -1242,7 +1242,7 @@ mod tests {
     /// the budget measures foreground spend, not dirty-to-present time.
     #[test]
     fn a_slow_frame_with_little_foreground_spend_is_not_an_incident() {
-        let startup = open_gpui_scheduler::Instant::now();
+        let startup = crate::scheduler::Instant::now();
         let at = |ms: u64| startup + Duration::from_millis(ms);
         let window_id = WindowId::from(0xFA57);
         let snapshot = FrameSnapshot {
@@ -1276,7 +1276,7 @@ mod tests {
 
     #[test]
     fn measured_frames_select_overlapping_work_and_suppress_blocking_fallback() {
-        let startup = open_gpui_scheduler::Instant::now();
+        let startup = crate::scheduler::Instant::now();
         let at = |ms: u64| startup + Duration::from_millis(ms);
         let window_id = WindowId::from(1);
         let presentation = PresentTiming {
@@ -1354,7 +1354,7 @@ mod tests {
 
     #[test]
     fn view_contributors_serialize_self_time_phase_and_containing_draw_phases() {
-        let startup = open_gpui_scheduler::Instant::now();
+        let startup = crate::scheduler::Instant::now();
         let at = |ms: u64| startup + Duration::from_millis(ms);
         let mut frame = frame(WindowId::from(1), at(40));
         frame.dirty_at = Some(at(0));
@@ -1436,7 +1436,7 @@ mod tests {
         ] {
             let (journal, _guard) = install_test_foreground_journal(32, 4);
             let mut detector = HangDetector::new(journal, HANG_THRESHOLD, FRAME_BUDGET);
-            let startup = open_gpui_scheduler::Instant::now();
+            let startup = crate::scheduler::Instant::now();
             let at = |ms: u64| startup + Duration::from_millis(ms);
             assert_eq!(
                 detector.take_active_time(at(0), Duration::from_secs(1)),
@@ -1492,7 +1492,7 @@ mod tests {
 
     #[test]
     fn active_use_counts_time_within_a_minute_of_deliberate_input() {
-        let start = open_gpui_scheduler::Instant::now();
+        let start = crate::scheduler::Instant::now();
         let at = |seconds: u64| start + Duration::from_secs(seconds);
         let input_of_kind = |activity: &mut super::ActiveUse, kind: &'static str, seconds: u64| {
             if super::super::input_is_deliberate(kind) {
@@ -1557,11 +1557,11 @@ mod tests {
     /// the 120 Hz floor, whichever is longer.
     #[test]
     fn late_frames_are_budget_hangs() {
-        let startup = open_gpui_scheduler::Instant::now();
+        let startup = crate::scheduler::Instant::now();
         let at = |ms: u64| startup + Duration::from_millis(ms);
         let window_id = WindowId::from(0xB0D6E7);
         let detect = |refresh_interval: Duration,
-                      signal_at: Option<open_gpui_scheduler::Instant>,
+                      signal_at: Option<crate::scheduler::Instant>,
                       submitted_ms: u64| {
             let snapshot = FrameSnapshot {
                 interval_start: at(0),
@@ -1615,7 +1615,7 @@ mod tests {
     /// budget is blocking work, however much short work the interval holds.
     #[test]
     fn only_single_events_over_the_frame_budget_are_blocking_work() {
-        let startup = open_gpui_scheduler::Instant::now();
+        let startup = crate::scheduler::Instant::now();
         let at = |ms: u64| startup + Duration::from_millis(ms);
         let snapshot = |longest_ms: u64| FrameSnapshot {
             interval_start: at(0),
@@ -1651,7 +1651,7 @@ mod tests {
     /// blocks of equal wall time.
     #[test]
     fn serialized_contributors_are_chronological_with_nesting_depths() {
-        let startup = open_gpui_scheduler::Instant::now();
+        let startup = crate::scheduler::Instant::now();
         let at = |ms: u64| startup + Duration::from_millis(ms);
         let window_id = WindowId::from(0x2E57ED);
         let snapshot = FrameSnapshot {
@@ -1704,7 +1704,7 @@ mod tests {
     /// events. A measured late frame can still report their aggregate work.
     #[test]
     fn small_poll_spend_requires_a_measured_late_frame() {
-        let startup = open_gpui_scheduler::Instant::now();
+        let startup = crate::scheduler::Instant::now();
         let at = |ms: u64| startup + Duration::from_millis(ms);
         let window_id = WindowId::from(0xDE1A7);
         let mut snapshot = FrameSnapshot {
@@ -1772,7 +1772,7 @@ mod tests {
             presented in any::<bool>(),
             discontinuous in any::<bool>(),
         ) {
-            let origin = open_gpui_scheduler::Instant::now();
+            let origin = crate::scheduler::Instant::now();
             let mut cursor_ms = 0u64;
             let events = durations_ms
                 .iter()
@@ -1935,7 +1935,7 @@ mod tests {
         let mut injections: Vec<Injection> = Vec::new();
         for _ in 0..rng.random_range(1..=4) {
             let duration = HANG_THRESHOLD + Duration::from_millis(rng.random_range(5..25));
-            let started = open_gpui_scheduler::Instant::now();
+            let started = crate::scheduler::Instant::now();
             let kind = match rng.random_range(0..4) {
                 0 => {
                     controls.render.set(Some(duration));
@@ -1965,7 +1965,7 @@ mod tests {
             injections.push(Injection {
                 kind,
                 duration,
-                window: started..open_gpui_scheduler::Instant::now(),
+                window: started..crate::scheduler::Instant::now(),
             });
 
             // Innocent interleaved activity that must not confuse detection.
@@ -2080,7 +2080,7 @@ mod tests {
     struct Injection {
         kind: HangKind,
         duration: Duration,
-        window: std::ops::Range<open_gpui_scheduler::Instant>,
+        window: std::ops::Range<crate::scheduler::Instant>,
     }
 
     /// Exactly one contributor of the injected kind must fall inside the
@@ -2148,17 +2148,14 @@ mod tests {
     /// dispatchers call around a poll that blocks the foreground.
     fn simulate_blocked_foreground_poll(duration: Duration) {
         let location = std::panic::Location::caller();
-        crate::profiler::update_running_task(
-            SpawnTime(open_gpui_scheduler::Instant::now()),
-            location,
-        );
+        crate::profiler::update_running_task(SpawnTime(crate::scheduler::Instant::now()), location);
         thread::sleep(duration);
         crate::profiler::save_task_timing();
     }
 
     fn task_poll_event(
-        start: open_gpui_scheduler::Instant,
-        end: open_gpui_scheduler::Instant,
+        start: crate::scheduler::Instant,
+        end: crate::scheduler::Instant,
     ) -> ForegroundEvent {
         ForegroundEvent::TaskPoll(TaskTiming {
             location: std::panic::Location::caller(),
@@ -2168,10 +2165,7 @@ mod tests {
         })
     }
 
-    fn presentation(
-        window_id: WindowId,
-        present_end: open_gpui_scheduler::Instant,
-    ) -> PresentTiming {
+    fn presentation(window_id: WindowId, present_end: crate::scheduler::Instant) -> PresentTiming {
         PresentTiming {
             window_id,
             present_start: present_end - Duration::from_millis(1),
@@ -2180,7 +2174,7 @@ mod tests {
         }
     }
 
-    fn frame(window_id: WindowId, draw_end: open_gpui_scheduler::Instant) -> FrameTiming {
+    fn frame(window_id: WindowId, draw_end: crate::scheduler::Instant) -> FrameTiming {
         FrameTiming {
             window_id,
             dirty_at: Some(draw_end - Duration::from_millis(2)),

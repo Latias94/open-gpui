@@ -7,6 +7,8 @@ use syn::{
 };
 
 pub(crate) fn derive_refineable(input: TokenStream) -> TokenStream {
+    let gpui = crate::gpui_path();
+    let is_empty = format!("{gpui}::IsEmpty::is_empty");
     let DeriveInput {
         ident,
         data,
@@ -55,7 +57,7 @@ pub(crate) fn derive_refineable(input: TokenStream) -> TokenStream {
         .map(|f| {
             if derives_serialize {
                 if is_refineable_field(f) {
-                    quote! { #[serde(default, skip_serializing_if = "::open_gpui::IsEmpty::is_empty")] }
+                    quote! { #[serde(default, skip_serializing_if = #is_empty)] }
                 } else {
                     quote! { #[serde(skip_serializing_if = "::std::option::Option::is_none")] }
                 }
@@ -399,7 +401,7 @@ pub(crate) fn derive_refineable(input: TokenStream) -> TokenStream {
             ),*
         }
 
-        impl #impl_generics ::open_gpui::Refineable for #ident #ty_generics
+        impl #impl_generics #gpui::Refineable for #ident #ty_generics
             #where_clause
         {
             type Refinement = #refinement_ident #ty_generics;
@@ -427,7 +429,7 @@ pub(crate) fn derive_refineable(input: TokenStream) -> TokenStream {
             }
         }
 
-        impl #impl_generics ::open_gpui::Refineable for #refinement_ident #ty_generics
+        impl #impl_generics #gpui::Refineable for #refinement_ident #ty_generics
             #where_clause
         {
             type Refinement = #refinement_ident #ty_generics;
@@ -455,7 +457,7 @@ pub(crate) fn derive_refineable(input: TokenStream) -> TokenStream {
             }
         }
 
-        impl #impl_generics ::open_gpui::IsEmpty for #refinement_ident #ty_generics
+        impl #impl_generics #gpui::IsEmpty for #refinement_ident #ty_generics
             #where_clause
         {
             fn is_empty(&self) -> bool {

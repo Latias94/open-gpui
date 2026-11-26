@@ -1,6 +1,6 @@
+use crate::scheduler::Instant;
+use crate::util::ResultExt;
 use anyhow::Context as _;
-use open_gpui_core_util::ResultExt;
-use open_gpui_scheduler::Instant;
 use smallvec::SmallVec;
 use std::time::Duration;
 

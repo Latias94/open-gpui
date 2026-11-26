@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- `open-gpui-base` provides unstyled GPUI controls, including `TextInput`, buttons, a controlled `Checkbox`, and virtualized lists and trees. The dockspace editor uses a retained text input per View and applies committed text to the shared document on submit.
 - SVGs support the official static and timed raster transformations, including rotation, independent easing, alpha, heartbeat and FPS caps. Native retained scenes animate without re-rendering their views; reduced motion uses the initial pose. Custom renderer monochrome records now include an SVG matrix and animation ID, while subpixel records retain their existing layout.
 - Additive Window/test APIs include `Window::touch_prediction_enabled`, scale-factor simulation, accepted-frame quad/underline inspection and passive image-cache/atlas queries. The test platform now retains owned menu snapshots for `App::get_menus`. `ElementId` accepts `u64`, `ImageFormat::extension` returns canonical file extensions, and `hsla` / `opaque_grey` support constant construction. See the [migration guide](docs/ui/migration-v0.3.md#additive-window-and-test-apis) for feature gates and observation limits.
 
@@ -93,11 +94,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - `Application::with_restart_arguments` configures owned native arguments for the next restart. The selected executable and each argument reach the existing platform launcher without shell-source interpolation.
 - `App::platform_info` reports the runtime host operating system separately from Native/Web delivery. Browser keyboard conventions follow the detected host, including macOS Command bindings, while tests can explicitly select an identity.
-- macOS `App::write_credentials_if_not_exists` uses a single Keychain insertion and reports an existing server/account without replacing its secret. The Mac backend exposes reusable typed Keychain operation, cancellation and status errors; the macOS Platform default reports unsupported when a backend lacks atomic insertion.
 - `App::read_from_clipboard_async` preserves desktop ready snapshots and supports permission-gated browser text/image reads. Platform-initiated paste forwards the complete `ClipboardItem` through `InputHandler::paste` and `EntityInputHandler::paste`; default handlers insert its text. Web text writing and DOM text/image paste share the existing input-handler lifecycle.
 - `BoxShadow::new` and its blur, spread and inset builders follow the official CSS-order API.
 - `ForegroundExecutor::to_send` and scheduler `LocalExecutor::to_send` expose the official Send-only submission handles. Worker submissions keep the captured dispatch destination, scheduler lifetime and foreground accounting; output values need Send, without a Sync requirement.
-- System notifications expose application identity, show/dismiss and body/action response APIs across the native backend closure. Unsupported or unavailable delivery remains best-effort; responses use the existing ordered App update owner, with lazy platform initialization and replaceable handlers.
 - Official stateful Spring animations support typed and custom targets, velocity-preserving retargeting, pause/stop/cancel/completion, arbitrary phase interpolation and animated parent composition. GPUI and the renderer-neutral motion crate expose the same pure solver types. Element samples and next-frame demand publish with accepted frames.
 - With `profiler`, `DebugFrameOverlayMode` and Window controls expose the official hidden/current/detailed draw-time overlay. A rolling 1,000-sample bitmap readout preserves history while hidden and counts completed accepted draws; reset preserves the lifetime count. Direct Scene drawing adds no font/layout dependency or self-refresh timer.
 - `Scene` supports complete owned drawing-data copies, including clip arenas and paint journals. Copies preserve their original geometry-validity associations without transferring atlas leases or presentation authority.
@@ -105,14 +104,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Breaking Changes and Migration Notes
 
+- The `open-gpui-ui-core` and `open-gpui-ui-components` packages, theme schema, and component inventory are retired. Use `open-gpui-base` for unstyled controls and keep styling and domain state in the application. [Migration guide](docs/ui/migration-v0.3.md#base-controls)
+- The standalone helper crates are retired. Use the retained collections, scheduler, motion and utilities through `open_gpui` and keep logging, portable paths, and async resource state in the application. [Migration guide](docs/ui/migration-v0.3.md#consolidated-helpers)
 - Phase 1 removes `legacy-docking` and the former native docking example. Replace `DockSurface::builder` with a shared `DockspaceSession` and retained `DockPane` registrations. Use `DockSurface::new_managed` and `dockspace-editor` for native docking. Existing v2/v3 session documents still import.
-- The desktop selector drops iOS and Web. The framework removes `App::screen_capture_sources` and the capture backends. Linux credential methods return an unsupported error after the removal of `oo7`.
+- The desktop selector drops iOS and Web. The framework removes `App::screen_capture_sources` and the capture backends.
 - The framework removes `Application::with_http_client`, URI image loading, and the HTTP, TLS, reqwest, and GitHub packages. Pass an `Image`, a local path, or an `AssetSource` entry to `img()`. Applications own download and archive extraction.
 - The canvas package, command registry and provider, form store, Tokio bridge, `bench-support` harness, DevTools, and foundation gallery are retired. `test-support` provides a headless application platform.
-- `Refineable` is part of `open_gpui`. Variable-height lists own their summary tree. Shared motion primitives live in `open_gpui_core_util::motion`.
+- `Refineable` is part of `open_gpui`. Variable-height lists own their summary tree. Shared motion primitives live in `open_gpui::motion`.
 
 - Custom renderers must replace `MonochromeSprite.pad` with `MonochromeSprite.animation` and append `MonochromeSprite.transformation`, for a 144-byte record. Keep `SubpixelSprite` at 120 bytes with its own vertex decoder, including grayscale fallback.
-- System notification dismissal now returns `Task<()>`; await completion or detach the task. Dropping it does not cancel an already queued dismissal. Migrate `App::dismiss_system_notification` callers and custom `Platform::dismiss_system_notification` implementations to the task return type; synchronous backends can use `Task::ready(())`.
+- Credential storage, system notifications, and Windows Jump List destinations are retired from GPUI. Applications call the OS services they use. [Migration guide](docs/ui/migration-v0.3.md#application-owned-desktop-services)
 
 - Shared-session applications register `DockSurface::set_close_handler` to decide the original tab/root/native pane plans. Ordinary native roots default to retaining layout; child windows recover their original presentation. Closing a View retains its registration and does not discard an application document automatically. The adapter clock now uses GPUI's cross-platform `web_time::Instant`, including WebAssembly.
 - `Element` now requires `'static + Sized` and supplies `IntoElement` through `impl<T: Element> IntoElement for T`. Delete explicit or derived `IntoElement` implementations on types that also implement `Element`; they conflict with the blanket implementation. Keep conversions for component builders that do not implement `Element`, and keep `IntoElement` in scope for its extension methods.

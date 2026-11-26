@@ -3,8 +3,8 @@ use std::time::Duration;
 #[cfg(feature = "profiler")]
 use super::cold_path;
 
+use crate::scheduler::Instant;
 use itertools::Itertools;
-use open_gpui_scheduler::Instant;
 
 #[cfg(feature = "profiler")]
 use crate::action::Action;

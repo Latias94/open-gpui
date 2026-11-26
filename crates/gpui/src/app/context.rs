@@ -1,3 +1,4 @@
+use crate::util::Deferred;
 use crate::{
     AnyView, AnyWindowHandle, AppContext, AsyncApp, DispatchPhase, Effect, EntityId, EventEmitter,
     FocusClaimOutcome, FocusHandle, FocusOutEvent, Focusable, Global, KeystrokeObserver, Priority,
@@ -6,7 +7,6 @@ use crate::{
 };
 use anyhow::Result;
 use futures::FutureExt;
-use open_gpui_core_util::Deferred;
 use std::{
     any::{Any, TypeId},
     borrow::{Borrow, BorrowMut},
@@ -279,7 +279,7 @@ impl<'a, T: 'static> Context<'a, T> {
     ) -> Deferred<impl FnOnce()> {
         let this = self.weak_entity();
         let mut cx = self.to_async();
-        open_gpui_core_util::defer(move || {
+        crate::util::defer(move || {
             this.update(&mut cx, f).ok();
         })
     }

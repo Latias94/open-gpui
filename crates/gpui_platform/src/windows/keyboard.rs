@@ -1,5 +1,5 @@
 use anyhow::Result;
-use open_gpui_collections::HashMap;
+use open_gpui::collections::HashMap;
 use windows::Win32::UI::{
     Input::KeyboardAndMouse::{
         GetKeyboardLayoutNameW, MAPVK_VK_TO_CHAR, MAPVK_VK_TO_VSC, MapVirtualKeyW, ToUnicode,

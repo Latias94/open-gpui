@@ -5,7 +5,7 @@ use std::{
     sync::atomic::Ordering,
 };
 
-use ::open_gpui_util::ResultExt;
+use ::open_gpui::util::ResultExt;
 use anyhow::Context as _;
 use windows::{
     Win32::{
@@ -26,7 +26,6 @@ use crate::windows::*;
 use open_gpui::*;
 
 pub(crate) const WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD: u32 = WM_USER + 3;
-pub(crate) const WM_GPUI_DOCK_MENU_ACTION: u32 = WM_USER + 4;
 pub(crate) const WM_GPUI_FORCE_UPDATE_WINDOW: u32 = WM_USER + 5;
 pub(crate) const WM_GPUI_KEYBOARD_LAYOUT_CHANGED: u32 = WM_USER + 6;
 pub(crate) const WM_GPUI_REFRESH_DISPLAY_TOPOLOGY: u32 = WM_USER + 9;

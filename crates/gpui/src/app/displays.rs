@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use open_gpui_collections::HashMap;
+use crate::collections::HashMap;
 
 use crate::{
     App, AppContext as _, Bounds, DisplayChanges, DisplayEvent, DisplayId, Pixels, Platform,

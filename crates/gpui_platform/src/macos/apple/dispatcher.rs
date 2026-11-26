@@ -9,8 +9,8 @@ use mach2::{
         thread_precedence_policy_data_t, thread_time_constraint_policy_data_t,
     },
 };
+use open_gpui::util::ResultExt;
 use open_gpui::{ActivityGuard, PlatformDispatcher, Priority, RunnableMeta, RunnableVariant};
-use open_gpui_util::ResultExt;
 
 use async_task::Runnable;
 use objc2::{rc::Retained, runtime::ProtocolObject};

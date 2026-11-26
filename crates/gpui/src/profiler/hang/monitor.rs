@@ -1,8 +1,8 @@
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::Duration;
 
+use crate::scheduler::Instant;
 use futures::channel::oneshot;
-use open_gpui_scheduler::Instant;
 
 use super::{HangDetector, HangIncident};
 

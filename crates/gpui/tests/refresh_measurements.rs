@@ -1,5 +1,6 @@
 #![cfg(all(feature = "test-support", feature = "profiler"))]
 
+use open_gpui::scheduler::Instant;
 use open_gpui::{
     App, AppContext as _, Context, Entity, FrameDurationSnapshot, FrameRequestSource,
     FrameTimingCollector, InputLatencySnapshot, InteractiveElement as _, IntoElement, MouseButton,
@@ -15,7 +16,6 @@ use open_gpui::{
     },
     px, size,
 };
-use open_gpui_scheduler::Instant;
 use std::{cell::Cell, rc::Rc, time::Duration};
 
 #[derive(Default)]

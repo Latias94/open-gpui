@@ -570,7 +570,7 @@ fn power_mode_changes_do_not_interrupt_measurement_or_clear_pending_demand(
     let journal = cx.read(|app| app.foreground_journal());
     let mut collector = journal.collector();
     let window_id = crate::WindowId::from(42);
-    let now = open_gpui_scheduler::Instant::now();
+    let now = crate::scheduler::Instant::now();
     crate::profiler::journal::record_frame_pending(window_id, now);
     for mode in [
         PowerMode::LowPower,

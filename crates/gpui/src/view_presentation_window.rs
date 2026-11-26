@@ -4,12 +4,12 @@
 //! fallback. This module is intentionally opt-in: it fences only view roots whose live
 //! presentation must move between windows without ever rendering in both at once.
 
+use crate::collections::{FxHashMap, FxHashSet};
 use crate::{
     AnyElement, AnyView, App, AppContext, Bounds, Element, ElementId, Empty, Entity, EntityId,
     GlobalElementId, InspectorElementId, IntoElement, LayoutId, Pixels, PrepaintPublicationId,
     Window, WindowId,
 };
-use open_gpui_collections::{FxHashMap, FxHashSet};
 use parking_lot::Mutex;
 use std::{fmt, sync::Arc};
 

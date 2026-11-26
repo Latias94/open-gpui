@@ -14,7 +14,7 @@ impl Window {
         if self.invalidator.is_dirty() || self.needs_present.get() {
             crate::profiler::journal::record_frame_pending(
                 self.handle.window_id(),
-                open_gpui_scheduler::Instant::now(),
+                crate::scheduler::Instant::now(),
             );
         }
     }

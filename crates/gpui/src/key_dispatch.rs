@@ -50,11 +50,11 @@
 //!
 //!  KeyBinding::new("cmd-k left", pane::SplitLeft, Some("Pane"))
 
+use crate::collections::FxHashMap;
 use crate::{
     Action, ActionRegistry, App, DispatchPhase, EntityId, FocusId, KeyBinding, KeyContext, Keymap,
     Keystroke, ModifiersChangedEvent, Window, geometry::SubtreeGeometryValidity,
 };
-use open_gpui_collections::FxHashMap;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},

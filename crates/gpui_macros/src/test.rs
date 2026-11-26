@@ -123,6 +123,7 @@ fn generate_test_function(
     inner_fn_name: Ident,
     outer_fn_name: Ident,
 ) -> Result<TokenStream, TokenStream> {
+    let gpui = crate::gpui_path();
     let seeds = &args.seeds;
     let max_retries = args.max_retries;
     let num_iterations = args.max_iterations;
@@ -141,11 +142,13 @@ fn generate_test_function(
                     let last_segment = ty.path.segments.last();
                     match last_segment.map(|s| s.ident.to_string()).as_deref() {
                         Some("StdRng") => {
-                            inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(_seed),));
+                            inner_fn_args.extend(
+                                quote!(#gpui::private::rand::SeedableRng::seed_from_u64(_seed),),
+                            );
                             continue;
                         }
                         Some("BackgroundExecutor") => {
-                            inner_fn_args.extend(quote!(open_gpui::BackgroundExecutor::new(
+                            inner_fn_args.extend(quote!(#gpui::BackgroundExecutor::new(
                                 std::sync::Arc::new(dispatcher.clone()),
                             ),));
                             continue;
@@ -161,7 +164,7 @@ fn generate_test_function(
                     {
                         let cx_varname = format_ident!("cx_{}", ix);
                         cx_vars.extend(quote!(
-                            let mut #cx_varname = open_gpui::TestAppContext::build(
+                            let mut #cx_varname = #gpui::TestAppContext::build(
                                 dispatcher.clone(),
                                 Some(stringify!(#outer_fn_name)),
                             );
@@ -187,14 +190,14 @@ fn generate_test_function(
             fn #outer_fn_name() {
                 #inner_fn
 
-                open_gpui::run_test(
+                #gpui::run_test(
                     #num_iterations,
                     &[#seeds],
                     #max_retries,
                     &mut |dispatcher, _seed| {
                         let exec = std::sync::Arc::new(dispatcher.clone());
                         #cx_vars
-                        open_gpui::ForegroundExecutor::new(exec.clone()).block_test(#inner_fn_name(#inner_fn_args));
+                        #gpui::ForegroundExecutor::new(exec.clone()).block_test(#inner_fn_name(#inner_fn_args));
                         drop(exec);
                         #cx_teardowns
                         // Ideally we would only drop cancelled tasks, that way we could detect leaks due to task <-> entity
@@ -220,7 +223,9 @@ fn generate_test_function(
                     let last_segment = ty.path.segments.last();
 
                     if let Some("StdRng") = last_segment.map(|s| s.ident.to_string()).as_deref() {
-                        inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(_seed),));
+                        inner_fn_args.extend(
+                            quote!(#gpui::private::rand::SeedableRng::seed_from_u64(_seed),),
+                        );
                         continue;
                     }
                 } else if let Type::Reference(ty) = &*arg.ty
@@ -232,7 +237,7 @@ fn generate_test_function(
                             let cx_varname = format_ident!("cx_{}", ix);
                             let cx_varname_lock = format_ident!("cx_{}_lock", ix);
                             cx_vars.extend(quote!(
-                                let mut #cx_varname = open_gpui::TestAppContext::build(
+                                let mut #cx_varname = #gpui::TestAppContext::build(
                                    dispatcher.clone(),
                                    Some(stringify!(#outer_fn_name))
                                 );
@@ -252,7 +257,7 @@ fn generate_test_function(
                         Some("TestAppContext") => {
                             let cx_varname = format_ident!("cx_{}", ix);
                             cx_vars.extend(quote!(
-                                let mut #cx_varname = open_gpui::TestAppContext::build(
+                                let mut #cx_varname = #gpui::TestAppContext::build(
                                     dispatcher.clone(),
                                     Some(stringify!(#outer_fn_name))
                                 );
@@ -280,7 +285,7 @@ fn generate_test_function(
             fn #outer_fn_name() {
                 #inner_fn
 
-                open_gpui::run_test(
+                #gpui::run_test(
                     #num_iterations,
                     &[#seeds],
                     #max_retries,

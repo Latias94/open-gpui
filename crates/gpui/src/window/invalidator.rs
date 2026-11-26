@@ -1,13 +1,13 @@
 use std::{cell::RefCell, mem, rc::Rc};
 
-use open_gpui_collections::FxHashSet;
+use crate::collections::FxHashSet;
 
 use crate::{App, Effect, EntityId, WindowId};
 
 use super::DrawPhase;
 
 #[cfg(feature = "profiler")]
-use open_gpui_scheduler::Instant;
+use crate::scheduler::Instant;
 
 #[cfg(feature = "profiler")]
 #[derive(Clone, Copy, Default)]

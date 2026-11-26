@@ -3,16 +3,17 @@ use quote::quote;
 use syn::{DeriveInput, parse_macro_input};
 
 pub fn derive_render(input: TokenStream) -> TokenStream {
+    let gpui = crate::gpui_path();
     let ast = parse_macro_input!(input as DeriveInput);
     let type_name = &ast.ident;
     let (impl_generics, type_generics, where_clause) = ast.generics.split_for_impl();
 
     let r#gen = quote! {
-        impl #impl_generics open_gpui::Render for #type_name #type_generics
+        impl #impl_generics #gpui::Render for #type_name #type_generics
         #where_clause
         {
-            fn render(&mut self, _window: &mut open_gpui::Window, _cx: &mut open_gpui::Context<Self>) -> impl open_gpui::Element {
-                open_gpui::Empty
+            fn render(&mut self, _window: &mut #gpui::Window, _cx: &mut #gpui::Context<Self>) -> impl #gpui::Element {
+                #gpui::Empty
             }
         }
     };

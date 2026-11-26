@@ -1,9 +1,9 @@
+use crate::scheduler::Instant;
 use crate::{
     Context, FrameRequestSource, IntoElement, Render, RequestFrameOptions, TestAppContext,
     TestWindow, Window, div,
     profiler::journal::{self, ForegroundJournalEntry, IntervalBoundary},
 };
-use open_gpui_scheduler::Instant;
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,

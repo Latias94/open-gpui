@@ -1,10 +1,10 @@
 //! A seeded, mutable element tree for benchmarks and tests of GPUI rendering.
+use crate::collections::{HashMap, HashSet};
 use crate::{
     AnimationExt as _, AnyElement, AppContext as _, Context, ElementId, Entity, Hsla,
     InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled,
     SubtreePresentation, SubtreePresentationExt as _, Window, div, px, util::FluentBuilder,
 };
-use open_gpui_collections::{HashMap, HashSet};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use std::{
     cell::RefCell,

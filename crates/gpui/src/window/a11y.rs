@@ -88,12 +88,12 @@
 //! [`NodeId`]: accesskit::NodeId
 //! [`Drawable::prepaint`]: crate::Drawable::prepaint
 
+use crate::collections::{FxHashMap, FxHashSet};
 use crate::{
     App, Bounds, FocusId, Pixels, Point, SharedString, Window, WindowId,
     geometry::SubtreeGeometryValidity,
 };
 use accesskit::{Action, NodeId, TreeUpdate};
-use open_gpui_collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::{
     cell::RefCell,
