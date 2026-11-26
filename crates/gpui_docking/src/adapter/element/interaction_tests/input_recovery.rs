@@ -1085,6 +1085,7 @@ fn closing_local_windows_retires_their_released_pointer_streams(cx: &mut TestApp
         SurfacePointerReceiverFacts,
     };
 
+    cx.update(|cx| cx.set_quit_mode(open_gpui::QuitMode::Explicit));
     let dock = preview_fixture(cx);
     let mut retired = Vec::new();
     for item in [SECOND, FIRST, SECOND] {
@@ -1142,6 +1143,7 @@ fn a_hidden_window_finishes_its_content_press_without_another_frame(cx: &mut Tes
         PlatformFrameDeliveryMode, PointerCancelEvent, PointerCancelReason, WindowVisibility,
     };
 
+    cx.update(|cx| cx.set_quit_mode(open_gpui::QuitMode::Explicit));
     for cancel in [false, true] {
         let dock = preview_fixture(cx);
         cx.defer_next_window_frame_requests();
@@ -1189,6 +1191,7 @@ fn retiring_content_source_keeps_its_committed_pointer_terminal_in_order(cx: &mu
 
     use super::content_receivers::content_fixture_layout;
 
+    cx.update(|cx| cx.set_quit_mode(open_gpui::QuitMode::Explicit));
     let sibling = SurfaceId::new(52);
     let other = ItemId::new(63);
     for (terminal, borrowed, close) in [
