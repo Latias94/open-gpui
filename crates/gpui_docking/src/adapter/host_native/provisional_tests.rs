@@ -419,12 +419,7 @@ fn collect(dock: &DockSurface, bridge: &mut NativeBridge, cx: &mut TestAppContex
         let mut deferred = super::super::DeferredHostWork::default();
         super::super::collect_host(&mut dock.host.borrow_mut(), bridge, None, &mut deferred, cx)
             .unwrap();
-        super::super::presentation::withdraw_borrowed_submissions(
-            &dock.host,
-            deferred.borrowed_submissions,
-            cx,
-        );
-        super::super::complete_deferred_root_binds(&dock.host, bridge, deferred.root_binds, cx);
+        deferred.flush_pre_dispatch(&dock.host, bridge, cx);
     });
 }
 
