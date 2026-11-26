@@ -385,6 +385,12 @@ compiler padding is no longer part of an upload. Windows now uploads the shared 
 directly, without a second renderer-specific record conversion. No raw-u32 constructor or
 serialization compatibility path is provided.
 
+## Optional WGPU Adapter Facts
+
+`WgpuRenderer::gpu_specs()` returns `Option<GpuSpecs>`. Use `if let Some(specs)` to read
+the adapter details. A renderer between device loss and successful recovery may have no GPU
+resources, so a diagnostic view can display that adapter details are currently unavailable.
+
 ## Runtime Font Installation And Missing Glyphs
 
 `TextSystem::add_fonts` now invalidates its resolved descriptor results and window line layouts

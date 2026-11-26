@@ -25,8 +25,12 @@ pub struct RowState {
 /// User intent from a [`VirtualList`]. Selection and expansion update immediately.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum VirtualListEvent<K> {
+    /// The selected set or active row changed. Keys stay in tree order.
     SelectionChanged(Vec<K>),
-    Expanded { key: K, expanded: bool },
+    Expanded {
+        key: K,
+        expanded: bool,
+    },
     Activate(K),
     ReorderRequested(Reorder<K>),
 }
@@ -101,6 +105,12 @@ impl<K: Clone + Eq + Hash + 'static> VirtualList<K> {
 
     pub fn selection(&self) -> Vec<K> {
         self.model.selection()
+    }
+
+    /// The row most recently reached by pointer or keyboard selection.
+    /// A toggled-off row can be active without being selected.
+    pub fn active_key(&self) -> Option<&K> {
+        self.model.active.as_ref()
     }
 
     pub fn set_selection(&mut self, keys: impl IntoIterator<Item = K>, cx: &mut Context<Self>) {

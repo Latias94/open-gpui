@@ -6052,6 +6052,13 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     ///
     /// Reconfiguring an unchanged live session can restart the platform's IME connection.
     fn set_text_input_configuration(&mut self, _configuration: TextInputConfiguration) {}
+    /// Cancels the focused native composition without calling back into the app.
+    ///
+    /// Return true only when callbacks from the canceled composition can no longer edit the
+    /// input handler. A backend that cannot provide that guarantee returns false.
+    fn try_cancel_text_composition(&self) -> bool {
+        false
+    }
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
     fn input_handler_slot_for_test(&self) -> Option<PlatformInputHandlerSlot> {

@@ -541,6 +541,7 @@ impl X11WindowObservationCoordinator {
         self.invalidate_sync_wake();
     }
 
+    #[cfg(test)]
     fn property_state(&self, domain: X11PropertyDomain) -> &X11PropertyDomainState {
         match domain {
             X11PropertyDomain::WindowState => &self.window_state,

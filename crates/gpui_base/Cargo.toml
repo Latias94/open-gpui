@@ -15,5 +15,8 @@ readme = "README.md"
 open_gpui.workspace = true
 unicode-segmentation.workspace = true
 
+[dev-dependencies]
+open_gpui = { workspace = true, features = ["test-support"] }
+
 [lints]
 workspace = true

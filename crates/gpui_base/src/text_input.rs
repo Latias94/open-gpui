@@ -39,7 +39,6 @@ pub struct TextInput {
     invalid: bool,
     style: StyleRefinement,
     geometry: Option<TextGeometry>,
-    selecting: bool,
     drag: PointerDrag<()>,
 }
 
@@ -56,7 +55,6 @@ impl TextInput {
             invalid: false,
             style: StyleRefinement::default(),
             geometry: None,
-            selecting: false,
             drag: PointerDrag::default(),
         }
     }
@@ -159,11 +157,22 @@ impl TextInput {
         let Ok(position) = event.target_layout_position() else {
             return;
         };
-        let offset = self.index_at(position);
+        let offset = if self.buffer.marked().is_some() {
+            if !window.try_cancel_text_composition(&self.focus) {
+                return;
+            }
+            let hit = self
+                .current_geometry()
+                .map(|geometry| geometry.index_at(position));
+            self.buffer.cancel_composition_for_caret(hit)
+        } else {
+            self.index_at(position)
+        };
         let event = event.window_event();
-        self.selecting = event.click_count < 2 || event.modifiers.shift;
-        if self.selecting {
+        if event.click_count < 2 || event.modifiers.shift {
             self.drag.begin((), window);
+        } else {
+            self.end_selection(window, cx);
         }
         if event.modifiers.shift {
             self.buffer.move_to(offset, true);
@@ -184,12 +193,12 @@ impl TextInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.selecting && !event.window_event().dragging() {
-            self.selecting = false;
+        if self.drag.state.is_none() {
+            return;
         }
-        if self.selecting
-            && let Ok(position) = event.target_layout_position()
-        {
+        if !event.window_event().dragging() {
+            self.end_selection(window, cx);
+        } else if let Ok(position) = event.target_layout_position() {
             self.buffer.move_to(self.index_at(position), true);
             self.selection_changed(window, cx);
         }
@@ -203,7 +212,6 @@ impl TextInput {
     }
 
     fn end_selection(&mut self, window: &mut Window, _: &mut Context<Self>) {
-        self.selecting = false;
         let _ = self.drag.take(window);
     }
 

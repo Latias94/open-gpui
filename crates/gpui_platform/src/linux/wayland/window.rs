@@ -1188,6 +1188,7 @@ impl WaylandWindowState {
         self.resize_throttle = false;
     }
 
+    #[cfg(test)]
     pub fn is_transparent(&self) -> bool {
         WaylandWindowBackgroundProjection::new(
             self.requested_background_appearance,
@@ -3347,7 +3348,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
-        self.borrow().renderer.gpu_specs().into()
+        self.borrow().renderer.gpu_specs()
     }
 
     fn play_system_bell(&self) {

@@ -10,12 +10,13 @@ mod scrubber;
 
 pub use scrubber::NumericScrubber;
 
-/// Finite numeric bounds with an optional step measured from the minimum.
+/// Finite numeric bounds with an optional step grid. Both endpoints remain valid values.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct NumericRange {
-    pub(crate) min: f64,
-    pub(crate) max: f64,
-    pub(crate) step: Option<f64>,
+    min: f64,
+    max: f64,
+    step: Option<f64>,
+    step_origin: f64,
 }
 
 impl NumericRange {
@@ -24,14 +25,38 @@ impl NumericRange {
             min,
             max,
             step: None,
+            step_origin: min,
         })
     }
 
+    /// Sets a positive finite step. Values halfway between steps round toward the greater value.
     pub fn with_step(mut self, step: f64) -> Option<Self> {
         if !step.is_finite() || step <= 0. {
             return None;
         }
         self.step = Some(step);
+        Some(self)
+    }
+
+    /// Sets the finite origin of the step grid. It defaults to the minimum and may lie outside
+    /// the bounds. Use a meaningful origin such as zero when bounds only limit the value.
+    ///
+    /// ```
+    /// use open_gpui_base::NumericRange;
+    ///
+    /// let range = NumericRange::new(-1e20, 1e20)
+    ///     .unwrap()
+    ///     .with_step(0.25)
+    ///     .unwrap()
+    ///     .with_step_origin(0.0)
+    ///     .unwrap();
+    /// assert_eq!(range.normalize(0.4), 0.5);
+    /// ```
+    pub fn with_step_origin(mut self, origin: f64) -> Option<Self> {
+        if !origin.is_finite() {
+            return None;
+        }
+        self.step_origin = origin;
         Some(self)
     }
 
@@ -73,13 +98,9 @@ impl NumericRange {
     }
 
     fn snap(self, value: f64, step: f64) -> f64 {
-        let remainder = (value - self.min) % step;
-        let rounded = if remainder >= step / 2. {
-            value + (step - remainder)
-        } else {
-            value - remainder
-        };
-        self.clamp(rounded)
+        let value_phase = nearest_step_offset(value % step, step);
+        let origin_phase = nearest_step_offset(self.step_origin % step, step);
+        self.clamp(value - nearest_step_offset(value_phase - origin_phase, step))
     }
 
     fn span(self) -> f64 {
@@ -88,6 +109,17 @@ impl NumericRange {
     fn key_step(self) -> f64 {
         self.step
             .unwrap_or((self.span() / 100.).max(f64::from_bits(1)))
+    }
+}
+
+fn nearest_step_offset(offset: f64, step: f64) -> f64 {
+    let complement = step - offset.abs();
+    if offset >= complement {
+        -complement
+    } else if -offset > complement {
+        complement
+    } else {
+        offset
     }
 }
 
@@ -367,6 +399,36 @@ mod tests {
         assert_eq!(range.value_at(0.), 2.);
         assert_eq!(range.value_at(1.), 10.);
         assert_eq!(range.normalize(6.6), 8.);
+        assert_eq!(range.normalize(3.5), 5.);
         assert_eq!(range.normalize(f64::NAN), 2.);
+    }
+
+    #[test]
+    fn wide_bounds_keep_step_resolution_and_grid_phase() {
+        let limit = f64::MAX / 4.;
+        let range = NumericRange::new(-limit, limit)
+            .and_then(|range| range.with_step(0.125))
+            .expect("finite range with a fractional step");
+        assert_eq!(range.normalize(0.3), 0.25);
+        assert_eq!(range.normalize(-0.1875), -0.125);
+        assert_eq!(range.normalize(-limit), -limit);
+
+        let offset_range = NumericRange::new(-1e20, 1e20)
+            .and_then(|range| range.with_step(3.))
+            .expect("finite range with an offset step grid");
+        assert_eq!(offset_range.normalize(0.), -1.);
+        assert_eq!(offset_range.normalize(0.5), 2.);
+    }
+
+    #[test]
+    fn explicit_step_origin_can_be_outside_the_bounds() {
+        let range = NumericRange::new(0.03125, f64::MAX)
+            .and_then(|range| range.with_step(0.125))
+            .expect("finite range with a fractional step");
+        assert_eq!(range.normalize(0.22), 0.28125);
+        let zero_based = range.with_step_origin(0.).expect("finite origin");
+        assert_eq!(zero_based.normalize(0.22), 0.25);
+        assert_eq!(zero_based.normalize(0.03125), 0.03125);
+        assert!(range.with_step_origin(f64::INFINITY).is_none());
     }
 }

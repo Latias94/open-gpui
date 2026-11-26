@@ -1,7 +1,5 @@
 error[E0432]: unresolved import `open_gpui::Visibility`
- --> tests/compile_fail/presentation/retired_visibility.rs:1:5
+ --> tests/compile_fail/presentation/retired_visibility.rs:1:17
   |
-1 | use open_gpui::Visibility;
-  |     ^^^^^^^^^^^----------
-  |                |
-  |                no `Visibility` in the root
+1 | use open_gpui::{Visibility};
+  |                 ^^^^^^^^^^ no `Visibility` in the root

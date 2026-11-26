@@ -396,6 +396,7 @@ fn native_wgpu_renderer_initializes_shares_resumes_and_retires_real_surfaces() {
     ))
     .expect("request an application-owned WGPU device");
     let device = shared.device().clone();
+    let adapter_name = shared.adapter().get_info().name;
     let device_errors = Arc::clone(shared.errors());
     let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let gpu_context = GpuContext::shared(shared);
@@ -411,6 +412,10 @@ fn native_wgpu_renderer_initializes_shares_resumes_and_retires_real_surfaces() {
     )
     .expect("the first zero-size renderer must join the shared context");
     assert!(Arc::ptr_eq(first_renderer.device_errors(), &device_errors));
+    let specs = first_renderer
+        .gpu_specs()
+        .expect("GPU resources are available");
+    assert_eq!(specs.device_name, adapter_name);
     let mut scene = Scene::default();
     let mut quad = Quad::default();
     quad.bounds = Bounds::new(

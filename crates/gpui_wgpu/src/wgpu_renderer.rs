@@ -441,6 +441,7 @@ pub struct WgpuRenderer {
     surface: Option<wgpu::Surface<'static>>,
     core: Option<WgpuRendererCore>,
     surface_config: wgpu::SurfaceConfiguration,
+    requested_transparency: bool,
     atlas: Arc<WgpuAtlas>,
     transparent_alpha_mode: wgpu::CompositeAlphaMode,
     opaque_alpha_mode: wgpu::CompositeAlphaMode,
@@ -736,6 +737,7 @@ impl WgpuRenderer {
             surface: Some(surface),
             core: Some(core),
             surface_config,
+            requested_transparency: config.transparent,
             atlas,
             transparent_alpha_mode,
             opaque_alpha_mode,
@@ -1471,7 +1473,12 @@ impl WgpuRenderer {
             return;
         }
 
-        let new_alpha_mode = if transparent {
+        self.requested_transparency = transparent;
+        let Some(core) = self.core.as_mut() else {
+            return;
+        };
+
+        let new_alpha_mode = if self.requested_transparency {
             self.transparent_alpha_mode
         } else {
             self.opaque_alpha_mode
@@ -1479,18 +1486,15 @@ impl WgpuRenderer {
 
         if new_alpha_mode != self.surface_config.alpha_mode {
             self.surface_config.alpha_mode = new_alpha_mode;
-            let surface_config = self.surface_config.clone();
-            let dual_source_blending = self.core().dual_source_blending;
-            let uses_webgl_instance_data = self.core().uses_webgl_instance_data;
             self.surface_lifecycle.request_reconfigure();
-            let resources = self.resources_mut();
+            let resources = &mut core.resources;
             resources.pipelines = WgpuRendererCore::create_pipelines(
                 &resources.device,
                 &resources.bind_group_layouts,
-                surface_config.format.remove_srgb_suffix(),
-                surface_config.alpha_mode,
-                dual_source_blending,
-                uses_webgl_instance_data,
+                self.surface_config.format.remove_srgb_suffix(),
+                new_alpha_mode,
+                core.dual_source_blending,
+                core.uses_webgl_instance_data,
             );
         }
     }
@@ -1513,13 +1517,15 @@ impl WgpuRenderer {
             .is_some_and(|core| core.dual_source_blending)
     }
 
-    pub fn gpu_specs(&self) -> GpuSpecs {
-        GpuSpecs {
-            is_software_emulated: self.core().adapter_info.device_type == wgpu::DeviceType::Cpu,
-            device_name: self.core().adapter_info.name.clone(),
-            driver_name: self.core().adapter_info.driver.clone(),
-            driver_info: self.core().adapter_info.driver_info.clone(),
-        }
+    /// Returns adapter details while the renderer has GPU resources.
+    pub fn gpu_specs(&self) -> Option<GpuSpecs> {
+        let adapter_info = &self.core.as_ref()?.adapter_info;
+        Some(GpuSpecs {
+            is_software_emulated: adapter_info.device_type == wgpu::DeviceType::Cpu,
+            device_name: adapter_info.name.clone(),
+            driver_name: adapter_info.driver.clone(),
+            driver_info: adapter_info.driver_info.clone(),
+        })
     }
 
     pub fn max_texture_size(&self) -> u32 {
@@ -2718,6 +2724,7 @@ impl WgpuRenderer {
             self.opaque_alpha_mode
         };
 
+        self.requested_transparency = config.transparent;
         self.surface_config.alpha_mode = alpha_mode;
         if let Some(mode) = config.preferred_present_mode {
             self.surface_config.present_mode = mode;
@@ -2931,6 +2938,15 @@ impl WgpuRenderer {
         !self.surface_lifecycle.shutdown_active() && self.device_errors.device_lost()
     }
 
+    #[cfg(not(target_family = "wasm"))]
+    fn recovery_surface_config(&self) -> WgpuSurfaceConfig {
+        WgpuSurfaceConfig {
+            size: self.viewport_size(),
+            transparent: self.requested_transparency,
+            preferred_present_mode: Some(self.surface_config.present_mode),
+        }
+    }
+
     /// Recovers from a lost GPU device by recreating the renderer with a new context.
     ///
     /// Call this after detecting `device_lost()` returns true.
@@ -2966,14 +2982,7 @@ impl WgpuRenderer {
             .window_handle()
             .map_err(|e| anyhow::anyhow!("Failed to get window handle: {e}"))?;
 
-        let config = WgpuSurfaceConfig {
-            size: open_gpui::Size {
-                width: open_gpui::DevicePixels(self.surface_config.width as i32),
-                height: open_gpui::DevicePixels(self.surface_config.height as i32),
-            },
-            transparent: self.surface_config.alpha_mode != wgpu::CompositeAlphaMode::Opaque,
-            preferred_present_mode: Some(self.surface_config.present_mode),
-        };
+        let config = self.recovery_surface_config();
         let (surface_factory, surface) = if needs_new_context {
             log::warn!("GPU device lost, recreating context...");
 
@@ -3564,6 +3573,66 @@ mod abi_layout_tests {
 mod tests {
     use super::*;
     use open_gpui::{PlatformHeadlessRenderer as _, size};
+
+    #[test]
+    fn updates_during_failed_recovery_keep_the_latest_transparency_request() -> anyhow::Result<()> {
+        let (context, format) = SharedWgpuContext::new_headless()?;
+        let size = size(DevicePixels(64), DevicePixels(48));
+        let max_texture_size = context.device.limits().max_texture_dimension_2d;
+        let (mut surface_lifecycle, extent) = WindowSurfaceRuntime::new(size, max_texture_size);
+        let SurfaceRenderPlan::Configure(ticket) = surface_lifecycle.prepare_render() else {
+            panic!("expected an initial surface configuration");
+        };
+        assert!(surface_lifecycle.accept_configuration(ticket));
+
+        let mut renderer = WgpuRenderer {
+            context: Some(GpuContext::default()),
+            compositor_gpu: None,
+            surface_factory: SurfaceFactory::for_raw_window(
+                context.instance.clone(),
+                raw_window_handle::WebWindowHandle::new(0).into(),
+                None,
+            ),
+            surface: None,
+            core: None,
+            surface_config: wgpu::SurfaceConfiguration {
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                format,
+                width: extent.width,
+                height: extent.height,
+                present_mode: wgpu::PresentMode::Fifo,
+                desired_maximum_frame_latency: 2,
+                alpha_mode: wgpu::CompositeAlphaMode::Inherit,
+                view_formats: Vec::new(),
+                color_space: wgpu::SurfaceColorSpace::Auto,
+            },
+            requested_transparency: false,
+            atlas: Arc::new(WgpuAtlas::from_context(&context)),
+            transparent_alpha_mode: wgpu::CompositeAlphaMode::PreMultiplied,
+            opaque_alpha_mode: wgpu::CompositeAlphaMode::Inherit,
+            max_texture_size,
+            device_errors: Arc::clone(context.errors()),
+            observed_error_generation: context.errors().current_generation(),
+            surface_lifecycle,
+            last_submission: None,
+        };
+
+        renderer.update_transparency(true);
+        assert!(renderer.gpu_specs().is_none());
+        assert!(renderer.recovery_surface_config().transparent);
+        assert_eq!(
+            renderer.surface_config.alpha_mode,
+            wgpu::CompositeAlphaMode::Inherit
+        );
+        assert_eq!(
+            renderer.surface_lifecycle.prepare_render(),
+            SurfaceRenderPlan::Acquire
+        );
+
+        renderer.update_transparency(false);
+        assert!(!renderer.recovery_surface_config().transparent);
+        Ok(())
+    }
 
     #[test]
     fn native_staging_reuses_chunks_and_skips_unchanged_uploads() -> anyhow::Result<()> {

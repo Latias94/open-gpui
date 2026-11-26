@@ -13426,6 +13426,18 @@ impl Window {
         }
     }
 
+    /// Attempts to cancel the accepted focused component's native IME composition.
+    ///
+    /// On success the component may discard its preedit and change its selection. On failure it
+    /// should retain the composition so a pending native update still uses the original range.
+    pub fn try_cancel_text_composition(&self, focus_handle: &FocusHandle) -> bool {
+        self.user_interaction_is_admitted()
+            && self.focused_text_input == Some(focus_handle.id)
+            && focus_handle.is_focused(self)
+            && !self.has_unaccepted_text_candidate()
+            && self.platform_window.try_cancel_text_composition()
+    }
+
     fn has_unaccepted_text_candidate(&self) -> bool {
         self.candidate_frame_transaction
             .as_ref()

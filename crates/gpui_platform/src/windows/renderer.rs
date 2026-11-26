@@ -595,10 +595,10 @@ impl WindowsRenderer for WindowsWgpuRenderer {
     }
 
     fn gpu_specs(&self) -> Result<Option<GpuSpecs>> {
-        Ok(
-            (!self.renderer.presentation_shutdown_active() && !self.renderer.device_lost())
-                .then(|| self.renderer.gpu_specs()),
-        )
+        if self.renderer.presentation_shutdown_active() || self.renderer.device_lost() {
+            return Ok(None);
+        }
+        Ok(self.renderer.gpu_specs())
     }
 
     #[cfg(any(test, feature = "test-support"))]

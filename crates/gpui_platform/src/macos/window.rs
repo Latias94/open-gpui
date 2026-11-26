@@ -5670,10 +5670,13 @@ impl PlatformWindow for MacWindow {
 
     fn gpu_specs(&self) -> Option<open_gpui::GpuSpecs> {
         let state = self.0.lock();
-        (!state.is_closed()
-            && !state.renderer.presentation_shutdown_active()
-            && !state.renderer.device_lost())
-        .then(|| state.renderer.gpu_specs())
+        if state.is_closed()
+            || state.renderer.presentation_shutdown_active()
+            || state.renderer.device_lost()
+        {
+            return None;
+        }
+        state.renderer.gpu_specs()
     }
 
     fn debug_state(&self) -> serde_json::Value {

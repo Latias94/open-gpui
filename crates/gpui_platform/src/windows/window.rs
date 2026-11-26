@@ -845,6 +845,7 @@ pub struct WindowsWindowState {
     pub frame_signal: Arc<PlatformFrameSignal>,
     pub input_handler: PlatformInputHandlerSlot,
     pub ime_enabled: Cell<bool>,
+    pub(crate) ime_cancellation: WindowsImeCancellation,
     pub pending_surrogate: Cell<Option<u16>>,
     pub last_reported_modifiers: Cell<Option<Modifiers>>,
     pub last_reported_capslock: Cell<Option<Capslock>>,
@@ -1081,6 +1082,7 @@ impl WindowsWindowState {
             frame_signal: Arc::new(PlatformFrameSignal::new()),
             input_handler,
             ime_enabled: Cell::new(true),
+            ime_cancellation: WindowsImeCancellation::default(),
             pending_surrogate: Cell::new(pending_surrogate),
             last_reported_modifiers: Cell::new(last_reported_modifiers),
             last_reported_capslock: Cell::new(last_reported_capslock),
@@ -9000,6 +9002,10 @@ impl PlatformWindow for WindowsWindow {
 
     fn take_input_handler_for_frame(&mut self) -> Option<PlatformInputHandler> {
         self.state.input_handler.take_for_frame()
+    }
+
+    fn try_cancel_text_composition(&self) -> bool {
+        self.0.try_cancel_ime_composition()
     }
 
     fn prompt(

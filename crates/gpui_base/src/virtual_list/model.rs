@@ -196,6 +196,7 @@ impl<K: Clone + Eq + Hash> TreeModel<K> {
         let Some(position) = self.position(key) else {
             return false;
         };
+        let active_changed = self.active.as_ref() != Some(key);
         self.active = Some(key.clone());
         if extend {
             let anchor = self
@@ -216,7 +217,7 @@ impl<K: Clone + Eq + Hash> TreeModel<K> {
             );
             let changed = self.selected != selected;
             self.selected = selected;
-            return changed;
+            return changed || active_changed;
         }
         self.anchor = Some(key.clone());
         if toggle {
@@ -226,7 +227,7 @@ impl<K: Clone + Eq + Hash> TreeModel<K> {
             return true;
         }
         if self.selected.len() == 1 && self.selected.contains(key) {
-            return false;
+            return active_changed;
         }
         self.selected.clear();
         self.selected.insert(key.clone());
@@ -385,6 +386,21 @@ mod tests {
         assert_eq!(tree.selection(), [1, 2, 3]);
         assert_eq!(tree.active, Some(1));
         assert_eq!(tree.position(&2), None);
+    }
+
+    #[test]
+    fn reversing_range_selection_preserves_tree_order_and_reports_the_active_row() {
+        let mut tree = sample();
+        assert!(tree.set_expanded(&1, true));
+        assert!(tree.select(&3, false, false));
+        assert!(tree.select(&1, true, false));
+        assert_eq!(tree.selection(), [1, 2, 3]);
+        assert_eq!(tree.active, Some(1));
+
+        assert!(tree.select(&2, true, true));
+        assert_eq!(tree.selection(), [1, 2, 3]);
+        assert_eq!(tree.active, Some(2));
+        assert!(!tree.select(&2, true, true));
     }
 
     #[test]

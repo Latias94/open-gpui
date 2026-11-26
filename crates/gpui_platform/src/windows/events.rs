@@ -35,6 +35,49 @@ pub(crate) const WM_GPUI_END_SESSION: u32 = WM_USER + 12;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum ImeCancellationState {
+    #[default]
+    Inactive,
+    Canceling,
+    AwaitingStart,
+}
+
+#[derive(Default)]
+pub(crate) struct WindowsImeCancellation(Cell<ImeCancellationState>);
+
+impl WindowsImeCancellation {
+    fn cancel(&self, notify: impl FnOnce() -> bool) -> bool {
+        let previous = self.0.get();
+        if previous == ImeCancellationState::Canceling {
+            return false;
+        }
+        self.0.set(ImeCancellationState::Canceling);
+        let canceled = notify();
+        self.0.set(if canceled {
+            ImeCancellationState::AwaitingStart
+        } else {
+            previous
+        });
+        canceled
+    }
+
+    fn consumes(&self, message: u32) -> bool {
+        let state = self.0.get();
+        match message {
+            WM_IME_STARTCOMPOSITION => {
+                if state == ImeCancellationState::Canceling {
+                    return true;
+                }
+                self.0.set(ImeCancellationState::Inactive);
+                false
+            }
+            WM_IME_COMPOSITION | WM_IME_CHAR => state != ImeCancellationState::Inactive,
+            _ => false,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct WindowsClientPointerPosition {
     position: Point<Pixels>,
@@ -1053,6 +1096,9 @@ impl WindowsWindowInner {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
+        if self.state.ime_cancellation.consumes(msg) {
+            return LRESULT(0);
+        }
         if self.is_attached() {
             if matches!(msg, WM_IME_STARTCOMPOSITION | WM_IME_ENDCOMPOSITION) {
                 self.observe_ime_composition(msg == WM_IME_STARTCOMPOSITION);
@@ -1865,6 +1911,25 @@ impl WindowsWindowInner {
                 }
             }
         }
+    }
+
+    pub(crate) fn try_cancel_ime_composition(&self) -> bool {
+        if self.state.interaction_is_quiesced()
+            || !self.provisional_accepts_interaction()
+            || !self.accepts_generation_bound_message(self.registration.generation())
+            || unsafe { GetFocus() } != self.hwnd
+        {
+            return false;
+        }
+        let canceled = self.state.ime_cancellation.cancel(|| {
+            ImeContext::get(self.hwnd).is_some_and(|context| {
+                unsafe { ImmNotifyIME(*context, NI_COMPOSITIONSTR, CPS_CANCEL, 0) }.as_bool()
+            })
+        });
+        if canceled {
+            self.observe_ime_composition(false);
+        }
+        canceled
     }
 
     fn handle_ime_composition(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {

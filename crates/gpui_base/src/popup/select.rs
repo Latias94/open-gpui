@@ -1,12 +1,11 @@
-use std::{cell::Cell, rc::Rc};
-
 use open_gpui::{
-    AccessibleAction, Anchor, App, Bounds, ClickEvent, Context, EventEmitter, FocusHandle,
-    Focusable, FontWeight, MouseButton, Pixels, Refineable, Role, ScrollHandle, SharedString,
-    StyleRefinement, TargetedEvent, Window, anchored, canvas, div, prelude::*, window_portal,
+    AccessibleAction, Anchor, App, Context, Div, EventEmitter, FocusHandle, Focusable, FontWeight,
+    MouseButton, PortalAnchorExt, PortalAnchorHandle, Refineable, Role, ScrollHandle, SharedString,
+    Stateful, StyleRefinement, Subscription, Window, anchored, div, portal_anchor_follower,
+    prelude::*, px,
 };
 
-use super::{PopupCommand, SELECT_CONTEXT, install_keys};
+use super::{MODAL_CONTEXT, PopupCommand, SELECT_CONTEXT, install_keys};
 
 /// A labeled choice or menu command.
 #[derive(Clone, Debug)]
@@ -45,8 +44,8 @@ pub struct Select<K> {
     active: Option<usize>,
     focus: FocusHandle,
     popup_focus: FocusHandle,
-    trigger_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
-    anchor: Option<Bounds<Pixels>>,
+    window_binding: Option<(PortalAnchorHandle, Subscription)>,
+    open: bool,
     scroll: ScrollHandle,
     is_menu: bool,
     trigger_style: StyleRefinement,
@@ -70,8 +69,8 @@ impl<K: Clone + Eq + 'static> Select<K> {
             active: None,
             focus: cx.focus_handle(),
             popup_focus: cx.focus_handle(),
-            trigger_bounds: Rc::new(Cell::new(None)),
-            anchor: None,
+            window_binding: None,
+            open: false,
             scroll: ScrollHandle::new(),
             is_menu: false,
             trigger_style: StyleRefinement::default(),
@@ -130,7 +129,7 @@ impl<K: Clone + Eq + 'static> Select<K> {
     }
 
     pub fn is_open(&self) -> bool {
-        self.anchor.is_some()
+        self.open
     }
 
     pub fn set_trigger_style(&mut self, style: StyleRefinement, cx: &mut Context<Self>) {
@@ -143,17 +142,11 @@ impl<K: Clone + Eq + 'static> Select<K> {
         cx.notify();
     }
 
-    fn open(
-        &mut self,
-        anchor: Bounds<Pixels>,
-        last: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn open(&mut self, last: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.items.is_empty() {
             return;
         }
-        self.anchor = Some(anchor);
+        self.open = true;
         self.active = self
             .selected
             .as_ref()
@@ -168,7 +161,7 @@ impl<K: Clone + Eq + 'static> Select<K> {
     }
 
     fn close(&mut self, restore_focus: bool, window: &mut Window, cx: &mut Context<Self>) {
-        self.anchor = None;
+        self.open = false;
         self.active = None;
         cx.notify();
         if restore_focus {
@@ -206,16 +199,11 @@ impl<K: Clone + Eq + 'static> Select<K> {
         cx.notify();
     }
 
-    fn toggle(
-        &mut self,
-        anchor: Option<Bounds<Pixels>>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.is_open() {
             self.dismiss(true, window, cx);
-        } else if let Some(anchor) = anchor {
-            self.open(anchor, false, window, cx);
+        } else {
+            self.open(false, window, cx);
         }
     }
 
@@ -223,14 +211,7 @@ impl<K: Clone + Eq + 'static> Select<K> {
         if !self.is_open() {
             match command {
                 PopupCommand::Enter | PopupCommand::Step(_) => {
-                    if let Some(anchor) = self.trigger_bounds.get() {
-                        self.open(
-                            anchor,
-                            matches!(command, PopupCommand::Step(false)),
-                            window,
-                            cx,
-                        );
-                    }
+                    self.open(matches!(command, PopupCommand::Step(false)), window, cx);
                 }
                 _ => cx.propagate(),
             }
@@ -253,13 +234,68 @@ impl<K: Clone + Eq + 'static> Select<K> {
             PopupCommand::Escape => self.dismiss(true, window, cx),
             PopupCommand::Tab { backward } => {
                 self.dismiss(true, window, cx);
-                if backward {
+                if window
+                    .context_stack()
+                    .iter()
+                    .any(|context| context.contains(MODAL_CONTEXT))
+                {
+                    cx.propagate();
+                } else if backward {
                     window.focus_prev(cx);
                 } else {
                     window.focus_next(cx);
                 }
             }
         }
+    }
+
+    fn popup(&self, cx: &Context<Self>) -> Stateful<Div> {
+        div()
+            .flex()
+            .flex_col()
+            .overflow_y_scroll()
+            .id("choices")
+            .role(if self.is_menu {
+                Role::Menu
+            } else {
+                Role::ListBox
+            })
+            .aria_label(self.label.clone())
+            .occlude()
+            .track_focus(&self.popup_focus)
+            .track_scroll(&self.scroll)
+            .children(self.items.iter().enumerate().map(|(index, item)| {
+                let mut row = div()
+                    .id(index)
+                    .role(if self.is_menu {
+                        Role::MenuItem
+                    } else {
+                        Role::ListBoxOption
+                    })
+                    .aria_label(item.label.clone())
+                    .aria_disabled(item.disabled)
+                    .aria_selected(self.selected.as_ref() == Some(&item.key))
+                    .child(item.label.clone());
+                if self.active == Some(index) {
+                    row = row
+                        .aria_active_descendant()
+                        .font_weight(FontWeight::SEMIBOLD);
+                }
+                if item.disabled {
+                    return row;
+                }
+                let key = item.key.clone();
+                let accessible_key = key.clone();
+                let view = cx.weak_entity();
+                row.cursor_pointer()
+                    .on_click(
+                        cx.listener(move |select, _, window, cx| select.choose(&key, window, cx)),
+                    )
+                    .on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
+                        let _ = view
+                            .update(cx, |select, cx| select.choose(&accessible_key, window, cx));
+                    })
+            }))
     }
 }
 
@@ -273,6 +309,18 @@ impl<K: 'static> Focusable for Select<K> {
 
 impl<K: Clone + Eq + 'static> Render for Select<K> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let window_id = window.window_handle().window_id();
+        let anchor_handle = match &self.window_binding {
+            Some((anchor, _)) if anchor.window_id() == window_id => *anchor,
+            _ => {
+                let anchor = window.new_portal_anchor();
+                let blur = cx.on_focus_out(&self.focus, window, |select, _, window, cx| {
+                    select.dismiss(false, window, cx);
+                });
+                self.window_binding = Some((anchor, blur));
+                anchor
+            }
+        };
         let label = self
             .selected
             .as_ref()
@@ -280,7 +328,6 @@ impl<K: Clone + Eq + 'static> Render for Select<K> {
             .map_or_else(|| self.label.clone(), |item| item.label.clone());
         let mut trigger = div().relative();
         trigger.style().refine(&self.trigger_style);
-        let bounds = self.trigger_bounds.clone();
         let view = cx.weak_entity();
         let trigger = trigger
             .id("trigger")
@@ -298,107 +345,52 @@ impl<K: Clone + Eq + 'static> Render for Select<K> {
             .key_context(SELECT_CONTEXT)
             .cursor_pointer()
             .on_action(cx.listener(Self::command))
-            .on_click(
-                cx.listener(|select, event: &TargetedEvent<ClickEvent>, window, cx| {
-                    select.toggle(Some(event.hitbox().displayed_bounds()), window, cx);
-                }),
-            )
+            .on_click(cx.listener(|select, _, window, cx| select.toggle(window, cx)))
             .on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
-                let _ = view.update(cx, |select, cx| {
-                    select.toggle(select.trigger_bounds.get(), window, cx)
-                });
+                let _ = view.update(cx, |select, cx| select.toggle(window, cx));
             })
-            .child(label)
-            .child(
-                canvas(
-                    move |rect, window, _| {
-                        bounds.set(
-                            window
-                                .try_element_geometry(rect)
-                                .ok()
-                                .map(|geometry| geometry.displayed_bounds()),
-                        );
-                    },
-                    |_, (), _, _| {},
+            .child(label);
+        let trigger = if self.is_open() {
+            let popup = self.popup(cx);
+            let style = self.popup_style.clone();
+            let view = cx.weak_entity();
+            let follower = portal_anchor_follower(&anchor_handle, move |snapshot, window, cx| {
+                let snapshot = snapshot?;
+                let anchor = snapshot.geometry().displayed_bounds();
+                let trigger_area = anchor.intersect(&snapshot.effective_clip_bounds());
+                if trigger_area.size.width <= px(0.0) || trigger_area.size.height <= px(0.0) {
+                    window.defer(cx, move |window, cx| {
+                        let _ = view.update(cx, |select, cx| select.dismiss(false, window, cx));
+                    });
+                    return None;
+                }
+                let mut popup = popup
+                    .min_w(anchor.size.width)
+                    .max_h(window.viewport_size().height / 2.);
+                popup.style().refine(&style);
+                let popup = popup.on_mouse_down_out(move |event, window, cx| {
+                    let mouse = event.window_event();
+                    if mouse.button != MouseButton::Left || !trigger_area.contains(&mouse.position)
+                    {
+                        let _ = view.update(cx, |select, cx| select.dismiss(false, window, cx));
+                    }
+                });
+                Some(
+                    anchored()
+                        .attach(anchor, Anchor::BottomLeft)
+                        .child(popup)
+                        .into_any_element(),
                 )
-                .absolute()
-                .size_full(),
-            );
-
-        let mut root = div().relative().child(trigger);
-        if let Some(anchor) = self.anchor {
-            let mut popup = div()
-                .flex()
-                .flex_col()
-                .min_w(anchor.size.width)
-                .max_h(window.viewport_size().height / 2.)
-                .overflow_y_scroll();
-            popup.style().refine(&self.popup_style);
-            let popup =
-                popup
-                    .id("choices")
-                    .role(if self.is_menu {
-                        Role::Menu
-                    } else {
-                        Role::ListBox
-                    })
-                    .aria_label(self.label.clone())
-                    .occlude()
-                    .track_focus(&self.popup_focus)
-                    .track_scroll(&self.scroll)
-                    .key_context(SELECT_CONTEXT)
-                    .on_action(cx.listener(Self::command))
-                    .on_mouse_down_out(cx.listener(
-                        |select, event: &TargetedEvent<open_gpui::MouseDownEvent>, window, cx| {
-                            if event.window_event().button == MouseButton::Left
-                                && select.trigger_bounds.get().is_none_or(|bounds| {
-                                    !bounds.contains(&event.window_event().position)
-                                })
-                            {
-                                select.dismiss(false, window, cx);
-                            }
-                        },
-                    ))
-                    .children(self.items.iter().enumerate().map(|(index, item)| {
-                        let active = self.active == Some(index);
-                        let mut row = div()
-                            .id(index)
-                            .role(if self.is_menu {
-                                Role::MenuItem
-                            } else {
-                                Role::ListBoxOption
-                            })
-                            .aria_label(item.label.clone())
-                            .aria_disabled(item.disabled)
-                            .aria_selected(self.selected.as_ref() == Some(&item.key))
-                            .child(item.label.clone());
-                        if active {
-                            row = row
-                                .aria_active_descendant()
-                                .font_weight(FontWeight::SEMIBOLD);
-                        }
-                        if item.disabled {
-                            return row;
-                        }
-                        let key = item.key.clone();
-                        let accessible_key = key.clone();
-                        let view = cx.weak_entity();
-                        row.cursor_pointer()
-                            .on_click(cx.listener(move |select, _, window, cx| {
-                                select.choose(&key, window, cx)
-                            }))
-                            .on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
-                                let _ = view.update(cx, |select, cx| {
-                                    select.choose(&accessible_key, window, cx)
-                                });
-                            })
-                    }));
-            root = root.child(
-                window_portal(anchored().attach(anchor, Anchor::BottomLeft).child(popup))
-                    .with_priority(2),
-            );
-        }
-        root
+            })
+            .priority(2);
+            trigger
+                .child(follower)
+                .track_portal_anchor(&anchor_handle)
+                .into_any_element()
+        } else {
+            trigger.into_any_element()
+        };
+        div().relative().child(trigger)
     }
 }
 

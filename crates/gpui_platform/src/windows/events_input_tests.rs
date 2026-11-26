@@ -1,4 +1,6 @@
-use super::{WM_GPUI_DISPLAY_TOPOLOGY_PUBLISHED, WM_GPUI_FORCE_UPDATE_WINDOW};
+use super::{
+    WM_GPUI_DISPLAY_TOPOLOGY_PUBLISHED, WM_GPUI_FORCE_UPDATE_WINDOW, WindowsImeCancellation,
+};
 use crate::windows::{
     WindowsPlatform, WindowsWindowInner, native_test_pointer::NativeTestSystemPointerGuard,
     native_test_window::NativeTestOpaqueWindow,
@@ -18,10 +20,14 @@ use windows::Win32::{
     System::SystemServices::MK_LBUTTON,
     UI::{
         Controls::WM_MOUSELEAVE,
-        Input::KeyboardAndMouse::{GetCapture, ReleaseCapture, SetCapture, VK_SHIFT},
+        Input::{
+            Ime::{GCS_COMPSTR, GCS_RESULTSTR},
+            KeyboardAndMouse::{GetCapture, ReleaseCapture, SetCapture, VK_SHIFT},
+        },
         WindowsAndMessaging::{
             GetWindowRect, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SendMessageW, SetWindowPos,
-            WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+            WM_CHAR, WM_IME_CHAR, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION,
+            WM_IME_STARTCOMPOSITION, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
         },
     },
 };
@@ -69,6 +75,57 @@ fn native_input_window() -> (
         .window_from_hwnd(hwnd)
         .expect("native input test HWND should have an exact registered owner");
     (app, window, native_window, platform)
+}
+
+#[test]
+fn ime_cancel_retires_callbacks_until_the_next_composition_start() {
+    let cancellation = WindowsImeCancellation::default();
+    assert!(!cancellation.cancel(|| {
+        assert!(cancellation.consumes(WM_IME_COMPOSITION));
+        false
+    }));
+    assert!(!cancellation.consumes(WM_IME_COMPOSITION));
+
+    assert!(cancellation.cancel(|| {
+        assert!(cancellation.consumes(WM_IME_STARTCOMPOSITION));
+        assert!(cancellation.consumes(WM_IME_COMPOSITION));
+        assert!(!cancellation.consumes(WM_IME_ENDCOMPOSITION));
+        true
+    }));
+    assert!(cancellation.consumes(WM_IME_COMPOSITION));
+    assert!(cancellation.consumes(WM_IME_CHAR));
+    assert!(!cancellation.consumes(WM_CHAR));
+    assert!(!cancellation.consumes(WM_IME_STARTCOMPOSITION));
+    assert!(!cancellation.consumes(WM_IME_COMPOSITION));
+    assert!(!cancellation.consumes(WM_IME_CHAR));
+}
+
+#[test]
+fn canceled_ime_messages_do_not_become_native_text_input() {
+    let (mut app, window, native_window, _) = native_input_window();
+    let send = |message, wparam, lparam| unsafe {
+        SendMessageW(native_window.hwnd, message, Some(wparam), Some(lparam))
+    };
+    let send_composition = |flags| send(WM_IME_COMPOSITION, WPARAM(0), LPARAM(flags));
+    let send_ime_char = || send(WM_IME_CHAR, WPARAM('x' as usize), LPARAM(0));
+    let high_surrogate = Some(0xD83D);
+    native_window.state.pending_surrogate.set(high_surrogate);
+
+    assert!(native_window.state.ime_cancellation.cancel(|| {
+        assert_eq!(send_composition(GCS_COMPSTR.0 as isize).0, 0);
+        send_ime_char();
+        true
+    }));
+    send(WM_IME_ENDCOMPOSITION, WPARAM(0), LPARAM(0));
+    assert_eq!(send_composition(GCS_RESULTSTR.0 as isize).0, 0);
+    assert_eq!(send_composition(0).0, 0);
+    send_ime_char();
+    assert_eq!(native_window.state.pending_surrogate.get(), high_surrogate);
+
+    send(WM_CHAR, WPARAM('x' as usize), LPARAM(0));
+    assert_eq!(native_window.state.pending_surrogate.get(), None);
+    app.update_for_test(|cx| window.update(cx, |_, window, cx| window.remove_window(cx)))
+        .unwrap();
 }
 
 #[test]

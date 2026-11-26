@@ -1651,12 +1651,6 @@ impl Drop for X11Window {
     }
 }
 
-enum WmHintPropertyState {
-    // Remove = 0,
-    // Add = 1,
-    Toggle = 2,
-}
-
 impl X11Window {
     pub fn new(
         handle: AnyWindowHandle,
@@ -1705,33 +1699,6 @@ impl X11Window {
         let window = Self(ptr, Rc::new(()));
         window.0.initialize_window_state_observation()?;
         Ok(window)
-    }
-
-    fn set_wm_hints<C: Display + Send + Sync + 'static, F: FnOnce() -> C>(
-        &self,
-        failure_context: F,
-        wm_hint_property_state: WmHintPropertyState,
-        prop1: u32,
-        prop2: u32,
-    ) -> anyhow::Result<()> {
-        let state = self.0.state.borrow();
-        let message = ClientMessageEvent::new(
-            32,
-            self.0.x_window,
-            state.atoms._NET_WM_STATE,
-            [wm_hint_property_state as u32, prop1, prop2, 1, 0],
-        );
-        check_reply(
-            failure_context,
-            self.0.xcb.send_event(
-                false,
-                state.x_root_window,
-                xproto::EventMask::SUBSTRUCTURE_REDIRECT | xproto::EventMask::SUBSTRUCTURE_NOTIFY,
-                message,
-            ),
-        )?;
-        xcb_flush(&self.0.xcb);
-        Ok(())
     }
 }
 
@@ -1937,7 +1904,7 @@ impl X11WindowStatePtr {
                 return;
             }
 
-            let mut changed = match observation {
+            let changed = match observation {
                 X11PropertyObservation::WindowState(facts) => {
                     let previous = (
                         state.fullscreen,
@@ -3218,7 +3185,7 @@ impl PlatformWindow for X11Window {
     }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
-        self.0.state.borrow().renderer.gpu_specs().into()
+        self.0.state.borrow().renderer.gpu_specs()
     }
 
     fn play_system_bell(&self) {

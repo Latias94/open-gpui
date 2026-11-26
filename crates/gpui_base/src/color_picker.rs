@@ -298,11 +298,7 @@ impl Channel {
 
     fn range(self) -> NumericRange {
         let max = if self == Self::Hue { 360. } else { 1. };
-        NumericRange {
-            min: 0.,
-            max,
-            step: None,
-        }
+        NumericRange::new(0., max).expect("color channel bounds are finite and ordered")
     }
 
     fn label(self) -> &'static str {

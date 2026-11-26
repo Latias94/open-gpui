@@ -180,6 +180,24 @@ impl TextBuffer {
         true
     }
 
+    pub(super) fn cancel_composition_for_caret(&mut self, display_offset: Option<usize>) -> usize {
+        let display_len = self.state.text.len();
+        let Some(ime) = self.composition.take() else {
+            return self.head();
+        };
+        self.state = ime.original;
+        let Some(offset) = display_offset else {
+            return self.head();
+        };
+        let restored_offset = if offset >= ime.span.end {
+            let suffix_len = display_len.saturating_sub(offset);
+            self.state.text.len().saturating_sub(suffix_len)
+        } else {
+            offset.min(ime.span.start)
+        };
+        self.grapheme_boundary(restored_offset)
+    }
+
     pub(super) fn undo(&mut self) -> bool {
         let Some(previous) = self.undo.pop_back() else {
             return false;
@@ -304,6 +322,26 @@ mod tests {
         assert_eq!(buffer.text().as_ref(), "abc");
         assert_eq!(buffer.selection(), 1..2);
         assert!(!buffer.undo());
+    }
+
+    #[test]
+    fn canceled_composition_rebases_the_clicked_caret() {
+        for (display_offset, expected_utf16) in [
+            (Some(0), 0),
+            (Some(4), 1),
+            (Some(7), 3),
+            (Some(8), 4),
+            (None, 3),
+        ] {
+            let mut buffer = TextBuffer::new("a😀b".into());
+            buffer.select(1, 5);
+            buffer.mark(None, "候補", None);
+            let caret = buffer.cancel_composition_for_caret(display_offset);
+            assert_eq!(buffer.value().as_ref(), "a😀b");
+            assert_eq!(buffer.utf16_offset(caret), expected_utf16);
+            assert!(buffer.marked().is_none());
+            assert!(!buffer.undo());
+        }
     }
 
     #[test]

@@ -1,8 +1,7 @@
 use open_gpui::{
     AccessibleAction, App, Context, CursorStyle, Entity, EventEmitter, FocusHandle, Focusable,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Refineable, Role, SharedString,
-    StyleRefinement, Subscription, TargetedEvent, Window, WindowId, accesskit::ActionData, div,
-    prelude::*,
+    StyleRefinement, Subscription, TargetedEvent, Window, accesskit::ActionData, div, prelude::*,
 };
 
 use super::{
@@ -29,7 +28,7 @@ pub struct NumericScrubber {
     focus: FocusHandle,
     drag: PointerDrag<Scrub>,
     input: Option<Entity<TextInput>>,
-    input_subscription: Option<(WindowId, Subscription)>,
+    input_subscription: Option<Subscription>,
     text_entry: bool,
     editing: bool,
     label: SharedString,
@@ -114,16 +113,19 @@ impl NumericScrubber {
         if self.editing || !self.text_entry {
             return;
         }
-        self.editing = true;
+        let value: SharedString = self.value.to_string().into();
         let input = self.input.get_or_insert_with(|| {
             cx.new(|cx| {
-                let mut input = TextInput::new(self.value.to_string(), cx);
+                let mut input = TextInput::new(value.clone(), cx);
                 input.set_label(self.label.clone(), cx);
                 input
             })
         });
+        self.input_subscription
+            .get_or_insert_with(|| cx.subscribe_in(input, window, Self::from_text));
+        self.editing = true;
         let handle = input.update(cx, |input, cx| {
-            input.set_value_in(self.value.to_string(), window, cx);
+            input.set_value_in(value, window, cx);
             input.set_invalid(false, cx);
             input.select_all(window, cx);
             input.focus_handle(cx)
@@ -159,10 +161,10 @@ impl NumericScrubber {
             TextInputEvent::Cancel => (None, true),
         };
         self.editing = false;
-        if let Some(value) = value {
-            self.commit(value, cx);
-        } else {
-            cx.emit(NumericEvent::Cancel(self.value));
+        match value {
+            Some(value) if value == self.value && matches!(event, TextInputEvent::Blur) => {}
+            Some(value) => self.commit(value, cx),
+            None => cx.emit(NumericEvent::Cancel(self.value)),
         }
         cx.notify();
         if restore_focus {
@@ -303,15 +305,6 @@ impl Render for NumericScrubber {
         if self.editing
             && let Some(input) = &self.input
         {
-            let window_id = window.window_handle().window_id();
-            if self
-                .input_subscription
-                .as_ref()
-                .is_none_or(|(id, _)| *id != window_id)
-            {
-                self.input_subscription =
-                    Some((window_id, cx.subscribe_in(input, window, Self::from_text)));
-            }
             return root.child(input.clone()).into_any_element();
         }
         let capture = self.drag.bind(window);
@@ -375,6 +368,7 @@ fn parse_value(text: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use open_gpui::{TestAppContext, VisualTestContext, px, size};
 
     #[test]
     fn editing_accepts_finite_exponents_and_rejects_incomplete_or_nonfinite_values() {
@@ -382,5 +376,27 @@ mod tests {
         assert_eq!(parse_value("-"), None);
         assert_eq!(parse_value("1e999"), None);
         assert_eq!(parse_value("NaN"), None);
+    }
+
+    #[test]
+    fn first_text_event_is_received_before_the_editor_renders() {
+        let mut app = TestAppContext::single();
+        let window = app.open_window(size(px(160.), px(80.)), |_, cx| {
+            NumericScrubber::new(2., NumericRange::new(0., 10.).expect("range"), cx)
+        });
+        let mut visual = VisualTestContext::from_window(window.into(), &app);
+        window
+            .update(&mut visual, |scrubber, window, cx| {
+                scrubber.edit(window, cx);
+                let input = scrubber.input.as_ref().expect("text editor exists");
+                input.update(cx, |_, cx| cx.emit(TextInputEvent::Submit("4".into())));
+            })
+            .expect("window is open");
+        window
+            .update(&mut visual, |scrubber, _, _| {
+                assert_eq!(scrubber.value(), 4.);
+                assert!(!scrubber.editing);
+            })
+            .expect("window is open");
     }
 }

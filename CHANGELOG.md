@@ -106,6 +106,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - The `open-gpui-ui-core` and `open-gpui-ui-components` packages, theme schema, and component inventory are retired. Use `open-gpui-base` for unstyled controls and keep styling and domain state in the application. [Migration guide](docs/ui/migration-v0.3.md#base-controls)
 - The standalone helper crates are retired. Use the retained collections, scheduler, motion and utilities through `open_gpui` and keep logging, portable paths, and async resource state in the application. [Migration guide](docs/ui/migration-v0.3.md#consolidated-helpers)
+- `WgpuRenderer::gpu_specs()` returns `Option<GpuSpecs>`. Handle `None` while GPU resources are unavailable during device recovery. [Migration guide](docs/ui/migration-v0.3.md#optional-wgpu-adapter-facts)
 - Phase 1 removes `legacy-docking` and the former native docking example. Replace `DockSurface::builder` with a shared `DockspaceSession` and retained `DockPane` registrations. Use `DockSurface::new_managed` and `dockspace-editor` for native docking. Existing v2/v3 session documents still import.
 - The desktop selector drops iOS and Web. The framework removes `App::screen_capture_sources` and the capture backends.
 - The framework removes `Application::with_http_client`, URI image loading, and the HTTP, TLS, reqwest, and GitHub packages. Pass an `Image`, a local path, or an `AssetSource` entry to `img()`. Applications own download and archive extraction.
