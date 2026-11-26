@@ -2,6 +2,19 @@
 
 use super::*;
 
+pub(super) struct CaptureRelease {
+    pub(super) binding: NativeWindowBinding,
+    barrier: NativeCapturedDragReleaseBarrier,
+    cancelled_from_keyboard: bool,
+}
+
+impl CaptureRelease {
+    fn matches_capture(&self, capture: NativeCapture) -> bool {
+        self.barrier.source_window() == capture.source
+            && self.barrier.drag_generation() == capture.generation
+    }
+}
+
 impl NativeCallbacks {
     pub(in crate::adapter) fn can_accept_capture_event(
         &self,
@@ -78,12 +91,16 @@ impl NativeCallbacks {
         consumer: &open_gpui::PreparedNativeCapturedDragConsumer,
     ) {
         if self.window_id() == Some(source) && consumer.is_active() && !self.0.sealed.get() {
-            // GPUI has already activated this original generation. Closing may
-            // race its first native motion, so custody begins at activation.
-            self.0.capture_start.set(Some(NativeCapture {
+            let capture = NativeCapture {
                 source,
                 generation: consumer.generation(),
-            }));
+            };
+            // GPUI has already activated this original generation. Closing may
+            // race its first native motion, so custody begins at activation.
+            self.0.capture_start.set(Some(capture));
+            self.0
+                .transport
+                .retain_mouse_capture(self.binding(), capture);
             self.0.capture_observation_missing.set(false);
         }
     }
@@ -91,10 +108,12 @@ impl NativeCallbacks {
     pub(in crate::adapter::native) fn request_capture_cancellation(&self, capture: NativeCapture) {
         if self.0.native_terminal.get()
             || self.0.capture_failed.get()
-            || self.0.capture_releases.borrow().iter().any(|(_, barrier)| {
-                barrier.source_window() == capture.source
-                    && barrier.drag_generation() == capture.generation
-            })
+            || self
+                .0
+                .capture_releases
+                .borrow()
+                .iter()
+                .any(|release| release.matches_capture(capture))
         {
             return;
         }
@@ -124,10 +143,13 @@ impl NativeCallbacks {
     pub fn observe_capture_release(&self, event: &open_gpui::NativeCapturedDragEvent, cx: &App) {
         if !self.can_accept_capture_event(event)
             || self.0.capture_failed.get()
-            || self.0.capture_releases.borrow().iter().any(|(_, barrier)| {
-                barrier.source_window() == event.source_window()
-                    && barrier.drag_generation() == event.generation()
-            })
+            || matches!(event.phase(), open_gpui::NativeCapturedDragPhase::Moved)
+            || self
+                .0
+                .capture_releases
+                .borrow()
+                .iter()
+                .any(|release| release.matches_capture(NativeCapture::from_event(event)))
         {
             return;
         }
@@ -147,10 +169,11 @@ impl NativeCallbacks {
                 drop(completion);
             },
         ) {
-            self.0
-                .capture_releases
-                .borrow_mut()
-                .push((binding, barrier));
+            self.0.capture_releases.borrow_mut().push(CaptureRelease {
+                binding,
+                barrier,
+                cancelled_from_keyboard: false,
+            });
         }
     }
 
@@ -163,18 +186,12 @@ impl NativeCallbacks {
         let mut releases = self.0.capture_releases.borrow_mut();
         let Some(index) = releases
             .iter()
-            .position(|pending| *pending == (binding, barrier))
+            .position(|pending| pending.binding == binding && pending.barrier == barrier)
         else {
             return;
         };
         releases.swap_remove(index);
         drop(releases);
-        if self.0.user_cancelled_capture.get().is_some_and(|capture| {
-            capture.source == barrier.source_window()
-                && capture.generation == barrier.drag_generation()
-        }) {
-            self.0.user_cancelled_capture.set(None);
-        }
         self.0.capture_cancellations.borrow_mut().retain(|capture| {
             capture.source != barrier.source_window()
                 || capture.generation != barrier.drag_generation()
@@ -211,25 +228,27 @@ impl NativeCallbacks {
     }
 
     pub(in crate::adapter) fn cancel_capture_from_keyboard(&self, cx: &mut App) -> bool {
-        let Some(capture) = self.active_capture() else {
+        let Some(capture) = self.0.transport.captured_mouse_press(self.binding()) else {
             return false;
         };
-        self.0.user_cancelled_capture.set(Some(capture));
-        self.cancel_capture(cx);
-        true
+        self.accepts_pointer_controls()
+            && !self.0.capture_failed.get()
+            && self.cancel_capture_identity(capture, true, cx)
     }
 
     pub(in crate::adapter::native) fn is_user_capture_cancellation(
         &self,
         event: &open_gpui::NativeCapturedDragEvent,
     ) -> bool {
-        self.0.user_cancelled_capture.get() == Some(NativeCapture::from_event(event))
-            && matches!(
-                event.phase(),
-                open_gpui::NativeCapturedDragPhase::Cancelled(
-                    open_gpui::PointerCancelReason::CaptureRevoked
-                )
+        matches!(
+            event.phase(),
+            open_gpui::NativeCapturedDragPhase::Cancelled(
+                open_gpui::PointerCancelReason::CaptureRevoked
             )
+        ) && self.0.capture_releases.borrow().iter().any(|release| {
+            release.cancelled_from_keyboard
+                && release.matches_capture(NativeCapture::from_event(event))
+        })
     }
 
     pub(in crate::adapter::native) fn dispatch_capture_cancellations(&self, cx: &mut App) {
@@ -252,39 +271,57 @@ impl NativeCallbacks {
             let Some(capture) = self.0.capture_cancellations.borrow_mut().pop_front() else {
                 break;
             };
-            self.cancel_capture_identity(capture, cx);
+            self.cancel_capture_identity(capture, false, cx);
         }
     }
 
-    fn cancel_capture_identity(&self, capture: NativeCapture, cx: &mut App) {
+    fn cancel_capture_identity(
+        &self,
+        capture: NativeCapture,
+        from_keyboard: bool,
+        cx: &mut App,
+    ) -> bool {
         let weak = Rc::downgrade(&self.0);
         let binding = self.binding();
         let completion = self.0.transport.retain_callback();
-        let barrier = cx.cancel_native_captured_drag_with_release_barrier(
-            capture.source,
-            capture.generation,
-            open_gpui::PointerCancelReason::CaptureRevoked,
-            move |barrier, terminal, cx| {
-                if let Some(state) = weak.upgrade() {
-                    state.transport.push(
-                        Inbound::CaptureTerminal(binding, barrier, terminal, CallbackCustody(weak)),
-                        cx,
-                    );
-                }
-                drop(completion);
-            },
-        );
-        if let Some(barrier) = barrier {
-            self.0
-                .capture_releases
-                .borrow_mut()
-                .push((binding, barrier));
+        let on_terminal = move |barrier, terminal, cx: &mut App| {
+            if let Some(state) = weak.upgrade() {
+                state.transport.push(
+                    Inbound::CaptureTerminal(binding, barrier, terminal, CallbackCustody(weak)),
+                    cx,
+                );
+            }
+            drop(completion);
+        };
+        let reason = open_gpui::PointerCancelReason::CaptureRevoked;
+        let barrier = if from_keyboard {
+            cx.try_cancel_native_captured_drag_with_release_barrier(
+                capture.source,
+                capture.generation,
+                reason,
+                on_terminal,
+            )
         } else {
+            cx.cancel_native_captured_drag_with_release_barrier(
+                capture.source,
+                capture.generation,
+                reason,
+                on_terminal,
+            )
+        };
+        if let Some(barrier) = barrier {
+            self.0.capture_releases.borrow_mut().push(CaptureRelease {
+                binding,
+                barrier,
+                cancelled_from_keyboard: from_keyboard,
+            });
+        } else if !from_keyboard {
             self.0.capture_failed.set(true);
             self.0
                 .transport
                 .push(Inbound::CaptureUnobserved(self.binding()), cx);
         }
+        barrier.is_some()
     }
 }
 

@@ -7,7 +7,7 @@ use dockspace::runtime::{
     NativeReceiverAnswer, NativeReceiverPurpose, NativeReceiverQuery, NativeRegionWindowHit,
     NativeWindowHit, resolve_region_window_hit,
 };
-use open_gpui::{App, HitboxId, Pixels, Window, WindowId, point, px};
+use open_gpui::{App, HitboxId, HitboxTag, Pixels, Window, WindowId, point, px};
 
 use super::{ManagedHost, WindowMount};
 
@@ -41,11 +41,11 @@ pub(super) fn resolve(
         return NativeReceiverAnswer::Unknown;
     };
     // A sibling's immutable hit graph remains readable while its Window is borrowed.
-    resolve_in_window(query, mount, |point| {
+    resolve_in_window(query, mount, native.wrapper_hitbox_tag, |point| {
         if let Some(window) = current.filter(|window| window.window_handle().window_id() == owner) {
-            Some(window.frontmost_hitbox_at(point))
+            Some(window.frontmost_hitbox_at_with_tag(point))
         } else {
-            cx.window_frontmost_hitbox_at(mount.window, point)
+            cx.window_frontmost_hitbox_at_with_tag(mount.window, point)
         }
     })
 }
@@ -53,12 +53,16 @@ pub(super) fn resolve(
 pub(super) fn resolve_in_window(
     query: NativeReceiverQuery,
     mount: &WindowMount,
-    frontmost: impl Fn(open_gpui::Point<Pixels>) -> Option<Option<HitboxId>>,
+    wrapper_tag: HitboxTag,
+    frontmost: impl Fn(open_gpui::Point<Pixels>) -> Option<Option<(HitboxId, Option<HitboxTag>)>>,
 ) -> NativeReceiverAnswer {
     match query {
-        NativeReceiverQuery::WindowHit(query) => {
-            NativeReceiverAnswer::WindowHit(window_hit(query.point(), mount, frontmost))
-        }
+        NativeReceiverQuery::WindowHit(query) => NativeReceiverAnswer::WindowHit(window_hit(
+            query.point(),
+            mount,
+            wrapper_tag,
+            frontmost,
+        )),
         NativeReceiverQuery::Surface(query) => {
             let Some(frame) = mount.input_frames.iter().find(|frame| {
                 frame.surface == query.surface()
@@ -82,6 +86,7 @@ pub(super) fn resolve_in_window(
             let Some(target) = frontmost(point) else {
                 return NativeReceiverAnswer::Unknown;
             };
+            let target = target.map(|(id, _)| id);
             if let Some((descriptor, _)) = frame
                 .receivers
                 .iter()
@@ -121,7 +126,8 @@ pub(super) fn resolve_in_window(
 fn window_hit(
     physical: PhysicalPoint,
     mount: &WindowMount,
-    frontmost: impl Fn(open_gpui::Point<Pixels>) -> Option<Option<HitboxId>>,
+    wrapper_tag: HitboxTag,
+    frontmost: impl Fn(open_gpui::Point<Pixels>) -> Option<Option<(HitboxId, Option<HitboxTag>)>>,
 ) -> NativeWindowHit {
     if !mount.attached {
         return NativeWindowHit::Unknown;
@@ -172,8 +178,8 @@ fn window_hit(
             last_hit = Some((frame.scale, target));
             target
         };
-        let exposed = target.is_some_and(|target| {
-            frame.hitboxes.contains(&target) || frame.content_hitboxes.contains(&target)
+        let exposed = target.is_some_and(|(id, _)| {
+            frame.hitboxes.contains(&id) || frame.content_hitboxes.contains(&id)
         });
         // A real foreground hit picks the winning region even when two region
         // rectangles overlap. An unpresented region cannot confer authority.
@@ -188,7 +194,7 @@ fn window_hit(
         if fallback == NativeWindowHit::Unknown || hit == NativeWindowHit::Blocked {
             fallback = hit;
         }
-        foreign |= target.is_some();
+        foreign |= target.is_some_and(|(_, tag)| tag != Some(wrapper_tag));
     }
     if !complete {
         NativeWindowHit::Unknown

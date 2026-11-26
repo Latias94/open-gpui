@@ -10,8 +10,8 @@ use dockspace::{
     },
     policy::DockPolicy,
     runtime::{
-        DockspaceRuntimeErrorKind, DockspaceSession, HostFrameReport, HostInputOutcome,
-        NativeHostErrorKind, NativeReceiverAnswer, SurfaceUnavailableReason,
+        DockspaceManipulationStatus, DockspaceRuntimeErrorKind, DockspaceSession, HostFrameReport,
+        HostInputOutcome, NativeHostErrorKind, NativeReceiverAnswer, SurfaceUnavailableReason,
     },
 };
 use open_gpui::{
@@ -64,6 +64,61 @@ fn finish(cx: &mut TestAppContext, dock: &DockSurface) {
     cx.update(|cx| dock.pump_native(cx));
     cx.run_until_parked();
     assert!(dock.error().is_none(), "{:?}", dock.error());
+}
+
+pub(in crate::adapter) fn capture_feedback(
+    cx: &mut TestAppContext,
+    dock: &DockSurface,
+    dispatch: impl FnOnce(&mut TestAppContext),
+) -> Vec<DockspaceManipulationStatus> {
+    // Let GPUI route its genuine native callbacks while retaining the bridge so
+    // the test can read the core feedback before the adapter consumes the report.
+    let mut bridge = dock
+        .host
+        .borrow_mut()
+        .native
+        .as_mut()
+        .unwrap()
+        .bridge
+        .take()
+        .unwrap();
+    dispatch(cx);
+    cx.run_until_parked();
+    let feedback = cx.update(|cx| {
+        let mut host = dock.host.borrow_mut();
+        let mut feedback = Vec::new();
+        for _ in 0..4 {
+            bridge.collect(&mut host.session).unwrap();
+            if host.session.has_pending_native_input() {
+                let super::HostState {
+                    session,
+                    mounts,
+                    native,
+                    ..
+                } = &mut *host;
+                let report = super::begin_frame(session, mounts, native.as_ref(), None, cx)
+                    .unwrap()
+                    .commit()
+                    .unwrap();
+                feedback.extend(
+                    report
+                        .manipulation_feedback()
+                        .iter()
+                        .map(|entry| entry.status()),
+                );
+                host.invalidate_report(&report);
+                bridge.accept_report(report);
+            }
+            if bridge.transport().is_empty() {
+                break;
+            }
+        }
+        assert!(bridge.transport().is_empty());
+        host.native.as_mut().unwrap().bridge = Some(bridge);
+        feedback
+    });
+    finish(cx, dock);
+    feedback
 }
 
 #[open_gpui::test]

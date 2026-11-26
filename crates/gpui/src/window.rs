@@ -692,6 +692,7 @@ impl HitboxId {
 #[derive(Clone, Debug)]
 struct CommittedWindowHitTestEntry {
     id: HitboxId,
+    tag: Option<HitboxTag>,
     geometry: ElementGeometry,
     clip_stack: ClipStackSnapshot,
     behavior: HitboxBehavior,
@@ -702,6 +703,7 @@ impl CommittedWindowHitTestEntry {
     fn from_hitbox(hitbox: &Hitbox) -> Self {
         Self {
             id: hitbox.id,
+            tag: hitbox.tag(),
             geometry: hitbox.geometry,
             clip_stack: hitbox.clip_stack.clone(),
             behavior: hitbox.behavior,
@@ -736,12 +738,15 @@ impl CommittedWindowHitTestSnapshot {
         }
     }
 
-    pub(crate) fn frontmost_hitbox_at(&self, point: Point<Pixels>) -> Option<HitboxId> {
+    pub(crate) fn frontmost_hitbox_at_with_tag(
+        &self,
+        point: Point<Pixels>,
+    ) -> Option<(HitboxId, Option<HitboxTag>)> {
         self.hitboxes
             .iter()
             .rev()
             .find(|hitbox| hitbox.is_window_point_target(point))
-            .map(|hitbox| hitbox.id)
+            .map(|hitbox| (hitbox.id, hitbox.tag))
     }
 
     pub(crate) fn window_point_target_rank(
@@ -13162,12 +13167,20 @@ impl Window {
     /// This query respects transforms, clips, and presentation state. It is
     /// independent of pointer capture and the current input modality.
     pub fn frontmost_hitbox_at(&self, point: Point<Pixels>) -> Option<HitboxId> {
+        self.frontmost_hitbox_at_with_tag(point).map(|(id, _)| id)
+    }
+
+    /// Returns the frontmost committed target and its optional label at a displayed point.
+    pub fn frontmost_hitbox_at_with_tag(
+        &self,
+        point: Point<Pixels>,
+    ) -> Option<(HitboxId, Option<HitboxTag>)> {
         self.rendered_frame
             .hitboxes
             .iter()
             .rev()
             .find(|hitbox| hitbox.is_window_point_target(point))
-            .map(|hitbox| hitbox.id)
+            .map(|hitbox| (hitbox.id, hitbox.tag()))
     }
 
     pub(crate) fn preparing_frame_generation(&self) -> u64 {

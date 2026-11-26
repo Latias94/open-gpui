@@ -179,6 +179,74 @@ fn open_content(cx: &mut TestAppContext, dock: &DockSurface, managed: bool) -> V
     visual
 }
 
+#[open_gpui::test]
+fn managed_primary_presses_reach_core_while_window_frame_requests_are_held(
+    cx: &mut TestAppContext,
+) {
+    cx.defer_next_window_frame_requests();
+    let (dock, _) = content_fixture(cx, true);
+    let mut visual = open_content(cx, &dock, true);
+    let tab = visual.debug_bounds("dockspace:tab:61").unwrap().center();
+    let content = pane_center(&dock, &mut visual, FIRST);
+    let scheduled_in_callback = Rc::new(Cell::new(None));
+    let _probe = visual.update(|window, _| {
+        let host = dock.host.clone();
+        let scheduled_in_callback = scheduled_in_callback.clone();
+        window.intercept_window_mouse_events(move |event, _, cx| {
+            if matches!(event, open_gpui::WindowMouseEvent::Down(event) if event.button == MouseButton::Left) {
+                let host = host.clone();
+                let scheduled_in_callback = scheduled_in_callback.clone();
+                // Inspect the work scheduled by the press before a deferred
+                // wake, platform observation, or redraw can drain the queue.
+                cx.defer(move |_| {
+                    let native = super::super::super::host_native::inspection(&host.borrow()).unwrap();
+                    scheduled_in_callback.set(Some(native.pump_scheduled));
+                });
+            }
+        })
+    });
+    for position in [tab, content] {
+        scheduled_in_callback.set(None);
+        let owner = visual.update(|window, _| window.window_handle().window_id());
+        let (before, serial) = {
+            let host = dock.host.borrow();
+            (
+                host.session.native_input_recorded_count(),
+                host.mounts[&owner].input_frames[0].serial,
+            )
+        };
+        visual.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(true));
+        native_input(
+            &mut visual,
+            position,
+            PlatformInput::MouseDown(MouseDownEvent {
+                button: MouseButton::Left,
+                position,
+                modifiers: Modifiers::none(),
+                click_count: 1,
+                first_mouse: false,
+            }),
+        );
+        assert_eq!(
+            scheduled_in_callback.get(),
+            Some(true),
+            "press at {position:?}"
+        );
+        {
+            let host = dock.host.borrow();
+            assert_eq!(host.mounts[&owner].input_frames[0].serial, serial);
+            assert_eq!(
+                host.session.native_input_recorded_count(),
+                before + 1,
+                "press at {position:?}"
+            );
+        }
+        visual.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
+        visual.simulate_mouse_up(position, MouseButton::Left, Modifiers::none());
+        frames(&mut visual, &dock);
+    }
+}
+
 pub(super) fn prepare_native_input(visual: &mut VisualTestContext) {
     let (handle, bounds, scale) = visual.update(|window, _| {
         let facts = window.platform_facts();

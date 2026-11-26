@@ -41,7 +41,7 @@ use super::{
 };
 use crate::{
     Action, BackgroundExecutor, CommittedWindowHitTestSnapshot, DispatchEventResult, HitboxId,
-    NativeInputInvariantViolation, Pixels, Platform, PlatformFocusedWindow,
+    HitboxTag, NativeInputInvariantViolation, Pixels, Platform, PlatformFocusedWindow,
     PlatformFrameSubmission, PlatformInput, PlatformPointerCaptureReleaseOutcome,
     PlatformPresentationShutdownOutcome, PlatformWindow, PlatformWindowCommand,
     PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, PlatformWindowPresentOutcome,
@@ -2402,7 +2402,19 @@ impl AppCell {
         generation: NativeCapturedDragGeneration,
         reason: PointerCancelReason,
     ) -> bool {
-        if self.native_events.is_terminated() {
+        if self.native_events.is_terminated()
+            || !self
+                .native_captured_drags
+                .can_reserve_cancellation(window_id, generation)
+            || self
+                .pointer_capture_releases
+                .borrow()
+                .values()
+                .any(|release| {
+                    release.token.window_id() == window_id
+                        && release.token.captured_drag_generation() == Some(generation)
+                })
+        {
             return false;
         }
         let sequence = self.native_events.reserve_input_sequence();
@@ -2480,13 +2492,13 @@ impl AppCell {
             .window_point_target_rank(window_id, hitbox, point)
     }
 
-    pub(super) fn native_window_frontmost_hitbox_at(
+    pub(super) fn native_window_frontmost_hitbox_at_with_tag(
         &self,
         window_id: WindowId,
         point: Point<Pixels>,
-    ) -> Option<Option<HitboxId>> {
+    ) -> Option<Option<(HitboxId, Option<HitboxTag>)>> {
         self.native_queries
-            .window_frontmost_hitbox_at(window_id, point)
+            .window_frontmost_hitbox_at_with_tag(window_id, point)
     }
 
     pub(super) fn native_window_control_area(

@@ -39,6 +39,7 @@ struct MousePress {
     binding: NativeWindowBinding,
     lane: MousePressLane,
     observed_at: Option<Duration>,
+    capture: Option<super::NativeCapture>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -153,6 +154,33 @@ impl NativeTransport {
         }
     }
 
+    pub(in crate::adapter) fn captured_mouse_press(
+        &self,
+        binding: NativeWindowBinding,
+    ) -> Option<super::NativeCapture> {
+        match self.0.mouse_primary.as_ref()?.get() {
+            MousePrimary::Pressed(press) if press.binding == binding => press.capture,
+            _ => None,
+        }
+    }
+
+    pub(super) fn retain_mouse_capture(
+        &self,
+        binding: NativeWindowBinding,
+        capture: super::NativeCapture,
+    ) {
+        if let Some(mouse) = &self.0.mouse_primary
+            && let MousePrimary::Pressed(press) = mouse.get()
+            && press.binding == binding
+            && press.lane != MousePressLane::Content
+        {
+            mouse.set(MousePrimary::Pressed(MousePress {
+                capture: Some(capture),
+                ..press
+            }));
+        }
+    }
+
     pub(super) fn continue_mouse_press(
         &self,
         before: NativeWindowBinding,
@@ -217,6 +245,12 @@ impl NativeTransport {
         metadata: PointerEventMetadata,
         cx: &mut App,
     ) {
+        if event.button() == open_gpui::MouseButton::Left
+            && !matches!(event.phase(), open_gpui::NativeCapturedDragPhase::Moved)
+            && self.captured_mouse_press(binding) == Some(super::NativeCapture::from_event(&event))
+        {
+            self.retire_mouse_press(binding);
+        }
         self.push(
             Inbound::CapturedDrag {
                 binding,
@@ -334,6 +368,7 @@ impl NativeTransport {
                             binding,
                             lane,
                             observed_at,
+                            capture: None,
                         })
                     }
                     _ => MousePrimary::Unobserved,
@@ -389,7 +424,7 @@ impl NativeTransport {
         }
     }
 
-    pub(in crate::adapter) fn retire_mouse_press(&self, binding: NativeWindowBinding) {
+    fn retire_mouse_press(&self, binding: NativeWindowBinding) {
         if let Some(mouse) = &self.0.mouse_primary
             && self.mouse_press_lane(binding).is_some()
         {
@@ -560,6 +595,8 @@ impl NativeBridge {
     /// failures need the host to commit its accepted native prefix before retrying.
     /// Platform focus mapping also waits for earlier recorded input to commit so
     /// visibility and lifecycle changes determine whether known focus is valid.
+    /// A complete inventory can be republished without collecting a callback.
+    /// Check `session.has_pending_native_input()` to determine whether to commit a frame.
     pub fn collect(&mut self, session: &mut DockspaceSession) -> Result<usize, NativeBridgeError> {
         if self.roster_pending_commit {
             if session.has_pending_native_input() {
@@ -640,7 +677,27 @@ impl NativeBridge {
                 break;
             }
         }
+        self.republish_inventory_if_complete(session)?;
         Ok(collected)
+    }
+
+    pub(in crate::adapter) fn republish_inventory_if_complete(
+        &self,
+        session: &mut DockspaceSession,
+    ) -> Result<bool, NativeBridgeError> {
+        // A pre-native create failure can complete the roster without another
+        // observation. Replay cached properties once the earlier FIFO commits.
+        if !self.inventory_needs_refresh.get()
+            || session.has_pending_native_input()
+            || !self.transport.is_empty()
+        {
+            return Ok(false);
+        }
+        let Some(observations) = self.snapshot(session, None) else {
+            return Ok(false);
+        };
+        self.record_inventory(session, Some(observations), &self.work_areas)?;
+        Ok(true)
     }
 
     fn collect_record(
@@ -814,14 +871,14 @@ impl NativeBridge {
                 session.report_native_global_focus(focus)?;
             }
             Inbound::WorkAreas(areas) => {
-                self.record_snapshot(session, None, Some(areas.clone()))?;
+                self.record_inventory(session, self.snapshot(session, None), areas)?;
                 self.work_areas = areas.clone();
                 self.desktop = super::desktop::DesktopObservation::default();
             }
             Inbound::Desktop(desktop) => {
                 if *desktop != self.desktop {
                     let areas = desktop.roster();
-                    self.record_snapshot(session, None, Some(areas.clone()))?;
+                    self.record_inventory(session, self.snapshot(session, None), &areas)?;
                     self.work_areas = areas;
                     self.desktop = desktop.clone();
                 }
@@ -849,35 +906,35 @@ impl NativeBridge {
             .windows
             .get(binding)
             .ok_or(NativeBridgeError::UnknownBinding)?;
-        let Some(observations) = self.snapshot(session, Some((binding, facts))) else {
-            // An unknown inventory cannot acknowledge the original effect or
-            // prove destruction. Hold this exact record until the roster exists.
-            if terminal || facts != facts.without_effect_acknowledgements() {
-                return Ok(false);
-            }
-            session.report_native_inventory_unknown()?;
+        let observations = self.snapshot(session, Some((binding, facts)));
+        let complete = observations.is_some();
+        // An unknown inventory cannot acknowledge the original effect or
+        // prove destruction. Hold this exact record until the roster exists.
+        if !complete && (terminal || facts != facts.without_effect_acknowledgements()) {
+            return Ok(false);
+        }
+        self.record_inventory(session, observations, &self.work_areas)?;
+        if complete {
+            callbacks.confirm_observation(facts);
+        } else {
             callbacks.set_facts(facts);
-            return Ok(true);
-        };
-        session.report_managed_native_snapshot(observations, self.work_areas.clone())?;
-        callbacks.confirm_observation(facts);
+        }
         Ok(true)
     }
 
-    fn record_snapshot(
+    fn record_inventory(
         &self,
         session: &mut DockspaceSession,
-        replacement: Option<(NativeWindowBinding, NativeWindowFacts)>,
-        areas: Option<NativeWorkAreaRoster>,
+        observations: Option<Vec<(NativeWindowBinding, NativeWindowFacts)>>,
+        areas: &NativeWorkAreaRoster,
     ) -> Result<(), NativeBridgeError> {
-        if let Some(observations) = self.snapshot(session, replacement) {
-            session.report_managed_native_snapshot(
-                observations,
-                areas.unwrap_or_else(|| self.work_areas.clone()),
-            )?;
+        let incomplete = observations.is_none();
+        if let Some(observations) = observations {
+            session.report_managed_native_snapshot(observations, areas.clone())?;
         } else {
             session.report_native_inventory_unknown()?;
         }
+        self.inventory_needs_refresh.set(incomplete);
         Ok(())
     }
 
@@ -889,6 +946,6 @@ impl NativeBridge {
         if !self.transport.is_empty() {
             return Err(NativeBridgeError::NotQuiescent);
         }
-        self.record_snapshot(session, None, None)
+        self.record_inventory(session, self.snapshot(session, None), &self.work_areas)
     }
 }

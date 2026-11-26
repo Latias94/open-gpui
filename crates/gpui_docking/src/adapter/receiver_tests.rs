@@ -19,7 +19,7 @@ use open_gpui::{
 };
 
 use super::{DockSurface, HostState, local_sample, resolve, resolve_in_window};
-use crate::adapter::{DockPane, GpuiDockspaceConfig};
+use crate::adapter::{DockPane, DockRegion, GpuiDockspaceConfig};
 
 const SURFACE: SurfaceId = SurfaceId::new(1);
 
@@ -177,6 +177,137 @@ fn clipped_native_regions_leave_confirmed_window_background(cx: &mut TestAppCont
 }
 
 #[open_gpui::test]
+fn gap_between_managed_regions_is_window_background(cx: &mut TestAppContext) {
+    const SIBLING: SurfaceId = SurfaceId::new(2);
+
+    struct SharedRoot {
+        dock: DockSurface,
+        overlay: bool,
+    }
+
+    impl Render for SharedRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let regions = self.dock.regions([
+                DockRegion::new(SURFACE, LogicalRect::new(0.0, 0.0, 350.0, 550.0).unwrap()),
+                DockRegion::new(SIBLING, LogicalRect::new(450.0, 0.0, 350.0, 550.0).unwrap()),
+            ]);
+            div().size_full().child(regions).when(self.overlay, |root| {
+                root.child(
+                    div()
+                        .absolute()
+                        .left(px(375.0))
+                        .top(px(80.0))
+                        .w(px(50.0))
+                        .h(px(60.0))
+                        .occlude(),
+                )
+            })
+        }
+    }
+
+    cx.defer_next_window_frame_requests();
+    let dock = cx.update(|cx| {
+        let items = [ItemId::new(1), ItemId::new(2)];
+        let layout = DockspaceLayout::new([
+            DockspaceSurfaceLayout::new(
+                SURFACE,
+                DockspaceRootLayout::new(RootId::new(1), DockspaceNode::tabs([items[0]])),
+            ),
+            DockspaceSurfaceLayout::new(
+                SIBLING,
+                DockspaceRootLayout::new(RootId::new(2), DockspaceNode::tabs([items[1]])),
+            ),
+        ])
+        .unwrap();
+        let session = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
+        let panes = items.map(|item| DockPane::new(item, "Pane", cx.new(|_| Empty)));
+        DockSurface::new_managed(session, panes, GpuiDockspaceConfig::default(), cx).unwrap()
+    });
+    let window = cx.open_window(size(px(800.0), px(600.0)), |window, cx| {
+        dock.bind_native_root(SURFACE, true, window, cx).unwrap();
+        SharedRoot {
+            dock: dock.clone(),
+            overlay: false,
+        }
+    });
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    for _ in 0..4 {
+        assert!(visual.simulate_frame(RequestFrameOptions {
+            require_presentation: true,
+            force_render: true,
+            ..Default::default()
+        }));
+        assert!(dock.error().is_none(), "{:?}", dock.error());
+    }
+    let position = point(px(400.0), px(100.0));
+    visual.update(|window, _| {
+        let host = dock.host.borrow();
+        let mount = &host.mounts[&window.window_handle().window_id()];
+        assert_eq!(mount.input_frames.len(), 2);
+        assert!(mount.input_frames.iter().all(|frame| {
+            !frame
+                .geometry
+                .displayed_bounds()
+                .intersect(&frame.clip)
+                .contains(&position)
+        }));
+        assert!(window.frontmost_hitbox_at(position).is_some());
+    });
+    let (queries, result) = pointer_queries(
+        &dock,
+        &mut visual,
+        position,
+        NativePointerEvent::ButtonPressed(NativePointerButton::Primary),
+    );
+    result.unwrap();
+    let [(query @ NativeReceiverQuery::WindowHit(_), answer)] = queries.as_slice() else {
+        panic!("expected a window hit query in the gap: {queries:?}");
+    };
+    let background = NativeReceiverAnswer::WindowHit(NativeWindowHit::WindowBackground);
+    assert_eq!(*answer, background);
+    visual.update(|_, cx| {
+        let host = dock.host.borrow();
+        assert_eq!(
+            resolve(
+                *query,
+                &host.mounts,
+                host.native.as_ref().unwrap(),
+                None,
+                cx
+            ),
+            background,
+        );
+    });
+    assert!(!dock.has_active_gesture());
+
+    visual.update(|window, cx| {
+        window
+            .root::<SharedRoot>()
+            .flatten()
+            .unwrap()
+            .update(cx, |root, cx| {
+                root.overlay = true;
+                cx.notify();
+            });
+    });
+    assert!(visual.simulate_frame(RequestFrameOptions {
+        require_presentation: true,
+        force_render: true,
+        ..Default::default()
+    }));
+    visual.update(|window, cx| {
+        let host = dock.host.borrow();
+        let native = host.native.as_ref().unwrap();
+        for current in [Some(&*window), None] {
+            assert_eq!(
+                resolve(*query, &host.mounts, native, current, cx),
+                NativeReceiverAnswer::WindowHit(NativeWindowHit::Blocked),
+            );
+        }
+    });
+}
+
+#[open_gpui::test]
 fn window_hit_waits_for_the_region_roster_and_reports_foreign_overlays(cx: &mut TestAppContext) {
     let (dock, mut visual) = fixture(cx);
     let position = point(px(24.0), px(550.0));
@@ -192,6 +323,7 @@ fn window_hit_waits_for_the_region_roster_and_reports_foreign_overlays(cx: &mut 
     };
     visual.update(|window, _| {
         let mut host = dock.host.borrow_mut();
+        let wrapper_tag = host.native.as_ref().unwrap().wrapper_hitbox_tag;
         let mount = host
             .mounts
             .get_mut(&window.window_handle().window_id())
@@ -204,13 +336,16 @@ fn window_hit_waits_for_the_region_roster_and_reports_foreign_overlays(cx: &mut 
         // The point is outside the region's clip. It still hits a framework
         // overlay, so it must not confirm that the pointer reached background.
         assert_eq!(
-            resolve_in_window(*query, mount, |_| Some(Some(foreign_overlay))),
+            resolve_in_window(*query, mount, wrapper_tag, |_| Some(Some((
+                foreign_overlay,
+                None
+            )))),
             NativeReceiverAnswer::WindowHit(NativeWindowHit::Blocked),
         );
         let sibling = SurfaceId::new(2);
         mount.regions.insert(sibling, Default::default());
         assert_eq!(
-            resolve_in_window(*query, mount, |_| Some(None)),
+            resolve_in_window(*query, mount, wrapper_tag, |_| Some(None)),
             NativeReceiverAnswer::WindowHit(NativeWindowHit::Unknown),
             "an unpresented sibling cannot prove window background",
         );
@@ -220,7 +355,7 @@ fn window_hit_waits_for_the_region_roster_and_reports_foreign_overlays(cx: &mut 
         mount.input_frames.push(stale);
         mount.regions.get_mut(&sibling).unwrap().presented = Some((serial + 1, artifact));
         assert_eq!(
-            resolve_in_window(*query, mount, |_| Some(None)),
+            resolve_in_window(*query, mount, wrapper_tag, |_| Some(None)),
             NativeReceiverAnswer::WindowHit(NativeWindowHit::Unknown),
             "a stale sibling hit graph cannot prove window background",
         );
@@ -381,6 +516,7 @@ fn an_exposed_rootless_background_clears_hover_without_inventing_a_drop_target(
         let mount = &host.mounts[&window.window_handle().window_id()];
         let frame = &mount.input_frames[0];
         let background = frame.hitboxes[0];
+        let wrapper_tag = host.native.as_ref().unwrap().wrapper_hitbox_tag;
         let (_, artifact) = mount.regions[&SURFACE].presented.unwrap();
         assert!(query.matches_presentation_artifact(artifact));
         assert_eq!(
@@ -403,7 +539,9 @@ fn an_exposed_rootless_background_clears_hover_without_inventing_a_drop_target(
             "framework clearance must not invent a rootless background target"
         );
         assert_eq!(
-            resolve_in_window((*query).into(), mount, |_| Some(Some(background))),
+            resolve_in_window((*query).into(), mount, wrapper_tag, |_| Some(Some((
+                background, None
+            )))),
             clear
         );
         assert_ne!(
@@ -411,7 +549,7 @@ fn an_exposed_rootless_background_clears_hover_without_inventing_a_drop_target(
             NativeReceiverAnswer::EmptyLane(query.presented_surface())
         );
         assert_eq!(
-            resolve_in_window((*query).into(), mount, |_| Some(None)),
+            resolve_in_window((*query).into(), mount, wrapper_tag, |_| Some(None)),
             NativeReceiverAnswer::Blocked(query.presented_surface()),
             "an external frontmost widget must still block hover"
         );
@@ -432,6 +570,7 @@ fn a_real_hit_without_matching_presentation_authority_remains_unknown(cx: &mut T
     assert_eq!(queries.len(), 2, "{queries:?}");
     visual.update(|window, _| {
         let mut host = dock.host.borrow_mut();
+        let wrapper_tag = host.native.as_ref().unwrap().wrapper_hitbox_tag;
         let mount = host
             .mounts
             .get_mut(&window.window_handle().window_id())
@@ -445,8 +584,8 @@ fn a_real_hit_without_matching_presentation_authority_remains_unknown(cx: &mut T
             .unwrap();
         for (query, _) in queries {
             assert_eq!(
-                resolve_in_window(query, mount, |point| Some(
-                    window.frontmost_hitbox_at(point)
+                resolve_in_window(query, mount, wrapper_tag, |point| Some(
+                    window.frontmost_hitbox_at_with_tag(point)
                 )),
                 NativeReceiverAnswer::Unknown
             );

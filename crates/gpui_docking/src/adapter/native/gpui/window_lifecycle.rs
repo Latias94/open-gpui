@@ -28,7 +28,6 @@ impl NativeCallbacks {
             root_detached: Cell::new(false),
             capture: Cell::new(None),
             capture_start: Cell::new(None),
-            user_cancelled_capture: Cell::new(None),
             drag_tear_off: Cell::new(None),
             capture_releases: RefCell::new(Vec::new()),
             capture_failed: Cell::new(false),
@@ -134,7 +133,6 @@ impl NativeCallbacks {
             state.native_terminal.set(true);
             state.capture.set(None);
             state.capture_start.set(None);
-            state.user_cancelled_capture.set(None);
             state.capture_releases.borrow_mut().clear();
             state.capture_failed.set(false);
             state.capture_cancellations.borrow_mut().clear();
@@ -859,7 +857,7 @@ impl NativeBridge {
                     .capture_releases
                     .borrow()
                     .iter()
-                    .any(|(owner, _)| *owner == binding.window())
+                    .any(|release| release.binding == binding.window())
             })
         {
             return Err(NativeBridgeError::NotQuiescent);

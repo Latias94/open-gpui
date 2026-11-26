@@ -18,8 +18,9 @@ use dockspace::{
     },
 };
 use open_gpui::{
-    AnyWindowHandle, App, AppContext as _, Context, IntoElement, Pixels, PlatformFrameDeliveryMode,
-    Render, Subscription, Window, WindowId, WindowOptions, div, prelude::*,
+    AnyWindowHandle, App, AppContext as _, Context, HitboxTag, IntoElement, Pixels,
+    PlatformFrameDeliveryMode, Render, Subscription, Window, WindowId, WindowOptions, div,
+    prelude::*,
 };
 
 use super::{
@@ -35,7 +36,7 @@ use super::{
 
 #[cfg(test)]
 #[path = "host_native_tests.rs"]
-mod tests;
+pub(super) mod tests;
 
 #[cfg(test)]
 #[path = "host_native_factory_tests.rs"]
@@ -64,6 +65,7 @@ type QuiescenceCallback = Box<dyn FnOnce(&mut App)>;
 
 pub(super) struct ManagedHost {
     bridge: Option<NativeBridge>,
+    pub(super) wrapper_hitbox_tag: HitboxTag,
     pub(super) transport: NativeTransport,
     pub(super) callbacks: BTreeMap<WindowId, NativeCallbacks>,
     roots: BTreeSet<WindowId>,
@@ -326,6 +328,7 @@ pub(super) fn enroll(shared: &SharedHost, cx: &mut App) -> Result<()> {
     let desktop = transport.clone();
     shared.borrow_mut().native = Some(ManagedHost {
         bridge: Some(bridge),
+        wrapper_hitbox_tag: HitboxTag::new(),
         transport,
         callbacks: BTreeMap::new(),
         roots: BTreeSet::new(),
@@ -361,9 +364,11 @@ struct NativeDragPayload {
     host: Weak<RefCell<HostState>>,
 }
 
-pub(super) fn routes_captured_drag(shared: &SharedHost, cx: &App) -> bool {
-    cx.active_drag_value::<NativeDragPayload>()
-        .is_some_and(|payload| payload.host.as_ptr() == Rc::as_ptr(shared))
+pub(super) fn routes_captured_drag(shared: &SharedHost, source: WindowId, cx: &App) -> bool {
+    cx.active_native_captured_drag_source_window() == Some(source)
+        && cx
+            .active_drag_value::<NativeDragPayload>()
+            .is_some_and(|payload| payload.host.as_ptr() == Rc::as_ptr(shared))
 }
 
 fn install_router(cx: &mut App) {
@@ -398,11 +403,13 @@ fn install_router(cx: &mut App) {
                 if let Some(native) = &mut host.native {
                     let owner = event.source_window();
                     if let Some(callbacks) = native.callbacks.get(&owner) {
-                        if event.button() == open_gpui::MouseButton::Left
-                            && !matches!(event.phase(), open_gpui::NativeCapturedDragPhase::Moved)
-                            && callbacks.can_accept_capture_event(&event)
-                        {
-                            native.transport.retire_mouse_press(callbacks.binding());
+                        // A cancellation's barrier is reserved by GPUI while it
+                        // settles the window callback. MouseUp has an earlier locker.
+                        if matches!(
+                            event.phase(),
+                            open_gpui::NativeCapturedDragPhase::Cancelled(_)
+                        ) {
+                            callbacks.observe_capture_release(&event, cx);
                         }
                         // Real ingress may rearm an unchanged finite challenge.
                         // The callback is queued before scheduling can sample it.
@@ -429,12 +436,18 @@ fn install_router(cx: &mut App) {
 }
 
 pub(super) fn wrap(shared: &SharedHost, element: open_gpui::AnyElement) -> open_gpui::AnyElement {
-    if shared.borrow().native.is_none() {
+    let Some(tag) = shared
+        .borrow()
+        .native
+        .as_ref()
+        .map(|native| native.wrapper_hitbox_tag)
+    else {
         return element;
-    }
+    };
     div()
         .id("dockspace-native-capture")
         .size_full()
+        .hitbox_tag(tag)
         .on_drag(
             NativeDragPayload {
                 host: Rc::downgrade(shared),
@@ -1189,6 +1202,11 @@ pub(super) fn queue_mouse_terminal(
     let Some(binding) = native.callbacks.get(&owner).map(NativeCallbacks::binding) else {
         return false;
     };
+    if native.transport.captured_mouse_press(binding).is_some() {
+        // The original native generation will submit the terminal after GPUI
+        // finishes its window callback, even if the active drag is already gone.
+        return false;
+    }
     let event = match event {
         SurfacePointerEvent::ButtonReleased(_) => {
             NativePointerEvent::ButtonReleased(NativePointerButton::Primary)
@@ -1304,7 +1322,7 @@ pub(super) fn queue_pointer(
         return false;
     }
     let press = native.transport.mouse_press_lane(binding);
-    if terminal && press.is_none() {
+    if terminal && (press.is_none() || native.transport.captured_mouse_press(binding).is_some()) {
         return false;
     }
     let delivery = NativePointerOwner::Native(binding);
@@ -1481,10 +1499,13 @@ fn collect_host(
         recover_root_registrations(host, bridge, current, cx)?;
         process_reports(host, bridge, cx)?;
         if !progressed {
-            return Ok(false);
+            // Effect results can change the roster without a public input outcome.
+            return Ok(bridge.republish_inventory_if_complete(&mut host.session)?);
         }
     }
-    Ok(host.session.has_pending_native_input() || !bridge.transport().is_empty())
+    Ok(host.session.has_pending_native_input()
+        || !bridge.transport().is_empty()
+        || bridge.republish_inventory_if_complete(&mut host.session)?)
 }
 
 fn recover_root_registrations(

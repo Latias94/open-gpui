@@ -404,10 +404,20 @@ impl Element for DockspaceElement {
             }
         }
         let owner = window.window_handle().window_id();
-        let capture = self.host.borrow().mounts[&owner].capture;
+        let (capture, wrapper_tag) = {
+            let host = self.host.borrow();
+            (
+                host.mounts[&owner].capture,
+                host.native.as_ref().map(|native| native.wrapper_hitbox_tag),
+            )
+        };
         // Failed duplicate mounts retract their hitbox and keep the existing capture binding.
         if let Err(error) = window.transact(|window| {
-            let background = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+            let background = if let Some(tag) = wrapper_tag {
+                window.insert_hitbox_with_tag(bounds, HitboxBehavior::Normal, tag)
+            } else {
+                window.insert_hitbox(bounds, HitboxBehavior::Normal)
+            };
             window.bind_pointer_capture(&capture, background.id)
         }) {
             return self.failure(error, bounds, window, cx);

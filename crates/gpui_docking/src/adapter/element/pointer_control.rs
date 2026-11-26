@@ -64,13 +64,13 @@ pub(super) fn install(
             SurfacePointerEvent::StreamCancelled(SurfacePointerCancelReason::ExplicitCancellation);
         if let Some(callbacks) = native {
             if !callbacks.cancel_capture_from_keyboard(cx) {
-                if host_native::routes_captured_drag(&shared, cx) {
-                    // A platform capture already settling owns its real terminal.
-                    return;
-                }
                 let Some(source) = callbacks.window_id() else {
                     return;
                 };
+                if host_native::routes_captured_drag(&shared, source, cx) {
+                    // A platform capture already settling owns its real terminal.
+                    return;
+                }
                 let mut host = shared.borrow_mut();
                 let metadata = host
                     .config
@@ -236,6 +236,7 @@ impl DockspaceElement {
                 return;
             }
             let target = window.frontmost_hitbox_at(event.position);
+            let managed = shared.borrow().native.is_some();
             if phase.capture() {
                 interaction.splitter_press.borrow_mut().take();
                 interaction.tab_list_press.borrow_mut().take();
@@ -257,6 +258,9 @@ impl DockspaceElement {
                     )
                 {
                     // Observe pane activation without capturing or consuming the widget's input.
+                    if managed {
+                        host_native::schedule(&shared, cx);
+                    }
                     window.refresh();
                 }
             }
@@ -269,11 +273,10 @@ impl DockspaceElement {
             if !input::is_presented(&shared.borrow(), owner, surface, serial) {
                 return;
             }
-            let managed = shared.borrow().native.is_some();
             if !managed && window.capture_pointer(&capture, MouseButton::Left).is_err() {
                 return;
             }
-            if input::queue(
+            let queued = input::queue(
                 &mut shared.borrow_mut(),
                 surface,
                 serial,
@@ -285,7 +288,11 @@ impl DockspaceElement {
                 !managed,
                 event.modifiers,
                 window,
-            ) {
+            );
+            if queued {
+                if managed {
+                    host_native::schedule(&shared, cx);
+                }
                 let control = controls
                     .iter()
                     .rev()
@@ -368,7 +375,7 @@ impl DockspaceElement {
             {
                 return;
             }
-            if host_native::routes_captured_drag(&shared, cx) {
+            if host_native::routes_captured_drag(&shared, owner, cx) {
                 return;
             }
             if input::queue(
@@ -571,20 +578,15 @@ fn settle_primary_terminal(
 ) {
     let mut host = shared.borrow_mut();
     let mut handled = input::finish_content_press(&mut host, event, modifiers, window);
-    if !handled && host.native.is_some() && !host_native::routes_captured_drag(shared, cx) {
+    let owner = window.window_handle().window_id();
+    if !handled && host.native.is_some() && !host_native::routes_captured_drag(shared, owner, cx) {
         let metadata = host
             .config
             .input
             .pointer_metadata(host.observed_at(), Some(modifiers));
         let routed = release_position
             .is_some_and(|point| displayed_surface_at(&host, point, window).is_some());
-        handled = host_native::queue_mouse_terminal(
-            &mut host,
-            window.window_handle().window_id(),
-            routed,
-            event,
-            metadata,
-        );
+        handled = host_native::queue_mouse_terminal(&mut host, owner, routed, event, metadata);
         if handled {
             interaction.splitter_press.borrow_mut().take();
             interaction.tab_list_press.borrow_mut().take();

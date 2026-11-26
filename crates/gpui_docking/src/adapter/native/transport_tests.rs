@@ -30,6 +30,132 @@ use crate::adapter::native::{NativeBridge, NativeBridgeError, NativeCallbacks, N
 struct DragView;
 
 #[open_gpui::test]
+fn failed_create_restores_inventory_without_another_window_observation(cx: &mut TestAppContext) {
+    use dockspace::{
+        geometry::{PhysicalRect, ScaleFactor},
+        model::NativeWindowPlacement,
+        policy::DockPolicy,
+        runtime::{
+            HostWindowToken, NativeHostCapabilities, NativeHostCapability, NativeWindowFacts,
+            NativeWindowPresentationState,
+        },
+    };
+    use open_gpui::WindowOptions;
+
+    use crate::adapter::native::{
+        NativeGeometry, NativeOpenFailure,
+        tests::{commit, layout},
+    };
+
+    let mut policy = DockPolicy::default();
+    policy.set_allow_native_surfaces(true);
+    let mut session = DockspaceSession::from_layout(layout(), policy).unwrap();
+    let transport = super::NativeTransport::new(|_| {});
+    let capabilities = NativeHostCapabilities::none_supported()
+        .with(NativeHostCapability::AuthoritativeInventory)
+        .with(NativeHostCapability::NativeWindowLifecycle)
+        .with(NativeHostCapability::GlobalWindowPlacement);
+    let mut bridge = NativeBridge::enable(
+        &mut session,
+        transport.clone(),
+        capabilities,
+        Some(Rc::new(NativeGeometry::new(|_| None, |_, _| None))),
+    )
+    .unwrap();
+    let source = SurfaceId::new(1);
+    session
+        .register_native_root(source, HostWindowToken::new(1))
+        .unwrap();
+    let root = commit(&mut session).native_bindings()[0].window();
+    cx.update(|cx| {
+        let window = cx
+            .open_window_detailed(WindowOptions::default(), |_, cx| cx.new(|_| Empty))
+            .unwrap();
+        bridge.bind_window(root, window.into(), true, cx).unwrap();
+    });
+    bridge.collect(&mut session).unwrap();
+    bridge.accept_report(commit(&mut session));
+
+    let bounds = PhysicalRect::new(0.0, 0.0, 800.0, 600.0).unwrap();
+    let scale = ScaleFactor::new(1.0).unwrap();
+    let root_facts = NativeWindowFacts::live()
+        .with_content_bounds(bounds)
+        .with_outer_bounds(bounds)
+        .with_native_scale_factor(scale)
+        .with_presentation_scale_factor(scale)
+        .with_presentation(NativeWindowPresentationState::Visible);
+    cx.update(|cx| transport.push(Inbound::Observed(root, root_facts), cx));
+    bridge.collect(&mut session).unwrap();
+    bridge.accept_report(commit(&mut session));
+    let mut frame = session
+        .begin_native_host_frame(|_| NativeReceiverAnswer::Unknown)
+        .unwrap();
+    frame
+        .create_native_surface_current(
+            SurfaceId::new(2),
+            source,
+            NativeWindowPlacement::new(bounds),
+        )
+        .unwrap();
+    bridge.accept_report(frame.commit().unwrap());
+    assert_eq!(session.native_window_bindings().count(), 2);
+
+    let resized = PhysicalRect::new(0.0, 0.0, 960.0, 720.0).unwrap();
+    let facts = root_facts
+        .with_content_bounds(resized)
+        .with_outer_bounds(resized);
+    cx.update(|cx| transport.push(Inbound::Observed(root, facts), cx));
+    bridge.collect(&mut session).unwrap();
+    bridge.accept_report(commit(&mut session));
+    assert_eq!(
+        session
+            .native_local_coordinates(root)
+            .unwrap()
+            .geometry()
+            .content_size()
+            .width(),
+        bounds.width(),
+        "the incomplete inventory cannot publish the new window size"
+    );
+
+    bridge.collect(&mut session).unwrap();
+    assert!(
+        !session.has_pending_native_input(),
+        "an incomplete roster must not repeatedly publish Unknown"
+    );
+
+    cx.update(|cx| {
+        bridge
+            .dispatch_effects(
+                &mut |_, _, _| {
+                    Err(NativeOpenFailure {
+                        root_binding: None,
+                        stage: None,
+                        message: "factory failed before allocating a window".into(),
+                        retirement_ticket: None,
+                        source: None,
+                    })
+                },
+                cx,
+            )
+            .unwrap();
+    });
+    bridge.collect(&mut session).unwrap();
+    bridge.accept_report(commit(&mut session));
+    assert_eq!(session.native_window_bindings().collect::<Vec<_>>(), [root]);
+    assert!(transport.is_empty());
+
+    assert_eq!(bridge.collect(&mut session).unwrap(), 0);
+    assert!(session.has_pending_native_input());
+    bridge.accept_report(commit(&mut session));
+    let coords = session.native_local_coordinates(root).unwrap();
+    assert_eq!(coords.geometry().content_size().width(), resized.width());
+
+    bridge.collect(&mut session).unwrap();
+    assert!(!session.has_pending_native_input());
+}
+
+#[open_gpui::test]
 fn rollback_terminal_and_compensating_close_settle_in_either_order(cx: &mut TestAppContext) {
     use dockspace::{
         geometry::{PhysicalRect, ScaleFactor},

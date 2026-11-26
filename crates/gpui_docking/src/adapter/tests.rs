@@ -21,13 +21,14 @@ use dockspace::{
         DockspaceSurfaceLayout, ItemId, RootId, SurfaceId,
     },
     policy::DockPolicy,
-    runtime::DockspaceSession,
+    runtime::{DockspaceManipulationCancelReason, DockspaceManipulationStatus, DockspaceSession},
 };
 use open_gpui::{
     Context, Entity, IntoElement, Modifiers, PlatformWindowPresentOutcome, Render,
     RequestFrameOptions, TestAppContext, VisualTestContext, Window, div, prelude::*, px, size,
 };
 
+use super::host_native::tests::capture_feedback;
 use super::{DockPane, DockRegion, DockSurface, GpuiDockspaceConfig};
 
 const FIRST: SurfaceId = SurfaceId::new(11);
@@ -1924,7 +1925,12 @@ fn managed_alt_release_docks_the_original_group_as_a_nested_tab(cx: &mut TestApp
 fn managed_escape_releases_the_captured_drag_before_mouse_up(cx: &mut TestAppContext) {
     let (dock, window, _) = managed_stationary_drag_fixture(cx);
     assert!(dock.has_active_gesture());
-    cx.simulate_keystrokes(window, "escape");
+    assert_eq!(
+        capture_feedback(cx, &dock, |cx| cx.simulate_keystrokes(window, "escape")),
+        [DockspaceManipulationStatus::Cancelled(
+            DockspaceManipulationCancelReason::ExplicitCancellation
+        )]
+    );
     let mut visual = VisualTestContext::from_window(window, cx);
     frames(&mut visual, &dock);
 
@@ -1955,7 +1961,13 @@ fn managed_capture_controls_follow_focus_to_a_sibling_window(cx: &mut TestAppCon
         dock.host.borrow().session.native_input_recorded_count(),
         recorded + 2
     );
-    visual.simulate_keystrokes("shift-escape");
+    assert_eq!(
+        capture_feedback(&mut visual.cx, &dock, |cx| cx
+            .simulate_keystrokes(sibling, "shift-escape")),
+        [DockspaceManipulationStatus::Cancelled(
+            DockspaceManipulationCancelReason::ExplicitCancellation
+        )]
+    );
     frames(&mut visual, &dock);
     assert!(!dock.has_active_gesture());
     visual.update(|_, cx| assert!(!cx.has_active_drag()));
@@ -1963,6 +1975,164 @@ fn managed_capture_controls_follow_focus_to_a_sibling_window(cx: &mut TestAppCon
         dock.with_view(|view| view.item(B).unwrap().surface()),
         FIRST
     );
+}
+
+#[open_gpui::test]
+fn managed_escape_leaves_an_earlier_platform_capture_cancellation_intact(cx: &mut TestAppContext) {
+    use open_gpui::PointerCancelReason;
+
+    let (dock, source, _) = managed_stationary_drag_fixture(cx);
+    let callbacks = dock
+        .native_callbacks_for_window(source.window_id())
+        .unwrap();
+    let capture = callbacks.active_capture().unwrap();
+    let recorded = dock.host.borrow().session.native_input_recorded_count();
+    let mut consumed_escape = false;
+    let feedback = capture_feedback(cx, &dock, |cx| {
+        cx.update(|cx| {
+            // The exact OS terminal is reserved before its release proof or the
+            // captured event can be delivered back to the adapter.
+            assert!(cx.cancel_native_captured_drag(
+                source.window_id(),
+                capture.generation(),
+                PointerCancelReason::CaptureRevoked,
+            ));
+            consumed_escape = callbacks.cancel_capture_from_keyboard(cx);
+        });
+    });
+    assert_eq!(
+        feedback,
+        [DockspaceManipulationStatus::Cancelled(
+            DockspaceManipulationCancelReason::PointerStreamCancelled
+        )]
+    );
+    assert!(
+        !consumed_escape,
+        "the earlier platform terminal owns this capture"
+    );
+    assert_eq!(
+        dock.host.borrow().session.native_input_recorded_count(),
+        recorded + 1
+    );
+    assert!(!dock.has_active_gesture());
+}
+
+#[open_gpui::test]
+fn managed_quiesce_submits_the_original_native_capture_terminal(cx: &mut TestAppContext) {
+    use open_gpui::{MouseButton, NativeCapturedDragReleaseTerminal, PointerCancelReason};
+
+    let (dock, source, _) = managed_stationary_drag_fixture(cx);
+    let callbacks = dock
+        .native_callbacks_for_window(source.window_id())
+        .unwrap();
+    let capture = callbacks.active_capture().unwrap();
+    let binding = callbacks.binding();
+    let recorded = dock.host.borrow().session.native_input_recorded_count();
+    dock.take_native_reports();
+    let feedback = capture_feedback(cx, &dock, |cx| {
+        cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
+        cx.update_window(source, |_, window, cx| {
+            window.quiesce_pointer_session(PointerCancelReason::CaptureRevoked, cx);
+        })
+        .unwrap();
+    });
+    assert_eq!(
+        feedback,
+        [DockspaceManipulationStatus::Cancelled(
+            DockspaceManipulationCancelReason::PointerStreamCancelled
+        )]
+    );
+    assert_eq!(
+        dock.host.borrow().session.native_input_recorded_count(),
+        recorded + 1
+    );
+    assert!(!dock.has_active_gesture());
+    assert_eq!(callbacks.active_capture(), None);
+    let reports = dock.take_native_reports();
+    assert_eq!(
+        reports
+            .iter()
+            .filter(|report| matches!(report,
+                super::native::NativeReport::CaptureTerminal { binding: owner, barrier, terminal }
+                    if *owner == binding
+                        && barrier.source_window() == source.window_id()
+                        && barrier.drag_generation() == capture.generation()
+                        && *terminal == NativeCapturedDragReleaseTerminal::Released
+            ))
+            .count(),
+        1,
+        "{reports:?}"
+    );
+}
+
+#[open_gpui::test]
+fn managed_escape_cannot_overtake_a_release_awaiting_collection(cx: &mut TestAppContext) {
+    use open_gpui::{
+        KeyDownEvent, Keystroke, MouseButton, MouseUpEvent, PlatformInput, WindowMouseEvent,
+    };
+
+    let (dock, source, frame) = managed_stationary_drag_fixture(cx);
+    let recorded = dock.host.borrow().session.native_input_recorded_count();
+    let propagated = Rc::new(Cell::new(None));
+    let _inputs = cx
+        .update_window(source, |_, window, _| {
+            let propagated = propagated.clone();
+            window.intercept_window_mouse_events(move |event, _, cx| {
+                if matches!(event, WindowMouseEvent::Up(event) if event.button == MouseButton::Left)
+                {
+                    let propagated = propagated.clone();
+                    cx.defer(move |cx| {
+                        assert!(!cx.has_active_drag(), "GPUI already ended the active drag");
+                        source
+                            .update(cx, |_, window, cx| {
+                                let result = window.dispatch_event(
+                                    PlatformInput::KeyDown(KeyDownEvent {
+                                        keystroke: Keystroke::parse("escape").unwrap(),
+                                        is_held: false,
+                                        prefer_character_input: false,
+                                    }),
+                                    cx,
+                                );
+                                propagated.set(Some(result.propagate));
+                            })
+                            .unwrap();
+                    });
+                }
+            })
+        })
+        .unwrap();
+    let feedback = capture_feedback(cx, &dock, |cx| {
+        cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
+        cx.simulate_platform_input_with_native_pointer_physical_frame(
+            source,
+            PlatformInput::MouseUp(MouseUpEvent {
+                button: MouseButton::Left,
+                position: frame
+                    .source_geometry()
+                    .global_to_local(frame.global_position())
+                    .unwrap(),
+                modifiers: Modifiers::none(),
+                click_count: 1,
+            }),
+            Some(frame),
+        );
+    });
+    assert_eq!(
+        propagated.get(),
+        Some(true),
+        "settlement leaves the key to GPUI"
+    );
+    assert_eq!(
+        dock.host.borrow().session.native_input_recorded_count(),
+        recorded + 1
+    );
+    assert!(
+        !feedback.contains(&DockspaceManipulationStatus::Cancelled(
+            DockspaceManipulationCancelReason::ExplicitCancellation
+        )),
+        "{feedback:?}"
+    );
+    assert!(!dock.has_active_gesture());
 }
 
 #[open_gpui::test]

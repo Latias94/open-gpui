@@ -26,6 +26,7 @@ mod transport;
 mod tests;
 
 use std::{
+    cell::Cell,
     collections::{BTreeSet, VecDeque},
     rc::Rc,
 };
@@ -176,6 +177,7 @@ pub struct NativeBridge {
     work_areas: NativeWorkAreaRoster,
     desktop: desktop::DesktopObservation,
     roster_pending_commit: bool,
+    inventory_needs_refresh: Cell<bool>,
     // Original captured packet from the accepted FIFO prefix, never a later cursor query.
     captured_pointer: Option<CapturedPointer>,
 }
@@ -232,6 +234,7 @@ impl NativeBridge {
             work_areas: NativeWorkAreaRoster::Unknown,
             desktop: desktop::DesktopObservation::default(),
             roster_pending_commit: false,
+            inventory_needs_refresh: Cell::new(false),
             captured_pointer: None,
         })
     }

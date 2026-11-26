@@ -50,8 +50,8 @@ use crate::{
     Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext,
     AppLifecyclePhase, Arena, ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds,
     ClipboardItem, ClipboardReadError, CursorStyle, DispatchPhase, DisplayId, EventEmitter,
-    FocusHandle, FocusMap, ForegroundExecutor, Global, HitboxId, KeyBinding, KeyContext, Keymap,
-    Keystroke, LayoutId, Menu, MenuItem, MouseButton, OwnedMenu, PathPromptOptions, Pixels,
+    FocusHandle, FocusMap, ForegroundExecutor, Global, HitboxId, HitboxTag, KeyBinding, KeyContext,
+    Keymap, Keystroke, LayoutId, Menu, MenuItem, MouseButton, OwnedMenu, PathPromptOptions, Pixels,
     Platform, PlatformDisplay, PlatformDisplaySnapshot, PlatformFocusedWindow,
     PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
     PlatformViewportCapabilities, PlatformWindow, PlatformWindowCapabilities,
@@ -1728,9 +1728,21 @@ impl App {
         window: AnyWindowHandle,
         point: Point<Pixels>,
     ) -> Option<Option<HitboxId>> {
+        self.window_frontmost_hitbox_at_with_tag(window, point)
+            .map(|target| target.map(|(id, _)| id))
+    }
+
+    /// Returns the frontmost target and its optional label from another window's committed frame.
+    /// The outer `None` means the committed hit-test snapshot is unavailable.
+    #[doc(hidden)]
+    pub fn window_frontmost_hitbox_at_with_tag(
+        &self,
+        window: AnyWindowHandle,
+        point: Point<Pixels>,
+    ) -> Option<Option<(HitboxId, Option<HitboxTag>)>> {
         self.this
             .upgrade()?
-            .native_window_frontmost_hitbox_at(window.window_id(), point)
+            .native_window_frontmost_hitbox_at_with_tag(window.window_id(), point)
     }
 
     pub(crate) fn set_native_window_control_area(

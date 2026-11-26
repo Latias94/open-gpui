@@ -424,8 +424,10 @@ impl Window {
             })
             .or_else(|| self.pressed_mouse_buttons.first())
             .expect("an active pointer session must retain an initiating button");
-        let native_release =
-            cx.reserve_native_pointer_capture_release(self.handle.window_id(), None);
+        let window = self.handle.window_id();
+        let native_release = cx
+            .reserve_active_native_captured_drag_pointer_cancellation(window, reason)
+            .or_else(|| cx.reserve_native_pointer_capture_release(window, None));
         self.queue_exact_pointer_session_cancellation(
             owner,
             button,
