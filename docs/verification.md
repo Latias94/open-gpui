@@ -10,6 +10,14 @@ cargo +1.95.0 run --locked -p open-gpui-dockspace-editor -- --smoke-native
 cargo +1.95.0 run --locked -p open-gpui-wgpu-native --no-default-features -- --smoke
 ```
 
+The physical-input suite runs on an interactive Windows desktop. Its mixed-DPI scenario uses
+two extended displays at different scales.
+
+```powershell
+$env:OPEN_GPUI_NATIVE_INTERACTIVE = '1'
+cargo +1.95.0 run --locked -p xtask -- native-windows-interactive
+```
+
 The examples document their recovery modes, GPU requirements and pass conditions.
 [Dockspace editor](../examples/dockspace-editor/README.md) · [Windows WGPU](../examples/wgpu-native/README.md)
 
@@ -265,11 +273,9 @@ tests and compiler checks are not substitutes for that physical qualification.
 The shared session is now the root/prelude API. Default library checks exercise
 that path; `--all-features` additionally compiles and tests the explicit
 compatibility engine under `legacy`. Both cohorts remain required. The native
-dogfood example requires `--features legacy-docking`; its local Windows manifest runner
-and hosted example baseline pass that feature explicitly. Older commands below describe their
-recorded revisions: add the feature when rerunning incumbent scenarios on current
-source. Browser smoke also explicitly retains the incumbent unsupported-native
-window probe until its replacement is qualified.
+dogfood example and its compatibility baseline use `--features legacy-docking`.
+The local Windows manifest runner selects `--test native_windows_interactive`
+with the default features. Browser smoke uses the shared session.
 
 The [cutover evidence](knowledge/engineering/verification/dockspace-default-cutover-20261114.md)
 records the exact commits, compiler, test counts and native limits. Read-only
@@ -13407,7 +13413,7 @@ The target-DPI follow-up adds an explicitly selected real Windows regression:
 
 ```powershell
 $env:CARGO_BUILD_JOBS = '1'
-cargo nextest run --locked -p open-gpui-docking-native --features legacy-docking `
+cargo nextest run --locked -p open-gpui-docking-native --test native_windows_interactive `
   --run-ignored only `
   -E 'test(=native_interactive_tests::shared_placement::real_windows_shared_native_placement_matches_target_dpi_in_both_directions)' `
   --test-threads=1 --no-fail-fast --no-tests fail --success-output final

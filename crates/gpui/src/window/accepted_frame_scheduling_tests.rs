@@ -1,8 +1,8 @@
 use crate::{
-    AnyWindowHandle, AppContext as _, Context, IntoElement, ParentElement as _,
+    AnyWindowHandle, AppContext as _, Context, Entity, IntoElement, ParentElement as _,
     PlatformFrameDeliveryMode, PlatformWindowPresentOutcome, PrepaintPublicationId, Render,
-    Styled as _, TestAppContext, TestWindow, Window, WindowInitialPresentationStatus, blue, canvas,
-    div, fill, red,
+    StyleRefinement, Styled as _, TestAppContext, TestWindow, Window,
+    WindowInitialPresentationStatus, blue, canvas, div, fill, px, red,
 };
 use std::{
     cell::Cell,
@@ -60,6 +60,109 @@ impl Render for UnwindRoot {
             .size_full(),
         )
     }
+}
+
+struct CachedPublication {
+    publication: PrepaintPublicationId,
+    records: Rc<Cell<usize>>,
+    commits: Rc<Cell<usize>>,
+}
+
+impl Render for CachedPublication {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let publication = self.publication;
+        let records = self.records.clone();
+        let commits = self.commits.clone();
+        canvas(
+            move |_, window, _| {
+                records.set(records.get() + 1);
+                window.record_prepaint_window_transaction(
+                    publication,
+                    move |fence, window, _| {
+                        assert!(fence.is_satisfied_by(window));
+                        commits.set(commits.get() + 1);
+                    },
+                    |_, _, _| panic!("the retained publication was not removed"),
+                );
+            },
+            |_, (), _, _| {},
+        )
+        .size_full()
+    }
+}
+
+struct CachedPublicationRoot {
+    retained: Entity<CachedPublication>,
+    trial: Option<PrepaintPublicationId>,
+    abandoned: Rc<Cell<usize>>,
+}
+
+impl Render for CachedPublicationRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let trial = self.trial.take();
+        let abandoned = self.abandoned.clone();
+        div()
+            .size_full()
+            .child(
+                canvas(
+                    move |_, window, _| {
+                        if let Some(publication) = trial {
+                            let result = window.transact(|window| {
+                                let attempt = window
+                                    .begin_prepaint_publication_attempt(publication, move |_| {
+                                        abandoned.set(abandoned.get() + 1)
+                                    });
+                                window.record_prepaint_window_transaction_for_attempt(
+                                    attempt,
+                                    |_, _, _| panic!("the rolled-back record cannot commit"),
+                                    |_, _, _| panic!("the rolled-back record cannot retire"),
+                                );
+                                Err::<(), _>(())
+                            });
+                            assert_eq!(result, Err(()));
+                        }
+                    },
+                    |_, (), _, _| {},
+                )
+                .size(px(4.0)),
+            )
+            .child(
+                self.retained
+                    .clone()
+                    .cached(StyleRefinement::default().size(px(60.0))),
+            )
+    }
+}
+
+#[crate::test]
+fn cached_publication_cannot_settle_a_rolled_back_replacement(cx: &mut TestAppContext) {
+    let publication = PrepaintPublicationId::new();
+    let records = Rc::new(Cell::new(0));
+    let commits = Rc::new(Cell::new(0));
+    let abandoned = Rc::new(Cell::new(0));
+    let retained = cx.new(|_| CachedPublication {
+        publication,
+        records: records.clone(),
+        commits: commits.clone(),
+    });
+    let window = cx.add_window(|_, _| CachedPublicationRoot {
+        retained: retained.clone(),
+        trial: None,
+        abandoned: abandoned.clone(),
+    });
+    window.update(cx, |_, _, cx| cx.notify()).unwrap();
+    let before = (records.get(), commits.get());
+    window
+        .update(cx, |root, _, cx| {
+            root.trial = Some(publication);
+            cx.notify();
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(records.get(), before.0, "prepaint must reuse its journal");
+    assert_eq!(commits.get(), before.1 + 1);
+    assert_eq!(abandoned.get(), 1, "the trial must release its own work");
 }
 
 fn open_parked_window(cx: &mut TestAppContext) -> (AnyWindowHandle, TestWindow, Rc<Controls>) {

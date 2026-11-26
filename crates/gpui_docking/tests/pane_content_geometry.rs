@@ -152,5 +152,7 @@ fn tab_content_controls_width_without_taking_input_from_the_tab(cx: &mut TestApp
     assert_eq!(label_clicks.get(), 0);
 }
 
+#[path = "pane_content_geometry/editor_input.rs"]
+mod editor_input;
 #[path = "pane_content_geometry/tab_labels.rs"]
 mod tab_labels;

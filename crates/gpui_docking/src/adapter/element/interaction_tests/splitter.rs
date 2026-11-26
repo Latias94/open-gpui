@@ -221,17 +221,17 @@ fn splitter_reset_retains_its_release_and_action_while_presentation_is_deferred(
     let mut visual = active_visual(window.into(), cx);
     frames(&mut visual, &dock);
     let before = receiver_bounds(&dock, &mut visual, DockspaceReceiverRole::Splitter);
+    assert!((before.center().x - px(200.0)).abs() < px(2.0));
     visual.set_window_present_outcome(window.into(), PlatformWindowPresentOutcome::Deferred);
     click(&mut visual, before.center(), 2);
     frames(&mut visual, &dock);
     let version = dock.host.borrow().session.version();
-    assert_eq!(
-        dock.host.borrow().inputs.len(),
-        2,
-        "the original release and its reset must remain queued behind the pending output"
-    );
     frames(&mut visual, &dock);
     assert_eq!(dock.host.borrow().session.version(), version);
+    assert_eq!(
+        receiver_bounds(&dock, &mut visual, DockspaceReceiverRole::Splitter),
+        before
+    );
     visual.set_window_present_outcome(window.into(), PlatformWindowPresentOutcome::Submitted);
     frames(&mut visual, &dock);
     let after = receiver_bounds(&dock, &mut visual, DockspaceReceiverRole::Splitter);

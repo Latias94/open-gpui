@@ -2,7 +2,9 @@ use std::{any::TypeId, cell::RefCell, rc::Rc};
 
 use open_gpui_collections::FxHashMap;
 
-use crate::{CommittedWindowHitTestSnapshot, HitboxId, Pixels, Point, WindowControlArea, WindowId};
+use crate::{
+    CommittedWindowHitTestSnapshot, HitboxId, HitboxTag, Pixels, Point, WindowControlArea, WindowId,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum NativeWindowLifecycle {
@@ -99,6 +101,20 @@ impl NativeQuerySnapshots {
             .borrow()
             .get(&window_id)?
             .window_point_target_rank(hitbox, point)
+    }
+
+    pub(super) fn window_frontmost_hitbox_at_with_tag(
+        &self,
+        window_id: WindowId,
+        point: Point<Pixels>,
+    ) -> Option<Option<(HitboxId, Option<HitboxTag>)>> {
+        self.committed(window_id)?;
+        Some(
+            self.window_hit_tests
+                .borrow()
+                .get(&window_id)?
+                .frontmost_hitbox_at_with_tag(point),
+        )
     }
 
     pub(super) fn commit_app_menu_action_availability(&self, action_type: TypeId, available: bool) {

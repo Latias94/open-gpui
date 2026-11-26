@@ -89,7 +89,7 @@ impl DeferredCandidateBasis {
             atlas_epoch: window.sprite_atlas.atlas_texture_lease_epoch(),
             focus: window.focus,
             focus_generation: window.focus_generation,
-            focus_claim_revision: window.focus_claim_revision,
+            focus_claim_revision: window.focus_claim_revision(),
             pending_focus_claim: window.pending_focus_claim,
             pending_blur_claim_generation: window.pending_blur_claim_generation,
             provisional_focus_claim: window.provisional_focus_claim,
@@ -120,7 +120,7 @@ impl DeferredCandidateBasis {
             && self.atlas_epoch == window.sprite_atlas.atlas_texture_lease_epoch()
             && self.focus == window.focus
             && self.focus_generation == window.focus_generation
-            && self.focus_claim_revision == window.focus_claim_revision
+            && self.focus_claim_revision == window.focus_claim_revision()
             && self.pending_focus_claim == window.pending_focus_claim
             && self.pending_blur_claim_generation == window.pending_blur_claim_generation
             && self.provisional_focus_claim == window.provisional_focus_claim
@@ -564,6 +564,10 @@ impl Window {
         self.schedule_focus_claim_resolution_dispatch(cx);
         self.mouse_hit_test = self.rendered_frame.hit_test(self.mouse_position);
         self.needs_present.set(false);
+        candidate
+            .prepared
+            .transaction
+            .schedule_abandoned_publications(cx);
         self.refresh();
         drop(candidate.observers);
         self.schedule_pending_frame();

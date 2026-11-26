@@ -2,12 +2,55 @@
 
 use super::*;
 use crate::adapter::{DockHostFailure, DockNativeTermination};
+use open_gpui::WindowPresentationShutdownTicket;
+use std::cell::Cell;
 
 pub(super) type TerminationCallback = Box<dyn FnOnce(DockNativeTermination, &mut App)>;
 
 pub(super) struct FailedShutdown {
     failure: DockHostFailure,
     terminated: bool,
+}
+
+/// Retains retirement evidence before an unbound window can leave the App registry.
+pub(super) struct UnboundWindowRetirement {
+    ticket: Rc<RefCell<Option<WindowPresentationShutdownTicket>>>,
+    terminal: Rc<Cell<bool>>,
+    _observers: Subscription,
+}
+
+impl UnboundWindowRetirement {
+    pub(super) fn observe(owner: WindowId, transport: &NativeTransport, cx: &App) -> Self {
+        let ticket = Rc::new(RefCell::new(None));
+        let closed_ticket = ticket.clone();
+        let transport = transport.clone();
+        let closed = cx.on_window_closed(move |cx, window| {
+            if window == owner {
+                *closed_ticket.borrow_mut() = cx.native_window_retirement_ticket(window);
+                transport.wake(cx);
+            }
+        });
+        let terminal = Rc::new(Cell::new(false));
+        let observed_terminal = terminal.clone();
+        let native = cx.on_window_native_terminal(move |_, window| {
+            if window == owner {
+                observed_terminal.set(true);
+            }
+        });
+        Self {
+            ticket,
+            terminal,
+            _observers: Subscription::join(closed, native),
+        }
+    }
+
+    pub(super) fn ticket(&self) -> Option<WindowPresentationShutdownTicket> {
+        self.ticket.borrow().clone()
+    }
+
+    pub(super) fn is_terminal(&self) -> bool {
+        self.terminal.get()
+    }
 }
 
 pub(super) fn disposition(host: &HostState, native: &ManagedHost) -> Option<DockNativeTermination> {
@@ -209,16 +252,25 @@ fn retire_unbound_roots(shared: &SharedHost, anchor: bool, cx: &mut App) -> bool
             .filter(|(owner, root)| {
                 root.anchor == anchor && !native.retirements.contains_key(owner)
             })
-            .map(|(owner, root)| (*owner, root.window))
+            .map(|(owner, root)| {
+                (
+                    *owner,
+                    root.window,
+                    root.retirement.ticket(),
+                    root.retirement.is_terminal(),
+                )
+            })
             .collect()
     };
     let mut retry = false;
-    for (owner, window) in roots {
-        let ticket = cx.native_window_retirement_ticket(owner).or_else(|| {
-            window
-                .update(cx, |_, window, cx| window.remove_window_with_retirement(cx))
-                .ok()
-        });
+    for (owner, window, ticket, terminal) in roots {
+        let ticket = ticket
+            .or_else(|| cx.native_window_retirement_ticket(owner))
+            .or_else(|| {
+                window
+                    .update(cx, |_, window, cx| window.remove_window_with_retirement(cx))
+                    .ok()
+            });
         if let Some(ticket) = ticket {
             shared
                 .borrow_mut()
@@ -227,6 +279,14 @@ fn retire_unbound_roots(shared: &SharedHost, anchor: bool, cx: &mut App) -> bool
                 .unwrap()
                 .retirements
                 .insert(owner, ticket);
+        } else if terminal {
+            shared
+                .borrow_mut()
+                .native
+                .as_mut()
+                .unwrap()
+                .registrations
+                .remove(&owner);
         } else {
             retry |= cx.windows().contains(&window);
         }

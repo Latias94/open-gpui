@@ -312,9 +312,10 @@ shared-session windows and an isolated workspace. The editor example retains two
 Views of one document and has a bounded native smoke trajectory through the
 repository's macOS probe runner.
 
-The `legacy/v0-pre-slim` tag contains the previous engine and its physical-input qualification
-suite. Use `dock.with_view(|view| view.to_layout())` for a logical recovery checkpoint and the
-session document envelope to persist external View keys and save generations.
+The Windows physical-input manifest runs shared-session scenarios through the
+`native_windows_interactive` integration target. Use `dock.with_view(|view| view.to_layout())`
+for a logical recovery checkpoint and the session document envelope to persist external View
+keys and save generations. The `legacy/v0-pre-slim` tag preserves the previous engine.
 
 ## Compiler And Verification Scope
 

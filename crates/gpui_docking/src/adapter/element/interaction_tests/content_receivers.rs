@@ -75,6 +75,39 @@ fn content_fixture_regions(
     managed: bool,
     separate: bool,
 ) -> (DockSurface, Vec<Entity<EditorPane>>) {
+    let surfaces = if separate {
+        [(SURFACE, FIRST), (SurfaceId::new(52), SECOND)]
+            .map(|(surface, item)| {
+                DockspaceSurfaceLayout::new(
+                    surface,
+                    DockspaceRootLayout::new(
+                        RootId::new(surface.get()),
+                        DockspaceNode::tabs([item]),
+                    ),
+                )
+            })
+            .into_iter()
+            .collect::<Vec<_>>()
+    } else {
+        let content = DockspaceNode::equal_split(
+            DockspaceAxis::Horizontal,
+            [DockspaceNode::tabs([FIRST]), DockspaceNode::tabs([SECOND])],
+        )
+        .unwrap();
+        vec![DockspaceSurfaceLayout::new(
+            SURFACE,
+            DockspaceRootLayout::new(RootId::new(71), content),
+        )]
+    };
+    content_fixture_layout(cx, managed, surfaces, &[FIRST, SECOND])
+}
+
+pub(super) fn content_fixture_layout(
+    cx: &mut TestAppContext,
+    managed: bool,
+    surfaces: impl IntoIterator<Item = DockspaceSurfaceLayout>,
+    items: &[ItemId],
+) -> (DockSurface, Vec<Entity<EditorPane>>) {
     if managed {
         cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
         cx.set_platform_window_hit_stack(
@@ -90,20 +123,24 @@ fn content_fixture_regions(
     }
     cx.update(|cx| {
         let tag = HitboxTag::new();
-        let views = [FIRST, SECOND].map(|_| {
-            cx.new(|cx| EditorPane {
-                focus: cx.focus_handle(),
-                tag,
-                declared: true,
-                blocker: false,
-                popup: false,
-                text: String::new(),
-                clicks: 0,
-                scrolls: Rc::default(),
+        let views = items
+            .iter()
+            .map(|_| {
+                cx.new(|cx| EditorPane {
+                    focus: cx.focus_handle(),
+                    tag,
+                    declared: true,
+                    blocker: false,
+                    popup: false,
+                    text: String::new(),
+                    clicks: 0,
+                    scrolls: Rc::default(),
+                })
             })
-        });
-        let panes = [FIRST, SECOND]
-            .into_iter()
+            .collect::<Vec<_>>();
+        let panes = items
+            .iter()
+            .copied()
             .zip(&views)
             .map(|(item, view)| {
                 DockPane::new(item, format!("Pane {}", item.get()), view.clone())
@@ -111,30 +148,6 @@ fn content_fixture_regions(
                     .with_content_receiver(tag)
             })
             .collect::<Vec<_>>();
-        let content = DockspaceNode::equal_split(
-            DockspaceAxis::Horizontal,
-            [DockspaceNode::tabs([FIRST]), DockspaceNode::tabs([SECOND])],
-        )
-        .unwrap();
-        let surfaces = if separate {
-            [(SURFACE, FIRST), (SurfaceId::new(52), SECOND)]
-                .map(|(surface, item)| {
-                    DockspaceSurfaceLayout::new(
-                        surface,
-                        DockspaceRootLayout::new(
-                            RootId::new(surface.get()),
-                            DockspaceNode::tabs([item]),
-                        ),
-                    )
-                })
-                .into_iter()
-                .collect::<Vec<_>>()
-        } else {
-            vec![DockspaceSurfaceLayout::new(
-                SURFACE,
-                DockspaceRootLayout::new(RootId::new(71), content),
-            )]
-        };
         let layout = DockspaceLayout::new(surfaces).unwrap();
         let session = DockspaceSession::from_layout(layout, DockPolicy::default()).unwrap();
         let dock = if managed {
@@ -143,7 +156,7 @@ fn content_fixture_regions(
             DockSurface::new(session, panes, GpuiDockspaceConfig::default(), cx)
         }
         .unwrap();
-        (dock, views.into())
+        (dock, views)
     })
 }
 
@@ -164,6 +177,74 @@ fn open_content(cx: &mut TestAppContext, dock: &DockSurface, managed: bool) -> V
     }
     frames(&mut visual, dock);
     visual
+}
+
+#[open_gpui::test]
+fn managed_primary_presses_reach_core_while_window_frame_requests_are_held(
+    cx: &mut TestAppContext,
+) {
+    cx.defer_next_window_frame_requests();
+    let (dock, _) = content_fixture(cx, true);
+    let mut visual = open_content(cx, &dock, true);
+    let tab = visual.debug_bounds("dockspace:tab:61").unwrap().center();
+    let content = pane_center(&dock, &mut visual, FIRST);
+    let scheduled_in_callback = Rc::new(Cell::new(None));
+    let _probe = visual.update(|window, _| {
+        let host = dock.host.clone();
+        let scheduled_in_callback = scheduled_in_callback.clone();
+        window.intercept_window_mouse_events(move |event, _, cx| {
+            if matches!(event, open_gpui::WindowMouseEvent::Down(event) if event.button == MouseButton::Left) {
+                let host = host.clone();
+                let scheduled_in_callback = scheduled_in_callback.clone();
+                // Inspect the work scheduled by the press before a deferred
+                // wake, platform observation, or redraw can drain the queue.
+                cx.defer(move |_| {
+                    let native = super::super::super::host_native::inspection(&host.borrow()).unwrap();
+                    scheduled_in_callback.set(Some(native.pump_scheduled));
+                });
+            }
+        })
+    });
+    for position in [tab, content] {
+        scheduled_in_callback.set(None);
+        let owner = visual.update(|window, _| window.window_handle().window_id());
+        let (before, serial) = {
+            let host = dock.host.borrow();
+            (
+                host.session.native_input_recorded_count(),
+                host.mounts[&owner].input_frames[0].serial,
+            )
+        };
+        visual.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(true));
+        native_input(
+            &mut visual,
+            position,
+            PlatformInput::MouseDown(MouseDownEvent {
+                button: MouseButton::Left,
+                position,
+                modifiers: Modifiers::none(),
+                click_count: 1,
+                first_mouse: false,
+            }),
+        );
+        assert_eq!(
+            scheduled_in_callback.get(),
+            Some(true),
+            "press at {position:?}"
+        );
+        {
+            let host = dock.host.borrow();
+            assert_eq!(host.mounts[&owner].input_frames[0].serial, serial);
+            assert_eq!(
+                host.session.native_input_recorded_count(),
+                before + 1,
+                "press at {position:?}"
+            );
+        }
+        visual.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
+        visual.simulate_mouse_up(position, MouseButton::Left, Modifiers::none());
+        frames(&mut visual, &dock);
+    }
 }
 
 pub(super) fn prepare_native_input(visual: &mut VisualTestContext) {
@@ -344,7 +425,7 @@ fn edit_and_dock(cx: &mut TestAppContext, managed: bool) {
                     if guide.direction == dockspace::runtime::DockspaceDropDirection::Center
                         && guide.eligible =>
                 {
-                    Some(to_gpui(*bounds, region.bounds.unwrap()).center())
+                    Some(to_gpui(*bounds, region.layout_bounds().unwrap()).center())
                 }
                 _ => None,
             })

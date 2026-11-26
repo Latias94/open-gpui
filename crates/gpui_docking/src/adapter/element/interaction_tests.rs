@@ -219,7 +219,7 @@ fn receiver_bounds(
                 _ => None,
             })
             .unwrap();
-        to_gpui(receiver.bounds(), region.bounds.unwrap())
+        to_gpui(receiver.bounds(), region.layout_bounds().unwrap())
     })
 }
 
@@ -237,7 +237,7 @@ fn tab_list_button_bounds(dock: &DockSurface, window: open_gpui::WindowId) -> Bo
             _ => None,
         })
         .unwrap();
-    to_gpui(control.bounds, region.bounds.unwrap())
+    to_gpui(control.bounds, region.layout_bounds().unwrap())
 }
 
 fn assert_accessibility_focus(visual: &VisualTestContext, role: Role, label: &str) {
@@ -482,7 +482,7 @@ fn presentation_menu_activates_the_frozen_core_float_command(cx: &mut TestAppCon
             menu.choices.is_empty(),
             "closed menus must not prepare product commands each frame"
         );
-        to_gpui(menu.bounds, region.bounds.unwrap())
+        to_gpui(menu.bounds, region.layout_bounds().unwrap())
     };
     visual.simulate_click(anchor.center(), Modifiers::none());
     frames(&mut visual, &dock);
@@ -584,12 +584,10 @@ fn dismissing_the_core_tab_list_restores_its_opener_and_can_reopen_from_the_keyb
 }
 
 #[test]
-fn source_preview_uses_the_observed_physical_client_origin_and_its_own_dpi() {
-    let preview = host_native::provisional::Preview {
-        host_surface: SURFACE,
-        target_surface: SurfaceId::new(52),
-        placement: dockspace::geometry::PhysicalRect::new(-600.0, 700.0, 400.0, 300.0).unwrap(),
-    };
+fn source_preview_uses_the_physical_client_origin_and_the_presentation_scale() {
+    use super::layout_paint::source_preview_display_bounds;
+
+    let placement = dockspace::geometry::PhysicalRect::new(-600.0, 700.0, 400.0, 300.0).unwrap();
     let geometry = open_gpui::PlatformWindowPhysicalGeometry::try_new(
         Bounds::new(
             point(open_gpui::DevicePixels(-800), open_gpui::DevicePixels(600)),
@@ -598,14 +596,13 @@ fn source_preview_uses_the_observed_physical_client_origin_and_its_own_dpi() {
         2.0,
     )
     .unwrap();
-    let surface = Bounds::new(point(px(25.0), px(10.0)), size(px(400.0), px(400.0)));
-    let projected = source_preview_bounds(preview, surface, Some(geometry)).unwrap();
+    let projected = source_preview_display_bounds(placement, Some(geometry), 2.5).unwrap();
     assert_eq!(
         projected,
-        Bounds::new(point(px(100.0), px(50.0)), size(px(200.0), px(150.0)))
+        Bounds::new(point(px(80.0), px(40.0)), size(px(160.0), px(120.0)))
     );
     assert!(
-        source_preview_bounds(preview, surface, None).is_none(),
+        source_preview_display_bounds(placement, None, 2.5).is_none(),
         "a source cue must never manufacture a physical desktop origin"
     );
 }
@@ -642,7 +639,7 @@ fn presentation_menu_with_content_focus(
                 _ => None,
             })
             .unwrap();
-        to_gpui(menu.bounds, region.bounds.unwrap())
+        to_gpui(menu.bounds, region.layout_bounds().unwrap())
     });
     (dock, handles[0].clone(), visual, anchor)
 }

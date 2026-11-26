@@ -44,8 +44,8 @@ use crate::{
     Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext,
     AppLifecyclePhase, Arena, ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds,
     ClipboardItem, ClipboardReadError, CursorStyle, DispatchPhase, DisplayId, EventEmitter,
-    FocusHandle, FocusMap, ForegroundExecutor, Global, HitboxId, KeyBinding, KeyContext, Keymap,
-    Keystroke, LayoutId, Menu, MenuItem, MouseButton, OwnedMenu, PathPromptOptions, Pixels,
+    FocusHandle, FocusMap, ForegroundExecutor, Global, HitboxId, HitboxTag, KeyBinding, KeyContext,
+    Keymap, Keystroke, LayoutId, Menu, MenuItem, MouseButton, OwnedMenu, PathPromptOptions, Pixels,
     Platform, PlatformDisplay, PlatformDisplaySnapshot, PlatformFocusedWindow,
     PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
     PlatformViewportCapabilities, PlatformWindow, PlatformWindowCapabilities,
@@ -1695,6 +1695,33 @@ impl App {
             .native_window_point_target_rank(window.window_id(), hitbox, point)
     }
 
+    /// Returns the frontmost committed hitbox at a point in another window.
+    ///
+    /// An available snapshot can prove that no hitbox covers the point.
+    /// The outer `None` means there is no readable committed hit-test snapshot.
+    #[doc(hidden)]
+    pub fn window_frontmost_hitbox_at(
+        &self,
+        window: AnyWindowHandle,
+        point: Point<Pixels>,
+    ) -> Option<Option<HitboxId>> {
+        self.window_frontmost_hitbox_at_with_tag(window, point)
+            .map(|target| target.map(|(id, _)| id))
+    }
+
+    /// Returns the frontmost target and its optional label from another window's committed frame.
+    /// The outer `None` means the committed hit-test snapshot is unavailable.
+    #[doc(hidden)]
+    pub fn window_frontmost_hitbox_at_with_tag(
+        &self,
+        window: AnyWindowHandle,
+        point: Point<Pixels>,
+    ) -> Option<Option<(HitboxId, Option<HitboxTag>)>> {
+        self.this
+            .upgrade()?
+            .native_window_frontmost_hitbox_at_with_tag(window.window_id(), point)
+    }
+
     pub(crate) fn set_native_window_control_area(
         &self,
         window_id: WindowId,
@@ -1803,6 +1830,13 @@ impl App {
     /// Returns a handle to the window that is currently focused at the platform level, if one exists.
     pub fn active_window(&self) -> Option<AnyWindowHandle> {
         self.platform.active_window()
+    }
+
+    /// Reads a window's focus claim revision, including from within its active update.
+    ///
+    /// Returns `None` once the window is no longer registered.
+    pub fn window_focus_claim_revision(&self, window: WindowId) -> Option<u64> {
+        self.this.upgrade()?.window_focus_claim_revision(window)
     }
 
     /// Returns the display containing the window currently focused at the platform level.

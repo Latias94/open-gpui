@@ -1,32 +1,140 @@
 //! Event-time submitted geometry and receiver facts for local surface input.
 
+use std::{cell::Cell, collections::BTreeMap, rc::Rc};
+
 use dockspace::{
     geometry::LogicalPoint,
-    model::SurfaceId,
+    model::{DockspaceItemView, ItemId, NodeKey, RootId, SurfaceId, WorkspaceVersion},
     runtime::{
-        DeferredSurfaceAction, DockspaceHostFrame, HostPointerInput, HostPointerRoute,
-        PointerDeviceKind, PointerEventMetadata, PresentedDockReceiver, PresentedDockspaceSurface,
+        DeferredSurfaceAction, DockspaceHostFrame, DockspaceOpenItemId, HostPointerInput,
+        HostPointerRoute, PointerDeviceKind, PointerEventMetadata, PresentedDockReceiver,
+        PresentedDockspaceSurface, SurfacePointerButton, SurfacePointerCancelReason,
         SurfacePointerCapture, SurfacePointerEvent, SurfacePointerId, SurfacePointerReceiverFacts,
     },
 };
 use open_gpui::{
-    Bounds, HitboxId, Modifiers, Pixels, Point, PointerCaptureHandle, Window, WindowId,
+    Bounds, ElementGeometry, HitboxId, Modifiers, Pixels, Point, PointerCaptureHandle, Window,
+    WindowId,
 };
 
 use super::HostState;
+
+#[derive(Clone, Copy, PartialEq)]
+pub(super) struct RegionGeometry {
+    pub(super) element: ElementGeometry,
+    pub(super) clip: Bounds<Pixels>,
+    pub(super) device_scale: f64,
+}
+
+impl RegionGeometry {
+    pub(super) fn new(bounds: Bounds<Pixels>, window: &Window) -> anyhow::Result<Self> {
+        let element = window.try_element_geometry(bounds)?;
+        Ok(Self {
+            element,
+            clip: element.displayed_bounds().intersect(&window.clip_bounds()),
+            device_scale: f64::from(window.scale_factor()),
+        })
+    }
+}
 
 #[derive(Clone)]
 pub(super) struct InputFrame {
     pub(super) surface: SurfaceId,
     pub(super) serial: u64,
-    pub(super) bounds: Bounds<Pixels>,
+    pub(super) version: WorkspaceVersion,
+    pub(super) geometry: ElementGeometry,
+    pub(super) clip: Bounds<Pixels>,
     pub(super) hitboxes: Vec<HitboxId>,
     pub(super) content_hitboxes: Vec<HitboxId>,
-    pub(super) panes: Vec<(dockspace::model::ItemId, open_gpui::HitTestSnapshot)>,
+    pub(super) panes: BTreeMap<ItemId, PanePresentation>,
     pub(super) capture: PointerCaptureHandle,
     pub(super) receivers: Vec<(dockspace::runtime::DockspaceReceiverDescriptor, HitboxId)>,
     pub(super) scale: f64,
     pub(super) native_binding: Option<dockspace::runtime::NativeSurfaceBinding>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct PanePlacement {
+    open_item: DockspaceOpenItemId,
+    root: RootId,
+    tabs: Option<NodeKey>,
+}
+
+impl PanePlacement {
+    pub(super) fn of(pane: DockspaceItemView<'_>, open_item: DockspaceOpenItemId) -> Self {
+        Self {
+            open_item,
+            root: pane.root(),
+            tabs: pane.tabs().map(|tabs| tabs.key()),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct PanePresentation {
+    pub(super) placement: PanePlacement,
+    pub(super) geometry: open_gpui::HitTestSnapshot,
+}
+
+pub(super) struct PrimaryPress {
+    surface: SurfaceId,
+    committed: Rc<Cell<bool>>,
+    captured: bool,
+}
+
+impl PrimaryPress {
+    pub(super) fn captured_local_surface(&self) -> Option<SurfaceId> {
+        self.captured.then_some(self.surface)
+    }
+}
+
+pub(super) fn finish_content_press(
+    host: &mut HostState,
+    event: SurfacePointerEvent,
+    modifiers: Modifiers,
+    window: &mut Window,
+) -> bool {
+    let owner = window.window_handle().window_id();
+    let Some(mount) = host.mounts.get_mut(&owner) else {
+        return false;
+    };
+    let Some(press) = mount.primary_press.take_if(|press| {
+        matches!(event, SurfacePointerEvent::StreamCancelled(_)) || !press.captured
+    }) else {
+        return false;
+    };
+    mount.wake = None;
+    if let Some(region) = mount.regions.get_mut(&press.surface) {
+        region.dirty = true;
+    }
+    let stream_live = mount.local_pointer_live.clone();
+    let metadata = PointerEventMetadata::new(PointerDeviceKind::Mouse, host.observed_at())
+        .with_docking_enabled(host.config.input.docking_enabled(modifiers));
+    // The press was observed for bookkeeping and pane activation. Its terminal
+    // does not need a new hit test, even when the original region was resized.
+    host.inputs.push(QueuedInput::unrouted_terminal(
+        owner,
+        event,
+        Some(press.committed),
+        stream_live,
+        metadata,
+    ));
+    window.refresh();
+    true
+}
+
+pub(super) fn retire_local_pointer(
+    host: &mut HostState,
+    owner: WindowId,
+    stream_live: Rc<Cell<bool>>,
+) {
+    host.inputs.push(QueuedInput::unrouted_terminal(
+        owner,
+        SurfacePointerEvent::StreamCancelled(SurfacePointerCancelReason::BindingRetired),
+        None,
+        stream_live,
+        PointerEventMetadata::new(PointerDeviceKind::Mouse, host.observed_at()),
+    ));
 }
 
 /// Semantic pointer consequences share the original input's rollback custody.
@@ -40,10 +148,58 @@ pub(super) enum QueuedInput {
 }
 
 impl QueuedInput {
+    fn unrouted_terminal(
+        owner: WindowId,
+        event: SurfacePointerEvent,
+        press_commit: Option<Rc<Cell<bool>>>,
+        stream_live: Rc<Cell<bool>>,
+        metadata: PointerEventMetadata,
+    ) -> Self {
+        Self::Pointer(QueuedPointer {
+            owner,
+            event,
+            manipulation: HostPointerRoute::Unknown,
+            hover: HostPointerRoute::Unknown,
+            surface: None,
+            delivery: None,
+            drag: None,
+            clear: false,
+            delivery_clear: false,
+            capture: SurfacePointerCapture::None,
+            metadata,
+            press_commit,
+            stream_live,
+        })
+    }
+
     pub(super) fn owner(&self) -> WindowId {
         match self {
             Self::Pointer(pointer) => pointer.owner,
             Self::Action { owner, .. } => *owner,
+        }
+    }
+
+    pub(super) fn is_required_pointer_terminal(&self) -> bool {
+        matches!(self, Self::Pointer(pointer)
+            if pointer.event
+                == SurfacePointerEvent::StreamCancelled(SurfacePointerCancelReason::BindingRetired)
+                || (matches!(pointer.event, SurfacePointerEvent::StreamCancelled(_))
+                    && pointer.stream_live.get())
+                || (is_primary_terminal(pointer.event)
+                    && pointer.press_commit.as_ref().is_some_and(|committed| committed.get())))
+    }
+
+    pub(super) fn mark_committed(&self) {
+        if let Self::Pointer(pointer) = self {
+            if is_primary_press(pointer.event)
+                && let Some(committed) = &pointer.press_commit
+            {
+                committed.set(true);
+            }
+            pointer.stream_live.set(!matches!(
+                pointer.event,
+                SurfacePointerEvent::StreamCancelled(_)
+            ));
         }
     }
 
@@ -71,7 +227,7 @@ pub(super) fn queue_action(
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(super) struct QueuedPointer {
     owner: WindowId,
     event: SurfacePointerEvent,
@@ -84,6 +240,27 @@ pub(super) struct QueuedPointer {
     delivery_clear: bool,
     capture: SurfacePointerCapture,
     metadata: PointerEventMetadata,
+    press_commit: Option<Rc<Cell<bool>>>,
+    stream_live: Rc<Cell<bool>>,
+}
+
+fn is_primary_press(event: SurfacePointerEvent) -> bool {
+    event == SurfacePointerEvent::ButtonPressed(SurfacePointerButton::Primary)
+}
+
+fn is_primary_terminal(event: SurfacePointerEvent) -> bool {
+    matches!(
+        event,
+        SurfacePointerEvent::StreamCancelled(_)
+            | SurfacePointerEvent::ButtonReleased(SurfacePointerButton::Primary)
+    )
+}
+
+pub(super) fn local_pointer(owner: WindowId) -> SurfacePointerId {
+    // Each physical window is an independent local pointer provider. Reusing
+    // one stream number lets a retired window's terminal edge terminate a
+    // newer gesture owned by a sibling window.
+    SurfacePointerId::new(owner.as_u64())
 }
 
 impl QueuedPointer {
@@ -109,7 +286,7 @@ impl QueuedPointer {
             };
         }
         frame.submit_host_pointer_batch([HostPointerInput::new(
-            SurfacePointerId::new(1),
+            local_pointer(self.owner),
             self.event,
             self.manipulation,
             self.hover,
@@ -127,13 +304,17 @@ pub(super) fn queue(
     serial: u64,
     event: SurfacePointerEvent,
     position: Point<Pixels>,
-    bounds: Bounds<Pixels>,
+    geometry: ElementGeometry,
     hitboxes: &[HitboxId],
     content_hitboxes: &[HitboxId],
     captured: bool,
     modifiers: Modifiers,
     window: &Window,
 ) -> bool {
+    let target = window.frontmost_hitbox_at(position);
+    let chrome_clear = target.is_some_and(|id| hitboxes.contains(&id));
+    let content_clear = target.is_some_and(|id| content_hitboxes.contains(&id));
+    let owner = window.window_handle().window_id();
     if host.native.is_some() {
         return super::host_native::queue_pointer(
             host,
@@ -141,56 +322,39 @@ pub(super) fn queue(
             serial,
             event,
             position,
-            bounds,
-            hitboxes,
-            content_hitboxes,
+            geometry,
+            chrome_clear,
+            content_clear,
             captured,
             modifiers,
             window,
         );
     }
-    let Some(point) = logical_point(position, bounds) else {
-        return false;
-    };
-    let owner = window.window_handle().window_id();
-    let chrome_clear = window.is_mouse_in_window()
-        && hitboxes
-            .iter()
-            .any(|hitbox| hitbox.window_point_target_rank(position, window) == Some(0));
-    let clear = chrome_clear
-        || (window.is_mouse_in_window()
-            && content_hitboxes
-                .iter()
-                .any(|hitbox| hitbox.window_point_target_rank(position, window) == Some(0)));
-    let terminal = matches!(
-        event,
-        SurfacePointerEvent::StreamCancelled(_) | SurfacePointerEvent::ButtonReleased(_)
-    );
+    let chrome_clear = window.is_mouse_in_window() && chrome_clear;
+    let clear = chrome_clear || (window.is_mouse_in_window() && content_clear);
+    let terminal = is_primary_terminal(event);
     if !captured && !clear && !terminal {
         return false;
     }
-    let hit = is_presented(host, owner, surface_id, serial)
-        .then(|| {
+    let point = logical_point(position, geometry);
+    let displayed = host.mounts.get(&owner).and_then(|mount| {
+        mount.input_frames.iter().find(|frame| {
+            frame.surface == surface_id && frame.serial == serial && frame.geometry == geometry
+        })
+    });
+    let hit = point
+        .filter(|_| displayed.is_some() && is_presented(host, owner, surface_id, serial))
+        .and_then(|point| {
             host.session
                 .host_pointer_hit_for_device(surface_id, point, PointerDeviceKind::Mouse)
-        })
-        .flatten();
-    let content_receiver = host
-        .mounts
-        .get(&owner)
-        .and_then(|mount| {
-            mount
-                .input_frames
-                .iter()
-                .find(|frame| frame.surface == surface_id && frame.serial == serial)
-        })
-        .and_then(|frame| {
-            frame.receivers.iter().find(|(_, id)| {
-                content_hitboxes.contains(id)
-                    && id.window_point_target_rank(position, window) == Some(0)
-            })
-        })
-        .map(|(receiver, _)| *receiver);
+        });
+    let content_receiver = target.filter(|_| content_clear).and_then(|target| {
+        displayed?
+            .receivers
+            .iter()
+            .find(|(_, id)| *id == target)
+            .map(|(receiver, _)| *receiver)
+    });
     let delivery_clear = chrome_clear
         || content_receiver.is_some_and(|receiver| {
             hit.and_then(|hit| hit.delivery())
@@ -202,8 +366,14 @@ pub(super) fn queue(
     let surface = hit.map(|hit| hit.surface());
     let source = captured
         .then(|| {
+            let pressed = host
+                .mounts
+                .get(&owner)
+                .and_then(|mount| mount.primary_press.as_ref()?.captured_local_surface());
             host.session
-                .host_pointer_manipulation_surface(SurfacePointerId::new(1))
+                .host_pointer_manipulation_surface(local_pointer(owner))
+                .filter(|source| pressed.is_none_or(|pressed| source.surface() == pressed))
+                .or_else(|| host.session.presented_surface(pressed?))
         })
         .flatten()
         .or(surface)
@@ -214,16 +384,39 @@ pub(super) fn queue(
         });
     let source_point = source.and_then(|source| {
         let mount = host.mounts.get(&owner)?;
-        let bounds = mount
+        let geometry = mount
             .input_frames
             .iter()
             .find(|frame| frame.surface == source.surface())?
-            .bounds;
-        logical_point(position, bounds)
+            .geometry;
+        logical_point(position, geometry)
     });
-    if let Some(mount) = host.mounts.get_mut(&owner) {
-        mount.wake = None;
-    }
+    let Some(mount) = host.mounts.get_mut(&owner) else {
+        return false;
+    };
+    let press_commit = if is_primary_press(event) {
+        if mount.primary_press.is_some() {
+            return false;
+        }
+        let committed = Rc::new(Cell::new(false));
+        mount.primary_press = Some(PrimaryPress {
+            surface: surface_id,
+            committed: committed.clone(),
+            captured,
+        });
+        Some(committed)
+    } else if terminal {
+        let Some(press) = mount.primary_press.take() else {
+            return false;
+        };
+        // Keep the original release route while making the terminal survive
+        // the loss of the window that supplied the press.
+        Some(press.committed)
+    } else {
+        None
+    };
+    let stream_live = mount.local_pointer_live.clone();
+    mount.wake = None;
     host.inputs.push(QueuedInput::Pointer(QueuedPointer {
         owner,
         event,
@@ -232,9 +425,11 @@ pub(super) fn queue(
             .map_or(HostPointerRoute::Unknown, |(source, point)| {
                 HostPointerRoute::new(source, point)
             }),
-        hover: surface.map_or(HostPointerRoute::Unknown, |surface| {
-            HostPointerRoute::new(surface, point)
-        }),
+        hover: surface
+            .zip(point)
+            .map_or(HostPointerRoute::Unknown, |(surface, point)| {
+                HostPointerRoute::new(surface, point)
+            }),
         surface,
         delivery: clear.then(|| hit.and_then(|hit| hit.delivery())).flatten(),
         drag: clear
@@ -251,13 +446,15 @@ pub(super) fn queue(
             .config
             .input
             .pointer_metadata(host.observed_at(), Some(modifiers)),
+        press_commit,
+        stream_live,
     }));
     if let Some(region) = host
         .mounts
         .get_mut(&owner)
         .and_then(|mount| mount.regions.get_mut(&surface_id))
     {
-        region.pointer = Some(point);
+        region.pointer = point;
         region.dirty = true;
     }
     true
@@ -310,7 +507,7 @@ pub(super) fn revoke_blocked_hover(shared: &super::SharedHost, window: &mut Wind
         blocked.into_iter().find(|frame| {
             probe
                 .host_pointer_hover_position(frame.surface)
-                .is_some_and(|(_, point)| logical_point(position, frame.bounds) == Some(point))
+                .is_some_and(|(_, point)| logical_point(position, frame.geometry) == Some(point))
         })
     };
     let Some(frame) = frame else {
@@ -326,7 +523,7 @@ pub(super) fn revoke_blocked_hover(shared: &super::SharedHost, window: &mut Wind
         frame.serial,
         SurfacePointerEvent::Moved,
         position,
-        frame.bounds,
+        frame.geometry,
         &frame.hitboxes,
         &frame.content_hitboxes,
         true,
@@ -339,13 +536,10 @@ pub(super) fn revoke_blocked_hover(shared: &super::SharedHost, window: &mut Wind
 
 pub(super) fn logical_point(
     position: Point<Pixels>,
-    bounds: Bounds<Pixels>,
+    geometry: ElementGeometry,
 ) -> Option<LogicalPoint> {
-    LogicalPoint::new(
-        f64::from(f32::from(position.x - bounds.origin.x)),
-        f64::from(f32::from(position.y - bounds.origin.y)),
-    )
-    .ok()
+    let local = geometry.window_to_local_point(position).ok()?;
+    LogicalPoint::new(f64::from(f32::from(local.x)), f64::from(f32::from(local.y))).ok()
 }
 
 pub(super) fn is_presented(

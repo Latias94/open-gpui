@@ -1513,7 +1513,7 @@ dependencies = [
 [[package]]
 name = "dockspace"
 version = "0.1.0"
-source = "git+https://github.com/Latias94/dockspace?rev=8cf631f85eb91b04ad29dcd6031acceb48081c08#8cf631f85eb91b04ad29dcd6031acceb48081c08"
+source = "git+https://github.com/Latias94/dockspace?rev=129e802abc516fe6aa24075f44aa9323a13ff04b#129e802abc516fe6aa24075f44aa9323a13ff04b"
 dependencies = [
  "blake3",
  "serde",
@@ -3758,6 +3758,23 @@ dependencies = [
  "open-gpui",
  "open-gpui-docking",
  "open-gpui-platform",
+]
+
+[[package]]
+name = "open-gpui-docking-native"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "log",
+ "open-gpui",
+ "open-gpui-docking",
+ "open-gpui-platform",
+ "raw-window-handle",
+ "serde",
+ "serde_json",
+ "toml",
+ "windows",
 ]
 
 [[package]]
@@ -7160,6 +7177,7 @@ version = "0.2.0"
 dependencies = [
  "clap",
  "open-gpui-ui-components",
+ "serde",
  "serde_json",
  "toml",
 ]

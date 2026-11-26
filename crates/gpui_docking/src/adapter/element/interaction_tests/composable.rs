@@ -383,7 +383,7 @@ fn shared_grid_divider_resizes_both_rows_without_rebuilding_views(cx: &mut TestA
                 _ => None,
             })
             .unwrap();
-        to_gpui(control.bounds, region.bounds.unwrap()).center()
+        to_gpui(control.bounds, region.layout_bounds().unwrap()).center()
     });
     visual.simulate_mouse_down(divider, MouseButton::Left, Modifiers::none());
     frames(&mut visual, &dock);

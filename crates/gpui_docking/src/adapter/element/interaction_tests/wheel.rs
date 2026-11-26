@@ -168,7 +168,7 @@ pub(super) fn target(
             _ => None,
         })
         .unwrap();
-    to_gpui(rect, region.bounds.unwrap())
+    to_gpui(rect, region.layout_bounds().unwrap())
 }
 
 #[open_gpui::test]
@@ -442,7 +442,7 @@ fn opening_a_sibling_tab_list_moves_keyboard_focus_to_its_first_row(cx: &mut Tes
                     _ => None,
                 })
                 .unwrap();
-            to_gpui(control.bounds, region.bounds.unwrap()).center()
+            to_gpui(control.bounds, region.layout_bounds().unwrap()).center()
         })
     };
     visual.simulate_click(openers[0], Modifiers::none());
@@ -566,7 +566,29 @@ fn withdrawing_a_hidden_frame_wakes_an_idle_embedded_sibling(cx: &mut TestAppCon
     cx.set_platform_hovered_window(Some(first.into()));
     let tab = source.debug_bounds("dockspace:tab:2").unwrap().center();
     cx.set_window_frame_delivery_mode(first.into(), open_gpui::PlatformFrameDeliveryMode::Deferred);
-    source.simulate_click(tab, Modifiers::none());
+    source.update(|window, cx| {
+        // Keep the sibling idle until the deliberate withdrawal below. The
+        // test application can draw automatically between separate updates.
+        window.dispatch_event(
+            open_gpui::PlatformInput::MouseDown(MouseDownEvent {
+                position: tab,
+                modifiers: Modifiers::none(),
+                button: MouseButton::Left,
+                click_count: 1,
+                first_mouse: false,
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            open_gpui::PlatformInput::MouseUp(MouseUpEvent {
+                position: tab,
+                modifiers: Modifiers::none(),
+                button: MouseButton::Left,
+                click_count: 1,
+            }),
+            cx,
+        );
+    });
     assert!(source.simulate_frame(RequestFrameOptions {
         require_presentation: true,
         force_render: true,

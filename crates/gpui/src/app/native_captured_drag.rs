@@ -592,6 +592,18 @@ pub(super) struct NativeCapturedDragOutbox {
 }
 
 impl NativeCapturedDragOutbox {
+    pub(super) fn can_reserve_cancellation(
+        &self,
+        source_window: WindowId,
+        generation: NativeCapturedDragGeneration,
+    ) -> bool {
+        let state = self.state.borrow();
+        state.terminal_generation != Some(generation)
+            && state.current_authority.as_ref().is_some_and(|authority| {
+                authority.source_window == source_window && authority.generation == generation
+            })
+    }
+
     pub(super) fn permits_stationary_sample(
         &self,
         generation: NativeCapturedDragGeneration,
@@ -1297,6 +1309,30 @@ impl App {
             generation,
             reason,
             continuation,
+        )
+    }
+
+    /// Requests cancellation of a current, unterminated native captured drag.
+    ///
+    /// Returning a barrier means this request reserved the terminal. An earlier
+    /// release or cancellation keeps its own continuation and reason.
+    #[doc(hidden)]
+    pub fn try_cancel_native_captured_drag_with_release_barrier(
+        &mut self,
+        source_window: WindowId,
+        generation: NativeCapturedDragGeneration,
+        reason: PointerCancelReason,
+        on_terminal: impl FnOnce(
+            NativeCapturedDragReleaseBarrier,
+            NativeCapturedDragReleaseTerminal,
+            &mut App,
+        ) + 'static,
+    ) -> Option<NativeCapturedDragReleaseBarrier> {
+        self.cancel_native_captured_drag_with_release_continuation(
+            source_window,
+            generation,
+            reason,
+            Some(Box::new(on_terminal)),
         )
     }
 

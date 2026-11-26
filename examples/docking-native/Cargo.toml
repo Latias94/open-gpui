@@ -1,0 +1,28 @@
+[package]
+name = "open-gpui-docking-native"
+version.workspace = true
+edition.workspace = true
+rust-version = "1.95"
+license.workspace = true
+publish = false
+description = "Native Windows qualification for the shared docking session."
+
+[[test]]
+name = "native_windows_interactive"
+path = "tests/native_windows_interactive.rs"
+
+[target.'cfg(windows)'.dev-dependencies]
+anyhow.workspace = true
+futures.workspace = true
+log.workspace = true
+open_gpui = { workspace = true, features = ["profiler", "test-support"] }
+open_gpui_docking = { workspace = true, features = ["test-support"] }
+open_gpui_platform = { workspace = true, features = ["test-support"] }
+raw-window-handle = "0.6"
+serde.workspace = true
+serde_json.workspace = true
+toml = "1.1.2"
+windows.workspace = true
+
+[lints]
+workspace = true

@@ -819,7 +819,7 @@ fn adoption_shares_the_original_semantics_submission_and_waits_for_first_live(
         assert!(resumed.same_authority(&ticket));
         super::super::watch_submission(&dock.host.borrow(), &resumed, window).unwrap();
         let serial = dock.host.borrow().mounts[&shell.window_id()].serial;
-        crate::adapter::presentation::observe(&dock.host, &resumed, serial, window);
+        crate::adapter::presentation::observe_presented(&dock.host, &resumed, serial, window);
     })
     .unwrap();
     frame(&mut visual, &dock);
@@ -988,6 +988,102 @@ fn a_custom_factory_retires_the_default_preview_and_keeps_creation_ownership(
     assert!(ticket.snapshot().native_terminal());
     assert!(dock.error().is_none(), "{:?}", dock.error());
     assert!(dock.native_is_quiescent());
+}
+
+#[open_gpui::test]
+fn preview_live_placement_failure_retires_only_the_visual_shell(cx: &mut TestAppContext) {
+    let Fixture {
+        dock,
+        anchor,
+        shell,
+        state,
+        bridge,
+        pointer,
+        drag,
+    } = Fixture::new(cx);
+    let preview = state.borrow().preview;
+    let updated = Preview {
+        placement: PhysicalRect::new(
+            preview.placement.x() + 24.0,
+            preview.placement.y(),
+            preview.placement.width(),
+            preview.placement.height(),
+        )
+        .unwrap(),
+        ..preview
+    };
+    dock.host
+        .borrow_mut()
+        .native
+        .as_mut()
+        .unwrap()
+        .provisional
+        .preview = Some(AcceptedPreview {
+        owner: anchor.window_id(),
+        drag,
+        visual: updated,
+        route: Some(PlatformNativePointerPhysicalFrame::new(
+            pointer.global_position(),
+            pointer.source_geometry(),
+        )),
+        capture: None,
+    });
+    cx.update(|cx| {
+        assert!(dock.has_active_gesture());
+        drive(&dock.host, &bridge, cx);
+        assert!(state.borrow().failure.is_some());
+        assert!(dock.error().is_none(), "{:?}", dock.error());
+        drive(&dock.host, &bridge, cx);
+    });
+    cx.run_until_parked();
+    assert!(dock.has_active_gesture());
+    assert!(!cx.update(|cx| cx.windows().contains(&shell)));
+    assert!(cx.update(|cx| cx.windows().contains(&anchor)));
+}
+
+#[open_gpui::test]
+fn preview_destroyed_before_retirement_does_not_block_failed_shutdown(cx: &mut TestAppContext) {
+    let Fixture {
+        dock,
+        shell,
+        state,
+        bridge,
+        ..
+    } = Fixture::new(cx);
+    cx.update_window(shell, |_, window, cx| window.remove_window(cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert!(!cx.windows().contains(&shell));
+        assert!(
+            cx.native_window_retirement_ticket(shell.window_id())
+                .is_none()
+        );
+        assert_eq!(
+            state.borrow().session.snapshot().phase(),
+            WindowProvisionalSessionPhase::Terminal
+        );
+        let mut host = dock.host.borrow_mut();
+        host.native.as_mut().unwrap().bridge = Some(bridge);
+        host.fail(&crate::adapter::native::NativeBridgeError::EffectReport(
+            dockspace::runtime::NativeHostErrorKind::InvalidFacts,
+        ));
+        drop(host);
+        dock.begin_failed_native_shutdown(cx).unwrap();
+    });
+    cx.run_until_parked();
+    assert!(matches!(
+        dock.native_termination(),
+        Some(crate::DockNativeTermination::Failed(_))
+    ));
+    assert_eq!(
+        dock.inspection()
+            .unwrap()
+            .native
+            .unwrap()
+            .provisional_retirement_count,
+        0
+    );
 }
 
 #[open_gpui::test]

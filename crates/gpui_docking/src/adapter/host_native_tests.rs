@@ -10,8 +10,8 @@ use dockspace::{
     },
     policy::DockPolicy,
     runtime::{
-        DockspaceRuntimeErrorKind, DockspaceSession, HostFrameReport, HostInputOutcome,
-        NativeHostErrorKind, NativeReceiverAnswer, SurfaceUnavailableReason,
+        DockspaceManipulationStatus, DockspaceRuntimeErrorKind, DockspaceSession, HostFrameReport,
+        HostInputOutcome, NativeHostErrorKind, NativeReceiverAnswer, SurfaceUnavailableReason,
     },
 };
 use open_gpui::{
@@ -64,6 +64,61 @@ fn finish(cx: &mut TestAppContext, dock: &DockSurface) {
     cx.update(|cx| dock.pump_native(cx));
     cx.run_until_parked();
     assert!(dock.error().is_none(), "{:?}", dock.error());
+}
+
+pub(in crate::adapter) fn capture_feedback(
+    cx: &mut TestAppContext,
+    dock: &DockSurface,
+    dispatch: impl FnOnce(&mut TestAppContext),
+) -> Vec<DockspaceManipulationStatus> {
+    // Let GPUI route its genuine native callbacks while retaining the bridge so
+    // the test can read the core feedback before the adapter consumes the report.
+    let mut bridge = dock
+        .host
+        .borrow_mut()
+        .native
+        .as_mut()
+        .unwrap()
+        .bridge
+        .take()
+        .unwrap();
+    dispatch(cx);
+    cx.run_until_parked();
+    let feedback = cx.update(|cx| {
+        let mut host = dock.host.borrow_mut();
+        let mut feedback = Vec::new();
+        for _ in 0..4 {
+            bridge.collect(&mut host.session).unwrap();
+            if host.session.has_pending_native_input() {
+                let super::HostState {
+                    session,
+                    mounts,
+                    native,
+                    ..
+                } = &mut *host;
+                let report = super::begin_frame(session, mounts, native.as_ref(), None, cx)
+                    .unwrap()
+                    .commit()
+                    .unwrap();
+                feedback.extend(
+                    report
+                        .manipulation_feedback()
+                        .iter()
+                        .map(|entry| entry.status()),
+                );
+                host.invalidate_report(&report);
+                bridge.accept_report(report);
+            }
+            if bridge.transport().is_empty() {
+                break;
+            }
+        }
+        assert!(bridge.transport().is_empty());
+        host.native.as_mut().unwrap().bridge = Some(bridge);
+        feedback
+    });
+    finish(cx, dock);
+    feedback
 }
 
 #[open_gpui::test]
@@ -260,6 +315,85 @@ fn failed_anchor_rollback_cannot_block_retirement_of_its_existing_root_dependenc
         Some(crate::DockNativeTermination::Failed(_))
     ));
     assert!(!dock.native_is_quiescent());
+}
+
+#[open_gpui::test]
+fn unbound_root_destroyed_before_retirement_does_not_block_failed_shutdown(
+    cx: &mut TestAppContext,
+) {
+    let dock = cx.update(workspace);
+    let anchor = cx
+        .update(|cx| dock.open_native_root(FIRST, true, WindowOptions::default(), cx))
+        .unwrap();
+    let root = cx
+        .update(|cx| {
+            cx.open_window_detailed(WindowOptions::default(), |window, cx| {
+                // Exercise the state after registration was recorded but before
+                // a native callback installation could claim the window.
+                let handle = window.window_handle();
+                let mut host = dock.host.borrow_mut();
+                let native = host.native.as_mut().unwrap();
+                native.registrations.insert(
+                    handle.window_id(),
+                    super::RootRegistration {
+                        surface: SECOND,
+                        window: handle,
+                        anchor: false,
+                        retirement: super::termination::UnboundWindowRetirement::observe(
+                            handle.window_id(),
+                            &native.transport,
+                            cx,
+                        ),
+                    },
+                );
+                cx.new(|_| Empty)
+            })
+        })
+        .unwrap()
+        .into();
+    // Keep pump callbacks from recovering the registration before its window
+    // goes away. The failed native generation still owns the same registration.
+    let bridge = dock
+        .host
+        .borrow_mut()
+        .native
+        .as_mut()
+        .unwrap()
+        .bridge
+        .take()
+        .unwrap();
+    let owner = cx
+        .update_window(root, |_, window, cx| {
+            let owner = window.window_handle().window_id();
+            window.remove_window(cx);
+            owner
+        })
+        .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert!(!cx.windows().contains(&root));
+        assert!(cx.native_window_retirement_ticket(owner).is_none());
+        let mut host = dock.host.borrow_mut();
+        assert!(
+            host.native
+                .as_ref()
+                .unwrap()
+                .registrations
+                .contains_key(&owner)
+        );
+        host.native.as_mut().unwrap().bridge = Some(bridge);
+        host.fail(&NativeBridgeError::EffectReport(
+            NativeHostErrorKind::InvalidFacts,
+        ));
+        drop(host);
+        dock.begin_failed_native_shutdown(cx).unwrap();
+    });
+    cx.run_until_parked();
+    assert!(matches!(
+        dock.native_termination(),
+        Some(crate::DockNativeTermination::Failed(_))
+    ));
+    assert!(cx.update_window(anchor, |_, _, _| ()).is_err());
 }
 
 #[open_gpui::test]

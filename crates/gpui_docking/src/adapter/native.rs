@@ -26,15 +26,16 @@ mod transport;
 mod tests;
 
 use std::{
+    cell::Cell,
     collections::{BTreeSet, VecDeque},
     rc::Rc,
 };
 
 use dockspace::runtime::{
-    DockspaceRuntimeError, DockspaceSession, HostFrameReport, NativeEffectRequest,
-    NativeHostCapabilities, NativeHostCapability, NativePointerRoster, NativeSurfaceBinding,
-    NativeSurfaceCloseAction, NativeSurfaceCloseRequest, NativeWindowBinding, NativeWindowFacts,
-    NativeWindows, NativeWorkAreaRoster,
+    DockspaceRuntimeError, DockspaceSession, HostFrameReport, NativeEffectOutbox,
+    NativeEffectRequest, NativeHostCapabilities, NativeHostCapability, NativePointerId,
+    NativePointerRoster, NativeSurfaceBinding, NativeSurfaceCloseAction, NativeSurfaceCloseRequest,
+    NativeWindowBinding, NativeWindowFacts, NativeWindows, NativeWorkAreaRoster,
 };
 use open_gpui::{
     AnyWindowHandle, App, NativeCapturedDragReleaseBarrier, NativeCapturedDragReleaseTerminal,
@@ -45,6 +46,7 @@ use thiserror::Error;
 pub use gpui::{NativeCallbacks, NativeGeometry, NativeOpenFailure, NativeWindowRequest};
 pub(crate) use input::native_capture_owner;
 pub use input::{NativeCapture, NativePointerFacts};
+pub(super) use transport::{GPUI_MOUSE_POINTER, MousePressLane};
 pub use transport::{NativeTransport, NativeTransportInspection};
 
 /// Facts delivered to the host without acknowledging its semantic outputs.
@@ -165,20 +167,26 @@ pub struct NativeBridge {
     transport: NativeTransport,
     windows: NativeWindows<open_gpui::WindowId, NativeCallbacks>,
     opening: Option<NativeCallbacks>,
-    effects: VecDeque<NativeEffectRequest>,
+    effects: NativeEffectOutbox<gpui::PendingDispatch>,
     reports: VecDeque<NativeReport>,
     geometry: Option<Rc<NativeGeometry>>,
     capabilities: NativeHostCapabilities,
     retired_placements: BTreeSet<NativeSurfaceBinding>,
     anchor: Option<NativeWindowBinding>,
     draining: bool,
-    pending: Option<gpui::PendingDispatch>,
     work_areas: NativeWorkAreaRoster,
     desktop: desktop::DesktopObservation,
-    desktop_pending_commit: bool,
+    roster_pending_commit: bool,
+    inventory_needs_refresh: Cell<bool>,
     // Original captured packet from the accepted FIFO prefix, never a later cursor query.
-    pointer_frame: Option<open_gpui::PlatformNativePointerPhysicalFrame>,
-    pointer_capture: Option<NativeCapture>,
+    captured_pointer: Option<CapturedPointer>,
+}
+
+struct CapturedPointer {
+    binding: NativeWindowBinding,
+    pointer: NativePointerId,
+    capture: NativeCapture,
+    frame: Option<open_gpui::PlatformNativePointerPhysicalFrame>,
 }
 
 impl NativeBridge {
@@ -216,19 +224,18 @@ impl NativeBridge {
             transport,
             windows: NativeWindows::new(),
             opening: None,
-            effects: VecDeque::new(),
+            effects: NativeEffectOutbox::default(),
             reports: VecDeque::new(),
             geometry,
             capabilities,
             retired_placements: BTreeSet::new(),
             anchor: None,
             draining: false,
-            pending: None,
             work_areas: NativeWorkAreaRoster::Unknown,
             desktop: desktop::DesktopObservation::default(),
-            desktop_pending_commit: false,
-            pointer_frame: None,
-            pointer_capture: None,
+            roster_pending_commit: false,
+            inventory_needs_refresh: Cell::new(false),
+            captured_pointer: None,
         })
     }
 
@@ -381,6 +388,9 @@ impl NativeBridge {
             let before = continuation.predecessor();
             let after = continuation.successor();
             if matches!(self.windows.continue_root(*continuation), Ok(true)) {
+                // The committed replacement settles the old Root's effects.
+                // The predecessor ticket cannot publish facts for the successor.
+                drop(self.effects.retire_continued_window(*continuation));
                 if let Some(callbacks) = self.windows.get(after.window()) {
                     callbacks.continue_root(after.window());
                 }
@@ -426,7 +436,7 @@ impl NativeBridge {
 
     /// Appends already extracted requests without deduplication or reordering.
     pub fn enqueue_effects(&mut self, effects: impl IntoIterator<Item = NativeEffectRequest>) {
-        self.effects.extend(effects);
+        self.effects.enqueue(effects);
     }
 
     /// Resolves one core-issued close edge; `Defer` retains the original edge unchanged.
@@ -467,7 +477,6 @@ impl NativeBridge {
         self.windows.is_empty()
             && self.opening.is_none()
             && self.effects.is_empty()
-            && self.pending.is_none()
             && self.retired_placements.is_empty()
             && self.reports.is_empty()
             && self.transport.is_empty()

@@ -86,6 +86,7 @@ and [docking guide](crates/gpui_docking/README.md).
 - `crates/gpui_docking`: shared DockspaceSession, retained Views and GPUI native transport; see
   [crates/gpui_docking/README.md](crates/gpui_docking/README.md)
 - `examples/docking-minimal`: minimal single-window docking example using common public APIs
+- `examples/docking-native`: Windows native shared-session qualification
 - `examples/smoke-native`: native smoke example
 - `xtask`: workspace verification and import-boundary checks
 

@@ -103,6 +103,14 @@ impl DockLogicalPlacementRect {
         )
         .map_err(|error| invalid(error.to_string()))
     }
+
+    pub(super) fn is_window_restore_hint(self) -> bool {
+        self.validate().is_ok()
+            && self.width > 0.0
+            && self.height > 0.0
+            && (self.x + self.width).is_finite()
+            && (self.y + self.height).is_finite()
+    }
 }
 
 /// A durable window presentation preference, not a live native state observation.
@@ -127,6 +135,14 @@ pub struct DockLogicalWindowPlacement {
     pub bounds: DockLogicalPlacementRect,
 }
 
+impl DockLogicalWindowPlacement {
+    /// Returns usable restore geometry. The requested window state can still be
+    /// applied with fallback geometry when a saved rectangle has no area.
+    pub fn restore_bounds(self) -> Option<DockLogicalPlacementRect> {
+        self.bounds.is_window_restore_hint().then_some(self.bounds)
+    }
+}
+
 /// Host-owned logical placement hints migrated without inventing native facts.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -134,7 +150,8 @@ pub struct DockLogicalViewportPlacement {
     /// Historical display identifier, used only as a restore preference.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_id: Option<u64>,
-    /// Historical logical window geometry.
+    /// Historical window state and logical geometry. Unusable bounds fall back to
+    /// the host's default geometry while preserving the requested window state.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window_bounds: Option<DockLogicalWindowPlacement>,
     /// Historical logical host rectangle within its window.

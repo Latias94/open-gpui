@@ -41,7 +41,7 @@ impl CustomTabLabel {
             },
             cx,
         );
-        super::tab_label_style(config, color)
+        super::layout_paint::tab_label_style(config, color)
             .id(ElementId::NamedInteger(
                 "dockspace-tab-label".into(),
                 self.item.get(),
