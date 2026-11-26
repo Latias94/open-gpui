@@ -6,6 +6,7 @@ on:
     branches:
       - master
       - main
+      - refactor/v2-slim-wgpu
   workflow_dispatch:
 
 permissions:
@@ -40,4 +41,4 @@ jobs:
           cache-bin: "false"
 
       - name: Run dependency health
-        run: cargo run -p xtask -- dependency-health
+        run: cargo run --locked -p xtask -- dependency-health

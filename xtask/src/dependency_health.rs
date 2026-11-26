@@ -13,32 +13,22 @@ const MSRV_EXCEPTIONS: &[(&str, &str)] = &[
     ("open-gpui-docking", "1.95"),
     ("open-gpui-docking-minimal", "1.95"),
     ("open-gpui-docking-multiviewport", "1.95"),
+    ("open-gpui-docking-native", "1.95"),
     ("open-gpui-dockspace-editor", "1.95"),
     ("xtask", "1.95"),
 ];
 
 const ALLOWED_DUPLICATE_CRATES: &[&str] = &[
     "accesskit_consumer",
-    "async-channel",
     "base64",
     "bitflags",
-    "block-buffer",
     "block2",
     "convert_case",
-    "core-foundation",
-    "core-graphics",
-    "core-graphics-types",
-    "cpufeatures",
-    "crypto-common",
-    "digest",
-    "event-listener",
     "getrandom",
     "hashbrown",
-    "heapless",
     "itertools",
     "jni-sys",
     "linux-raw-sys",
-    "nix",
     "nom",
     "objc2",
     "objc2-app-kit",
@@ -51,48 +41,20 @@ const ALLOWED_DUPLICATE_CRATES: &[&str] = &[
     "quick-error",
     "r-efi",
     "rand",
-    "rand_chacha",
     "rand_core",
     "read-fonts",
-    "redox_syscall",
     "roxmltree",
     "rustc-hash",
     "rustix",
-    "serde_spanned",
-    "sha2",
-    "shlex",
     "skrifa",
     "spin",
     "syn",
     "thiserror",
     "thiserror-impl",
-    "toml",
-    "toml_datetime",
-    "toml_edit",
-    "unicode-width",
-    "windows",
-    "windows-collections",
-    "windows-core",
-    "windows-future",
-    "windows-implement",
-    "windows-interface",
     "windows-link",
-    "windows-numerics",
-    "windows-registry",
     "windows-result",
     "windows-strings",
     "windows-sys",
-    "windows-targets",
-    "windows-threading",
-    "windows_aarch64_gnullvm",
-    "windows_aarch64_msvc",
-    "windows_i686_gnu",
-    "windows_i686_gnullvm",
-    "windows_i686_msvc",
-    "windows_x86_64_gnu",
-    "windows_x86_64_gnullvm",
-    "windows_x86_64_msvc",
-    "winnow",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -108,7 +70,10 @@ pub(crate) fn dependency_health(root: &Path) -> Result<(), ()> {
     let metadata = cargo_metadata(root)?;
     let mut failures = Vec::new();
     failures.extend(msrv_failures(&metadata));
-    failures.extend(duplicate_dependency_failures(&metadata));
+    failures.extend(duplicate_dependency_failures(
+        &metadata,
+        ALLOWED_DUPLICATE_CRATES,
+    ));
     failures.extend(cargo_audit_failures(root));
 
     if failures.is_empty() {
@@ -255,7 +220,7 @@ fn msrv_failures(metadata: &Value) -> Vec<String> {
     failures
 }
 
-fn duplicate_dependency_failures(metadata: &Value) -> Vec<String> {
+fn duplicate_dependency_failures(metadata: &Value, allowed: &[&str]) -> Vec<String> {
     let mut by_name = BTreeMap::<String, BTreeSet<String>>::new();
     for package in packages(metadata) {
         let Some(source) = package.get("source").and_then(Value::as_str) else {
@@ -276,10 +241,7 @@ fn duplicate_dependency_failures(metadata: &Value) -> Vec<String> {
             .insert(version.to_string());
     }
 
-    let allowed = ALLOWED_DUPLICATE_CRATES
-        .iter()
-        .copied()
-        .collect::<BTreeSet<_>>();
+    let allowed = allowed.iter().copied().collect::<BTreeSet<_>>();
     let actual_duplicates = by_name
         .iter()
         .filter(|(_, versions)| versions.len() > 1)
@@ -451,15 +413,17 @@ mod tests {
     #[test]
     fn msrv_scan_allows_docking_floor_without_raising_core_floor() {
         let metadata = serde_json::json!({
-            "workspace_members": ["core", "docking"],
+            "workspace_members": ["core", "docking", "docking-native"],
             "packages": [
                 {"id": "core", "name": "open-gpui", "rust_version": "1.93"},
                 {"id": "docking", "name": "open-gpui-docking", "rust_version": "1.95"},
+                {"id": "docking-native", "name": "open-gpui-docking-native", "rust_version": "1.95"},
                 {"id": "dockspace", "name": "dockspace", "rust_version": "1.95"}
             ],
             "resolve": {"nodes": [
                 {"id": "core", "dependencies": []},
                 {"id": "docking", "dependencies": ["core", "dockspace"]},
+                {"id": "docking-native", "dependencies": ["docking"]},
                 {"id": "dockspace", "dependencies": []}
             ]}
         });
@@ -505,17 +469,22 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_dependency_scan_rejects_unlisted_duplicates() {
+    fn duplicate_dependency_scan_rejects_unlisted_duplicates_and_stale_allowances() {
         let metadata = serde_json::json!({
             "packages": [
+                {"name": "allowed-dup", "version": "1.0.0", "source": "registry+test"},
+                {"name": "allowed-dup", "version": "2.0.0", "source": "registry+test"},
                 {"name": "fresh-dup", "version": "1.0.0", "source": "registry+test"},
-                {"name": "fresh-dup", "version": "2.0.0", "source": "registry+test"}
+                {"name": "fresh-dup", "version": "2.0.0", "source": "registry+test"},
+                {"name": "stale-dup", "version": "1.0.0", "source": "registry+test"}
             ]
         });
-        assert!(
-            duplicate_dependency_failures(&metadata)
-                .iter()
-                .any(|failure| failure.contains("fresh-dup"))
+        assert_eq!(
+            duplicate_dependency_failures(&metadata, &["allowed-dup", "stale-dup"]),
+            [
+                "unexpected duplicate dependency `fresh-dup` has versions 1.0.0, 2.0.0",
+                "duplicate dependency allowlist entry `stale-dup` is stale; remove it",
+            ]
         );
     }
 }
