@@ -26,8 +26,9 @@ use windows::Win32::{
         },
         WindowsAndMessaging::{
             GetWindowRect, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SendMessageW, SetWindowPos,
-            WM_CHAR, WM_IME_CHAR, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION,
-            WM_IME_STARTCOMPOSITION, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+            WM_ACTIVATE, WM_CHAR, WM_IME_CHAR, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION,
+            WM_IME_STARTCOMPOSITION, WM_INPUTLANGCHANGE, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN,
+            WM_LBUTTONUP, WM_MOUSEMOVE, WM_SETFOCUS,
         },
     },
 };
@@ -94,10 +95,33 @@ fn ime_cancel_retires_callbacks_until_the_next_composition_start() {
     }));
     assert!(cancellation.consumes(WM_IME_COMPOSITION));
     assert!(cancellation.consumes(WM_IME_CHAR));
-    assert!(!cancellation.consumes(WM_CHAR));
     assert!(!cancellation.consumes(WM_IME_STARTCOMPOSITION));
     assert!(!cancellation.consumes(WM_IME_COMPOSITION));
     assert!(!cancellation.consumes(WM_IME_CHAR));
+
+    for boundary in [
+        WM_KEYDOWN,
+        WM_CHAR,
+        WM_KILLFOCUS,
+        WM_SETFOCUS,
+        WM_ACTIVATE,
+        WM_INPUTLANGCHANGE,
+    ] {
+        assert!(cancellation.cancel(|| true));
+        assert!(cancellation.consumes(WM_IME_COMPOSITION));
+        assert!(cancellation.consumes(WM_IME_CHAR));
+        assert!(!cancellation.consumes(boundary));
+        assert!(!cancellation.consumes(WM_IME_COMPOSITION));
+        assert!(!cancellation.consumes(WM_IME_CHAR));
+    }
+
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        cancellation.cancel(|| panic!("simulated ImmNotifyIME unwind"))
+    }));
+    assert!(panicked.is_err());
+    assert!(!cancellation.consumes(WM_IME_COMPOSITION));
+    assert!(!cancellation.consumes(WM_IME_STARTCOMPOSITION));
+    assert!(cancellation.cancel(|| true));
 }
 
 #[test]

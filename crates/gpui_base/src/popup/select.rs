@@ -125,6 +125,11 @@ impl<K: Clone + Eq + 'static> Select<K> {
                 .iter()
                 .position(|item| item.key == key && !item.disabled)
         });
+        if self.items.is_empty() && self.open {
+            self.open = false;
+            self.active = None;
+            cx.emit(MenuEvent::Dismissed);
+        }
         cx.notify();
     }
 

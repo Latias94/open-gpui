@@ -154,6 +154,7 @@ impl TextInput {
     ) {
         window.focus(&self.focus, cx);
         window.request_virtual_keyboard();
+        cx.stop_propagation();
         let Ok(position) = event.target_layout_position() else {
             return;
         };

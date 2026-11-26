@@ -48,18 +48,37 @@ pub(crate) struct WindowsImeCancellation(Cell<ImeCancellationState>);
 
 impl WindowsImeCancellation {
     fn cancel(&self, notify: impl FnOnce() -> bool) -> bool {
+        struct ResetGuard<'a> {
+            cell: &'a Cell<ImeCancellationState>,
+            next: ImeCancellationState,
+        }
+
+        impl Drop for ResetGuard<'_> {
+            fn drop(&mut self) {
+                self.cell.set(self.next);
+            }
+        }
+
         let previous = self.0.get();
         if previous == ImeCancellationState::Canceling {
             return false;
         }
         self.0.set(ImeCancellationState::Canceling);
+        let mut guard = ResetGuard {
+            cell: &self.0,
+            next: previous,
+        };
         let canceled = notify();
-        self.0.set(if canceled {
-            ImeCancellationState::AwaitingStart
-        } else {
-            previous
-        });
+        if canceled {
+            guard.next = ImeCancellationState::AwaitingStart;
+        }
         canceled
+    }
+
+    fn clear_awaiting(&self) {
+        if self.0.get() == ImeCancellationState::AwaitingStart {
+            self.0.set(ImeCancellationState::Inactive);
+        }
     }
 
     fn consumes(&self, message: u32) -> bool {
@@ -73,6 +92,11 @@ impl WindowsImeCancellation {
                 false
             }
             WM_IME_COMPOSITION | WM_IME_CHAR => state != ImeCancellationState::Inactive,
+            WM_KEYDOWN | WM_SYSKEYDOWN | WM_CHAR | WM_KILLFOCUS | WM_SETFOCUS | WM_ACTIVATE
+            | WM_INPUTLANGCHANGE => {
+                self.clear_awaiting();
+                false
+            }
             _ => false,
         }
     }
@@ -1888,6 +1912,7 @@ impl WindowsWindowInner {
         if !authority.is_current() || ime_enabled == self.state.ime_enabled.get() {
             return;
         }
+        self.state.ime_cancellation.clear_awaiting();
         self.state.ime_enabled.set(ime_enabled);
         unsafe {
             if ime_enabled {

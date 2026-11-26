@@ -7,7 +7,7 @@ use open_gpui::{
 };
 use open_gpui_base::{
     Menu, MenuEvent, MenuItem, Modal, NumericEvent, NumericRange, NumericScrubber, Select,
-    TextInput, TextInputEvent,
+    TextInput, TextInputEvent, TreeRow, VirtualListEvent, VirtualTree,
 };
 
 fn draw(visual: &mut VisualTestContext) {
@@ -302,4 +302,199 @@ fn scrolling_the_trigger_out_of_view_dismisses_the_popup() {
     draw(&mut visual);
     visual.run_until_parked();
     visual.update(|_, cx| assert!(!select.read(cx).is_open()));
+}
+
+struct ScrubberHost {
+    scrubber: Option<Entity<NumericScrubber>>,
+}
+
+impl Render for ScrubberHost {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().children(self.scrubber.clone())
+    }
+}
+
+#[test]
+fn numeric_scrubber_rebinds_text_input_when_moved_to_another_window() {
+    let mut app = TestAppContext::single();
+    let scrubber = app.new(|cx| {
+        NumericScrubber::new(
+            2.,
+            NumericRange::new(0., 10.)
+                .and_then(|range| range.with_step(1.))
+                .expect("stepped range"),
+            cx,
+        )
+    });
+    let first = app.open_window(size(px(160.), px(80.)), |_, _| ScrubberHost {
+        scrubber: Some(scrubber.clone()),
+    });
+    let mut first_visual = activate(first, &app);
+    let (events, _subscription) = events(&mut first_visual, &scrubber);
+
+    first_visual.update(|window, cx| scrubber.focus_handle(cx).focus(window, cx));
+    first_visual.simulate_keystrokes("enter");
+    draw(&mut first_visual);
+    first_visual.simulate_keystrokes("escape");
+    draw(&mut first_visual);
+    assert_eq!(*events.borrow(), [NumericEvent::Cancel(2.)]);
+    events.borrow_mut().clear();
+
+    let second = app.open_window(size(px(160.), px(80.)), |_, _| ScrubberHost {
+        scrubber: Some(scrubber.clone()),
+    });
+    first
+        .update(&mut first_visual, |host, window, cx| {
+            host.scrubber = None;
+            window.remove_window(cx);
+        })
+        .expect("first window closes");
+    app.run_until_parked();
+
+    let mut second_visual = activate(second, &app);
+    second_visual.update(|window, cx| scrubber.focus_handle(cx).focus(window, cx));
+    second_visual.simulate_keystrokes("enter");
+    draw(&mut second_visual);
+    second_visual.simulate_input("2.1");
+    second_visual.update(|window, cx| window.blur(cx));
+    draw(&mut second_visual);
+    assert!(
+        events.borrow().is_empty(),
+        "blurring a value that normalizes to the current value should not emit Commit"
+    );
+
+    second_visual.update(|window, cx| scrubber.focus_handle(cx).focus(window, cx));
+    second_visual.simulate_keystrokes("enter");
+    draw(&mut second_visual);
+    second_visual.simulate_input("7");
+    second_visual.simulate_keystrokes("enter");
+    draw(&mut second_visual);
+    assert_eq!(
+        *events.borrow(),
+        [NumericEvent::Change(7.), NumericEvent::Commit(7.)]
+    );
+    second_visual.update(|window, cx| {
+        assert_eq!(scrubber.read(cx).value(), 7.);
+        assert!(scrubber.focus_handle(cx).is_focused(window));
+    });
+}
+
+#[test]
+fn select_set_items_empty_while_open_dismisses_popup() {
+    let mut app = TestAppContext::single();
+    let window = scroll_window(&mut app);
+    let mut visual = activate(window, &app);
+    let select = window
+        .update(&mut visual, |root, _, _| root.select.clone())
+        .expect("scroll window");
+    let (events, _subscription) = events(&mut visual, &select);
+
+    visual.simulate_click(point(px(160.), px(78.)), Modifiers::none());
+    draw(&mut visual);
+    visual.update(|_, cx| assert!(select.read(cx).is_open()));
+
+    visual.update(|_, cx| {
+        select.update(cx, |select, cx| select.set_items([], cx));
+    });
+    draw(&mut visual);
+    visual.update(|_, cx| assert!(!select.read(cx).is_open()));
+    assert_eq!(*events.borrow(), [MenuEvent::Dismissed]);
+}
+
+#[test]
+fn virtual_tree_programmatic_selection_syncs_active_and_keyboard_navigation() {
+    let mut app = TestAppContext::single();
+    let focused_rows = Rc::new(RefCell::new(Vec::<u32>::new()));
+    let focused_capture = focused_rows.clone();
+    let window = app.open_window(size(px(220.), px(160.)), |_, cx| {
+        let mut tree = VirtualTree::tree(px(24.), cx);
+        tree.set_rows(
+            [
+                TreeRow::new(1u32, None, "One"),
+                TreeRow::new(2, None, "Two"),
+                TreeRow::new(3, None, "Three"),
+                TreeRow::new(4, None, "Four"),
+            ],
+            cx,
+        )
+        .expect("valid rows");
+        tree.set_row_renderer(
+            move |row, state, _, _| {
+                if state.focused {
+                    focused_capture.borrow_mut().push(*row.key());
+                }
+                div().child(row.label().clone())
+            },
+            cx,
+        );
+        tree
+    });
+    let mut visual = activate(window, &app);
+    let tree = window.root(&mut visual).expect("tree root");
+    let (events, _subscription) = events(&mut visual, &tree);
+
+    visual.update(|window, cx| {
+        tree.update(cx, |tree, cx| tree.set_selection([2], cx));
+        tree.focus_handle(cx).focus(window, cx);
+    });
+    focused_rows.borrow_mut().clear();
+    draw(&mut visual);
+    visual.update(|_, cx| {
+        assert_eq!(tree.read(cx).active_key(), Some(&2));
+        assert_eq!(tree.read(cx).selection(), [2]);
+    });
+    assert_eq!(*focused_rows.borrow(), [2]);
+
+    visual.simulate_keystrokes("down");
+    draw(&mut visual);
+    visual.update(|_, cx| {
+        assert_eq!(tree.read(cx).active_key(), Some(&3));
+        assert_eq!(tree.read(cx).selection(), [3]);
+    });
+    visual.simulate_keystrokes("shift-down");
+    draw(&mut visual);
+    visual.update(|_, cx| {
+        assert_eq!(tree.read(cx).active_key(), Some(&4));
+        assert_eq!(tree.read(cx).selection(), [3, 4]);
+    });
+    assert_eq!(
+        *events.borrow(),
+        [
+            VirtualListEvent::SelectionChanged(vec![3]),
+            VirtualListEvent::SelectionChanged(vec![3, 4]),
+        ]
+    );
+}
+
+struct ClickableParent {
+    input: Entity<TextInput>,
+    parent_clicks: Rc<RefCell<usize>>,
+}
+
+impl Render for ClickableParent {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let clicks = self.parent_clicks.clone();
+        div()
+            .id("parent-row")
+            .size_full()
+            .on_mouse_down(MouseButton::Left, move |_, _, _| {
+                *clicks.borrow_mut() += 1;
+            })
+            .child(self.input.clone())
+    }
+}
+
+#[test]
+fn text_input_mouse_down_stops_propagation_to_parent() {
+    let mut app = TestAppContext::single();
+    let parent_clicks = Rc::new(RefCell::new(0usize));
+    let clicks = parent_clicks.clone();
+    let window = app.open_window(size(px(160.), px(60.)), |_, cx| ClickableParent {
+        input: cx.new(|cx| TextInput::new("hello", cx)),
+        parent_clicks: clicks,
+    });
+    let mut visual = activate(window, &app);
+    visual.simulate_click(point(px(12.), px(10.)), Modifiers::none());
+    draw(&mut visual);
+    assert_eq!(*parent_clicks.borrow(), 0);
 }

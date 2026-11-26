@@ -153,8 +153,14 @@ impl<K: Clone + Eq + Hash> TreeModel<K> {
         self.selected.retain(|key| next.indices.contains_key(key));
         next.expanded = std::mem::take(&mut self.expanded);
         next.selected = std::mem::take(&mut self.selected);
-        next.active = self.active.take();
-        next.anchor = self.anchor.take();
+        next.active = self
+            .active
+            .take()
+            .filter(|key| next.indices.contains_key(key));
+        next.anchor = self
+            .anchor
+            .take()
+            .filter(|key| next.indices.contains_key(key));
         next.refresh_visible();
         *self = next;
         Ok(())
@@ -242,6 +248,56 @@ impl<K: Clone + Eq + Hash> TreeModel<K> {
                 self.selected.contains(key).then(|| key.clone())
             })
             .collect()
+    }
+
+    pub(super) fn set_selection(&mut self, keys: impl IntoIterator<Item = K>, multiple: bool) {
+        let mut selected = Vec::new();
+        let mut set = HashSet::new();
+        let limit = if multiple { usize::MAX } else { 1 };
+        for key in keys {
+            if selected.len() >= limit {
+                break;
+            }
+            if self.indices.contains_key(&key) && set.insert(key.clone()) {
+                selected.push(key);
+            }
+        }
+        self.selected = set;
+        if selected.is_empty() {
+            self.active = None;
+            self.anchor = None;
+        } else {
+            if self
+                .active
+                .as_ref()
+                .is_none_or(|key| !self.selected.contains(key))
+            {
+                self.active = selected.last().cloned();
+            }
+            if self
+                .anchor
+                .as_ref()
+                .is_none_or(|key| !self.selected.contains(key))
+            {
+                self.anchor = selected.first().cloned();
+            }
+        }
+    }
+
+    pub(super) fn enforce_single_selection(&mut self) {
+        if self.selected.len() <= 1 {
+            return;
+        }
+        let kept = self.selection().into_iter().next();
+        self.selected.clear();
+        if let Some(key) = kept {
+            self.selected.insert(key.clone());
+            self.active = Some(key.clone());
+            self.anchor = Some(key);
+        } else {
+            self.active = None;
+            self.anchor = None;
+        }
     }
 
     pub(super) fn plan_reorder(

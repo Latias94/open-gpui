@@ -442,6 +442,7 @@ pub struct WgpuRenderer {
     core: Option<WgpuRendererCore>,
     surface_config: wgpu::SurfaceConfiguration,
     requested_transparency: bool,
+    is_bgr: bool,
     atlas: Arc<WgpuAtlas>,
     transparent_alpha_mode: wgpu::CompositeAlphaMode,
     opaque_alpha_mode: wgpu::CompositeAlphaMode,
@@ -738,6 +739,7 @@ impl WgpuRenderer {
             core: Some(core),
             surface_config,
             requested_transparency: config.transparent,
+            is_bgr: false,
             atlas,
             transparent_alpha_mode,
             opaque_alpha_mode,
@@ -1440,6 +1442,7 @@ impl WgpuRendererCore {
 
 impl WgpuRenderer {
     pub fn set_subpixel_layout(&mut self, is_bgr: bool) {
+        self.is_bgr = is_bgr;
         if let Some(core) = self.core.as_mut() {
             core.is_bgr = is_bgr;
         }
@@ -1453,6 +1456,7 @@ impl WgpuRenderer {
         subpixel_enhanced_contrast: f32,
         is_bgr: bool,
     ) {
+        self.is_bgr = is_bgr;
         if let Some(core) = &mut self.core {
             core.rendering_params = RenderingParameters {
                 gamma_ratios,
@@ -1519,6 +1523,9 @@ impl WgpuRenderer {
 
     /// Returns adapter details while the renderer has GPU resources.
     pub fn gpu_specs(&self) -> Option<GpuSpecs> {
+        if self.surface_lifecycle.shutdown_active() || self.device_errors.device_lost() {
+            return None;
+        }
         let adapter_info = &self.core.as_ref()?.adapter_info;
         Some(GpuSpecs {
             is_software_emulated: adapter_info.device_type == wgpu::DeviceType::Cpu,
@@ -1533,7 +1540,7 @@ impl WgpuRenderer {
     }
 
     fn configure_surface(&mut self, ticket: SurfaceConfigureTicket) -> bool {
-        if self.surface_lifecycle.shutdown_active() {
+        if self.surface_lifecycle.shutdown_active() || self.core.is_none() {
             return false;
         }
 
@@ -1552,6 +1559,10 @@ impl WgpuRenderer {
         anyhow::ensure!(
             !self.surface_lifecycle.shutdown_active(),
             "cannot recreate a draining presentation surface"
+        );
+        anyhow::ensure!(
+            self.core.is_some(),
+            "cannot recreate a presentation surface without active GPU resources"
         );
 
         self.surface_config.width = ticket.extent.width;
@@ -1644,6 +1655,9 @@ impl WgpuRenderer {
     pub fn draw(&mut self, scene: &Scene) -> PlatformWindowPresentOutcome {
         if self.surface_lifecycle.shutdown_active() {
             return PlatformWindowPresentOutcome::Deferred;
+        }
+        if self.core.is_none() {
+            return PlatformWindowPresentOutcome::Rejected;
         }
 
         if let Some(outcome) = self.prepare_surface_for_draw() {
@@ -2702,6 +2716,10 @@ impl WgpuRenderer {
             !self.surface_lifecycle.shutdown_active(),
             "cannot replace a quiesced presentation surface"
         );
+        anyhow::ensure!(
+            self.core.is_some(),
+            "cannot replace a presentation surface without active GPU resources"
+        );
 
         let window_handle = window
             .window_handle()
@@ -2964,7 +2982,7 @@ impl WgpuRenderer {
             "cannot recover a quiesced presentation surface"
         );
 
-        let is_bgr = self.core.as_ref().is_some_and(|core| core.is_bgr);
+        let is_bgr = self.is_bgr;
         let gpu_context = self.context.as_ref().expect("recover requires gpu_context");
         anyhow::ensure!(
             !gpu_context.application_owned,
@@ -3607,6 +3625,7 @@ mod tests {
                 color_space: wgpu::SurfaceColorSpace::Auto,
             },
             requested_transparency: false,
+            is_bgr: false,
             atlas: Arc::new(WgpuAtlas::from_context(&context)),
             transparent_alpha_mode: wgpu::CompositeAlphaMode::PreMultiplied,
             opaque_alpha_mode: wgpu::CompositeAlphaMode::Inherit,
@@ -3631,6 +3650,34 @@ mod tests {
 
         renderer.update_transparency(false);
         assert!(!renderer.recovery_surface_config().transparent);
+        renderer.set_subpixel_layout(true);
+        assert!(renderer.is_bgr);
+        assert_eq!(
+            renderer.draw(&Scene::default()),
+            PlatformWindowPresentOutcome::Rejected
+        );
+        struct DummyWindow;
+        impl HasWindowHandle for DummyWindow {
+            fn window_handle(
+                &self,
+            ) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError>
+            {
+                let raw = raw_window_handle::RawWindowHandle::Web(
+                    raw_window_handle::WebWindowHandle::new(0),
+                );
+                // SAFETY: `replace_surface` rejects a missing core before touching the handle.
+                Ok(unsafe { raw_window_handle::WindowHandle::borrow_raw(raw) })
+            }
+        }
+        assert!(
+            renderer
+                .replace_surface(
+                    &DummyWindow,
+                    renderer.recovery_surface_config(),
+                    &context.instance,
+                )
+                .is_err()
+        );
         Ok(())
     }
 

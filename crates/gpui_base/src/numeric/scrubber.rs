@@ -1,7 +1,8 @@
 use open_gpui::{
     AccessibleAction, App, Context, CursorStyle, Entity, EventEmitter, FocusHandle, Focusable,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Refineable, Role, SharedString,
-    StyleRefinement, Subscription, TargetedEvent, Window, accesskit::ActionData, div, prelude::*,
+    StyleRefinement, Subscription, TargetedEvent, Window, WindowId, accesskit::ActionData, div,
+    prelude::*,
 };
 
 use super::{
@@ -28,7 +29,7 @@ pub struct NumericScrubber {
     focus: FocusHandle,
     drag: PointerDrag<Scrub>,
     input: Option<Entity<TextInput>>,
-    input_subscription: Option<Subscription>,
+    input_subscription: Option<(WindowId, Subscription)>,
     text_entry: bool,
     editing: bool,
     label: SharedString,
@@ -121,8 +122,15 @@ impl NumericScrubber {
                 input
             })
         });
-        self.input_subscription
-            .get_or_insert_with(|| cx.subscribe_in(input, window, Self::from_text));
+        let window_id = window.window_handle().window_id();
+        if self
+            .input_subscription
+            .as_ref()
+            .is_none_or(|(bound, _)| *bound != window_id)
+        {
+            self.input_subscription =
+                Some((window_id, cx.subscribe_in(input, window, Self::from_text)));
+        }
         self.editing = true;
         let handle = input.update(cx, |input, cx| {
             input.set_value_in(value, window, cx);
@@ -162,7 +170,9 @@ impl NumericScrubber {
         };
         self.editing = false;
         match value {
-            Some(value) if value == self.value && matches!(event, TextInputEvent::Blur) => {}
+            Some(value)
+                if self.range.normalize(value) == self.value
+                    && matches!(event, TextInputEvent::Blur) => {}
             Some(value) => self.commit(value, cx),
             None => cx.emit(NumericEvent::Cancel(self.value)),
         }

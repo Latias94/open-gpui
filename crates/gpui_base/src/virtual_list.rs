@@ -114,19 +114,14 @@ impl<K: Clone + Eq + Hash + 'static> VirtualList<K> {
     }
 
     pub fn set_selection(&mut self, keys: impl IntoIterator<Item = K>, cx: &mut Context<Self>) {
-        let keys = keys
-            .into_iter()
-            .filter(|key| self.model.indices.contains_key(key));
-        self.model.selected = keys
-            .take(if self.multiple { usize::MAX } else { 1 })
-            .collect();
+        self.model.set_selection(keys, self.multiple);
         cx.notify();
     }
 
     pub fn set_multiselect(&mut self, multiple: bool, cx: &mut Context<Self>) {
         self.multiple = multiple;
-        if !multiple && self.model.selected.len() > 1 {
-            self.model.selected = self.model.selection().into_iter().take(1).collect();
+        if !multiple {
+            self.model.enforce_single_selection();
         }
         cx.notify();
     }
