@@ -1710,6 +1710,7 @@ pub struct Window {
     view_retention_enabled: bool,
     pub(crate) refresh_retained_views: bool,
     retained_view_replay_failed: bool,
+    replayed_font_generation: Option<usize>,
     pub(crate) root: Option<AnyView>,
     pub(crate) element_id_stack: ElementIdStack,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
@@ -2966,6 +2967,7 @@ impl Window {
                 != Some(std::ffi::OsStr::new("0")),
             refresh_retained_views: false,
             retained_view_replay_failed: false,
+            replayed_font_generation: None,
             root: None,
             element_id_stack: ElementIdStack::default(),
             text_style_stack: Vec::new(),
@@ -7202,7 +7204,11 @@ impl Window {
     }
 
     pub(crate) fn appearance_changed(&mut self, cx: &mut App) {
-        self.appearance = self.platform_window.appearance();
+        let appearance = self.platform_window.appearance();
+        if self.appearance != appearance {
+            self.appearance = appearance;
+            self.refresh();
+        }
 
         self.appearance_observers
             .clone()
@@ -8317,6 +8323,23 @@ impl Window {
     }
 
     fn draw_inner(&mut self, cx: &mut App, allow_root_replay: bool) -> ArenaClearNeeded {
+        let clear = self.draw_attempt(cx, allow_root_replay, false);
+        if self.retained_view_replay_failed && self.presentation_is_allowed() {
+            clear.clear(cx);
+            self.draw_attempt(cx, false, true)
+        } else {
+            clear
+        }
+    }
+
+    fn draw_attempt(
+        &mut self,
+        cx: &mut App,
+        allow_root_replay: bool,
+        _retrying: bool,
+    ) -> ArenaClearNeeded {
+        self.retained_view_replay_failed = false;
+        self.replayed_font_generation = None;
         self.cancel_deferred_scene();
         let _access_frame = cx.entities.frame_access_scope();
         // Set up the per-App arena for element allocation during this draw.
@@ -8331,14 +8354,15 @@ impl Window {
             return arena_scope.exit();
         }
         #[cfg(feature = "profiler")]
-        self.window_profiler.begin_draw();
+        if !_retrying {
+            self.window_profiler.begin_draw();
+        }
 
         if self.platform_window.prepare_frame() {
             self.refresh();
         }
         self.invalidate_entities();
         self.refresh_retained_views = !allow_root_replay || self.invalidator.requires_fresh_draw();
-        self.retained_view_replay_failed = false;
         self.layout_engine
             .as_mut()
             .unwrap()
@@ -8423,11 +8447,13 @@ impl Window {
                     })
                 };
                 #[cfg(feature = "profiler")]
-                self.debug_frame_overlay.paint(
-                    &mut self.next_frame.scene,
-                    self.viewport_size,
-                    self.scale_factor,
-                )?;
+                if !self.retained_view_replay_failed {
+                    self.debug_frame_overlay.paint(
+                        &mut self.next_frame.scene,
+                        self.viewport_size,
+                        self.scale_factor,
+                    )?;
+                }
                 Ok::<_, SubtreeGeometryError>(roots)
             } else {
                 Ok((
@@ -8476,6 +8502,24 @@ impl Window {
             }
         };
         self.next_frame.retained_views.clear_prebuilt();
+        if self.retained_view_replay_failed
+            || self
+                .replayed_font_generation
+                .is_some_and(|generation| generation != self.text_system.font_generation())
+        {
+            self.restore_candidate_draw_context(draw_context);
+            self.reject_candidate_frame(
+                authority_checkpoint,
+                restored_input_handler_index,
+                rendered_input_handlers_len,
+                false,
+                cx,
+            );
+            self.retained_view_replay_failed = true;
+            self.refreshing = true;
+            self.invalidator.set_dirty(true);
+            return arena_scope.exit();
+        }
         if let Some(error) = self.candidate_atlas_lease_failure.take() {
             let rejected_generation = self.next_frame.generation;
             let rejected_attempt = self.reject_candidate_frame(
@@ -8502,19 +8546,6 @@ impl Window {
                 self.refreshing = true;
                 self.invalidator.set_dirty(true);
             }
-            return arena_scope.exit();
-        }
-        if self.retained_view_replay_failed {
-            self.restore_candidate_draw_context(draw_context);
-            self.reject_candidate_frame(
-                authority_checkpoint,
-                restored_input_handler_index,
-                rendered_input_handlers_len,
-                false,
-                cx,
-            );
-            self.refreshing = true;
-            self.invalidator.set_dirty(true);
             return arena_scope.exit();
         }
         let mut transaction = self
@@ -9344,11 +9375,17 @@ impl Window {
             .unwrap()
             .stretch_auto_size_to_fill(root_layout_id, root_size, scale_factor);
         root_element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
+        if self.retained_view_replay_failed {
+            return (None, None);
+        }
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         let inspector_element = self.prepaint_inspector(_inspector_width, cx);
 
         self.prepaint_deferred_draws(cx);
+        if self.retained_view_replay_failed {
+            return (None, None);
+        }
 
         let mut prompt_element = None;
         if let Some(prompt) = &self.prompt {
@@ -9387,6 +9424,9 @@ impl Window {
         } else if prompt_element.is_none() && !window_owns_active_drag {
             tooltip_element = self.prepaint_tooltip(cx);
         }
+        if self.retained_view_replay_failed {
+            return (None, None);
+        }
 
         // Cached subtrees replay dispatch nodes without calling `set_focus_handle`, so give a
         // one-frame claim one final prepaint qualification point before paint installs handlers.
@@ -9398,11 +9438,17 @@ impl Window {
         let paint_start = Instant::now();
         self.invalidator.set_phase(DrawPhase::Paint);
         root_element.paint(self, cx);
+        if self.retained_view_replay_failed {
+            return (None, None);
+        }
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector(inspector_element, cx);
 
         self.paint_deferred_draws(cx);
+        if self.retained_view_replay_failed {
+            return (None, None);
+        }
 
         let mut active_drag_preview_painted = false;
         if let Some(mut prompt_element) = prompt_element {
@@ -9872,7 +9918,7 @@ impl Window {
                     cx.entities.extend_accessed(
                         &self.next_frame.deferred_draws[deferred_draw_ix].accessed_entities,
                     );
-                    self.reuse_prepaint(recorded_prepaint_range);
+                    let _ = self.reuse_prepaint(recorded_prepaint_range);
                 }
                 self.element_opacity = previous_opacity;
                 let prepaint_end = self.prepaint_index();
@@ -9994,7 +10040,10 @@ impl Window {
         }
     }
 
-    pub(crate) fn reuse_prepaint(&mut self, range: Range<PrepaintStateIndex>) -> ReusedSubtree {
+    pub(crate) fn reuse_prepaint(
+        &mut self,
+        range: Range<PrepaintStateIndex>,
+    ) -> Option<ReusedSubtree> {
         self.reuse_prepaint_inner(range, None)
     }
 
@@ -10002,7 +10051,7 @@ impl Window {
         &mut self,
         range: Range<PrepaintStateIndex>,
         dispatch: &mut DispatchSplice,
-    ) -> ReusedSubtree {
+    ) -> Option<ReusedSubtree> {
         self.reuse_prepaint_inner(range, Some(dispatch))
     }
 
@@ -10010,7 +10059,12 @@ impl Window {
         &mut self,
         range: Range<PrepaintStateIndex>,
         dispatch: Option<&mut DispatchSplice>,
-    ) -> ReusedSubtree {
+    ) -> Option<ReusedSubtree> {
+        if !self.replay_frame_text_layouts(
+            range.start.line_layout_index.clone()..range.end.line_layout_index.clone(),
+        ) {
+            return None;
+        }
         let validity = self.subtree_geometry_validity();
         let presentation = self.subtree_presentation();
         self.next_frame.hitboxes.extend(
@@ -10107,23 +10161,11 @@ impl Window {
                     })
                 }),
         );
-        let accessed_element_states = self.rendered_frame.accessed_element_states
-            [range.start.accessed_element_states_index..range.end.accessed_element_states_index]
-            .to_vec();
-        for key in accessed_element_states {
-            self.next_frame.accessed_element_states.push(key.clone());
-            let recorded_validity = self
-                .rendered_frame
-                .element_state_validities
-                .get(&key)
-                .and_then(Option::as_ref);
-            self.next_frame.element_state_validities.insert(
-                key,
-                SubtreeGeometryValidity::replayed_under(recorded_validity, validity.clone()),
-            );
-        }
-        self.text_system
-            .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
+        self.replay_element_state_accesses(
+            range.start.accessed_element_states_index..range.end.accessed_element_states_index,
+            &validity,
+            dispatch.is_some(),
+        );
         self.next_frame.subtree_transform_diagnostics.extend(
             self.rendered_frame.subtree_transform_diagnostics[range
                 .start
@@ -10188,7 +10230,7 @@ impl Window {
                     paint_range: deferred_draw.paint_range.clone(),
                 }),
         );
-        reused_subtree
+        Some(reused_subtree)
     }
 
     pub(crate) fn paint_index(&self) -> PaintIndex {
@@ -10292,6 +10334,20 @@ impl Window {
         self.retained_view_replay_failed = true;
     }
 
+    fn replay_frame_text_layouts(&mut self, range: Range<crate::LineLayoutIndex>) -> bool {
+        let generation = range.start.font_generation();
+        if self
+            .replayed_font_generation
+            .is_some_and(|replayed| replayed != generation)
+            || !self.text_system.reuse_layouts(range)
+        {
+            self.reject_retained_view_replay();
+            return false;
+        }
+        self.replayed_font_generation = Some(generation);
+        true
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
     pub fn set_view_retention_for_test(&mut self, enabled: bool) {
@@ -10385,6 +10441,18 @@ impl Window {
         result
     }
 
+    pub(crate) fn can_reuse_view_text(
+        &self,
+        prepaint: &Range<PrepaintStateIndex>,
+        paint: &Range<PaintIndex>,
+    ) -> bool {
+        self.text_system.can_reuse_layouts(
+            &(prepaint.start.line_layout_index.clone()..prepaint.end.line_layout_index.clone()),
+        ) && self.text_system.can_reuse_layouts(
+            &(paint.start.line_layout_index.clone()..paint.end.line_layout_index.clone()),
+        )
+    }
+
     pub(crate) fn can_replay_view_output(
         &self,
         prepaint: &Range<PrepaintStateIndex>,
@@ -10396,6 +10464,7 @@ impl Window {
             && paint.start.subtree_transform_diagnostics_index
                 == paint.end.subtree_transform_diagnostics_index
             && paint.start.retained_visual_replays_index == paint.end.retained_visual_replays_index
+            && self.can_reuse_view_text(prepaint, paint)
             && self.can_reuse_paint(paint)
     }
 
@@ -10407,11 +10476,46 @@ impl Window {
                 .element_state_validities
                 .get(key)
                 .and_then(Option::as_ref);
-            self.next_frame.accessed_element_states.push(key.clone());
+            self.next_frame
+                .accessed_element_states
+                .push(Some(frame_journal::ElementStateAccess {
+                    key: key.clone(),
+                    recorded_during_layout: true,
+                }));
             self.next_frame.element_state_validities.insert(
                 key.clone(),
                 SubtreeGeometryValidity::replayed_under(recorded, validity.clone()),
             );
+        }
+    }
+
+    fn replay_element_state_accesses(
+        &mut self,
+        range: Range<usize>,
+        validity: &Option<SubtreeGeometryValidity>,
+        splicing: bool,
+    ) {
+        for access in &self.rendered_frame.accessed_element_states[range] {
+            // A detached layout can request state before its view's prepaint range. During
+            // a splice, layout state follows the owning view, even when its journal entry
+            // appears in a different segment. Keep the slot for rebasing segment indices.
+            let access = access
+                .as_ref()
+                .filter(|access| !splicing || !access.recorded_during_layout);
+            if let Some(access) = access {
+                let recorded = self
+                    .rendered_frame
+                    .element_state_validities
+                    .get(&access.key)
+                    .and_then(Option::as_ref);
+                self.next_frame.element_state_validities.insert(
+                    access.key.clone(),
+                    SubtreeGeometryValidity::replayed_under(recorded, validity.clone()),
+                );
+            }
+            self.next_frame
+                .accessed_element_states
+                .push(access.cloned());
         }
     }
 
@@ -10443,6 +10547,11 @@ impl Window {
             })
         };
         if replay_identity_conflicts {
+            return false;
+        }
+        if !self.replay_frame_text_layouts(
+            range.start.line_layout_index.clone()..range.end.line_layout_index.clone(),
+        ) {
             return false;
         }
 
@@ -10576,21 +10685,11 @@ impl Window {
                     )
                 }),
         );
-        let accessed_element_states = self.rendered_frame.accessed_element_states
-            [range.start.accessed_element_states_index..range.end.accessed_element_states_index]
-            .to_vec();
-        for key in accessed_element_states {
-            self.next_frame.accessed_element_states.push(key.clone());
-            let recorded_validity = self
-                .rendered_frame
-                .element_state_validities
-                .get(&key)
-                .and_then(Option::as_ref);
-            self.next_frame.element_state_validities.insert(
-                key,
-                SubtreeGeometryValidity::replayed_under(recorded_validity, validity.clone()),
-            );
-        }
+        self.replay_element_state_accesses(
+            range.start.accessed_element_states_index..range.end.accessed_element_states_index,
+            &validity,
+            false,
+        );
         self.next_frame.tab_stops.replay_scoped(
             &self.rendered_frame.tab_stops.insertion_history
                 [range.start.tab_handle_index..range.end.tab_handle_index],
@@ -10631,8 +10730,6 @@ impl Window {
                 }),
         );
 
-        self.text_system
-            .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
         self.next_frame.subtree_transform_diagnostics.extend(
             self.rendered_frame.subtree_transform_diagnostics[range
                 .start
@@ -11843,8 +11940,13 @@ impl Window {
         self.invalidator.debug_assert_paint_or_prepaint();
 
         let key = (global_id.clone(), TypeId::of::<S>());
-        retained_reads::element_state(&key);
-        self.next_frame.accessed_element_states.push(key.clone());
+        let recorded_during_layout = retained_reads::element_state(&key);
+        self.next_frame
+            .accessed_element_states
+            .push(Some(frame_journal::ElementStateAccess {
+                key: key.clone(),
+                recorded_during_layout,
+            }));
         self.next_frame
             .element_state_validities
             .insert(key.clone(), self.subtree_geometry_validity());

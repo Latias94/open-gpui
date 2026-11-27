@@ -152,14 +152,17 @@ fn record(read: impl FnOnce() -> Read) {
     });
 }
 
-pub(crate) fn element_state(key: &ElementStateKey) {
+pub(crate) fn element_state(key: &ElementStateKey) -> bool {
     CURRENT_READS.with(|current| {
         if let Some(log) = current.borrow().as_ref()
             && let Some(states) = &mut log.borrow_mut().layout_states
         {
             states.push(key.clone());
+            true
+        } else {
+            false
         }
-    });
+    })
 }
 
 pub(crate) fn requires_fresh_draw() {

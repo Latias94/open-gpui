@@ -18,7 +18,10 @@ fn old_font_markers_cannot_restore_or_truncate_new_generation_entries() {
     text.add_fonts(vec![Cow::Borrowed(b"font")]).unwrap();
     cache.layout_line("new", px(16.), &runs, None, 1);
     cache.layout_wrapped_line("new", px(16.), &runs, Some(px(20.)), None, 1);
-    cache.reuse_layouts(start.clone()..end);
+    assert!(!cache.reuse_layouts(start.clone()..end.clone()));
+    let new_start = cache.layout_index();
+    let obsolete_end = end.rebase(&start, &new_start);
+    assert!(!obsolete_end.precedes(&new_start));
     cache.truncate_layouts(start);
     let state = cache.state();
     let current = &state.current_frame;
@@ -125,7 +128,7 @@ fn owner_thread_range_operations_observe_shared_font_installation_on_a_worker() 
     assert_eq!(state.previous_frame.wrapped_lines.len(), 1);
     drop(state);
 
-    cache.reuse_layouts(start.clone()..end);
+    assert!(!cache.reuse_layouts(start.clone()..end));
     let new = cache.layout_line("same", px(16.), &runs, None, 1);
     let new_wrapped = cache.layout_wrapped_line("same", px(16.), &runs, Some(px(20.)), None, 1);
     cache.truncate_layouts(start);
@@ -137,6 +140,27 @@ fn owner_thread_range_operations_observe_shared_font_installation_on_a_worker() 
     assert!(!Arc::ptr_eq(&old_wrapped, &new_wrapped));
     assert!(Arc::ptr_eq(&new, &new_wrapped.unwrapped_layout));
     assert_eq!(new.width, old.width * 2.);
+}
+
+#[test]
+fn out_of_bounds_wrapped_range_leaves_plain_layouts_in_the_previous_frame() {
+    let (_, _, window) = fixture();
+    let cache = &window.line_layout_cache;
+    let start = cache.layout_index();
+    let runs = [crate::FontRun {
+        len: 3,
+        font_id: FontId(1),
+    }];
+    cache.layout_line("one", px(16.), &runs, None, 0);
+    let end = cache.layout_index();
+    cache.finish_frame();
+
+    let mut invalid = end.clone();
+    invalid.wrapped_lines_index += 1;
+    assert!(!cache.reuse_layouts(start.clone()..invalid));
+    assert_eq!(cache.layout_index().lines_index, 0);
+    assert!(cache.reuse_layouts(start..end));
+    assert_eq!(cache.layout_index().lines_index, 1);
 }
 
 #[test]

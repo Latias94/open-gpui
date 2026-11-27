@@ -489,6 +489,25 @@ struct LineLayoutCacheState {
     font_generation: usize,
 }
 
+impl LineLayoutCacheState {
+    fn reusable_ranges(
+        &self,
+        range: &Range<LineLayoutIndex>,
+    ) -> Option<(Range<usize>, Range<usize>)> {
+        if range.start.font_generation != self.font_generation || !range.start.precedes(&range.end)
+        {
+            return None;
+        }
+        let lines = range.start.lines_index..range.end.lines_index;
+        let wrapped = range.start.wrapped_lines_index..range.end.wrapped_lines_index;
+        self.previous_frame.used_lines.get(lines.clone())?;
+        self.previous_frame
+            .used_wrapped_lines
+            .get(wrapped.clone())?;
+        Some((lines, wrapped))
+    }
+}
+
 #[derive(Default)]
 struct FrameCache {
     lines: FxHashMap<Arc<CacheKey>, Arc<LineLayout>>,
@@ -505,6 +524,10 @@ pub(crate) struct LineLayoutIndex {
 }
 
 impl LineLayoutIndex {
+    pub(crate) fn font_generation(&self) -> usize {
+        self.font_generation
+    }
+
     pub(crate) fn precedes(&self, other: &Self) -> bool {
         self.font_generation == other.font_generation
             && self.lines_index <= other.lines_index
@@ -513,7 +536,7 @@ impl LineLayoutIndex {
 
     pub(crate) fn rebase(&self, source: &Self, target: &Self) -> Self {
         Self {
-            font_generation: target.font_generation,
+            font_generation: self.font_generation,
             lines_index: target.lines_index + self.lines_index - source.lines_index,
             wrapped_lines_index: target.wrapped_lines_index + self.wrapped_lines_index
                 - source.wrapped_lines_index,
@@ -547,33 +570,35 @@ impl LineLayoutCache {
         }
     }
 
-    pub fn reuse_layouts(&self, range: Range<LineLayoutIndex>) {
+    pub(crate) fn can_reuse_layouts(&self, range: &Range<LineLayoutIndex>) -> bool {
+        self.state().reusable_ranges(range).is_some()
+    }
+
+    pub fn reuse_layouts(&self, range: Range<LineLayoutIndex>) -> bool {
         let mut state = self.state();
-        let generation = state.font_generation;
-        if range.start.font_generation != generation || range.end.font_generation != generation {
-            return;
-        }
+        let Some((lines, wrapped_lines)) = state.reusable_ranges(&range) else {
+            return false;
+        };
         let LineLayoutCacheState {
             current_frame,
             previous_frame,
             ..
         } = &mut *state;
 
-        for key in &previous_frame.used_lines[range.start.lines_index..range.end.lines_index] {
+        for key in &previous_frame.used_lines[lines] {
             if let Some((key, line)) = previous_frame.lines.remove_entry(key) {
                 current_frame.lines.insert(key, line);
             }
             current_frame.used_lines.push(key.clone());
         }
 
-        for key in &previous_frame.used_wrapped_lines
-            [range.start.wrapped_lines_index..range.end.wrapped_lines_index]
-        {
+        for key in &previous_frame.used_wrapped_lines[wrapped_lines] {
             if let Some((key, line)) = previous_frame.wrapped_lines.remove_entry(key) {
                 current_frame.wrapped_lines.insert(key, line);
             }
             current_frame.used_wrapped_lines.push(key.clone());
         }
+        true
     }
 
     pub fn truncate_layouts(&self, index: LineLayoutIndex) {

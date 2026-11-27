@@ -355,22 +355,38 @@ impl ListState {
     }
 
     fn record_retained_read(&self) {
+        let read_layout = |state: &StateInner| {
+            (
+                state.last_layout_bounds,
+                state.scroll_anchor.map(|anchor| anchor.position),
+            )
+        };
+        self.record_retained_value(read_layout, || read_layout(&self.0.borrow()));
+    }
+
+    fn read_retained<T: Copy + PartialEq + 'static>(&self, read: fn(&StateInner) -> T) -> T {
+        let value = read(&self.0.borrow());
+        self.record_retained_value(read, || value);
+        value
+    }
+
+    fn record_retained_value<T: PartialEq + 'static>(
+        &self,
+        read: fn(&StateInner) -> T,
+        observed: impl FnOnce() -> T,
+    ) {
         crate::fast::dependencies::state(|| {
             let revision = self.2.get();
             let layout = Rc::downgrade(&self.0);
             let mutations = Rc::downgrade(&self.2);
-            let state = self.0.borrow();
-            let bounds = state.last_layout_bounds;
-            let anchor = state.scroll_anchor.map(|anchor| anchor.position);
+            let value = observed();
             Box::new(move || {
                 mutations
                     .upgrade()
                     .is_some_and(|state| state.get() == revision)
-                    && layout.upgrade().is_some_and(|layout| {
-                        let state = layout.borrow();
-                        state.last_layout_bounds == bounds
-                            && state.scroll_anchor.map(|anchor| anchor.position) == anchor
-                    })
+                    && layout
+                        .upgrade()
+                        .is_some_and(|layout| read(&layout.borrow()) == value)
             })
         });
     }
@@ -713,10 +729,7 @@ impl ListState {
     /// Returns whether the list is currently actively following the
     /// tail (snapping to the end on each layout).
     pub fn is_following_tail(&self) -> bool {
-        matches!(
-            self.0.borrow().follow_state,
-            FollowState::Tail { is_following: true }
-        )
+        self.read_retained(|state| state.follow_state.is_following())
     }
 
     /// Scroll the list to the given offset
@@ -810,14 +823,26 @@ impl ListState {
     /// as items in the overdraw get measured, and help offset scroll position changes accordingly.
     pub fn scrollbar_drag_started(&self) {
         let mut state = self.0.borrow_mut();
-        state.scrollbar_drag_start_height = Some(state.items.summary().height);
+        let height = Some(state.items.summary().height);
+        if state.scrollbar_drag_start_height != height {
+            state.scrollbar_drag_start_height = height;
+            self.retained_state_changed();
+        }
     }
 
     /// Called when the user stops dragging the scrollbar.
     ///
     /// See `scrollbar_drag_started`.
     pub fn scrollbar_drag_ended(&self) {
-        self.0.borrow_mut().scrollbar_drag_start_height.take();
+        if self
+            .0
+            .borrow_mut()
+            .scrollbar_drag_start_height
+            .take()
+            .is_some()
+        {
+            self.retained_state_changed();
+        }
     }
 
     /// Returns `true` if the scrollbar is currently being dragged.
@@ -827,7 +852,7 @@ impl ListState {
     /// consumers that need to distinguish scrollbar drags from wheel/trackpad scrolls,
     /// e.g. to suppress auto-scroll behavior during manual positioning.
     pub fn is_scrollbar_dragging(&self) -> bool {
-        self.0.borrow().scrollbar_drag_start_height.is_some()
+        self.read_retained(|state| state.scrollbar_drag_start_height.is_some())
     }
 
     /// Set the offset from the scrollbar
@@ -840,8 +865,10 @@ impl ListState {
     /// Returns the maximum scroll offset according to the items we have measured.
     /// This value remains constant while dragging to prevent the scrollbar from moving away unexpectedly.
     pub fn max_offset_for_scrollbar(&self) -> Point<Pixels> {
-        let state = self.0.borrow();
-        point(Pixels::ZERO, state.max_scroll_offset())
+        point(
+            Pixels::ZERO,
+            self.read_retained(StateInner::max_scroll_offset),
+        )
     }
 
     /// Returns the current scroll offset adjusted for the scrollbar.
@@ -849,20 +876,10 @@ impl ListState {
     /// The returned offset has a negative `y` component representing
     /// how far the content has scrolled.
     pub fn scroll_px_offset_for_scrollbar(&self) -> Point<Pixels> {
-        let state = &self.0.borrow();
-
-        if state.scroll_anchor.is_none() && state.alignment == ListAlignment::Bottom {
-            return Point::new(px(0.), -state.max_scroll_offset());
-        }
-
-        let logical_scroll_top = state.logical_scroll_top();
-
-        let mut cursor = state.items.cursor::<ListItemSummary>(());
-        let summary: ListItemSummary =
-            cursor.summary(&Count(logical_scroll_top.item_ix), Bias::Right);
-        let offset = summary.height + logical_scroll_top.offset_in_item;
-
-        Point::new(px(0.), -offset)
+        point(
+            Pixels::ZERO,
+            self.read_retained(StateInner::scrollbar_offset),
+        )
     }
 
     /// Return the bounds of the viewport in pixels.
@@ -968,6 +985,18 @@ impl ListState {
 }
 
 impl StateInner {
+    fn scrollbar_offset(&self) -> Pixels {
+        if self.scroll_anchor.is_none() && self.alignment == ListAlignment::Bottom {
+            return -self.max_scroll_offset();
+        }
+
+        let logical_scroll_top = self.logical_scroll_top();
+        let mut cursor = self.items.cursor::<ListItemSummary>(());
+        let summary: ListItemSummary =
+            cursor.summary(&Count(logical_scroll_top.item_ix), Bias::Right);
+        -(summary.height + logical_scroll_top.offset_in_item)
+    }
+
     fn max_scroll_offset(&self) -> Pixels {
         let bounds = self.last_layout_bounds.unwrap_or_default();
         let padding = self.last_padding.unwrap_or_default();

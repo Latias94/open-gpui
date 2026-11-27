@@ -342,6 +342,7 @@ fn prepaint_view(
                 && state.cache_key.opacity.to_bits() == opacity.to_bits()
                 && state.cache_key.subtree_presentation == subtree_presentation
                 && state.cache_key.subtree_transform == subtree_transform
+                && window.can_reuse_view_text(&state.prepaint_range, &state.paint_range)
                 && window.can_reuse_paint(&state.paint_range)
                 && !window.dirty_views.contains(&entity_id)
                 && !window.refreshing
@@ -350,9 +351,13 @@ fn prepaint_view(
                 && !window.reveal_target_capture_requires_fresh_prepaint()
             {
                 let start = window.prepaint_index();
-                window.reuse_prepaint(state.prepaint_range.clone());
-                cx.entities.extend_accessed(&state.accessed_entities);
-                state.prepaint_range = start..window.prepaint_index();
+                if window
+                    .reuse_prepaint(state.prepaint_range.clone())
+                    .is_some()
+                {
+                    cx.entities.extend_accessed(&state.accessed_entities);
+                    state.prepaint_range = start..window.prepaint_index();
+                }
                 return (None, state);
             }
             let refreshing = mem::replace(&mut window.refreshing, true);

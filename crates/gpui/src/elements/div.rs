@@ -5556,6 +5556,13 @@ pub(crate) struct GroupHitboxes(HashMap<SharedString, SmallVec<[HitboxId; 1]>>);
 impl Global for GroupHitboxes {}
 
 impl GroupHitboxes {
+    pub(crate) fn is_active(cx: &App) -> bool {
+        cx.globals_by_type
+            .get(&TypeId::of::<Self>())
+            .and_then(|group| group.downcast_ref::<Self>())
+            .is_some_and(|group| !group.0.is_empty())
+    }
+
     pub fn get(name: &SharedString, cx: &mut App) -> Option<HitboxId> {
         cx.default_global::<Self>()
             .0
@@ -5573,7 +5580,12 @@ impl GroupHitboxes {
     }
 
     pub fn pop(name: &SharedString, cx: &mut App) {
-        cx.default_global::<Self>().0.get_mut(name).unwrap().pop();
+        let groups = &mut cx.default_global::<Self>().0;
+        let stack = groups.get_mut(name).unwrap();
+        stack.pop();
+        if stack.is_empty() {
+            groups.remove(name);
+        }
     }
 }
 

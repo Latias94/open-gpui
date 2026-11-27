@@ -1,5 +1,65 @@
 use super::*;
-use crate::{AppContext, Context, Render, TestAppContext, VisualTestContext, canvas, div};
+use crate::{
+    AppContext, Context, Render, TestAppContext, VisualTestContext, canvas, div,
+    fast::dependencies::capture,
+};
+
+#[crate::test]
+fn retained_scrollbar_metrics_follow_list_layout(cx: &mut TestAppContext) {
+    let cx = cx.add_empty_window();
+    let state = ListState::new(4, ListAlignment::Bottom, px(0.)).measure_all();
+    let draw = |height, cx: &mut VisualTestContext| {
+        draw_list(&state, 40., move |_| div().h(px(height)).into_any(), cx);
+    };
+
+    draw(20., cx);
+    state.remeasure();
+    let (max, max_reads) = capture(|| state.max_offset_for_scrollbar().y);
+    let (offset, offset_reads) = capture(|| state.scroll_px_offset_for_scrollbar().y);
+    assert_eq!((max, offset), (px(40.), px(-40.)));
+    cx.update(|window, cx| {
+        assert!(max_reads.is_current(window, cx));
+        assert!(offset_reads.is_current(window, cx));
+    });
+
+    draw(30., cx);
+    assert_eq!(state.max_offset_for_scrollbar().y, px(80.));
+    assert_eq!(state.scroll_px_offset_for_scrollbar().y, px(-80.));
+    cx.update(|window, cx| {
+        assert!(!max_reads.is_current(window, cx));
+        assert!(!offset_reads.is_current(window, cx));
+    });
+}
+
+#[crate::test]
+fn retained_scrollbar_drag_revision_tracks_only_changes(cx: &mut TestAppContext) {
+    let state = ListState::new(4, ListAlignment::Top, px(0.)).with_uniform_item_height(px(20.));
+    cx.add_empty_window().update(|window, cx| {
+        let direct_revision = state.direct_scroll_revision();
+        let (dragging, idle) = capture(|| state.is_scrollbar_dragging());
+        let (_, idle_layout) = capture(|| state.viewport_bounds());
+        assert!(!dragging);
+        state.scrollbar_drag_ended();
+        assert!(idle.is_current(window, cx));
+        assert!(idle_layout.is_current(window, cx));
+
+        state.scrollbar_drag_started();
+        assert!(!idle.is_current(window, cx));
+        assert!(!idle_layout.is_current(window, cx));
+        let (dragging, active) = capture(|| state.is_scrollbar_dragging());
+        let (_, active_layout) = capture(|| state.viewport_bounds());
+        assert!(dragging);
+        state.scrollbar_drag_started();
+        assert!(active.is_current(window, cx));
+        assert!(active_layout.is_current(window, cx));
+
+        state.scrollbar_drag_ended();
+        assert!(!active.is_current(window, cx));
+        assert!(!active_layout.is_current(window, cx));
+        assert!(!state.is_scrollbar_dragging());
+        assert_eq!(state.direct_scroll_revision(), direct_revision);
+    });
+}
 
 #[crate::test]
 fn test_provisional_item_heights_keep_scroll_anchor(cx: &mut TestAppContext) {
@@ -618,7 +678,9 @@ fn test_pause_following_tail_reengages_when_still_at_bottom(cx: &mut TestAppCont
     // must not strand follow-tail: the next layout has to re-engage so the
     // invariant "at the bottom + new content => visible" is preserved.
     state.pause_following_tail();
-    assert!(!state.is_following_tail());
+    let (following, paused) = capture(|| state.is_following_tail());
+    assert!(!following);
+    cx.update(|window, cx| assert!(paused.is_current(window, cx)));
 
     cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
         view.into_any_element()
@@ -627,6 +689,7 @@ fn test_pause_following_tail_reengages_when_still_at_bottom(cx: &mut TestAppCont
         state.is_following_tail(),
         "pausing while at the bottom must re-engage follow-tail on the next layout"
     );
+    cx.update(|window, cx| assert!(!paused.is_current(window, cx)));
 }
 
 #[crate::test]

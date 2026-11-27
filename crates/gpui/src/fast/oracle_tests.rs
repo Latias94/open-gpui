@@ -1,12 +1,13 @@
-use std::{cell::Cell, rc::Rc};
+use std::{borrow::Cow, cell::Cell, rc::Rc};
 
 use accesskit::Role;
 
 use crate::{
-    AppContext as _, Background, BorderStyle, Bounds, Context, Corners, Edges, Entity, FocusHandle,
-    Global, GpuClipShape, HitboxBehavior, HitboxTag, Hsla, InteractiveElement, IntoElement,
-    Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
-    Point, PrimitiveTransform, Render, ScaledPixels, Scene, StatefulInteractiveElement, Styled,
+    App, AppContext as _, Background, BorderStyle, Bounds, Context, Corners, Edges, Element,
+    ElementId, Entity, FocusHandle, Global, GlobalElementId, GpuClipShape, HitboxBehavior,
+    HitboxTag, Hsla, InspectorElementId, InteractiveElement, IntoElement, LayoutId, Modifiers,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
+    PrimitiveTransform, Render, ScaledPixels, Scene, StatefulInteractiveElement, Style, Styled,
     SubtreeClip, TestAppContext, Window, WindowHandle, canvas, div, fill, point, px, rgb, size,
     util::FluentBuilder as _,
 };
@@ -564,12 +565,216 @@ fn dirty_paint_only_leaf_rebuilds_inside_replayed_ancestors(cx: &mut TestAppCont
     );
 }
 
-struct DetachedPane {
-    panel: Entity<Swatch>,
+struct GroupHoverRoot {
+    leaf: Entity<GroupHoverLeaf>,
     builds: usize,
 }
 
-impl Render for DetachedPane {
+impl Render for GroupHoverRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.builds += 1;
+        div()
+            .id("group-row")
+            .group("row")
+            .flex()
+            .flex_none()
+            .w(px(200.0))
+            .h(px(40.0))
+            .child(self.leaf.clone())
+    }
+}
+
+struct GroupHoverLeaf(bool);
+
+impl Render for GroupHoverLeaf {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("group-leaf")
+            .flex_none()
+            .w(px(40.0))
+            .h(px(40.0))
+            .bg(rgb(INITIAL_FILL))
+            .group_hover(if self.0 { "row" } else { "absent" }, |style| {
+                style.bg(rgb(CHANGED_FILL))
+            })
+    }
+}
+
+#[open_gpui::test]
+fn dirty_leaf_keeps_its_ancestor_hover_group(cx: &mut TestAppContext) {
+    let windows = [true, false].map(|retain| {
+        let leaf = cx.new(|_| GroupHoverLeaf(false));
+        let window = cx.open_window(size(px(200.0), px(80.0)), |window, _| {
+            window.set_view_retention_for_test(retain);
+            GroupHoverRoot {
+                leaf: leaf.clone(),
+                builds: 0,
+            }
+        });
+        cx.simulate_event(
+            window.into(),
+            MouseMoveEvent {
+                position: point(px(100.0), px(20.0)),
+                pressed_button: None,
+                modifiers: Modifiers::none(),
+            },
+        );
+        (window, leaf)
+    });
+    let read = |cx: &mut TestAppContext, handle: WindowHandle<GroupHoverRoot>| {
+        cx.update_window(handle.into(), |root, window, cx| {
+            (
+                quad_facts(&window.rendered_frame.scene),
+                root.downcast::<GroupHoverRoot>().unwrap().read(cx).builds,
+            )
+        })
+        .unwrap()
+    };
+    let before = windows.each_ref().map(|(window, _)| read(cx, *window));
+    for (quads, _) in &before {
+        assert!(
+            quads
+                .iter()
+                .any(|quad| { quad.background == Background::from(rgb(INITIAL_FILL)) })
+        );
+    }
+    cx.update(|cx| {
+        for (_, leaf) in &windows {
+            leaf.update(cx, |leaf, cx| {
+                leaf.0 = true;
+                cx.notify();
+            });
+        }
+    });
+    let [(retained, retained_builds), (redrawn, _)] =
+        windows.each_ref().map(|(window, _)| read(cx, *window));
+    assert!(
+        redrawn
+            .iter()
+            .any(|quad| { quad.background == Background::from(rgb(CHANGED_FILL)) })
+    );
+    assert_eq!(retained, redrawn);
+    assert_eq!(retained_builds, before[0].1 + 1);
+}
+
+struct FontChangeRoot {
+    leaf: Entity<FontChangeLeaf>,
+    builds: usize,
+}
+
+impl Render for FontChangeRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.builds += 1;
+        div()
+            .id("font-change-root")
+            .flex()
+            .flex_none()
+            .w(px(200.0))
+            .h(px(40.0))
+            .child(self.leaf.clone())
+            .child(canvas(
+                |_, window, _| {
+                    window
+                        .text_system()
+                        .shape_line("unchanged".into(), px(16.0), &[], None);
+                },
+                |_, (), _, _| {},
+            ))
+    }
+}
+
+struct FontChangeLeaf {
+    install_font: Rc<Cell<bool>>,
+    color: u32,
+    builds: usize,
+}
+
+impl Render for FontChangeLeaf {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.builds += 1;
+        let install_font = self.install_font.clone();
+        let color = self.color;
+        canvas(
+            move |_, _, cx| {
+                if install_font.replace(false) {
+                    cx.text_system()
+                        .add_fonts(vec![Cow::Borrowed(b"test font")])
+                        .unwrap();
+                }
+            },
+            move |bounds, (), window, _| window.paint_quad(fill(bounds, rgb(color))),
+        )
+        .flex_none()
+        .w(px(40.0))
+        .h(px(40.0))
+    }
+}
+
+#[open_gpui::test]
+fn font_installation_during_splice_rebuilds_before_presenting(cx: &mut TestAppContext) {
+    let install_font = Rc::new(Cell::new(false));
+    let leaf = cx.new(|_| FontChangeLeaf {
+        install_font: install_font.clone(),
+        color: INITIAL_FILL,
+        builds: 0,
+    });
+    let window = cx.open_window(size(px(200.0), px(80.0)), |window, _| {
+        window.set_view_retention_for_test(true);
+        FontChangeRoot {
+            leaf: leaf.clone(),
+            builds: 0,
+        }
+    });
+    let read = |cx: &mut TestAppContext| {
+        cx.update_window(window.into(), |root, window, cx| {
+            let root = root.downcast::<FontChangeRoot>().unwrap().read(cx);
+            (
+                window.rendered_frame_revision(),
+                root.builds,
+                leaf.read(cx).builds,
+            )
+        })
+        .unwrap()
+    };
+    let (revision, root_builds, leaf_builds) = read(cx);
+    cx.update(|cx| {
+        leaf.update(cx, |leaf, cx| {
+            leaf.color = CHANGED_FILL;
+            cx.notify();
+        });
+    });
+    assert_eq!(read(cx), (revision + 1, root_builds, leaf_builds + 1));
+
+    let generation = cx.text_system().font_generation();
+    install_font.set(true);
+    cx.update(|cx| {
+        leaf.update(cx, |leaf, cx| {
+            leaf.color = INITIAL_FILL;
+            cx.notify();
+        });
+    });
+    // The gap starts rebuilding before font registration invalidates the replay. The same
+    // frame request then rebuilds the full draw and commits it exactly once.
+    assert_eq!(read(cx), (revision + 2, root_builds + 1, leaf_builds + 3));
+    cx.update_window(window.into(), |_, window, cx| {
+        assert!(
+            quad_facts(&window.rendered_frame.scene)
+                .iter()
+                .any(|quad| { quad.background == Background::from(rgb(INITIAL_FILL)) })
+        );
+        window.draw_scheduled_frame(cx).clear(cx);
+    })
+    .unwrap();
+    assert_eq!(read(cx), (revision + 3, root_builds + 1, leaf_builds + 3));
+    assert_eq!(cx.text_system().font_generation(), generation + 1);
+}
+
+struct DetachedPane<P> {
+    panel: Entity<P>,
+    builds: usize,
+}
+
+impl<P: Render> Render for DetachedPane<P> {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         self.builds += 1;
         let panel = self.panel.clone();
@@ -634,9 +839,9 @@ fn clipped_detached_root_splices_repeated_leaf_edits(cx: &mut TestAppContext) {
         });
         (window, leaf)
     });
-    let snapshot = |cx: &mut TestAppContext, handle: WindowHandle<DetachedPane>| {
+    let snapshot = |cx: &mut TestAppContext, handle: WindowHandle<DetachedPane<Swatch>>| {
         cx.update_window(handle.into(), |root, window, cx| {
-            let root = root.downcast::<DetachedPane>().unwrap();
+            let root = root.downcast::<DetachedPane<Swatch>>().unwrap();
             let root = root.read(cx);
             let panel = root.panel.read(cx);
             let leaf = panel.children[0].read(cx);
@@ -699,6 +904,124 @@ fn clipped_detached_root_splices_repeated_leaf_edits(cx: &mut TestAppContext) {
         );
         retained = next_retained;
         redraw = next_redraw;
+    }
+}
+
+struct LayoutStateProbe(bool);
+
+impl Render for LayoutStateProbe {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        LayoutStateElement(self.0)
+    }
+}
+
+struct LayoutStateElement(bool);
+
+impl Element for LayoutStateElement {
+    type RequestLayoutState = u32;
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        Some("layout-state-probe".into())
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, u32) {
+        let color = if self.0 {
+            window.with_element_state(id.unwrap(), |previous: Option<()>, _| {
+                (
+                    if previous.is_some() {
+                        CHANGED_FILL
+                    } else {
+                        INITIAL_FILL
+                    },
+                    (),
+                )
+            })
+        } else {
+            INITIAL_MARKER
+        };
+        let mut style = Style::default();
+        style.size = size(px(40.0).into(), px(20.0).into());
+        (window.request_layout(style, [], cx), color)
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut u32,
+        _: &mut Window,
+        _: &mut App,
+    ) {
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        color: &mut u32,
+        _: &mut (),
+        window: &mut Window,
+        _: &mut App,
+    ) {
+        window.paint_quad(fill(bounds, rgb(*color)));
+    }
+}
+
+#[open_gpui::test]
+fn detached_layout_drops_state_when_the_dirty_view_stops_using_it(cx: &mut TestAppContext) {
+    let windows = [true, false].map(|retain| {
+        let panel = cx.new(|_| LayoutStateProbe(true));
+        let window = cx.open_window(size(px(200.0), px(80.0)), |window, _| {
+            window.set_view_retention_for_test(retain);
+            DetachedPane {
+                panel: panel.clone(),
+                builds: 0,
+            }
+        });
+        (window, panel)
+    });
+    let read = |cx: &mut TestAppContext, handle: WindowHandle<DetachedPane<LayoutStateProbe>>| {
+        cx.update_window(handle.into(), |root, window, cx| {
+            let root = root.downcast::<DetachedPane<LayoutStateProbe>>().unwrap();
+            (
+                quad_facts(&window.rendered_frame.scene),
+                root.read(cx).builds,
+            )
+        })
+        .unwrap()
+    };
+    let before = read(cx, windows[0].0);
+    for (uses_state, color) in [(false, INITIAL_MARKER), (true, INITIAL_FILL)] {
+        cx.update(|cx| {
+            for (_, panel) in &windows {
+                panel.update(cx, |panel, cx| {
+                    panel.0 = uses_state;
+                    cx.notify();
+                });
+            }
+        });
+        let [(retained, retained_builds), (redrawn, _)] =
+            windows.each_ref().map(|(window, _)| read(cx, *window));
+        assert_eq!(retained_builds, before.1, "the detached root is spliced");
+        assert!(
+            redrawn
+                .iter()
+                .any(|quad| quad.background == Background::from(rgb(color)))
+        );
+        assert_eq!(retained, redrawn);
     }
 }
 
@@ -811,7 +1134,18 @@ fn accessibility_node(update: &accesskit::TreeUpdate, id: accesskit::NodeId) -> 
 #[cfg(not(target_family = "wasm"))]
 #[open_gpui::test]
 fn retained_accessibility_tree_matches_full_redraw(cx: &mut TestAppContext) {
-    let windows = Windows::open(cx, false);
+    check_accessibility_replay(cx, false);
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[open_gpui::test]
+fn clipped_accessibility_tree_matches_full_redraw(cx: &mut TestAppContext) {
+    check_accessibility_replay(cx, true);
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn check_accessibility_replay(cx: &mut TestAppContext, clipped: bool) {
+    let windows = Windows::open(cx, clipped);
     for handle in windows.pair() {
         assert!(cx.activate_accessibility(handle.into()));
     }
@@ -828,7 +1162,11 @@ fn retained_accessibility_tree_matches_full_redraw(cx: &mut TestAppContext) {
     };
     let [warm, _] = windows.draw_and_compare(cx, "warm accessibility frame");
     let [retained, _] = windows.draw_and_compare(cx, "static accessibility frame");
-    assert_eq!(retained.builds, warm.builds);
+    if clipped {
+        assert_eq!(retained.builds, warm.builds.map(|builds| builds + 1));
+    } else {
+        assert_eq!(retained.builds, warm.builds);
+    }
     let before = windows.pair().map(|handle| snapshot(cx, handle));
     assert_eq!(before[0], before[1]);
     assert!(!before[0].2);

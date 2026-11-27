@@ -320,7 +320,7 @@ pub(super) fn prepaint(
 
     for (index, part) in segments.iter().enumerate() {
         segment_starts.push(window.prepaint_index());
-        window.reuse_prepaint_segment(part.prepaint.clone(), &mut dispatch);
+        window.reuse_prepaint_segment(part.prepaint.clone(), &mut dispatch)?;
         while let Some(copy) = pending.next_if(|copy| copy.last_segment == index) {
             let old = &window.rendered_frame.retained_views.views[copy.previous];
             cx.entities.extend_accessed(&old.data.accessed);

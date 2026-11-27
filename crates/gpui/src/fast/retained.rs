@@ -3,6 +3,7 @@ use std::{any::TypeId, ops::Range, rc::Rc};
 use crate::{
     AnyElement, AnyWeakView, App, Bounds, DispatchNodeId, EntityId, FocusId, GlobalElementId,
     LayoutId, PaintIndex, Pixels, PrepaintStateIndex, Size, SubtreePresentation, TextStyle, Window,
+    WindowAppearance,
     collections::{FxHashMap, FxHashSet},
     geometry::{ClipStackSnapshot, ResolvedSubtreeTransform},
     window::RetainedViewContext,
@@ -158,6 +159,7 @@ struct LayoutInputs {
     scale: f32,
     viewport_size: Size<Pixels>,
     font_generation: usize,
+    appearance: WindowAppearance,
     text: TextStyle,
     keyboard: bool,
     touch: bool,
@@ -171,6 +173,7 @@ impl LayoutInputs {
             scale: window.scale_factor(),
             viewport_size: window.viewport_size,
             font_generation: window.text_system().font_generation(),
+            appearance: window.appearance(),
             text: window.text_style(),
             keyboard: window.last_input_was_keyboard(),
             touch: window.last_input_was_touch(),
@@ -182,6 +185,7 @@ impl LayoutInputs {
 #[derive(Clone, PartialEq)]
 struct PaintInputs {
     bounds: Bounds<Pixels>,
+    font_generation: usize,
     clip: ClipStackSnapshot,
     text: TextStyle,
     focus: Option<FocusId>,
@@ -194,6 +198,7 @@ impl PaintInputs {
     fn capture(window: &Window, bounds: Bounds<Pixels>) -> Self {
         Self {
             bounds,
+            font_generation: window.text_system().font_generation(),
             clip: window.clip_stack(),
             text: window.text_style(),
             focus: window.focus,
@@ -234,6 +239,7 @@ pub(crate) fn can_record(window: &Window, cx: &App) -> bool {
     window.view_retention_enabled()
         && !window.is_inspector_picking(cx)
         && cx.active_drag.is_none()
+        && !cx.has_active_platform_drag()
         && window.image_cache_stack.is_empty()
         && window.subtree_presentation().paints()
 }
@@ -375,8 +381,10 @@ pub(crate) fn prepaint(
                 window.reject_retained_view_replay();
                 return Prepaint::Aborted;
             }
-            let current = replay_prepaint(window, cx, previous);
-            Prepaint::Replayed { previous, current }
+            match replay_prepaint(window, cx, previous) {
+                Some(current) => Prepaint::Replayed { previous, current },
+                None => Prepaint::Aborted,
+            }
         }
     }
 }
@@ -447,7 +455,7 @@ fn can_replay_accessibility(_window: &Window, _view: &ViewOutput) -> bool {
     true
 }
 
-fn replay_prepaint(window: &mut Window, cx: &mut App, index: usize) -> usize {
+fn replay_prepaint(window: &mut Window, cx: &mut App, index: usize) -> Option<usize> {
     let old = &window.rendered_frame.retained_views.views[index];
     let range = old.prepaint.clone();
     cx.entities.extend_accessed(&old.data.accessed);
@@ -468,8 +476,9 @@ fn replay_prepaint(window: &mut Window, cx: &mut App, index: usize) -> usize {
         Point::default(),
     ) {
         window.reject_retained_view_replay();
+        return None;
     }
-    let dispatch = window.reuse_prepaint(range.clone());
+    let dispatch = window.reuse_prepaint(range.clone())?;
     let end = window.prepaint_index();
     let active = window.next_frame.dispatch_tree.active_node_id();
 
@@ -493,7 +502,7 @@ fn replay_prepaint(window: &mut Window, cx: &mut App, index: usize) -> usize {
         );
     }
     let current = next.views.len();
-    next.push(output.replayed(start..end, new_children..current, active))
+    Some(next.push(output.replayed(start..end, new_children..current, active)))
 }
 
 pub(crate) fn paint(state: &mut Prepaint, window: &mut Window, cx: &mut App) {
@@ -505,6 +514,8 @@ pub(crate) fn paint(state: &mut Prepaint, window: &mut Window, cx: &mut App) {
                 .data
                 .rebuild
                 .as_ref()
+                // Splicing cannot reconstruct an ancestor's group hitbox stack.
+                .filter(|_| !crate::GroupHitboxes::is_active(cx))
                 .and_then(|_| window.retained_view_context());
             let inputs = PaintInputs::capture(window, output.data.inputs.bounds);
             #[cfg(not(target_family = "wasm"))]

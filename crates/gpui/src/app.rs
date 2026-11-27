@@ -303,9 +303,13 @@ impl Application {
     /// See the [accessibility guide](crate::_accessibility) for an overview of
     /// the features this disables.
     pub fn new_inaccessible(platform: Rc<dyn Platform>) -> Self {
-        let this = Self::with_platform(platform);
-        this.0.borrow_mut().accessibility_force_disabled = true;
-        this
+        Self::with_platform(platform).without_accessibility()
+    }
+
+    /// Disables AccessKit integration before running this application.
+    pub fn without_accessibility(self) -> Self {
+        self.0.borrow_mut().accessibility_force_disabled = true;
+        self
     }
 
     /// Assigns the source of assets for the application.

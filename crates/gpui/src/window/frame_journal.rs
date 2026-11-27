@@ -48,6 +48,12 @@ pub(crate) struct FrameOutput<T> {
 }
 
 #[derive(Clone)]
+pub(super) struct ElementStateAccess {
+    pub(super) key: (GlobalElementId, TypeId),
+    pub(super) recorded_during_layout: bool,
+}
+
+#[derive(Clone)]
 pub(crate) struct PrepaintCommit {
     pub(super) phase: PrepaintCommitPhase,
     pub(super) publication: Option<PrepaintPublicationId>,
@@ -119,7 +125,7 @@ pub(crate) struct Frame {
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
     pub(crate) element_state_validities:
         FxHashMap<(GlobalElementId, TypeId), Option<SubtreeGeometryValidity>>,
-    pub(super) accessed_element_states: Vec<(GlobalElementId, TypeId)>,
+    pub(super) accessed_element_states: Vec<Option<ElementStateAccess>>,
     pub(crate) mouse_listeners: Vec<FrameOutput<Option<AnyMouseListener>>>,
     pub(crate) pointer_cancel_listeners: Vec<FrameOutput<Option<AnyPointerCancelListener>>>,
     pub(crate) dispatch_tree: DispatchTree,
@@ -577,7 +583,8 @@ impl Frame {
     }
 
     pub(crate) fn finish(&mut self, prev_frame: &mut Self) {
-        for element_state_key in &self.accessed_element_states {
+        for access in self.accessed_element_states.iter().flatten() {
+            let element_state_key = &access.key;
             if self
                 .element_state_validities
                 .get(element_state_key)

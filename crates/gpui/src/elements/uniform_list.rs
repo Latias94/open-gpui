@@ -141,6 +141,22 @@ impl UniformListScrollHandle {
         self.0.borrow().base_handle.clone()
     }
 
+    fn read_retained<T: Copy + PartialEq + 'static>(
+        &self,
+        read: fn(&UniformListScrollState) -> T,
+    ) -> T {
+        let value = read(&self.0.borrow());
+        crate::fast::dependencies::state(|| {
+            let handle = Rc::downgrade(&self.0);
+            Box::new(move || {
+                handle
+                    .upgrade()
+                    .is_some_and(|handle| read(&handle.borrow()) == value)
+            })
+        });
+        value
+    }
+
     fn queue_direct_scroll_to_item(
         &self,
         item_index: usize,
@@ -210,26 +226,27 @@ impl UniformListScrollHandle {
 
     /// Check if the list is flipped vertically.
     pub fn y_flipped(&self) -> bool {
-        self.0.borrow().y_flipped
+        self.read_retained(|state| state.y_flipped)
     }
 
     /// Get the index of the topmost visible child.
     #[cfg(any(test, feature = "test-support"))]
     pub fn logical_scroll_top_index(&self) -> usize {
-        let this = self.0.borrow();
-        this.deferred_scroll_to_item
-            .as_ref()
-            .map(|deferred| deferred.item_index)
-            .unwrap_or_else(|| this.base_handle.logical_scroll_top().0)
+        self.read_retained(|state| {
+            state
+                .deferred_scroll_to_item
+                .map(|request| request.item_index)
+        })
+        .unwrap_or_else(|| self.0.borrow().base_handle.logical_scroll_top().0)
     }
 
     /// Checks if the list can be scrolled vertically.
     pub fn is_scrollable(&self) -> bool {
-        if let Some(size) = self.0.borrow().last_item_size {
-            size.contents.height > size.item.height
-        } else {
-            false
-        }
+        self.read_retained(|state| {
+            state
+                .last_item_size
+                .is_some_and(|size| size.contents.height > size.item.height)
+        })
     }
 
     /// Whether the list is scrolled to the end, or `None` if the list is
@@ -383,12 +400,10 @@ impl Element for UniformList {
             window,
             cx,
             |style, mut scroll_offset, hitbox, window, cx| {
-                let y_flipped = if let Some(scroll_handle) = &self.scroll_handle {
-                    let scroll_state = scroll_handle.0.borrow();
-                    scroll_state.y_flipped
-                } else {
-                    false
-                };
+                let y_flipped = self
+                    .scroll_handle
+                    .as_ref()
+                    .is_some_and(UniformListScrollHandle::y_flipped);
 
                 if self.item_count > 0 {
                     let content_height = item_height * self.item_count;
@@ -747,6 +762,78 @@ mod text_measurement_tests;
 #[cfg(test)]
 mod test {
     use crate::TestAppContext;
+
+    #[open_gpui::test]
+    fn retained_uniform_scroll_reads_track_handle_and_layout_changes(cx: &mut TestAppContext) {
+        use super::{ScrollStrategy, UniformList, UniformListScrollHandle, uniform_list};
+        use crate::{
+            AppContext, Context, IntoElement, Render, Styled, VisualTestContext, Window, div,
+            fast::dependencies::capture, point, px, size,
+        };
+
+        struct TestList {
+            handle: UniformListScrollHandle,
+            count: usize,
+        }
+
+        impl TestList {
+            fn list(&self) -> UniformList {
+                uniform_list("entries", self.count, |range, _, _| {
+                    range.map(|_| div().h(px(20.))).collect()
+                })
+                .track_scroll(&self.handle)
+                .h(px(40.))
+            }
+        }
+
+        impl Render for TestList {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.list()
+            }
+        }
+
+        let cx = cx.add_empty_window();
+        let handle = UniformListScrollHandle::new();
+        let build = |count| TestList {
+            handle: handle.clone(),
+            count,
+        };
+        let draw = |count, cx: &mut VisualTestContext| {
+            cx.draw(point(px(0.), px(0.)), size(px(100.), px(40.)), |_, cx| {
+                cx.new(|_| build(count)).into_any_element()
+            });
+        };
+
+        draw(1, cx);
+        let (scrollable, scrollable_reads) = capture(|| handle.is_scrollable());
+        assert!(!scrollable);
+        handle.scroll_to_item(1, ScrollStrategy::Top);
+        let (index, first_request) = capture(|| handle.logical_scroll_top_index());
+        assert_eq!(index, 1);
+        handle.scroll_to_item(2, ScrollStrategy::Top);
+        let (index, second_request) = capture(|| handle.logical_scroll_top_index());
+        assert_eq!(index, 2);
+        cx.update(|window, cx| {
+            assert!(scrollable_reads.is_current(window, cx));
+            assert!(!first_request.is_current(window, cx));
+            assert!(second_request.is_current(window, cx));
+        });
+
+        draw(5, cx);
+        assert!(handle.is_scrollable());
+        cx.update(|window, cx| {
+            assert!(!scrollable_reads.is_current(window, cx));
+            assert!(!second_request.is_current(window, cx));
+        });
+
+        let (flipped, orientation) = capture(|| handle.y_flipped());
+        assert!(!flipped);
+        build(5).list().y_flipped(false);
+        cx.update(|window, cx| assert!(orientation.is_current(window, cx)));
+        build(5).list().y_flipped(true);
+        assert!(handle.y_flipped());
+        cx.update(|window, cx| assert!(!orientation.is_current(window, cx)));
+    }
 
     #[open_gpui::test]
     fn test_scroll_strategy_nearest(cx: &mut TestAppContext) {
