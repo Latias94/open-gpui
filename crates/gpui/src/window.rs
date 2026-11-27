@@ -1772,7 +1772,8 @@ pub struct Window {
     default_prevented: bool,
     last_dispatch_event_result: Option<DispatchEventResult>,
     mouse_position: Point<Pixels>,
-    mouse_in_window: bool,
+    // The platform may not have reported a pointer event when the first frame is drawn.
+    mouse_in_window: Option<bool>,
     mouse_hit_test: HitTest,
     modifiers: Modifiers,
     capslock: Capslock,
@@ -3028,7 +3029,7 @@ impl Window {
             default_prevented: true,
             last_dispatch_event_result: None,
             mouse_position,
-            mouse_in_window: hovered.get(),
+            mouse_in_window: hovered.get().then_some(true),
             mouse_hit_test: HitTest::default(),
             modifiers,
             capslock,
@@ -7277,7 +7278,7 @@ impl Window {
 
     pub(crate) fn native_hover_status_changed(&mut self, hovered: bool, cx: &mut App) {
         self.hovered.set(hovered);
-        self.mouse_in_window = hovered;
+        self.mouse_in_window = Some(hovered);
         if !hovered {
             self.reset_cursor_style(cx);
         }
@@ -7790,16 +7791,17 @@ impl Window {
 
     /// Whether the mouse is currently inside this window according to the last platform input.
     pub fn is_mouse_in_window(&self) -> bool {
-        retained_reads::input(InputRead::MouseInWindow(self.mouse_in_window));
-        self.mouse_in_window
+        let inside = self.mouse_in_window == Some(true);
+        retained_reads::input(InputRead::MouseInWindow(inside));
+        inside
     }
 
     fn frame_hit_test(&self, frame: &Frame) -> HitTest {
         // A leave event can carry the last client position, which may still hit the frame.
-        if self.mouse_in_window {
-            frame.hit_test(self.mouse_position)
-        } else {
+        if self.mouse_in_window == Some(false) {
             HitTest::default()
+        } else {
+            frame.hit_test(self.mouse_position)
         }
     }
 
@@ -7843,7 +7845,7 @@ impl Window {
             InputRead::Position(position) => self.mouse_position == position,
             InputRead::Modifiers(modifiers) => self.modifiers == modifiers,
             InputRead::Capslock(capslock) => self.capslock == capslock,
-            InputRead::MouseInWindow(inside) => self.mouse_in_window == inside,
+            InputRead::MouseInWindow(inside) => (self.mouse_in_window == Some(true)) == inside,
             InputRead::Hover(hitbox, hovered) => hitbox.hit_test(self) == hovered,
         }
     }
@@ -14469,7 +14471,7 @@ impl Window {
             let hit_test = if exited_window {
                 HitTest::default()
             } else {
-                self.rendered_frame.hit_test(self.mouse_position())
+                self.frame_hit_test(&self.rendered_frame)
             };
             if !exited_window && hit_test != self.mouse_hit_test {
                 self.mouse_hit_test = hit_test;

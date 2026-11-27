@@ -88,14 +88,14 @@ impl Window {
         match gesture {
             RecognizedTouchGesture::Scroll(scroll) => {
                 self.mouse_position = scroll.position;
-                self.mouse_in_window = true;
+                self.mouse_in_window = Some(true);
                 cx.propagate_event = true;
                 self.default_prevented = false;
                 self.dispatch_mouse_event(&scroll, cx);
             }
             RecognizedTouchGesture::Tap { down, up } => {
                 self.mouse_position = up.position;
-                self.mouse_in_window = true;
+                self.mouse_in_window = Some(true);
                 cx.propagate_event = true;
                 self.default_prevented = false;
                 self.dispatch_mouse_event(&down, cx);
@@ -107,7 +107,7 @@ impl Window {
             }
             RecognizedTouchGesture::TouchDrag(drag) => {
                 self.mouse_position = drag.start_position;
-                self.mouse_in_window = true;
+                self.mouse_in_window = Some(true);
                 cx.propagate_event = true;
                 self.default_prevented = false;
                 let started = drag.phase == TouchPhase::Started;
@@ -136,7 +136,7 @@ impl Window {
                 } else {
                     press.position
                 };
-                self.mouse_in_window = true;
+                self.mouse_in_window = Some(true);
                 cx.propagate_event = true;
                 self.default_prevented = false;
                 let started = press.phase == TouchPhase::Started;

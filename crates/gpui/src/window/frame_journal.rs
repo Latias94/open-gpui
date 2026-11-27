@@ -418,7 +418,7 @@ impl Frame {
     }
 
     pub(crate) fn cursor_style(&self, window: &Window) -> Option<CursorStyle> {
-        if !window.mouse_in_window {
+        if window.mouse_in_window != Some(true) {
             return None;
         }
 

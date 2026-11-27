@@ -41,19 +41,19 @@ fn normalize_platform_input(
     match event {
         PlatformInput::MouseMove(mouse_move) => {
             window.mouse_position = mouse_move.position;
-            window.mouse_in_window = true;
+            window.mouse_in_window = Some(true);
             window.modifiers = mouse_move.modifiers;
             PlatformInput::MouseMove(mouse_move)
         }
         PlatformInput::MouseDown(mouse_down) => {
             window.mouse_position = mouse_down.position;
-            window.mouse_in_window = true;
+            window.mouse_in_window = Some(true);
             window.modifiers = mouse_down.modifiers;
             PlatformInput::MouseDown(mouse_down)
         }
         PlatformInput::MouseUp(mouse_up) => {
             window.mouse_position = mouse_up.position;
-            window.mouse_in_window = true;
+            window.mouse_in_window = Some(true);
             window.modifiers = mouse_up.modifiers;
             PlatformInput::MouseUp(mouse_up)
         }
@@ -62,7 +62,7 @@ fn normalize_platform_input(
         }
         PlatformInput::MouseExited(mouse_exited) => {
             window.mouse_position = mouse_exited.position;
-            window.mouse_in_window = false;
+            window.mouse_in_window = Some(false);
             window.modifiers = mouse_exited.modifiers;
             PlatformInput::MouseExited(mouse_exited)
         }
@@ -80,13 +80,13 @@ fn normalize_platform_input(
         }
         PlatformInput::Scroll(scroll_wheel) => {
             window.mouse_position = scroll_wheel.position;
-            window.mouse_in_window = true;
+            window.mouse_in_window = Some(true);
             window.modifiers = scroll_wheel.modifiers;
             PlatformInput::Scroll(scroll_wheel)
         }
         PlatformInput::Pinch(pinch) => {
             window.mouse_position = pinch.position;
-            window.mouse_in_window = true;
+            window.mouse_in_window = Some(true);
             window.modifiers = pinch.modifiers;
             PlatformInput::Pinch(pinch)
         }
@@ -97,17 +97,17 @@ fn normalize_platform_input(
             } else {
                 long_press.position
             };
-            window.mouse_in_window = true;
+            window.mouse_in_window = Some(true);
             PlatformInput::LongPress(long_press)
         }
         PlatformInput::TouchDrag(touch_drag) => {
             window.mouse_position = touch_drag.start_position;
-            window.mouse_in_window = true;
+            window.mouse_in_window = Some(true);
             PlatformInput::TouchDrag(touch_drag)
         }
         PlatformInput::BackGesture(back) => {
             window.mouse_position = back.start_position;
-            window.mouse_in_window = true;
+            window.mouse_in_window = Some(true);
             PlatformInput::BackGesture(back)
         }
         PlatformInput::Touch(touch) => PlatformInput::Touch(touch),
@@ -120,7 +120,7 @@ fn normalize_file_drop(window: &mut Window, cx: &mut App, event: FileDropEvent) 
     match event {
         FileDropEvent::Entered { position, paths } => {
             window.mouse_position = position;
-            window.mouse_in_window = true;
+            window.mouse_in_window = Some(true);
             if !cx.restore_current_platform_drag(window.window_handle().window_id())
                 && cx.active_drag.is_none()
             {
@@ -144,7 +144,7 @@ fn normalize_file_drop(window: &mut Window, cx: &mut App, event: FileDropEvent) 
         }
         FileDropEvent::Pending { position } => {
             window.mouse_position = position;
-            window.mouse_in_window = true;
+            window.mouse_in_window = Some(true);
             PlatformInput::MouseMove(MouseMoveEvent {
                 position,
                 pressed_button: Some(MouseButton::Left),
@@ -154,7 +154,7 @@ fn normalize_file_drop(window: &mut Window, cx: &mut App, event: FileDropEvent) 
         FileDropEvent::Submit { position } => {
             cx.activate(true);
             window.mouse_position = position;
-            window.mouse_in_window = true;
+            window.mouse_in_window = Some(true);
             PlatformInput::MouseUp(MouseUpEvent {
                 button: MouseButton::Left,
                 position,
@@ -163,7 +163,7 @@ fn normalize_file_drop(window: &mut Window, cx: &mut App, event: FileDropEvent) 
             })
         }
         FileDropEvent::Exited => {
-            window.mouse_in_window = false;
+            window.mouse_in_window = Some(false);
             if !cx.hand_current_restored_drag_to_platform(window.window_handle().window_id()) {
                 let _ = cx.clear_active_drag_for_window(window.window_handle().window_id());
             }
