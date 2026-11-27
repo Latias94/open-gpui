@@ -77,8 +77,12 @@ with `into_any_element()`; the underlying entity identity and concrete profiling
 GPUI can replay the layout and frame output of an unchanged entity-backed view. It tracks
 entity, global, scroll, list, and input reads during drawing. When a nested update preserves
 layout and inherited state, GPUI can rebuild that view and replay the accepted frame around it.
-Use `Context::notify` when drawing depends on state held outside GPUI's tracked APIs. Set
-`GPUI_VIEW_RETENTION=0` before launching an application to disable automatic view and layout reuse.
+Use `Context::notify` when drawing depends on state held outside GPUI's tracked APIs. An explicit
+`Window::draw` rebuilds the root and still allows explicitly cached children to replay. Native
+accessibility supports complete subtree replay and uses a fresh draw for dirty splice candidates.
+
+Set `GPUI_VIEW_RETENTION=0` before launch to disable view and layout replay for a full-redraw
+comparison. Presentation of an already accepted scene remains available in this mode.
 
 ## Atlas Ownership
 
@@ -409,17 +413,6 @@ producing a catch-up burst. These rules do not replace accepted-frame or native 
 The [power/cadence qualification](../../docs/verification.md#power-modes-and-stable-frame-cadence)
 records backend sources, executed platform/consumer scope and remaining physical timing/energy
 limits.
-
-## Retained View Rendering
-
-GPUI can reuse layout and frame output from an accepted draw when an entity-backed view's
-dependencies and rendering context still match. A dirty nested view can rebuild within retained
-ancestors when its layout remains stable. When those checks fail, GPUI draws the affected frame
-through the ordinary rendering path. Native accessibility supports complete subtree replay and
-uses a fresh draw for dirty splice candidates.
-
-Set `GPUI_VIEW_RETENTION=0` before launch to disable view replay for a full-redraw comparison.
-Presentation of an already accepted scene remains available in this mode.
 
 ## Frame And Hang Measurement
 

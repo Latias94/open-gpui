@@ -271,7 +271,7 @@ struct Drawn {
 fn draw(cx: &mut TestAppContext, handle: WindowHandle<Sheet>) -> Drawn {
     cx.update_window(handle.into(), |root, window, cx| {
         let previous = window.rendered_frame_revision();
-        window.draw(cx).clear(cx);
+        window.draw_scheduled_frame(cx).clear(cx);
         assert!(window.rendered_frame_revision() > previous);
 
         let root = root.downcast::<Sheet>().unwrap();
@@ -448,6 +448,16 @@ fn static_replay_skips_view_builds(cx: &mut TestAppContext) {
     assert_eq!(
         redraw_before.builds.map(|count| count + 1),
         redraw_after.builds
+    );
+
+    cx.update_window(windows.retained.into(), |_, window, cx| {
+        window.draw(cx).clear(cx);
+    })
+    .unwrap();
+    let [after_explicit_draw, _] = windows.draw_and_compare(cx, "after explicit draw");
+    assert_eq!(
+        retained_after.builds.map(|count| count + 1),
+        after_explicit_draw.builds
     );
 }
 

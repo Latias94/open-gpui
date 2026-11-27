@@ -8036,7 +8036,7 @@ impl Window {
                 self.refresh();
             }
             let accepted_generation = self.presentation_state.frame_accepted_generation;
-            let arena_clear_needed = self.draw(cx);
+            let arena_clear_needed = self.draw_scheduled_frame(cx);
             if self.presentation_state.frame_accepted_generation != accepted_generation
                 || self.needs_present.get()
             {
@@ -8246,10 +8246,18 @@ impl Window {
         self.candidate_frame_transfers = CandidateFrameTransfers::default();
     }
 
-    /// Produces a new frame and assigns it to `rendered_frame`. To actually show
-    /// the contents of the new [`Scene`], use [`Self::present`].
-    #[profiling::function]
+    /// Draws the window root explicitly. Explicitly cached child views remain eligible for reuse.
+    /// To show the contents of the new [`Scene`], use [`Self::present`].
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
+        self.draw_frame(cx, false)
+    }
+
+    pub(crate) fn draw_scheduled_frame(&mut self, cx: &mut App) -> ArenaClearNeeded {
+        self.draw_frame(cx, true)
+    }
+
+    #[profiling::function]
+    fn draw_frame(&mut self, cx: &mut App, allow_root_replay: bool) -> ArenaClearNeeded {
         #[cfg(feature = "profiler")]
         {
             let refresh_interval = self.refresh_interval(cx);
@@ -8258,7 +8266,9 @@ impl Window {
             let frame_dirty = self.invalidator.take_frame_dirty();
             let previous_generation = self.rendered_frame.generation;
             let update_count_at_draw_start = self.invalidator.update_count();
-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.draw_inner(cx))) {
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.draw_inner(cx, allow_root_replay)
+            })) {
                 Ok(clear) => {
                     if let Some(candidate) = self.deferred_candidate.as_mut() {
                         if let Some(timing) = self.window_profiler.prepare_draw_checkpoint(
@@ -8303,10 +8313,10 @@ impl Window {
             }
         }
         #[cfg(not(feature = "profiler"))]
-        self.draw_inner(cx)
+        self.draw_inner(cx, allow_root_replay)
     }
 
-    fn draw_inner(&mut self, cx: &mut App) -> ArenaClearNeeded {
+    fn draw_inner(&mut self, cx: &mut App, allow_root_replay: bool) -> ArenaClearNeeded {
         self.cancel_deferred_scene();
         let _access_frame = cx.entities.frame_access_scope();
         // Set up the per-App arena for element allocation during this draw.
@@ -8327,7 +8337,7 @@ impl Window {
             self.refresh();
         }
         self.invalidate_entities();
-        self.refresh_retained_views = self.invalidator.requires_fresh_draw();
+        self.refresh_retained_views = !allow_root_replay || self.invalidator.requires_fresh_draw();
         self.retained_view_replay_failed = false;
         self.layout_engine
             .as_mut()

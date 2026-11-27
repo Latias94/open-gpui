@@ -2662,8 +2662,10 @@ impl App {
                         })
                         .collect::<Vec<_>>()
                     {
-                        self.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
-                            .unwrap();
+                        self.update_window(window, |_, window, cx| {
+                            window.draw_scheduled_frame(cx).clear(cx)
+                        })
+                        .unwrap();
                     }
                 }
 

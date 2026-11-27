@@ -42,7 +42,7 @@ fn test_action_macros() {
         where
             Self: Sized,
         {
-            unimplemented!()
+            "test_only::RegisterableAction"
         }
 
         fn build(_value: serde_json::Value) -> anyhow::Result<Box<dyn open_gpui::Action>>
