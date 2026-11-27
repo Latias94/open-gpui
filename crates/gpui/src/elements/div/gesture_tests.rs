@@ -173,6 +173,16 @@ fn input_modality_independent_hover_listener_updates_after_key_press(cx: &mut Te
     })
     .unwrap();
     assert_eq!(*hover_transitions.borrow(), [true, false, true, false]);
+
+    cx.update_window(any_window, |_, window, cx| window.draw(cx).clear(cx))
+        .unwrap();
+    assert_eq!(*hover_transitions.borrow(), [true, false, true, false]);
+
+    cx.update_window(any_window, |_, window, cx| {
+        window.simulate_mouse_move(pointer_position, cx);
+    })
+    .unwrap();
+    assert_eq!(*hover_transitions.borrow(), [true, false, true, false, true]);
 }
 
 #[crate::test]

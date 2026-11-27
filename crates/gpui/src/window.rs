@@ -7794,6 +7794,15 @@ impl Window {
         self.mouse_in_window
     }
 
+    fn frame_hit_test(&self, frame: &Frame) -> HitTest {
+        // A leave event can carry the last client position, which may still hit the frame.
+        if self.mouse_in_window {
+            frame.hit_test(self.mouse_position)
+        } else {
+            HitTest::default()
+        }
+    }
+
     /// Captures subsequent long-press phases for the given entity.
     ///
     /// The listener must also prevent the started event's default behavior to claim it.
@@ -8221,7 +8230,7 @@ impl Window {
         self.schedule_focus_claim_resolution_dispatch(cx);
         self.candidate_accessibility_focus = None;
         self.candidate_atlas_lease_failure = None;
-        self.mouse_hit_test = self.rendered_frame.hit_test(self.mouse_position);
+        self.mouse_hit_test = self.frame_hit_test(&self.rendered_frame);
         if let Some(index) = restored_input_handler_index
             && let Some(input_handler) = self.rendered_frame.input_handlers[index].value.take()
         {
@@ -8674,7 +8683,7 @@ impl Window {
         self.sealed_focus_retry_rejection = self.settle_focus_claim_for_candidate_generation();
         let prepaint_commit_plan = self.prepare_candidate_prepaint_commit_plan();
         self.hover_style_hitboxes.get_mut().0 = 0;
-        self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
+        self.mouse_hit_test = self.frame_hit_test(&self.next_frame);
 
         // Ordinary normal-phase commits may prepare accepted-frame publications and follow-up
         // focus work, but cross-frame publications remain private until the candidate is swapped.
@@ -9431,7 +9440,7 @@ impl Window {
         // Cached subtrees replay dispatch nodes without calling `set_focus_handle`, so give a
         // one-frame claim one final prepaint qualification point before paint installs handlers.
         self.promote_pending_focus_claim();
-        self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
+        self.mouse_hit_test = self.frame_hit_test(&self.next_frame);
 
         // Now actually paint the elements.
         #[cfg(feature = "profiler")]
