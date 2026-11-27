@@ -1,4 +1,4 @@
-use super::{Command, restart_command};
+use super::restart_command;
 use std::{
     ffi::OsString,
     fs,

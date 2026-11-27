@@ -844,16 +844,33 @@ impl Smoke {
     }
 
     fn submit_original(&self, factory: &Factory, original: &PendingFrame) -> Result<()> {
-        let pending = factory
-            .pending_frame()
-            .context("the original deferred packet disappeared")?;
+        let pending = factory.pending_frame().with_context(|| {
+            format!(
+                "the original deferred packet disappeared during {} ({:?})",
+                self.phase_name(),
+                original.submission.status()
+            )
+        })?;
         ensure!(
             same_attempt(&pending.submission, &original.submission)
                 && pending.submission.is_pending()
                 && pending.recorded_count == original.recorded_count
                 && pending.extent == original.extent
                 && pending.target_generation == original.target_generation,
-            "host drain replaced or mutated the original recorded packet"
+            "host drain replaced or mutated the original recorded packet during {}: \
+             expected {:?} {:?} with count {}, extent {:?}, target generation {}; \
+             found {:?} {:?} with count {}, extent {:?}, target generation {}",
+            self.phase_name(),
+            original.submission.attempt_id(),
+            original.submission.status(),
+            original.recorded_count,
+            original.extent,
+            original.target_generation,
+            pending.submission.attempt_id(),
+            pending.submission.status(),
+            pending.recorded_count,
+            pending.extent,
+            pending.target_generation,
         );
         let before = factory.submitted.get();
         ensure!(
