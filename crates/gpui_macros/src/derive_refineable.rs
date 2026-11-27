@@ -17,13 +17,14 @@ pub(crate) fn derive_refineable(input: TokenStream) -> TokenStream {
         ..
     } = parse_macro_input!(input);
 
-    let refineable_attr = attrs.iter().find(|attr| attr.path().is_ident("refineable"));
-
     let mut impl_debug_on_refinement = false;
     let mut derives_serialize = false;
     let mut refinement_traits_to_derive = vec![];
 
-    if let Some(refineable_attr) = refineable_attr {
+    for refineable_attr in attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("refineable"))
+    {
         let _ = refineable_attr.parse_nested_meta(|meta| {
             if meta.path.is_ident("Debug") {
                 impl_debug_on_refinement = true;

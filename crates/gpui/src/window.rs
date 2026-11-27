@@ -6,6 +6,9 @@ use crate::Refineable;
 use crate::app::{AppCell, PlatformWindowCommandSink};
 use crate::collections::{FxHashSet, TypeIdHashMap};
 use crate::element::ElementIdStack;
+use crate::fast::dependencies::{self as retained_reads, ElementStateKey, InputRead};
+use crate::fast::layout_key::LayoutKeys;
+use crate::key_dispatch::{DispatchSplice, ReusedSubtree};
 #[cfg(feature = "profiler")]
 use crate::profiler;
 use crate::scheduler::Instant;
@@ -644,7 +647,7 @@ impl HitboxId {
         if window.last_input_was_keyboard() {
             return false;
         }
-        self.hit_test(window)
+        self.is_hovered_ignoring_last_input(window)
     }
 
     /// Checks whether this hitbox is the routed target for the current mouse-button event.
@@ -663,7 +666,11 @@ impl HitboxId {
     ///
     /// See [`HitboxId::is_hovered`] for more details.
     pub(crate) fn is_hovered_ignoring_last_input(self, window: &Window) -> bool {
-        self.hit_test(window)
+        let hovered = self.hit_test(window);
+        if window.invalidator.is_paint() {
+            retained_reads::input(InputRead::Hover(self, hovered));
+        }
+        hovered
     }
 
     fn hit_test(self, window: &Window) -> bool {
@@ -1699,6 +1706,10 @@ pub struct Window {
     rem_size_override_stack: SmallVec<[Pixels; 8]>,
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
+    pub(crate) layout_keys: LayoutKeys,
+    view_retention_enabled: bool,
+    pub(crate) refresh_retained_views: bool,
+    retained_view_replay_failed: bool,
     pub(crate) root: Option<AnyView>,
     pub(crate) element_id_stack: ElementIdStack,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
@@ -2020,6 +2031,14 @@ struct CandidateDrawContextCheckpoint {
     offsets: Vec<Point<Pixels>>,
     rem_sizes: SmallVec<[Pixels; 8]>,
     image_caches: Vec<AnyImageCache>,
+    opacity: f32,
+}
+
+pub(crate) struct RetainedViewContext {
+    text_styles: Vec<TextStyleRefinement>,
+    rem: Pixels,
+    offset: Point<Pixels>,
+    clip: Option<ClipStackSnapshot>,
     opacity: f32,
 }
 
@@ -2942,6 +2961,11 @@ impl Window {
             rem_size_override_stack: SmallVec::new(),
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
+            layout_keys: LayoutKeys::default(),
+            view_retention_enabled: std::env::var_os("GPUI_VIEW_RETENTION").as_deref()
+                != Some(std::ffi::OsStr::new("0")),
+            refresh_retained_views: false,
+            retained_view_replay_failed: false,
             root: None,
             element_id_stack: ElementIdStack::default(),
             text_style_stack: Vec::new(),
@@ -7730,6 +7754,7 @@ impl Window {
 
     /// The position of the mouse relative to the window.
     pub fn mouse_position(&self) -> Point<Pixels> {
+        retained_reads::input(InputRead::Position(self.mouse_position));
         self.mouse_position
     }
 
@@ -7759,6 +7784,7 @@ impl Window {
 
     /// Whether the mouse is currently inside this window according to the last platform input.
     pub fn is_mouse_in_window(&self) -> bool {
+        retained_reads::input(InputRead::MouseInWindow(self.mouse_in_window));
         self.mouse_in_window
     }
 
@@ -7776,6 +7802,7 @@ impl Window {
 
     /// The current state of the keyboard's modifiers
     pub fn modifiers(&self) -> Modifiers {
+        retained_reads::input(InputRead::Modifiers(self.modifiers));
         self.modifiers
     }
 
@@ -7792,7 +7819,18 @@ impl Window {
 
     /// The current state of the keyboard's capslock
     pub fn capslock(&self) -> Capslock {
+        retained_reads::input(InputRead::Capslock(self.capslock));
         self.capslock
+    }
+
+    pub(crate) fn retained_input_matches(&self, input: InputRead) -> bool {
+        match input {
+            InputRead::Position(position) => self.mouse_position == position,
+            InputRead::Modifiers(modifiers) => self.modifiers == modifiers,
+            InputRead::Capslock(capslock) => self.capslock == capslock,
+            InputRead::MouseInWindow(inside) => self.mouse_in_window == inside,
+            InputRead::Hover(hitbox, hovered) => hitbox.hit_test(self) == hovered,
+        }
     }
 
     fn complete_native_frame(&self) {
@@ -8159,6 +8197,7 @@ impl Window {
         self.refreshing = false;
         self.invalidator.set_phase(DrawPhase::None);
         self.layout_engine.as_mut().unwrap().clear();
+        self.layout_keys.begin_frame();
         self.text_system().abort_frame();
         self.a11y.discard_candidate_frame();
         self.rollback_candidate_frame_transfers(unwound);
@@ -8288,6 +8327,13 @@ impl Window {
             self.refresh();
         }
         self.invalidate_entities();
+        self.refresh_retained_views = self.invalidator.requires_fresh_draw();
+        self.retained_view_replay_failed = false;
+        self.layout_engine
+            .as_mut()
+            .unwrap()
+            .begin_retained_frame(self.view_retention_enabled);
+        self.layout_keys.begin_frame();
         debug_assert!(self.rendered_entity_stack.is_empty());
         debug_assert!(self.subtree_presentation_stack.borrow().is_empty());
         debug_assert!(self.subtree_transform_stack.borrow().is_empty());
@@ -8419,6 +8465,7 @@ impl Window {
                 std::panic::resume_unwind(panic);
             }
         };
+        self.next_frame.retained_views.clear_prebuilt();
         if let Some(error) = self.candidate_atlas_lease_failure.take() {
             let rejected_generation = self.next_frame.generation;
             let rejected_attempt = self.reject_candidate_frame(
@@ -8445,6 +8492,19 @@ impl Window {
                 self.refreshing = true;
                 self.invalidator.set_dirty(true);
             }
+            return arena_scope.exit();
+        }
+        if self.retained_view_replay_failed {
+            self.restore_candidate_draw_context(draw_context);
+            self.reject_candidate_frame(
+                authority_checkpoint,
+                restored_input_handler_index,
+                rendered_input_handlers_len,
+                false,
+                cx,
+            );
+            self.refreshing = true;
+            self.invalidator.set_dirty(true);
             return arena_scope.exit();
         }
         let mut transaction = self
@@ -8536,7 +8596,8 @@ impl Window {
             self.restore_input_handler_if_admitted(input_handler, cx);
         }
 
-        self.layout_engine.as_mut().unwrap().clear();
+        self.layout_engine.as_mut().unwrap().finish_retained_frame();
+        self.layout_keys.end_frame();
         self.text_system().finish_frame();
         if let Some((owner, refresh_after_drag_removal)) = candidate_stale_pointer_owner {
             if refresh_after_drag_removal {
@@ -9923,7 +9984,23 @@ impl Window {
         }
     }
 
-    pub(crate) fn reuse_prepaint(&mut self, range: Range<PrepaintStateIndex>) {
+    pub(crate) fn reuse_prepaint(&mut self, range: Range<PrepaintStateIndex>) -> ReusedSubtree {
+        self.reuse_prepaint_inner(range, None)
+    }
+
+    pub(crate) fn reuse_prepaint_segment(
+        &mut self,
+        range: Range<PrepaintStateIndex>,
+        dispatch: &mut DispatchSplice,
+    ) -> ReusedSubtree {
+        self.reuse_prepaint_inner(range, Some(dispatch))
+    }
+
+    fn reuse_prepaint_inner(
+        &mut self,
+        range: Range<PrepaintStateIndex>,
+        dispatch: Option<&mut DispatchSplice>,
+    ) -> ReusedSubtree {
         let validity = self.subtree_geometry_validity();
         let presentation = self.subtree_presentation();
         self.next_frame.hitboxes.extend(
@@ -10050,12 +10127,22 @@ impl Window {
                 }),
         );
 
-        let reused_subtree = self.next_frame.dispatch_tree.reuse_subtree(
-            range.start.dispatch_tree_index..range.end.dispatch_tree_index,
-            &self.rendered_frame.dispatch_tree,
-            self.focus,
-            validity.clone(),
-        );
+        let old_dispatch = range.start.dispatch_tree_index..range.end.dispatch_tree_index;
+        let reused_subtree = match dispatch {
+            Some(dispatch) => self.next_frame.dispatch_tree.reuse_segment(
+                old_dispatch,
+                &self.rendered_frame.dispatch_tree,
+                self.focus,
+                validity.clone(),
+                dispatch,
+            ),
+            None => self.next_frame.dispatch_tree.reuse_subtree(
+                old_dispatch,
+                &self.rendered_frame.dispatch_tree,
+                self.focus,
+                validity.clone(),
+            ),
+        };
 
         if reused_subtree.contains_focus() {
             self.next_frame.focus = self.focus;
@@ -10091,6 +10178,7 @@ impl Window {
                     paint_range: deferred_draw.paint_range.clone(),
                 }),
         );
+        reused_subtree
     }
 
     pub(crate) fn paint_index(&self) -> PaintIndex {
@@ -10186,7 +10274,146 @@ impl Window {
             })
     }
 
+    pub(crate) fn view_retention_enabled(&self) -> bool {
+        self.view_retention_enabled
+    }
+
+    pub(crate) fn reject_retained_view_replay(&mut self) {
+        self.retained_view_replay_failed = true;
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn set_view_retention_for_test(&mut self, enabled: bool) {
+        if self.view_retention_enabled != enabled {
+            self.view_retention_enabled = enabled;
+            self.layout_engine.as_mut().unwrap().clear();
+            self.rendered_frame.retained_views.clear();
+            self.refresh();
+        }
+    }
+
+    pub(crate) fn try_retain_layout(&mut self, id: LayoutId) -> bool {
+        self.layout_engine
+            .as_mut()
+            .is_some_and(|layout| layout.try_retain_subtree(id))
+    }
+
+    pub(crate) fn claim_spliced_layout(&mut self, root: LayoutId, gaps: &[LayoutId]) -> bool {
+        self.layout_engine
+            .as_mut()
+            .is_some_and(|layout| layout.try_retain_subtree_except(root, gaps))
+    }
+
+    pub(crate) fn release_spliced_layout(&mut self, root: LayoutId) {
+        self.layout_engine
+            .as_mut()
+            .unwrap()
+            .release_subtree_claims(root);
+    }
+
+    pub(crate) fn retained_layout_revision(&self) -> u64 {
+        self.layout_engine.as_ref().unwrap().layout_revision()
+    }
+
+    pub(crate) fn retained_layout_root(&self, id: LayoutId) -> Option<LayoutId> {
+        self.layout_engine.as_ref()?.retained_tree_root(id)
+    }
+
+    pub(crate) fn retained_view_context(&self) -> Option<RetainedViewContext> {
+        if !self.subtree_presentation().is_interactive()
+            || self.subtree_transform() != ResolvedSubtreeTransform::IDENTITY
+            || self
+                .subtree_geometry_validity()
+                .is_some_and(|validity| !validity.is_valid())
+            || !self.scroll_ancestry_stack.borrow().is_empty()
+            || !self.image_cache_stack.is_empty()
+        {
+            return None;
+        }
+        Some(RetainedViewContext {
+            text_styles: self.text_style_stack.clone(),
+            rem: self.rem_size(),
+            offset: self
+                .element_offset_stack
+                .last()
+                .copied()
+                .unwrap_or_default(),
+            clip: self.clip_stack.borrow().last().cloned(),
+            opacity: self.element_opacity,
+        })
+    }
+
+    pub(crate) fn with_retained_view_context<R>(
+        &mut self,
+        id: &GlobalElementId,
+        context: &RetainedViewContext,
+        validity: &SubtreeGeometryValidity,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let ids = mem::take(&mut self.element_id_stack);
+        for id in id.iter().cloned() {
+            self.element_id_stack.push(id);
+        }
+        let styles = mem::replace(&mut self.text_style_stack, context.text_styles.clone());
+        let opacity = mem::replace(&mut self.element_opacity, context.opacity);
+        self.element_offset_stack.push(context.offset);
+        let result = self.with_rem_size(Some(context.rem), |window| {
+            window.with_resolved_subtree_transform(
+                ResolvedSubtreeTransform::IDENTITY,
+                Some(validity.clone()),
+                |window| match &context.clip {
+                    Some(clip) => window.with_resolved_clip_stack(clip.clone(), f),
+                    None => f(window),
+                },
+            )
+        });
+        self.element_offset_stack.pop();
+        self.element_opacity = opacity;
+        self.text_style_stack = styles;
+        self.element_id_stack = ids;
+        result
+    }
+
+    pub(crate) fn can_replay_view_output(
+        &self,
+        prepaint: &Range<PrepaintStateIndex>,
+        paint: &Range<PaintIndex>,
+    ) -> bool {
+        prepaint.start.deferred_draws_index == prepaint.end.deferred_draws_index
+            && prepaint.start.subtree_transform_diagnostics_index
+                == prepaint.end.subtree_transform_diagnostics_index
+            && paint.start.subtree_transform_diagnostics_index
+                == paint.end.subtree_transform_diagnostics_index
+            && paint.start.retained_visual_replays_index == paint.end.retained_visual_replays_index
+            && self.can_reuse_paint(paint)
+    }
+
+    pub(crate) fn retain_view_layout_states(&mut self, keys: &[ElementStateKey]) {
+        let validity = self.subtree_geometry_validity();
+        for key in keys {
+            let recorded = self
+                .rendered_frame
+                .element_state_validities
+                .get(key)
+                .and_then(Option::as_ref);
+            self.next_frame.accessed_element_states.push(key.clone());
+            self.next_frame.element_state_validities.insert(
+                key.clone(),
+                SubtreeGeometryValidity::replayed_under(recorded, validity.clone()),
+            );
+        }
+    }
+
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) -> bool {
+        self.reuse_paint_inner(range, false)
+    }
+
+    pub(crate) fn reuse_retained_view_paint(&mut self, range: Range<PaintIndex>) -> bool {
+        self.reuse_paint_inner(range, true)
+    }
+
+    fn reuse_paint_inner(&mut self, range: Range<PaintIndex>, exact_journal: bool) -> bool {
         if !self.can_reuse_paint(&range) {
             return false;
         }
@@ -10415,6 +10642,7 @@ impl Window {
         );
         if let Err(error) = replay_result {
             self.record_subtree_geometry_failure(error);
+            return !exact_journal;
         } else {
             for identity in &retained_visual_replays {
                 self.candidate_frame_transaction
@@ -10434,7 +10662,11 @@ impl Window {
                             .or_insert_with(|| lease.clone());
                     }
                 }
-                self.record_atlas_texture_lease_entry(entry);
+                if exact_journal {
+                    self.next_frame.atlas_texture_lease_entries.push(entry);
+                } else {
+                    self.record_atlas_texture_lease_entry(entry);
+                }
             }
             self.next_frame
                 .retained_visual_publications
@@ -10819,6 +11051,7 @@ impl Window {
     pub fn transact<T, U>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, U>) -> Result<T, U> {
         self.invalidator.debug_assert_prepaint();
         let index = self.prepaint_index();
+        let retained_views = self.next_frame.retained_views.checkpoint();
         let publication_attempts = self
             .candidate_frame_transaction
             .as_ref()
@@ -10849,6 +11082,8 @@ impl Window {
             .then(|| self.a11y.prepaint_checkpoint());
         let result = f(self);
         if result.is_err() {
+            retained_reads::requires_fresh_draw();
+            self.next_frame.retained_views.rollback(retained_views);
             if self.interaction_authority.is_admitted() {
                 self.next_frame.focus = candidate_focus;
                 self.focus = committed_focus;
@@ -11598,6 +11833,7 @@ impl Window {
         self.invalidator.debug_assert_paint_or_prepaint();
 
         let key = (global_id.clone(), TypeId::of::<S>());
+        retained_reads::element_state(&key);
         self.next_frame.accessed_element_states.push(key.clone());
         self.next_frame
             .element_state_validities
@@ -12998,18 +13234,18 @@ impl Window {
         cx.layout_id_buffer.extend(children);
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
-
-        self.layout_engine.as_mut().unwrap().request_layout(
-            style,
-            rem_size,
-            scale_factor,
-            &cx.layout_id_buffer,
-        )
+        let key = self.layout_keys.next_request();
+        let engine = self.layout_engine.as_mut().unwrap();
+        if key.is_some() {
+            engine.request_layout_keyed(key, style, rem_size, scale_factor, &cx.layout_id_buffer)
+        } else {
+            engine.request_layout(style, rem_size, scale_factor, &cx.layout_id_buffer)
+        }
     }
 
     /// Add a node to the layout tree for the current frame. Instead of taking a `Style` and children,
     /// this variant takes a function that is invoked during layout so you can use arbitrary logic to
-    /// determine the element's size. One place this is used internally is when measuring text.
+    /// determine the element's size.
     ///
     /// The closure receives pass-dependent optional known dimensions and available-space
     /// constraints in logical pixels. Known dimensions do not guarantee resolved style or
@@ -13025,22 +13261,83 @@ impl Window {
     {
         self.invalidator.debug_assert_prepaint();
 
+        // Detached measurements are outside the Taffy subtree checked during view replay.
+        retained_reads::state(|| Box::new(|| false));
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
         let presentation = self.subtree_presentation();
-        self.layout_engine
-            .as_mut()
-            .unwrap()
-            .request_measured_layout(
+        let key = self.layout_keys.next_request();
+        let measure =
+            move |known_dimensions, available_space, window: &mut Window, cx: &mut App| {
+                window.with_subtree_presentation(presentation, |window| {
+                    measure(known_dimensions, available_space, window, cx)
+                })
+            };
+        let engine = self.layout_engine.as_mut().unwrap();
+        if key.is_some() {
+            engine.request_measured_layout_keyed(key, style, rem_size, scale_factor, measure)
+        } else {
+            engine.request_measured_layout(style, rem_size, scale_factor, measure)
+        }
+    }
+
+    /// Request a measured leaf whose immutable inputs and result can be reused.
+    /// `publish` restores the result into the current element's state.
+    pub(crate) fn request_cached_measured_layout<Inputs, State>(
+        &mut self,
+        style: Style,
+        inputs: Inputs,
+        mut measure: impl FnMut(
+            Size<Option<Pixels>>,
+            Size<AvailableSpace>,
+            &mut Window,
+            &mut App,
+        ) -> (Size<Pixels>, State)
+        + 'static,
+        publish: impl Fn(&State) + 'static,
+    ) -> LayoutId
+    where
+        Inputs: PartialEq + 'static,
+        State: 'static,
+    {
+        self.invalidator.debug_assert_prepaint();
+
+        let rem_size = self.rem_size();
+        let scale_factor = self.scale_factor();
+        let presentation = self.subtree_presentation();
+        let key = self.layout_keys.next_request();
+        let mut measure =
+            move |known_dimensions, available_space, window: &mut Window, cx: &mut App| {
+                window.with_subtree_presentation(presentation, |window| {
+                    measure(known_dimensions, available_space, window, cx)
+                })
+            };
+        let retained = key.is_some()
+            && self.view_retention_enabled
+            && self.candidate_frame_transaction.is_some();
+        let engine = self.layout_engine.as_mut().unwrap();
+        if retained {
+            engine.request_cached_measured_layout(
+                key,
                 style,
                 rem_size,
                 scale_factor,
-                move |known_dimensions, available_space, window, cx| {
-                    window.with_subtree_presentation(presentation, |window| {
-                        measure(known_dimensions, available_space, window, cx)
-                    })
+                inputs,
+                measure,
+                publish,
+            )
+        } else {
+            engine.request_measured_layout(
+                style,
+                rem_size,
+                scale_factor,
+                move |known, space, window, cx| {
+                    let (size, state) = measure(known, space, window, cx);
+                    publish(&state);
+                    size
                 },
             )
+        }
     }
 
     /// Compute the layout for the given id within the given available space.
@@ -13057,8 +13354,13 @@ impl Window {
         self.invalidator.debug_assert_prepaint();
 
         let mut layout_engine = self.layout_engine.take().unwrap();
-        layout_engine.compute_layout(layout_id, available_space, self, cx);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            layout_engine.compute_layout(layout_id, available_space, self, cx);
+        }));
         self.layout_engine = Some(layout_engine);
+        if let Err(panic) = result {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     /// Obtain the bounds computed for the given LayoutId relative to the window. This method will usually be invoked by
@@ -13135,7 +13437,11 @@ impl Window {
     ) -> (R, Vec<Hitbox>) {
         self.invalidator.debug_assert_prepaint();
         let start = self.next_frame.hitboxes.len();
+        let retained = self.next_frame.retained_views.checkpoint();
         let result = prepaint(self);
+        self.next_frame
+            .retained_views
+            .mark_hitboxes_captured_since(retained);
         (result, self.next_frame.hitboxes[start..].to_vec())
     }
 
@@ -13316,6 +13622,8 @@ impl Window {
         if !self.subtree_presentation().is_interactive() {
             return;
         }
+        #[cfg(not(target_family = "wasm"))]
+        crate::fast::a11y::block_capture(&mut self.a11y);
         match self.candidate_accessibility_focus {
             None => self.candidate_accessibility_focus = Some(focus_handle.id),
             Some(current) => debug_assert_eq!(
@@ -13964,6 +14272,11 @@ impl Window {
                 window.dispatch_touch_event(touch_event, cx);
             }
             window.promote_external_drag_to_platform(&event, cx);
+            if !window.invalidator.is_dirty()
+                && window.rendered_frame.retained_views.input_changed(window)
+            {
+                window.invalidator.set_retained_dirty();
+            }
         };
 
         #[cfg(feature = "profiler")]

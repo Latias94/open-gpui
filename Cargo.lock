@@ -3335,6 +3335,7 @@ dependencies = [
  "async-tungstenite",
  "backtrace",
  "bitflags 2.13.0",
+ "bytemuck",
  "chrono",
  "ctor",
  "derive_more",
@@ -3397,7 +3398,6 @@ dependencies = [
  "usvg",
  "uuid",
  "waker-fn",
- "wasm_thread",
  "web-time",
  "windows",
 ]
@@ -5710,17 +5710,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wasm_thread"
-version = "0.3.3"
-source = "git+https://github.com/zed-industries/wasm_thread?rev=0cf96c7708dfb97ccf3da50347e25edcf75d6937#0cf96c7708dfb97ccf3da50347e25edcf75d6937"
-dependencies = [
- "futures",
- "js-sys",
- "wasm-bindgen",
- "web-sys",
-]
-
-[[package]]
 name = "wayland-backend"
 version = "0.3.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5899,7 +5888,6 @@ dependencies = [
  "wgpu-core-deps-apple",
  "wgpu-core-deps-emscripten",
  "wgpu-core-deps-linux-android-bsd",
- "wgpu-core-deps-wasm",
  "wgpu-core-deps-windows",
  "wgpu-hal",
  "wgpu-naga-bridge",
@@ -5925,14 +5913,6 @@ dependencies = [
 
 [[package]]
 name = "wgpu-core-deps-linux-android-bsd"
-version = "30.0.0"
-source = "git+https://github.com/gfx-rs/wgpu?rev=cddb2f5d80dc0009b2ef6767635140cacf90a007#cddb2f5d80dc0009b2ef6767635140cacf90a007"
-dependencies = [
- "wgpu-hal",
-]
-
-[[package]]
-name = "wgpu-core-deps-wasm"
 version = "30.0.0"
 source = "git+https://github.com/gfx-rs/wgpu?rev=cddb2f5d80dc0009b2ef6767635140cacf90a007#cddb2f5d80dc0009b2ef6767635140cacf90a007"
 dependencies = [

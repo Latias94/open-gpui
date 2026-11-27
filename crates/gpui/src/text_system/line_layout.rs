@@ -504,6 +504,23 @@ pub(crate) struct LineLayoutIndex {
     wrapped_lines_index: usize,
 }
 
+impl LineLayoutIndex {
+    pub(crate) fn precedes(&self, other: &Self) -> bool {
+        self.font_generation == other.font_generation
+            && self.lines_index <= other.lines_index
+            && self.wrapped_lines_index <= other.wrapped_lines_index
+    }
+
+    pub(crate) fn rebase(&self, source: &Self, target: &Self) -> Self {
+        Self {
+            font_generation: target.font_generation,
+            lines_index: target.lines_index + self.lines_index - source.lines_index,
+            wrapped_lines_index: target.wrapped_lines_index + self.wrapped_lines_index
+                - source.wrapped_lines_index,
+        }
+    }
+}
+
 impl LineLayoutCache {
     pub fn new(
         platform_text_system: Arc<dyn PlatformTextSystem>,

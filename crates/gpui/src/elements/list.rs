@@ -62,6 +62,7 @@ impl List {
 pub struct ListState(
     Rc<RefCell<StateInner>>,
     Rc<Cell<crate::window::ScrollDirectMutationRevision>>,
+    Rc<Cell<u64>>,
 );
 
 impl std::fmt::Debug for ListState {
@@ -347,15 +348,42 @@ impl ListState {
             Rc::new(Cell::new(
                 crate::window::ScrollDirectMutationRevision::default(),
             )),
+            Rc::default(),
         );
         this.splice(0..0, item_count);
         this
+    }
+
+    fn record_retained_read(&self) {
+        crate::fast::dependencies::state(|| {
+            let revision = self.2.get();
+            let layout = Rc::downgrade(&self.0);
+            let mutations = Rc::downgrade(&self.2);
+            let state = self.0.borrow();
+            let bounds = state.last_layout_bounds;
+            let anchor = state.scroll_anchor.map(|anchor| anchor.position);
+            Box::new(move || {
+                mutations
+                    .upgrade()
+                    .is_some_and(|state| state.get() == revision)
+                    && layout.upgrade().is_some_and(|layout| {
+                        let state = layout.borrow();
+                        state.last_layout_bounds == bounds
+                            && state.scroll_anchor.map(|anchor| anchor.position) == anchor
+                    })
+            })
+        });
+    }
+
+    fn retained_state_changed(&self) {
+        self.2.set(self.2.get().wrapping_add(1));
     }
 
     /// Set the list to measure all items in the list in the first layout phase.
     ///
     /// This is useful for ensuring that the scrollbar size is correct instead of based on only rendered elements.
     pub fn measure_all(self) -> Self {
+        self.retained_state_changed();
         self.0.borrow_mut().measuring_behavior = ListMeasuringBehavior::Measure(false);
         self
     }
@@ -396,6 +424,7 @@ impl ListState {
     }
 
     fn apply_uniform_item_height(&self, height: Pixels) {
+        self.retained_state_changed();
         let size_hint = Size {
             width: px(0.),
             height,
@@ -435,6 +464,7 @@ impl ListState {
     }
 
     fn remeasure_items_with_scroll_anchor(&self, range: Range<usize>, mode: ScrollAnchorMode) {
+        self.retained_state_changed();
         let state = &mut *self.0.borrow_mut();
 
         if let Some(anchor) = state.scroll_anchor.as_mut()
@@ -485,12 +515,14 @@ impl ListState {
 
     /// The number of items in this list.
     pub fn item_count(&self) -> usize {
+        self.record_retained_read();
         self.0.borrow().items.summary().count
     }
 
     /// Whether the list is scrolled to the end, or `None` if the list is
     /// not scrollable or the total content height is not yet known.
     pub fn is_scrolled_to_end(&self) -> Option<bool> {
+        self.record_retained_read();
         let state = self.0.borrow();
         let bounds = state.last_layout_bounds?;
         let summary = state.items.summary();
@@ -522,6 +554,7 @@ impl ListState {
         old_range: Range<usize>,
         focus_handles: impl IntoIterator<Item = Option<FocusHandle>>,
     ) {
+        self.retained_state_changed();
         let state = &mut *self.0.borrow_mut();
 
         let mut old_items = state.items.cursor::<Count>(());
@@ -570,6 +603,7 @@ impl ListState {
 
     /// Get the current scroll offset, in terms of the list's items.
     pub fn logical_scroll_top(&self) -> ListOffset {
+        self.record_retained_read();
         self.0.borrow().logical_scroll_top()
     }
 
@@ -658,6 +692,7 @@ impl ListState {
     /// diagram) and the current position should stay put rather than snapping
     /// to the end.
     pub fn pause_following_tail(&self) {
+        self.retained_state_changed();
         let state = &mut *self.0.borrow_mut();
         if state.follow_state.is_following()
             && let Some(anchor) = state.scroll_anchor.as_mut()
@@ -671,6 +706,7 @@ impl ListState {
     /// Measurements reported as `false` remain provisional and are retried on later layouts.
     /// The consumer must request a new frame when measurement becomes ready.
     pub fn set_item_measurement_readiness(&self, ready: impl Fn(usize, &App) -> bool + 'static) {
+        self.retained_state_changed();
         self.0.borrow_mut().item_measurement_ready = Some(Box::new(ready));
     }
 
@@ -739,6 +775,7 @@ impl ListState {
     /// Get the bounds for the given item in window coordinates, if it's
     /// been rendered.
     pub fn bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
+        self.record_retained_read();
         let state = &*self.0.borrow();
 
         let bounds = state.last_layout_bounds.unwrap_or_default();
@@ -830,6 +867,7 @@ impl ListState {
 
     /// Return the bounds of the viewport in pixels.
     pub fn viewport_bounds(&self) -> Bounds<Pixels> {
+        self.record_retained_read();
         self.0.borrow().last_layout_bounds.unwrap_or_default()
     }
 
@@ -842,6 +880,7 @@ impl ListState {
     }
 
     fn mark_direct_scroll_intent(&self, horizontal: bool, vertical: bool) {
+        self.retained_state_changed();
         let mut revision = self.1.get();
         if horizontal {
             revision.horizontal = revision.horizontal.saturating_add(1);
@@ -1554,6 +1593,7 @@ impl Element for List {
         window: &mut Window,
         cx: &mut App,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
+        self.state.record_retained_read();
         let layout_id = match self.sizing_behavior {
             ListSizingBehavior::Infer => {
                 let mut style = Style::default();

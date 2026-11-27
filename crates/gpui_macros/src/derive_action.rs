@@ -128,10 +128,10 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
         quote! { Ok(Box::new(#gpui::private::serde_json::from_value::<Self>(_value)?)) }
     };
 
-    let json_schema_fn_body = if no_json || is_unit_struct {
-        quote! { None }
+    let json_schema = if no_json || is_unit_struct {
+        quote! {}
     } else {
-        quote! { Some(<Self as #gpui::private::schemars::JsonSchema>::json_schema(_generator)) }
+        quote! { #gpui::__open_gpui_action_schema!(); }
     };
 
     let deprecated_aliases_fn_body = if deprecated_aliases.is_empty() {
@@ -190,11 +190,7 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
                 #build_fn_body
             }
 
-            fn action_json_schema(
-                _generator: &mut #gpui::private::schemars::SchemaGenerator,
-            ) -> Option<#gpui::private::schemars::Schema> {
-                #json_schema_fn_body
-            }
+            #json_schema
 
             fn deprecated_aliases() -> &'static [&'static str] {
                 #deprecated_aliases_fn_body

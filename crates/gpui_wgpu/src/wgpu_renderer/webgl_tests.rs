@@ -212,7 +212,7 @@ fn webgl_quad_layout_matches_fixed_decoder() {
         bottom: 32.0.into(),
         left: 33.0.into(),
     };
-    let bytes = unsafe { WgpuRendererCore::instance_bytes(std::slice::from_ref(&quad)) };
+    let bytes = WgpuRendererCore::instance_bytes(std::slice::from_ref(&quad));
     let words: &[u32] = bytemuck::cast_slice(bytes);
     let mut expected = vec![41, 1];
     expected.extend((1..=8).map(|value| (value as f32).to_bits()));

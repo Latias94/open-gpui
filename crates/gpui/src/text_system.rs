@@ -16,7 +16,6 @@ pub use line_layout::*;
 pub use line_wrapper::*;
 pub use missing_glyphs::{FallbackFontClass, MissingGlyph, MissingGlyphSink};
 use missing_glyphs::{MissingGlyphReceiver, MissingGlyphReporter, missing_glyph_channel};
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::collections::FxHashMap;
@@ -895,6 +894,7 @@ impl FontWeight {
     ];
 }
 
+#[cfg(feature = "schemars")]
 impl schemars::JsonSchema for FontWeight {
     fn schema_name() -> std::borrow::Cow<'static, str> {
         "FontWeight".into()
@@ -913,7 +913,8 @@ impl schemars::JsonSchema for FontWeight {
 }
 
 /// Allows italic or oblique faces to be selected.
-#[derive(Clone, Copy, Eq, PartialEq, Debug, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Eq, PartialEq, Debug, Hash, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub enum FontStyle {
     /// A face that is neither italic not obliqued.
     #[default]

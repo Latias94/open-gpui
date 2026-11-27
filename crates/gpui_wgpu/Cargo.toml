@@ -25,7 +25,7 @@ test-support = ["open_gpui/test-support", "dep:image"]
 [dependencies]
 open_gpui.workspace = true
 anyhow.workspace = true
-bytemuck = "1"
+bytemuck = { version = "1", features = ["derive"] }
 cosmic-text = "0.19.0"
 etagere = "0.3"
 itertools.workspace = true
@@ -53,7 +53,6 @@ pollster.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 futures.workspace = true
-wgpu = { workspace = true, features = ["webgl"] }
 wasm-bindgen.workspace = true
 wasm-bindgen-futures = "0.4.76"
 web-sys = { version = "0.3.103", features = ["HtmlCanvasElement"] }

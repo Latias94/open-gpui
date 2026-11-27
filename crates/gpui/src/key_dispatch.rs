@@ -68,6 +68,42 @@ use std::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct DispatchNodeId(usize);
 
+impl DispatchNodeId {
+    pub(crate) fn is_in(self, range: &Range<usize>) -> bool {
+        range.contains(&self.0)
+    }
+}
+
+/// Maps ordered dispatch segments around the freshly built interiors of a retained subtree.
+pub(crate) struct DispatchSplice {
+    source_anchor: DispatchNodeId,
+    target_anchor: DispatchNodeId,
+    segments: SmallVec<[ReusedSubtree; 4]>,
+}
+
+impl DispatchSplice {
+    pub(crate) fn new(source_anchor: DispatchNodeId, target_anchor: DispatchNodeId) -> Self {
+        Self {
+            source_anchor,
+            target_anchor,
+            segments: SmallVec::new(),
+        }
+    }
+
+    pub(crate) fn target_for(&self, source: DispatchNodeId) -> Option<DispatchNodeId> {
+        if source == self.source_anchor {
+            return Some(self.target_anchor);
+        }
+        let index = self
+            .segments
+            .partition_point(|segment| segment.old_range.end <= source.0);
+        let segment = self.segments.get(index)?;
+        source
+            .is_in(&segment.old_range)
+            .then(|| segment.refresh_node_id(source))
+    }
+}
+
 pub(crate) struct DispatchTree {
     node_stack: Vec<DispatchNodeId>,
     pub(crate) context_stack: Vec<KeyContext>,
@@ -91,6 +127,7 @@ pub(crate) struct DispatchNode {
     validity: Option<SubtreeGeometryValidity>,
 }
 
+#[derive(Clone)]
 pub(crate) struct ReusedSubtree {
     old_range: Range<usize>,
     new_range: Range<usize>,
@@ -100,7 +137,7 @@ pub(crate) struct ReusedSubtree {
 impl ReusedSubtree {
     pub fn refresh_node_id(&self, node_id: DispatchNodeId) -> DispatchNodeId {
         debug_assert!(
-            self.old_range.contains(&node_id.0),
+            node_id.is_in(&self.old_range),
             "node {} was not part of the reused subtree {:?}",
             node_id.0,
             self.old_range
@@ -187,14 +224,7 @@ impl DispatchTree {
         }
 
         if self.node_stack.last().copied() == next_node_parent {
-            self.node_stack.push(node_id);
-            let active_node = &self.nodes[node_id.0];
-            if let Some(view_id) = active_node.view_id {
-                self.view_stack.push(view_id)
-            }
-            if let Some(context) = active_node.context.clone() {
-                self.context_stack.push(context);
-            }
+            self.push_active_node(node_id);
         } else {
             debug_assert_eq!(self.node_stack.len(), 0);
 
@@ -214,6 +244,17 @@ impl DispatchTree {
             self.context_stack.reverse();
             self.view_stack.reverse();
             self.node_stack.reverse();
+        }
+    }
+
+    fn push_active_node(&mut self, node_id: DispatchNodeId) {
+        self.node_stack.push(node_id);
+        let node = &self.nodes[node_id.0];
+        if let Some(view_id) = node.view_id {
+            self.view_stack.push(view_id);
+        }
+        if let Some(context) = node.context.clone() {
+            self.context_stack.push(context);
         }
     }
 
@@ -249,24 +290,41 @@ impl DispatchTree {
     }
 
     fn replay_node(&mut self, source: &DispatchNode, validity: Option<SubtreeGeometryValidity>) {
-        let validity = SubtreeGeometryValidity::replayed_under(source.validity.as_ref(), validity);
-        self.push_node_scoped(validity);
-        if let Some(context) = source.context.clone() {
-            self.set_key_context(context);
-        }
-        if let Some(focus_id) = source.focus_id {
-            self.set_focus_id(focus_id);
-        }
-        if let Some(view_id) = source.view_id {
-            self.set_view_id(view_id);
-        }
+        let node_id = self.append_replayed_node(
+            source,
+            self.active_node_id(),
+            self.view_stack.last().copied(),
+            validity,
+        );
+        self.push_active_node(node_id);
+    }
 
-        let target = self.active_node();
-        target.key_listeners.clone_from(&source.key_listeners);
-        target.action_listeners.clone_from(&source.action_listeners);
-        target
-            .modifiers_changed_listeners
-            .clone_from(&source.modifiers_changed_listeners);
+    fn append_replayed_node(
+        &mut self,
+        source: &DispatchNode,
+        parent: Option<DispatchNodeId>,
+        enclosing_view: Option<EntityId>,
+        validity: Option<SubtreeGeometryValidity>,
+    ) -> DispatchNodeId {
+        let node_id = DispatchNodeId(self.nodes.len());
+        let view_id = source.view_id.filter(|&id| Some(id) != enclosing_view);
+        if let Some(focus_id) = source.focus_id {
+            self.focusable_node_ids.insert(focus_id, node_id);
+        }
+        if let Some(view_id) = view_id {
+            self.view_node_ids.insert(view_id, node_id);
+        }
+        self.nodes.push(DispatchNode {
+            key_listeners: source.key_listeners.clone(),
+            action_listeners: source.action_listeners.clone(),
+            modifiers_changed_listeners: source.modifiers_changed_listeners.clone(),
+            context: source.context.clone(),
+            focus_id: source.focus_id,
+            view_id,
+            parent,
+            validity: SubtreeGeometryValidity::replayed_under(source.validity.as_ref(), validity),
+        });
+        node_id
     }
 
     pub fn reuse_subtree(
@@ -314,6 +372,62 @@ impl DispatchTree {
             new_range,
             contains_focus,
         }
+    }
+
+    /// Copy a segment in journal order. Each source parent must be the anchor or an earlier
+    /// copied node, so a gap can omit a balanced interior while retaining its wrapper.
+    pub(crate) fn reuse_segment(
+        &mut self,
+        old_range: Range<usize>,
+        source: &Self,
+        focus: Option<FocusId>,
+        validity: Option<SubtreeGeometryValidity>,
+        splice: &mut DispatchSplice,
+    ) -> ReusedSubtree {
+        assert!(
+            !splice.source_anchor.is_in(&old_range)
+                && splice
+                    .segments
+                    .last()
+                    .is_none_or(|segment| segment.old_range.end <= old_range.start),
+            "dispatch splice segments must be disjoint, ordered and below the source anchor"
+        );
+        let new_start = self.nodes.len();
+        let mut contains_focus = false;
+        let source_nodes = &source.nodes[old_range.clone()];
+        self.nodes.reserve(source_nodes.len());
+        for source_node in source_nodes {
+            let parent = source_node
+                .parent
+                .and_then(|source_parent| {
+                    if source_parent.is_in(&old_range) {
+                        Some(DispatchNodeId(
+                            new_start + (source_parent.0 - old_range.start),
+                        ))
+                    } else {
+                        splice.target_for(source_parent)
+                    }
+                })
+                .expect("dispatch splice must retain each source parent");
+            let enclosing_view = source_node.view_id.and_then(|_| {
+                std::iter::successors(Some(parent), |&id| self.node(id).parent)
+                    .find_map(|id| self.node(id).view_id)
+            });
+            contains_focus |= focus.is_some() && source_node.focus_id == focus;
+            self.append_replayed_node(source_node, Some(parent), enclosing_view, validity.clone());
+        }
+        if self.active_node_id() != Some(splice.target_anchor) {
+            self.set_active_node(splice.target_anchor);
+        }
+        let reused = ReusedSubtree {
+            old_range,
+            new_range: new_start..self.nodes.len(),
+            contains_focus,
+        };
+        if !reused.old_range.is_empty() {
+            splice.segments.push(reused.clone());
+        }
+        reused
     }
 
     pub fn truncate(&mut self, index: usize) {
@@ -664,13 +778,15 @@ impl DispatchTree {
 
 #[cfg(test)]
 mod tests {
+    use super::DispatchSplice;
     use crate::{
         AppContext, DispatchResult, Element, ElementId, GlobalElementId, InspectorElementId,
         InteractiveElement as _, Keystroke, LayoutId, ParentElement as _, Style, div,
     };
     use core::panic;
+    use slotmap::SlotMap;
     use smallvec::SmallVec;
-    use std::{cell::RefCell, ops::Range, rc::Rc};
+    use std::{any::TypeId, cell::RefCell, ops::Range, rc::Rc};
 
     use crate::{
         ActionRegistry, App, Bounds, Context, DispatchTree, FocusHandle, InputHandler, IntoElement,
@@ -687,6 +803,183 @@ mod tests {
             Rc::new(RefCell::new(Keymap::new(bindings))),
             Rc::new(registry),
         )
+    }
+
+    #[test]
+    fn segmented_replay_reconnects_wrappers_around_a_fresh_interior() {
+        let mut focus_ids = SlotMap::<crate::FocusId, ()>::with_key();
+        let anchor_focus = focus_ids.insert(());
+        let wrapper_focus = focus_ids.insert(());
+        let old_focus = focus_ids.insert(());
+        let fresh_focus = focus_ids.insert(());
+        let tail_focus = focus_ids.insert(());
+        let mut view_ids = SlotMap::<crate::EntityId, ()>::with_key();
+        let anchor_view = view_ids.insert(());
+        let wrapper_view = view_ids.insert(());
+
+        let mut source = test_dispatch_tree(vec![]);
+        let source_anchor = source.push_node_scoped(None);
+        let prefix_start = source.len();
+        let outer = source.push_node_scoped(None);
+        source.set_key_context(KeyContext::parse("Outer").unwrap());
+        source.on_action(TypeId::of::<TestAction>(), Rc::new(|_, _, _, _| {}));
+        let wrapper = source.push_node_scoped(None);
+        source.set_key_context(KeyContext::parse("Wrapper").unwrap());
+        source.set_focus_id(wrapper_focus);
+        source.set_view_id(wrapper_view);
+        let prefix_end = source.len();
+        let omitted = source.push_node_scoped(None);
+        source.set_focus_id(old_focus);
+        let omitted_child = source.push_node_scoped(None);
+        source.pop_node();
+        source.pop_node();
+        let suffix_start = source.len();
+        let tail = source.push_node_scoped(None);
+        source.set_key_context(KeyContext::parse("Tail").unwrap());
+        source.set_focus_id(tail_focus);
+        source.on_key_event(Rc::new(|_, _, _, _| {}));
+        source.on_modifiers_changed(Rc::new(|_, _, _| {}));
+        source.pop_node();
+        source.pop_node();
+        source.pop_node();
+        let adjacent = source.push_node_scoped(None);
+        source.pop_node();
+
+        let mut target = test_dispatch_tree(vec![]);
+        let root = target.push_node_scoped(None);
+        target.push_node_scoped(None);
+        target.pop_node();
+        let target_anchor = target.push_node_scoped(None);
+        target.set_key_context(KeyContext::parse("Anchor").unwrap());
+        target.set_focus_id(anchor_focus);
+        target.set_view_id(anchor_view);
+        let mut splice = DispatchSplice::new(source_anchor, target_anchor);
+        let prefix = target.reuse_segment(
+            prefix_start..prefix_end,
+            &source,
+            Some(tail_focus),
+            None,
+            &mut splice,
+        );
+        assert!(!prefix.contains_focus());
+        assert_eq!(target.active_node_id(), Some(target_anchor));
+        let target_wrapper = splice.target_for(wrapper).unwrap();
+        assert_eq!(target_wrapper, prefix.refresh_node_id(wrapper));
+        target.set_active_node(target_wrapper);
+        let fresh = target.push_node_scoped(None);
+        target.set_focus_id(fresh_focus);
+        target.pop_node();
+
+        let suffix = target.reuse_segment(
+            suffix_start..source.len(),
+            &source,
+            Some(tail_focus),
+            None,
+            &mut splice,
+        );
+        let target_tail = splice.target_for(tail).unwrap();
+        let target_outer = splice.target_for(outer).unwrap();
+        let target_adjacent = splice.target_for(adjacent).unwrap();
+        assert!(suffix.contains_focus());
+        assert_eq!(target_tail, suffix.refresh_node_id(tail));
+        assert_eq!(splice.target_for(source_anchor), Some(target_anchor));
+        assert_eq!(splice.target_for(omitted), None);
+        assert_eq!(splice.target_for(omitted_child), None);
+        assert_eq!(target.focusable_node_id(old_focus), None);
+        assert_eq!(target.focusable_node_id(fresh_focus), Some(fresh));
+        assert_eq!(target.node(fresh).parent, Some(target_wrapper));
+        assert_eq!(target.node(target_adjacent).parent, Some(target_anchor));
+        assert_eq!(target.active_node_id(), Some(target_anchor));
+        assert_eq!(target.context_stack, [KeyContext::parse("Anchor").unwrap()]);
+        assert_eq!(target.view_stack, [anchor_view]);
+        assert_eq!(target.view_node_ids[&wrapper_view], target_wrapper);
+        assert_eq!(
+            target.focus_path(tail_focus).as_slice(),
+            &[anchor_focus, wrapper_focus, tail_focus]
+        );
+        assert_eq!(
+            target.dispatch_path(target_tail).as_slice(),
+            &[
+                root,
+                target_anchor,
+                target_outer,
+                target_wrapper,
+                target_tail
+            ]
+        );
+        assert!(target.is_action_available(&TestAction, target_tail));
+        assert!(Rc::ptr_eq(
+            &target.node(target_tail).key_listeners[0],
+            &source.node(tail).key_listeners[0],
+        ));
+        assert!(Rc::ptr_eq(
+            &target.node(target_tail).modifiers_changed_listeners[0],
+            &source.node(tail).modifiers_changed_listeners[0],
+        ));
+
+        target.set_active_node(target_wrapper);
+        let count = target.len();
+        let empty =
+            target.reuse_segment(source.len()..source.len(), &source, None, None, &mut splice);
+        assert!(!empty.contains_focus());
+        assert_eq!(target.len(), count);
+        assert_eq!(target.active_node_id(), Some(target_anchor));
+    }
+
+    #[test]
+    fn segmented_replay_rebinds_geometry_and_uses_destination_view_ancestry() {
+        use crate::geometry::{SubtreeGeometryError, SubtreeGeometryValidity};
+
+        let mut view_ids = SlotMap::<crate::EntityId, ()>::with_key();
+        let view = view_ids.insert(());
+        let mut focus_ids = SlotMap::<crate::FocusId, ()>::with_key();
+        let rejected_focus = focus_ids.insert(());
+        let accepted_focus = focus_ids.insert(());
+        let mut source = test_dispatch_tree(vec![]);
+        let source_anchor = source.push_node_scoped(None);
+        let start = source.len();
+        let source_validity = SubtreeGeometryValidity::new(None);
+        let rejected = source.push_node_scoped(Some(source_validity.clone()));
+        source.set_focus_id(rejected_focus);
+        source.set_view_id(view);
+        source_validity.invalidate(SubtreeGeometryError::DeviceConversion);
+        source.pop_node();
+        let accepted = source.push_node_scoped(None);
+        source.set_focus_id(accepted_focus);
+        source.set_view_id(view);
+        source.pop_node();
+
+        let mut target = test_dispatch_tree(vec![]);
+        let target_anchor = target.push_node_scoped(None);
+        target.set_view_id(view);
+        let target_validity = SubtreeGeometryValidity::new(None);
+        let mut splice = DispatchSplice::new(source_anchor, target_anchor);
+        target.reuse_segment(
+            start..source.len(),
+            &source,
+            None,
+            Some(target_validity.clone()),
+            &mut splice,
+        );
+        let target_rejected = splice.target_for(rejected).unwrap();
+        let target_accepted = splice.target_for(accepted).unwrap();
+        assert_eq!(target.node(target_rejected).view_id, None);
+        assert_eq!(target.node(target_accepted).view_id, None);
+        assert_eq!(target.view_node_ids[&view], target_anchor);
+        assert_eq!(target.valid_focusable_node_id(rejected_focus), None);
+        assert_eq!(
+            target.valid_focusable_node_id(accepted_focus),
+            Some(target_accepted)
+        );
+        target_validity.invalidate(SubtreeGeometryError::DeviceConversion);
+        assert_eq!(target.valid_focusable_node_id(accepted_focus), None);
+        target.suppress_invalid_nodes();
+        assert_eq!(target.focusable_node_id(rejected_focus), None);
+        assert_eq!(target.focusable_node_id(accepted_focus), None);
+        assert_eq!(
+            source.valid_focusable_node_id(accepted_focus),
+            Some(accepted)
+        );
     }
 
     #[test]

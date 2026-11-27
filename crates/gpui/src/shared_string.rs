@@ -4,6 +4,7 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(feature = "schemars")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
@@ -52,6 +53,7 @@ impl SharedString {
     }
 }
 
+#[cfg(feature = "schemars")]
 impl JsonSchema for SharedString {
     fn inline_schema() -> bool {
         String::inline_schema()

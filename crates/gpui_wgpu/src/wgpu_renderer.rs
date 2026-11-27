@@ -7,7 +7,7 @@ use crate::{
     wgpu_atlas::WgpuAtlasPresentationReceipt,
 };
 use anyhow::Context as _;
-use bytemuck::{Pod, Zeroable};
+use bytemuck::{NoUninit, Pod, Zeroable};
 use log::warn;
 use open_gpui::collections::FxHashMap;
 use open_gpui::{
@@ -2067,7 +2067,7 @@ impl WgpuRendererCore {
             &mut self.encoder_uploads,
             &resources.clip_buffer,
             0,
-            unsafe { Self::instance_bytes(scene.clip_shapes()) },
+            Self::instance_bytes(scene.clip_shapes()),
         )
         .context("failed to upload complete clip arena")?;
         let gamma_params = GammaParams {
@@ -2364,13 +2364,8 @@ impl WgpuRendererCore {
         Ok(())
     }
 
-    unsafe fn instance_bytes<T>(instances: &[T]) -> &[u8] {
-        unsafe {
-            std::slice::from_raw_parts(
-                instances.as_ptr() as *const u8,
-                std::mem::size_of_val(instances),
-            )
-        }
+    fn instance_bytes<T: NoUninit>(instances: &[T]) -> &[u8] {
+        bytemuck::cast_slice(instances)
     }
 
     fn write_path_tiles(
@@ -2580,12 +2575,12 @@ impl WgpuRendererCore {
         Ok(())
     }
 
-    fn write_instance_data<Instance>(
+    fn write_instance_data<Instance: NoUninit>(
         &mut self,
         instance_offset: &mut u64,
         instances: &[Instance],
     ) -> anyhow::Result<InstanceAllocation> {
-        let data = unsafe { Self::instance_bytes(instances) };
+        let data = Self::instance_bytes(instances);
         let stride = std::mem::size_of::<Instance>() as u64;
         let size = (data.len() as u64).max(stride).max(16);
         let (mut offset, allocation, mut first_instance) = instance_allocation(
@@ -2641,7 +2636,7 @@ impl WgpuRendererCore {
         })
     }
 
-    fn write_instance_binding<Instance>(
+    fn write_instance_binding<Instance: NoUninit>(
         &mut self,
         label: &str,
         instance_offset: &mut u64,
@@ -3439,7 +3434,7 @@ mod abi_layout_tests {
             (PaddedBool32::from(false), 0),
             (PaddedBool32::from(true), 1),
         ] {
-            let bytes = unsafe { WgpuRendererCore::instance_bytes(std::slice::from_ref(&flag)) };
+            let bytes = WgpuRendererCore::instance_bytes(std::slice::from_ref(&flag));
             assert_eq!(bytes, expected.to_ne_bytes());
         }
     }

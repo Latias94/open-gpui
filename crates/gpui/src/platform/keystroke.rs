@@ -1,4 +1,3 @@
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
@@ -488,7 +487,8 @@ impl std::fmt::Display for KeystrokeDisplay<'_> {
 }
 
 /// The state of the modifier keys at some point in time
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Default, Serialize, Deserialize, Hash, JsonSchema)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Default, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct Modifiers {
     /// The control key
     #[serde(default)]
@@ -697,7 +697,8 @@ impl std::ops::BitAndAssign for Modifiers {
 }
 
 /// The state of the capslock key at some point in time
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Default, Serialize, Deserialize, Hash, JsonSchema)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Default, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct Capslock {
     /// The capslock key is on
     #[serde(default)]

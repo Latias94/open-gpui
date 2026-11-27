@@ -875,6 +875,7 @@ pub struct App {
     // the tokio runtime. As any task attempting to spawn a blocking tokio task,
     // might panic.
     pub(crate) globals_by_type: TypeIdHashMap<Box<dyn Any>>,
+    pub(crate) retained_revisions: crate::fast::dependencies::Revisions,
 
     // assets
     pub(crate) loading_assets: FxHashMap<(TypeId, u64), Box<dyn Any>>,
@@ -1035,6 +1036,7 @@ impl App {
                 loading_assets: Default::default(),
                 asset_source,
                 globals_by_type: Default::default(),
+                retained_revisions: Default::default(),
                 entities,
                 new_entity_observers: SubscriberSet::new(),
                 windows: SlotMap::with_key(),
@@ -2695,6 +2697,7 @@ impl App {
             }
 
             for (entity_id, mut entity) in dropped {
+                self.retained_revisions.release(entity_id);
                 self.observers.remove(&entity_id);
                 self.event_listeners.remove(&entity_id);
                 self.window_invalidators_by_entity.remove(&entity_id);
@@ -2785,6 +2788,16 @@ impl App {
         self.global_observers
             .clone()
             .retain(&type_id, |observer| observer(self));
+        let present = self.globals_by_type.contains_key(&type_id);
+        for window in self.windows.values().filter_map(Option::as_deref) {
+            if window
+                .rendered_frame
+                .retained_views
+                .global_changed(type_id, present)
+            {
+                window.invalidator.set_retained_dirty();
+            }
+        }
     }
 
     fn apply_defer_effect(&mut self, callback: Box<dyn FnOnce(&mut Self) + 'static>) {
@@ -3269,22 +3282,26 @@ impl App {
 
     /// Check whether a global of the given type has been assigned.
     pub fn has_global<G: Global>(&self) -> bool {
-        self.globals_by_type.contains_key(&TypeId::of::<G>())
+        let key = TypeId::of::<G>();
+        let present = self.globals_by_type.contains_key(&key);
+        crate::fast::dependencies::global_presence(key, present);
+        present
     }
 
     /// Access the global of the given type. Panics if a global for that type has not been assigned.
     #[track_caller]
     pub fn global<G: Global>(&self) -> &G {
-        self.globals_by_type
-            .get(&TypeId::of::<G>())
-            .map(|any_state| any_state.downcast_ref::<G>().unwrap())
+        self.try_global::<G>()
             .unwrap_or_else(|| panic!("no state of type {} exists", type_name::<G>()))
     }
 
     /// Access the global of the given type if a value has been assigned.
     pub fn try_global<G: Global>(&self) -> Option<&G> {
+        let key = TypeId::of::<G>();
+        self.retained_revisions
+            .read(crate::fast::dependencies::RevisionKey::Global(key));
         self.globals_by_type
-            .get(&TypeId::of::<G>())
+            .get(&key)
             .map(|any_state| any_state.downcast_ref::<G>().unwrap())
     }
 
@@ -3292,6 +3309,7 @@ impl App {
     #[track_caller]
     pub fn global_mut<G: Global>(&mut self) -> &mut G {
         let global_type = TypeId::of::<G>();
+        self.retained_global_changed(global_type);
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type
             .get_mut(&global_type)
@@ -3303,6 +3321,7 @@ impl App {
     /// yet been assigned.
     pub fn default_global<G: Global + Default>(&mut self) -> &mut G {
         let global_type = TypeId::of::<G>();
+        self.retained_global_changed(global_type);
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type
             .entry(global_type)
@@ -3314,6 +3333,7 @@ impl App {
     /// Sets the value of the global of the given type.
     pub fn set_global<G: Global>(&mut self, global: G) {
         let global_type = TypeId::of::<G>();
+        self.retained_global_changed(global_type);
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type.insert(global_type, Box::new(global));
     }
@@ -3321,12 +3341,16 @@ impl App {
     /// Clear all stored globals. Does not notify global observers.
     #[cfg(any(test, feature = "test-support"))]
     pub fn clear_globals(&mut self) {
-        self.globals_by_type.drain();
+        for (global_type, _) in self.globals_by_type.drain() {
+            self.retained_revisions
+                .changed(crate::fast::dependencies::RevisionKey::Global(global_type));
+        }
     }
 
     /// Remove the global of the given type from the app context. Does not notify global observers.
     pub fn remove_global<G: Global>(&mut self) -> G {
         let global_type = TypeId::of::<G>();
+        self.retained_global_changed(global_type);
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         *self
             .globals_by_type
@@ -3367,8 +3391,14 @@ impl App {
     pub(crate) fn end_global_lease<G: Global>(&mut self, lease: GlobalLease<G>) {
         let global_type = TypeId::of::<G>();
 
+        self.retained_global_changed(global_type);
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type.insert(global_type, lease.global);
+    }
+
+    fn retained_global_changed(&mut self, global_type: TypeId) {
+        self.retained_revisions
+            .changed(crate::fast::dependencies::RevisionKey::Global(global_type));
     }
 
     pub(crate) fn new_entity_observer(
@@ -3566,6 +3596,7 @@ impl App {
     }
 
     /// Get all non-internal actions that have been registered, along with their schemas.
+    #[cfg(feature = "schemars")]
     pub fn action_schemas(
         &self,
         generator: &mut schemars::SchemaGenerator,
@@ -3577,6 +3608,7 @@ impl App {
     /// Returns `None` if the action is not found.
     /// Returns `Some(None)` if the action exists but has no schema.
     /// Returns `Some(Some(schema))` if the action exists and has a schema.
+    #[cfg(feature = "schemars")]
     pub fn action_schema_by_name(
         &self,
         name: &str,
@@ -3898,6 +3930,8 @@ impl App {
 
     /// Tell GPUI that an entity has changed and observers of it should be notified.
     pub fn notify(&mut self, entity_id: EntityId) {
+        self.retained_revisions
+            .changed(crate::fast::dependencies::RevisionKey::Entity(entity_id));
         let window_invalidators = mem::take(
             self.window_invalidators_by_entity
                 .entry(entity_id)
@@ -4030,6 +4064,12 @@ impl AppContext for App {
         update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> R {
         self.update(|cx| {
+            if !crate::fast::dependencies::takes_render_receiver(handle.entity_id()) {
+                cx.retained_revisions
+                    .changed(crate::fast::dependencies::RevisionKey::Entity(
+                        handle.entity_id(),
+                    ));
+            }
             let mut entity = cx.entities.lease(handle);
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 update(
@@ -4049,6 +4089,10 @@ impl AppContext for App {
     where
         T: 'static,
     {
+        self.retained_revisions
+            .changed(crate::fast::dependencies::RevisionKey::Entity(
+                handle.entity_id(),
+            ));
         GpuiBorrow::new(handle.clone(), self)
     }
 
@@ -4056,7 +4100,7 @@ impl AppContext for App {
     where
         T: 'static,
     {
-        let entity = self.entities.read(handle);
+        let entity = handle.read(self);
         read(entity, self)
     }
 

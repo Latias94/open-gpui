@@ -32,7 +32,6 @@ pub(crate) use window::*;
 #[cfg(feature = "font-kit")]
 pub(crate) use apple::AppleTextSystem;
 
-pub use apple::keychain;
 pub use platform::MacPlatform;
 
 trait BoolExt {

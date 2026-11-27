@@ -1,7 +1,12 @@
-use crate::collections::{FxHashMap, FxHashSet};
+use crate::collections::FxHashMap;
 use crate::{
     AbsoluteLength, App, Bounds, DefiniteLength, Edges, GridTemplate, Length, Pixels, Point, Size,
-    Style, Window, size,
+    Style, Window,
+    fast::{
+        layout::{CachedMeasure, LayoutRetention, MeasureConstraints, NodeContext},
+        layout_key::LayoutKey,
+    },
+    size,
     util::{
         ceil_to_device_pixel, round_half_toward_zero, round_stroke_to_device_pixel,
         round_to_device_pixel,
@@ -16,24 +21,19 @@ use taffy::{
     tree::NodeId,
 };
 
-#[cfg(feature = "stacker")]
-type StackSafe<T> = stacksafe::StackSafe<T>;
-#[cfg(not(feature = "stacker"))]
-type StackSafe<T> = T;
-
-type MeasureFn =
-    dyn FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>;
-type NodeMeasureFn = StackSafe<Box<MeasureFn>>;
-
-struct NodeContext {
-    measure: NodeMeasureFn,
+struct RootFillStyle {
+    requested: taffy::Style,
+    applied: bool,
 }
+
 pub struct TaffyLayoutEngine {
     taffy: TaffyTree<NodeContext>,
-    absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
+    retention: LayoutRetention,
+    layout_revision: u64,
+    root_fill_styles: FxHashMap<LayoutId, RootFillStyle>,
+    absolute_layout_bounds: FxHashMap<LayoutId, Bounds<f32>>,
     /// Unrounded absolute border-box top-left per-node coordinate in device pixels.
     absolute_outer_origins: FxHashMap<LayoutId, Point<f32>>,
-    computed_layouts: FxHashSet<LayoutId>,
     layout_bounds_scratch_space: Vec<LayoutId>,
 }
 
@@ -45,18 +45,94 @@ impl TaffyLayoutEngine {
         taffy.disable_rounding();
         TaffyLayoutEngine {
             taffy,
+            retention: LayoutRetention::default(),
+            layout_revision: 0,
+            root_fill_styles: FxHashMap::default(),
             absolute_layout_bounds: FxHashMap::default(),
             absolute_outer_origins: FxHashMap::default(),
-            computed_layouts: FxHashSet::default(),
             layout_bounds_scratch_space: Vec::new(),
         }
     }
 
+    pub(crate) fn begin_retained_frame(&mut self, enabled: bool) {
+        let nodes = self.taffy.total_node_count();
+        if self.retention.active() || !enabled && nodes != 0 || nodes != self.retention.node_count()
+        {
+            self.clear();
+        }
+        if enabled {
+            self.retention.begin_frame();
+        }
+    }
+
+    pub(crate) fn finish_retained_frame(&mut self) {
+        if !self.retention.active() {
+            self.clear();
+            return;
+        }
+        let previous_nodes = self.taffy.total_node_count();
+        self.retention.finish_frame(&mut self.taffy);
+        if self.taffy.total_node_count() != previous_nodes {
+            self.note_layout_change();
+        }
+        self.root_fill_styles.retain(|id, root| {
+            root.applied = false;
+            self.retention.contains(*id)
+        });
+        self.clear_bounds();
+    }
+
+    /// Keeps a previously computed detached layout tree for frame-output replay.
+    /// The caller must match the original layout environment and available space.
+    pub(crate) fn try_retain_subtree(&mut self, root: LayoutId) -> bool {
+        self.try_retain_subtree_except(root, &[])
+    }
+
+    /// Finds the previous computed detached root of an unclaimed node in this frame.
+    /// Claim the root separately to validate the other branches before replay.
+    pub(crate) fn retained_tree_root(&self, id: LayoutId) -> Option<LayoutId> {
+        self.retention.retained_tree_root(&self.taffy, id)
+    }
+
+    /// Claims the clean parts of a detached tree atomically. Each exclusion must name a
+    /// separate descendant subtree. Replay requires matching roots, constraints and revision.
+    pub(crate) fn try_retain_subtree_except(
+        &mut self,
+        root: LayoutId,
+        excluded: &[LayoutId],
+    ) -> bool {
+        self.retention
+            .claim_subtree_except(&self.taffy, root, excluded)
+    }
+
+    /// Releases the marks from a subtree claim. Fresh layout requests and tree writes stand.
+    pub(crate) fn release_subtree_claims(&mut self, root: LayoutId) {
+        self.retention.release_subtree_claims(root);
+    }
+
+    /// Changes when a layout request or removal changes the retained tree or its inputs.
+    pub(crate) fn layout_revision(&self) -> u64 {
+        self.layout_revision
+    }
+
+    fn note_layout_change(&mut self) {
+        self.layout_revision = self.layout_revision.wrapping_add(1);
+    }
+
     pub fn clear(&mut self) {
+        if self.taffy.total_node_count() != 0 {
+            self.note_layout_change();
+        }
         self.taffy.clear();
+        self.retention.clear();
+        self.root_fill_styles.clear();
+        self.clear_bounds();
+    }
+
+    fn clear_bounds(&mut self) {
         self.absolute_layout_bounds.clear();
         self.absolute_outer_origins.clear();
-        self.computed_layouts.clear();
+        self.layout_bounds_scratch_space.clear();
     }
 
     pub fn request_layout(
@@ -66,20 +142,18 @@ impl TaffyLayoutEngine {
         scale_factor: f32,
         children: &[LayoutId],
     ) -> LayoutId {
-        let taffy_style = style.to_taffy(rem_size, scale_factor);
+        self.request_layout_keyed(None, style, rem_size, scale_factor, children)
+    }
 
-        if children.is_empty() {
-            self.taffy
-                .new_leaf(taffy_style)
-                .expect(EXPECT_MESSAGE)
-                .into()
-        } else {
-            self.taffy
-                // This is safe because LayoutId is repr(transparent) to taffy::tree::NodeId.
-                .new_with_children(taffy_style, LayoutId::to_taffy_slice(children))
-                .expect(EXPECT_MESSAGE)
-                .into()
-        }
+    pub(crate) fn request_layout_keyed(
+        &mut self,
+        key: Option<LayoutKey>,
+        style: Style,
+        rem_size: Pixels,
+        scale_factor: f32,
+        children: &[LayoutId],
+    ) -> LayoutId {
+        self.request_node(key, style.to_taffy(rem_size, scale_factor), children, None)
     }
 
     pub fn request_measured_layout(
@@ -95,15 +169,163 @@ impl TaffyLayoutEngine {
         ) -> Size<Pixels>
         + 'static,
     ) -> LayoutId {
-        let taffy_style = style.to_taffy(rem_size, scale_factor);
-        let measure = Box::new(measure) as Box<MeasureFn>;
-        #[cfg(feature = "stacker")]
-        let measure = StackSafe::new(measure);
+        self.request_measured_layout_keyed(None, style, rem_size, scale_factor, measure)
+    }
 
+    pub(crate) fn request_measured_layout_keyed(
+        &mut self,
+        key: Option<LayoutKey>,
+        style: Style,
+        rem_size: Pixels,
+        scale_factor: f32,
+        measure: impl FnMut(
+            Size<Option<Pixels>>,
+            Size<AvailableSpace>,
+            &mut Window,
+            &mut App,
+        ) -> Size<Pixels>
+        + 'static,
+    ) -> LayoutId {
+        self.request_node(
+            key,
+            style.to_taffy(rem_size, scale_factor),
+            &[],
+            Some(NodeContext::dynamic(measure)),
+        )
+    }
+
+    /// Requests a measured leaf with comparable inputs and a frame-independent result.
+    /// Only final layout publishes its result into the current element's state.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn request_cached_measured_layout<Inputs, State>(
+        &mut self,
+        key: Option<LayoutKey>,
+        style: Style,
+        rem_size: Pixels,
+        scale_factor: f32,
+        inputs: Inputs,
+        measure: impl FnMut(
+            Size<Option<Pixels>>,
+            Size<AvailableSpace>,
+            &mut Window,
+            &mut App,
+        ) -> (Size<Pixels>, State)
+        + 'static,
+        publish: impl Fn(&State) + 'static,
+    ) -> LayoutId
+    where
+        Inputs: PartialEq + 'static,
+        State: 'static,
+    {
+        let cache = CachedMeasure::new(inputs, rem_size, scale_factor, measure, publish);
+        self.request_node(
+            key,
+            style.to_taffy(rem_size, scale_factor),
+            &[],
+            Some(NodeContext::Cached(Box::new(cache))),
+        )
+    }
+
+    fn request_node(
+        &mut self,
+        key: Option<LayoutKey>,
+        style: taffy::Style,
+        children: &[LayoutId],
+        context: Option<NodeContext>,
+    ) -> LayoutId {
+        if !self.retention.active() {
+            let node = match context {
+                Some(context) => self.taffy.new_leaf_with_context(style, context),
+                None if children.is_empty() => self.taffy.new_leaf(style),
+                None => self
+                    .taffy
+                    .new_with_children(style, LayoutId::to_taffy_slice(children)),
+            };
+            self.note_layout_change();
+            return node.expect(EXPECT_MESSAGE).into();
+        }
+
+        if let Some(id) = self.retention.claim_request(key) {
+            let same_requested_root_style = self
+                .root_fill_styles
+                .get(&id)
+                .is_some_and(|root| root.requested == style);
+            if !same_requested_root_style {
+                self.root_fill_styles.remove(&id);
+                self.set_style(id, style);
+            }
+            self.set_children(id, children);
+            self.replace_context(id, context);
+            return id;
+        }
+
+        let id = match context {
+            Some(context) => self.taffy.new_leaf_with_context(style, context),
+            None => self.taffy.new_leaf(style),
+        }
+        .expect(EXPECT_MESSAGE)
+        .into();
+        self.note_layout_change();
+        self.retention.record_request(key, id);
+        self.set_children(id, children);
+        id
+    }
+
+    fn set_style(&mut self, id: LayoutId, style: taffy::Style) {
+        if self.taffy.style(id.into()).expect(EXPECT_MESSAGE) != &style {
+            self.taffy
+                .set_style(id.into(), style)
+                .expect(EXPECT_MESSAGE);
+            self.note_layout_change();
+        }
+    }
+
+    fn set_children(&mut self, id: LayoutId, children: &[LayoutId]) {
+        let native = LayoutId::to_taffy_slice(children);
+        if self.taffy.child_ids(id.into()).eq(native.iter().copied()) {
+            return;
+        }
+        self.invalidate_bounds(id);
+        for child in children.iter().copied() {
+            self.restore_requested_root_style(child);
+            let parent = self.taffy.parent(child.into()).map(LayoutId::from);
+            if parent != Some(id) {
+                self.invalidate_bounds(child);
+                if let Some(parent) = parent {
+                    self.retention.invalidate_subtree(parent);
+                }
+            }
+        }
         self.taffy
-            .new_leaf_with_context(taffy_style, NodeContext { measure })
-            .expect(EXPECT_MESSAGE)
-            .into()
+            .set_children(id.into(), native)
+            .expect(EXPECT_MESSAGE);
+        self.note_layout_change();
+    }
+
+    fn replace_context(&mut self, id: LayoutId, context: Option<NodeContext>) {
+        match (self.taffy.get_node_context_mut(id.into()), context) {
+            (Some(previous), Some(mut current)) => {
+                let reuse = current.carry_from(previous);
+                *previous = current;
+                if !reuse {
+                    self.taffy.mark_dirty(id.into()).expect(EXPECT_MESSAGE);
+                    self.note_layout_change();
+                }
+            }
+            (None, None) => {}
+            (_, context) => {
+                self.taffy
+                    .set_node_context(id.into(), context)
+                    .expect(EXPECT_MESSAGE);
+                self.note_layout_change();
+            }
+        }
+    }
+
+    fn restore_requested_root_style(&mut self, id: LayoutId) {
+        if let Some(root) = self.root_fill_styles.remove(&id) {
+            self.set_style(id, root.requested);
+        }
     }
 
     /// Fills auto dimensions of a window or prompt root from its viewport size.
@@ -114,22 +336,46 @@ impl TaffyLayoutEngine {
         size: Size<Pixels>,
         scale_factor: f32,
     ) {
-        let style = self.taffy.style(id.0).expect(EXPECT_MESSAGE);
+        let style = self.root_fill_styles.get(&id).map_or_else(
+            || self.taffy.style(id.into()).expect(EXPECT_MESSAGE),
+            |root| &root.requested,
+        );
         let stretch_width = style.size.width.is_auto();
         let stretch_height = style.size.height.is_auto();
         if !stretch_width && !stretch_height {
             return;
         }
-        let mut style = style.clone();
+        let mut filled = style.clone();
         if stretch_width {
-            style.size.width =
+            filled.size.width =
                 taffy::style::Dimension::length(round_to_device_pixel(size.width.0, scale_factor));
         }
         if stretch_height {
-            style.size.height =
+            filled.size.height =
                 taffy::style::Dimension::length(round_to_device_pixel(size.height.0, scale_factor));
         }
-        self.taffy.set_style(id.0, style).expect(EXPECT_MESSAGE);
+        self.root_fill_styles
+            .entry(id)
+            .or_insert_with(|| RootFillStyle {
+                requested: self.taffy.style(id.into()).expect(EXPECT_MESSAGE).clone(),
+                applied: false,
+            })
+            .applied = true;
+        self.set_style(id, filled);
+    }
+
+    fn invalidate_bounds(&mut self, root: LayoutId) {
+        if !self.absolute_layout_bounds.contains_key(&root) {
+            return;
+        }
+        let stack = &mut self.layout_bounds_scratch_space;
+        stack.push(root);
+        while let Some(id) = stack.pop() {
+            if self.absolute_layout_bounds.remove(&id).is_some() {
+                self.absolute_outer_origins.remove(&id);
+                stack.extend(self.taffy.child_ids(id.into()).map(LayoutId::from));
+            }
+        }
     }
 
     // Used to understand performance
@@ -198,19 +444,24 @@ impl TaffyLayoutEngine {
         // }
         //
 
-        if !self.computed_layouts.insert(id) {
-            let stack = &mut self.layout_bounds_scratch_space;
-            stack.push(id);
-            while let Some(id) = stack.pop() {
-                self.absolute_layout_bounds.remove(&id);
-                self.absolute_outer_origins.remove(&id);
-                stack.extend(
-                    self.taffy
-                        .children(id.into())
-                        .expect(EXPECT_MESSAGE)
-                        .into_iter()
-                        .map(LayoutId::from),
-                );
+        self.invalidate_bounds(id);
+        if self
+            .root_fill_styles
+            .get(&id)
+            .is_some_and(|root| !root.applied)
+        {
+            self.restore_requested_root_style(id);
+        }
+        if self.retention.active()
+            && let Some(parent) = self.taffy.parent(id.into())
+        {
+            self.taffy.mark_dirty(id.into()).expect(EXPECT_MESSAGE);
+            if !self.retention.has_request(parent.into()) {
+                self.taffy
+                    .remove_child(parent, id.into())
+                    .expect(EXPECT_MESSAGE);
+                self.retention.invalidate_subtree(parent.into());
+                self.note_layout_change();
             }
         }
 
@@ -257,9 +508,13 @@ impl TaffyLayoutEngine {
                                 untransform(available_space.width),
                                 untransform(available_space.height),
                             );
-                            let measured_size: Size<Pixels> = (node_context.measure)(
-                                known_dimensions,
-                                available_space,
+                            let measured_size = node_context.measure(
+                                MeasureConstraints {
+                                    known: known_dimensions,
+                                    available: available_space,
+                                    scale: scale_factor,
+                                },
+                                input.run_mode == taffy::RunMode::PerformLayout,
                                 window,
                                 cx,
                             );
@@ -269,6 +524,11 @@ impl TaffyLayoutEngine {
                 },
             )
             .expect(EXPECT_MESSAGE);
+        if self.taffy.parent(id.into()).is_none() {
+            self.retention.record_computed_root(id);
+        } else if self.retention.active() {
+            self.taffy.mark_dirty(id.into()).expect(EXPECT_MESSAGE);
+        }
     }
 
     // Pixel snapping
@@ -347,8 +607,8 @@ impl TaffyLayoutEngine {
     // 1dp residual into descendants.
 
     pub fn layout_bounds(&mut self, id: LayoutId, scale_factor: f32) -> Bounds<Pixels> {
-        if let Some(layout) = self.absolute_layout_bounds.get(&id).cloned() {
-            return layout;
+        if let Some(bounds) = self.absolute_layout_bounds.get(&id) {
+            return (*bounds / scale_factor).map(Pixels);
         }
 
         let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
@@ -377,9 +637,8 @@ impl TaffyLayoutEngine {
             absolute_far.map(round_half_toward_zero),
         );
 
-        let bounds = (snapped_bounds / scale_factor).map(Pixels);
-        self.absolute_layout_bounds.insert(id, bounds);
-        bounds
+        self.absolute_layout_bounds.insert(id, snapped_bounds);
+        (snapped_bounds / scale_factor).map(Pixels)
     }
 }
 

@@ -430,7 +430,8 @@ struct NativeShutdownEffectFlushOwnership<'a> {
 
 impl<'a> NativeShutdownEffectFlushOwnership<'a> {
     fn begin(active_generation: &'a Cell<Option<u64>>, generation: u64) -> Self {
-        debug_assert!(active_generation.replace(Some(generation)).is_none());
+        let previous = active_generation.replace(Some(generation));
+        debug_assert!(previous.is_none());
         Self { active_generation }
     }
 }
@@ -5267,6 +5268,51 @@ mod tests {
         assert!(shutdown.is_err());
         assert_eq!(attempts.get(), SHUTDOWN_EFFECT_FLUSH_PANIC_BUDGET);
         assert!(cx.windows().is_empty());
+    }
+
+    #[crate::test]
+    fn native_shutdown_reuses_the_fence_when_critical_work_closes_the_last_window(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|app| app.set_quit_mode(QuitMode::LastWindowClosed));
+        let window: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let terminal = cx.hold_window_native_terminal(window);
+        let quit_observations = Rc::new(Cell::new(0));
+        let after_registry_clear = Rc::new(Cell::new(false));
+        let _subscription = cx.read(|app| {
+            let quit_observations = quit_observations.clone();
+            let after_registry_clear = after_registry_clear.clone();
+            app.on_app_quit(move |app| {
+                quit_observations.set(quit_observations.get() + 1);
+                let after_registry_clear = after_registry_clear.clone();
+                app.defer_shutdown_critical_before_window_registry_clear(move |app| {
+                    window
+                        .update(app, |_, window, app| window.remove_window(app))
+                        .unwrap();
+                    app.defer_shutdown_critical_after_window_registry_clear(move |app| {
+                        assert!(app.windows().is_empty());
+                        assert!(!after_registry_clear.replace(true));
+                    });
+                });
+                std::future::ready(())
+            })
+        });
+        let mut quit = cx.test_platform().take_quit_callback().unwrap();
+
+        assert!(!quit());
+        cx.run_until_parked();
+        assert!(cx.windows().is_empty());
+        assert!(after_registry_clear.get());
+        assert_eq!(quit_observations.get(), 1);
+        assert!(!cx.test_platform().did_quit());
+
+        assert!(terminal.release());
+        cx.run_until_parked();
+        assert!(cx.test_platform().did_quit());
+        assert!(quit());
+        assert_eq!(quit_observations.get(), 1);
     }
 
     #[crate::test]

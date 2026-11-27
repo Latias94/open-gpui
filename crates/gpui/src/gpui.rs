@@ -43,6 +43,7 @@ pub mod colors;
 mod element;
 mod elements;
 mod executor;
+mod fast;
 mod platform_scheduler;
 pub(crate) use platform_scheduler::PlatformScheduler;
 mod geometry;
@@ -113,6 +114,7 @@ pub mod private {
     pub use anyhow;
     pub use inventory;
     pub use rand;
+    #[cfg(feature = "schemars")]
     pub use schemars;
     pub use serde;
     pub use serde_json;

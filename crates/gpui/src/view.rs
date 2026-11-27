@@ -111,6 +111,10 @@ impl View for AnyView {
         Some(AnyView::entity_id(self))
     }
 
+    fn retained_view(&self) -> Option<AnyWeakView> {
+        Some(self.downgrade())
+    }
+
     #[cfg(not(gpui_hot_reload))]
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         (self.render)(&self, window, cx)
@@ -156,6 +160,7 @@ impl IntoElement for AnyView {
 }
 
 /// A weak, dynamically typed view handle that does not retain its entity.
+#[derive(Clone)]
 pub struct AnyWeakView {
     entity: AnyWeakEntity,
     render: fn(&AnyView, &mut Window, &mut App) -> AnyElement,
@@ -207,8 +212,10 @@ mod any_view {
         cx: &mut App,
     ) -> AnyElement {
         let view = view.clone().downcast::<V>().unwrap();
-        view.update(cx, |view, cx| {
-            Render::render(view, window, cx).into_any_element()
+        crate::fast::dependencies::render_entity(view.entity_id(), || {
+            view.update(cx, |view, cx| {
+                Render::render(view, window, cx).into_any_element()
+            })
         })
     }
 }
@@ -223,6 +230,12 @@ mod any_view {
 pub trait View: 'static + Sized {
     /// Return the backing entity's identity, or None for a stateless component.
     fn entity_id(&self) -> Option<EntityId>;
+
+    /// Supplies a rebuild handle for views fully determined by their backing entity.
+    #[doc(hidden)]
+    fn retained_view(&self) -> Option<AnyWeakView> {
+        None
+    }
 
     /// Consume this view to produce its element tree.
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement;
@@ -244,10 +257,16 @@ impl<T: Render> View for Entity<T> {
         Some(Entity::entity_id(self))
     }
 
+    fn retained_view(&self) -> Option<AnyWeakView> {
+        Some(AnyView::from(self.clone()).downgrade())
+    }
+
     #[inline]
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        self.update(cx, |this, cx| {
-            Render::render(this, window, cx).into_any_element()
+        crate::fast::dependencies::render_entity(self.entity_id(), || {
+            self.update(cx, |this, cx| {
+                Render::render(this, window, cx).into_any_element()
+            })
         })
     }
 }

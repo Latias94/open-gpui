@@ -28,12 +28,12 @@ test-support = [
 ]
 inspector = ["open_gpui_macros/inspector"]
 leak-detection = []
-wasm-threads = ["dep:wasm_thread", "flume/spin"]
 font-kit = []
 wayland = []
 x11 = []
 windows-manifest = ["dep:embed-resource"]
-profiler = ["dep:hdrhistogram"]
+profiler = ["dep:hdrhistogram", "windows/Win32_System_WindowsProgramming"]
+schemars = ["dep:schemars"]
 stacker = ["dep:stacksafe"]
 hot-reload = [
     "dep:async-tungstenite",
@@ -53,6 +53,7 @@ anyhow.workspace = true
 async-task.workspace = true
 backtrace.workspace = true
 bitflags.workspace = true
+bytemuck = { version = "1", features = ["derive"] }
 ctor.workspace = true
 derive_more.workspace = true
 etagere = "0.3"
@@ -84,7 +85,7 @@ resvg = { version = "0.46.0", default-features = false, features = [
 usvg = { version = "0.46.0", default-features = false }
 ttf-parser = "0.25"
 rustc-hash.workspace = true
-schemars.workspace = true
+schemars = { workspace = true, optional = true }
 seahash = "4.1"
 serde.workspace = true
 serde_json.workspace = true
@@ -127,7 +128,6 @@ subsecond = { version = "=0.7.10", optional = true }
 async-channel.workspace = true
 getrandom = { version = "0.4.3", features = ["wasm_js"] }
 uuid = { workspace = true, features = ["js"] }
-wasm_thread = { workspace = true, optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 async-channel = { workspace = true, features = ["std"] }
@@ -142,7 +142,7 @@ libc.workspace = true
 
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { workspace = true, features = ["Win32_System_WindowsProgramming"] }
+windows = { workspace = true, features = ["Win32_System_RemoteDesktop"] }
 
 
 [dev-dependencies]

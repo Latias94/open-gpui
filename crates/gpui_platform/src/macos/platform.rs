@@ -35,7 +35,6 @@ use objc2_foundation::{
     NSActivityOptions, NSArray, NSBundle, NSError, NSInteger, NSNotificationCenter, NSNumber,
     NSProcessInfo, NSString, NSURL, NSUserDefaults,
 };
-use open_gpui::util::ResultExt;
 use open_gpui::{
     Action, ActivationPolicy, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem,
     CursorStyle, DisplayId, ForegroundExecutor, GraphicalEnvironment, KeyContext, Keymap, Menu,

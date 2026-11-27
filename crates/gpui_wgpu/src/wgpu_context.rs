@@ -34,6 +34,7 @@ pub enum WebBackendPreference {
     #[default]
     Auto,
     WebGpu,
+    /// Requires the application's WGPU build to enable `wgpu/webgl`.
     WebGl,
 }
 
@@ -300,7 +301,12 @@ impl SharedWgpuContext {
             WebBackendPreference::Auto => wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
             WebBackendPreference::WebGpu => wgpu::Backends::BROWSER_WEBGPU,
             WebBackendPreference::WebGl => wgpu::Backends::GL,
-        };
+        } & wgpu::Instance::enabled_backend_features();
+        anyhow::ensure!(
+            !backends.is_empty(),
+            "Requested browser graphics backend is not enabled: {:?}",
+            options.backend_preference
+        );
         let descriptor = wgpu::InstanceDescriptor {
             backends,
             flags: wgpu::InstanceFlags::default(),
@@ -308,7 +314,7 @@ impl SharedWgpuContext {
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
             display: Some(Box::new(WebDisplaySource)),
         };
-        let instance = if options.backend_preference == WebBackendPreference::Auto {
+        let instance = if backends.contains(wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL) {
             wgpu::util::new_instance_with_webgpu_detection(descriptor).await
         } else {
             wgpu::Instance::new(descriptor)

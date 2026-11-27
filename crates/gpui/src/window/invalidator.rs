@@ -20,6 +20,7 @@ struct WindowInvalidatorInner {
     #[cfg(feature = "profiler")]
     window_id: WindowId,
     dirty: bool,
+    requires_fresh_draw: bool,
     focus_only_dirty: bool,
     draw_phase: DrawPhase,
     dirty_views: FxHashSet<EntityId>,
@@ -43,6 +44,7 @@ impl WindowInvalidator {
                 #[cfg(feature = "profiler")]
                 window_id,
                 dirty: true,
+                requires_fresh_draw: false,
                 focus_only_dirty: false,
                 draw_phase: DrawPhase::None,
                 dirty_views: FxHashSet::default(),
@@ -88,6 +90,19 @@ impl WindowInvalidator {
     }
 
     pub fn set_dirty(&self, dirty: bool) {
+        self.inner.borrow_mut().requires_fresh_draw = dirty;
+        self.update_dirty(dirty);
+    }
+
+    pub(super) fn requires_fresh_draw(&self) -> bool {
+        self.inner.borrow().requires_fresh_draw
+    }
+
+    pub(crate) fn set_retained_dirty(&self) {
+        self.update_dirty(true);
+    }
+
+    fn update_dirty(&self, dirty: bool) {
         let mut inner = self.inner.borrow_mut();
         let became_dirty = dirty && !inner.dirty;
         inner.dirty = dirty;

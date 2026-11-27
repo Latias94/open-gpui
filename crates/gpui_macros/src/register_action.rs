@@ -28,15 +28,7 @@ pub(crate) fn generate_register_action(type_name: &Ident) -> TokenStream2 {
                 /// This is an auto generated function, do not use.
                 #[doc(hidden)]
                 fn #action_builder_fn_name() -> #gpui::MacroActionData {
-                    #gpui::MacroActionData {
-                        name: <#type_name as #gpui::Action>::name_for_type(),
-                        type_id: ::std::any::TypeId::of::<#type_name>(),
-                        build: <#type_name as #gpui::Action>::build,
-                        json_schema: <#type_name as #gpui::Action>::action_json_schema,
-                        deprecated_aliases: <#type_name as #gpui::Action>::deprecated_aliases(),
-                        deprecation_message: <#type_name as #gpui::Action>::deprecation_message(),
-                        documentation: <#type_name as #gpui::Action>::documentation(),
-                    }
+                    #gpui::MacroActionData::new::<#type_name>()
                 }
 
                 #gpui::private::inventory::submit! {

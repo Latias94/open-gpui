@@ -80,12 +80,11 @@ default = []
 font-kit = ["dep:font-kit", "dep:core-text", "dep:objc2-core-text", "dep:pathfinder_geometry"]
 inspector = ["open_gpui/inspector"]
 profiler = ["open_gpui/profiler"]
-test-support = ["open_gpui/test-support", "open_gpui_wgpu?/test-support"]
+test-support = ["open_gpui/test-support", "open_gpui_wgpu/test-support"]
 wayland = [
     "dep:calloop-wayland-source",
     "dep:filedescriptor",
     "dep:open",
-    "dep:open_gpui_wgpu",
     "dep:wayland-backend",
     "dep:wayland-client",
     "dep:wayland-cursor",
@@ -94,6 +93,7 @@ wayland = [
     "dep:wayland-protocols-wlr",
     "ashpd/wayland",
     "open_gpui/wayland",
+    "open_gpui_wgpu/font-kit",
     "xkbcommon/wayland",
 ]
 x11 = [
@@ -101,9 +101,9 @@ x11 = [
     "dep:as-raw-xcb-connection",
     "dep:filedescriptor",
     "dep:open",
-    "dep:open_gpui_wgpu",
     "dep:x11rb",
     "dep:xim",
+    "open_gpui_wgpu/font-kit",
     "xkbcommon/x11",
 ]
 
@@ -201,7 +201,39 @@ raw-window-handle = { version = "0.6", features = ["std"] }
 smallvec.workspace = true
 uuid.workspace = true
 which.workspace = true
-windows.workspace = true
+windows = { workspace = true, features = [
+    "UI_ViewManagement",
+    "Wdk_System_SystemServices",
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Graphics_DirectManipulation",
+    "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_Media",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_DataExchange",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_System_Performance",
+    "Win32_System_Power",
+    "Win32_System_StationsAndDesktops",
+    "Win32_System_SystemInformation",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+    "Win32_System_WinRT",
+    "Win32_UI_Controls",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_Ime",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Input_Pointer",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_WindowsAndMessaging",
+] }
 windows-core.workspace = true
 windows-numerics = "0.3"
 windows-registry = "0.5"
@@ -221,7 +253,6 @@ itertools.workspace = true
 libc.workspace = true
 log.workspace = true
 open = { version = "5.3.6", optional = true }
-open_gpui_wgpu = { workspace = true, optional = true, features = ["font-kit"] }
 parking_lot.workspace = true
 pollster.workspace = true
 profiling.workspace = true

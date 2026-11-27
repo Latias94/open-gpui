@@ -4,11 +4,14 @@
 
 use crate::Refineable;
 use anyhow::{Context as _, anyhow};
+use bytemuck::NoUninit;
 use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, DivAssign, Mul, Neg, Sub, SubAssign};
+#[cfg(feature = "schemars")]
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use smallvec::{SmallVec, smallvec};
+#[cfg(feature = "schemars")]
 use std::borrow::Cow;
 use std::cell::Cell;
 use std::ops::{AddAssign, Range};
@@ -79,11 +82,11 @@ pub trait Along {
     Eq,
     Serialize,
     Deserialize,
-    JsonSchema,
     Hash,
     Neg,
 )]
-#[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "schemars", derive(JsonSchema), refineable(JsonSchema))]
+#[refineable(Debug, PartialEq, Serialize, Deserialize)]
 #[repr(C)]
 pub struct Point<T: Clone + Debug + Default + PartialEq> {
     /// The x coordinate of the point.
@@ -394,7 +397,8 @@ impl<T: Clone + Debug + Default + PartialEq + Display> Display for Point<T> {
 #[derive(
     Add, Clone, Copy, Default, Deserialize, Div, Hash, Neg, PartialEq, Refineable, Serialize, Sub,
 )]
-#[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "schemars", refineable(JsonSchema))]
+#[refineable(Debug, PartialEq, Serialize, Deserialize)]
 #[repr(C)]
 pub struct Size<T: Clone + Debug + Default + PartialEq> {
     /// The width component of the size.
@@ -1767,7 +1771,8 @@ impl Bounds<DevicePixels> {
 /// assert_eq!(edges.left, 40.0);
 /// ```
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
-#[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "schemars", refineable(JsonSchema))]
+#[refineable(Debug, PartialEq, Serialize, Deserialize)]
 #[repr(C)]
 pub struct Edges<T: Clone + Debug + Default + PartialEq> {
     /// The size of the top edge.
@@ -2331,7 +2336,8 @@ impl Anchor {
 ///
 /// Each field represents the size of the corner on one side of the box: `top_left`, `top_right`, `bottom_right`, and `bottom_left`.
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
-#[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "schemars", refineable(JsonSchema))]
+#[refineable(Debug, PartialEq, Serialize, Deserialize)]
 #[repr(C)]
 pub struct Corners<T: Clone + Debug + Default + PartialEq> {
     /// The value associated with the top left corner.
@@ -2343,6 +2349,14 @@ pub struct Corners<T: Clone + Debug + Default + PartialEq> {
     /// The value associated with the bottom left corner.
     pub bottom_left: T,
 }
+
+// SAFETY: These repr(C) types concatenate fields of type T. Bounds concatenates Point and Size,
+// which each have the alignment of T and a size of twice size_of::<T>(). None add padding.
+unsafe impl<T: NoUninit + Debug + Default + PartialEq> NoUninit for Point<T> {}
+unsafe impl<T: NoUninit + Debug + Default + PartialEq> NoUninit for Size<T> {}
+unsafe impl<T: NoUninit + Debug + Default + PartialEq> NoUninit for Bounds<T> {}
+unsafe impl<T: NoUninit + Debug + Default + PartialEq> NoUninit for Edges<T> {}
+unsafe impl<T: NoUninit + Debug + Default + PartialEq> NoUninit for Corners<T> {}
 
 impl<T> Corners<T>
 where
@@ -2749,8 +2763,8 @@ impl From<Percentage> for Radians {
     PartialEq,
     Serialize,
     Deserialize,
-    JsonSchema,
 )]
+#[cfg_attr(feature = "schemars", derive(JsonSchema))]
 #[repr(transparent)]
 pub struct Pixels(pub(crate) f32);
 
@@ -3061,6 +3075,7 @@ impl From<usize> for Pixels {
     SubAssign,
     Serialize,
     Deserialize,
+    NoUninit,
 )]
 #[repr(transparent)]
 pub struct DevicePixels(pub i32);
@@ -3154,7 +3169,9 @@ impl From<usize> for DevicePixels {
 /// a single logical pixel may correspond to multiple physical pixels. By using `ScaledPixels`,
 /// dimensions and positions can be specified in a way that scales appropriately across different
 /// display resolutions.
-#[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Neg, Div, DivAssign, PartialEq)]
+#[derive(
+    Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Neg, Div, DivAssign, PartialEq, NoUninit,
+)]
 #[repr(transparent)]
 pub struct ScaledPixels(pub f32);
 
@@ -3505,6 +3522,7 @@ impl TryFrom<&'_ str> for AbsoluteLength {
     }
 }
 
+#[cfg(feature = "schemars")]
 impl JsonSchema for AbsoluteLength {
     fn schema_name() -> Cow<'static, str> {
         "AbsoluteLength".into()
@@ -3636,6 +3654,7 @@ impl TryFrom<&'_ str> for DefiniteLength {
     }
 }
 
+#[cfg(feature = "schemars")]
 impl JsonSchema for DefiniteLength {
     fn schema_name() -> Cow<'static, str> {
         "DefiniteLength".into()
@@ -3744,6 +3763,7 @@ impl TryFrom<&'_ str> for Length {
     }
 }
 
+#[cfg(feature = "schemars")]
 impl JsonSchema for Length {
     fn schema_name() -> Cow<'static, str> {
         "Length".into()
@@ -5269,7 +5289,8 @@ impl From<()> for Length {
 }
 
 /// A location in a grid layout.
-#[derive(Clone, PartialEq, Debug, Serialize, Deserialize, JsonSchema, Default)]
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "schemars", derive(JsonSchema))]
 pub struct GridLocation {
     /// The rows this item uses within the grid.
     pub row: Range<GridPlacement>,
@@ -5278,7 +5299,8 @@ pub struct GridLocation {
 }
 
 /// The placement of an item within a grid layout's column or row.
-#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, JsonSchema, Default)]
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "schemars", derive(JsonSchema))]
 pub enum GridPlacement {
     /// The grid line index to place this item.
     Line(i16),

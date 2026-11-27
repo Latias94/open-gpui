@@ -94,6 +94,7 @@ fn grid_template_preserves_its_serialized_representation() {
 }
 
 #[test]
+#[cfg(feature = "schemars")]
 fn grid_template_schema_uses_the_shared_minimum_size_type() {
     assert_eq!(GridTemplateMinSize::schema_name(), "GridTemplateMinSize");
 

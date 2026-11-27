@@ -771,6 +771,7 @@ pub(super) struct ActiveBringIntoViewRequest {
 enum BringIntoViewRequestSource {
     Application,
     Focus(FocusId),
+    #[cfg(not(target_family = "wasm"))]
     Accessibility {
         node: accesskit::NodeId,
         activation_generation: u64,
@@ -1143,6 +1144,7 @@ impl Window {
         fence.expected_chain.matches_chain(snapshot)
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub(super) fn enqueue_accessibility_bring_into_view(
         &mut self,
         node: accesskit::NodeId,
@@ -1474,6 +1476,7 @@ impl Window {
                 None
             }
             BringIntoViewRequestSource::Focus(_) => Some(BringIntoViewCancelReason::Superseded),
+            #[cfg(not(target_family = "wasm"))]
             BringIntoViewRequestSource::Accessibility {
                 node,
                 activation_generation,
@@ -1486,6 +1489,7 @@ impl Window {
             {
                 None
             }
+            #[cfg(not(target_family = "wasm"))]
             BringIntoViewRequestSource::Accessibility { .. } => {
                 Some(BringIntoViewCancelReason::TargetUnlinked)
             }

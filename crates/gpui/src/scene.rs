@@ -1,7 +1,7 @@
 // todo("windows"): remove
 #![cfg_attr(windows, allow(dead_code))]
 
-use schemars::JsonSchema;
+use bytemuck::NoUninit;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -27,7 +27,7 @@ pub type DrawOrder = u32;
 /// A boolean with a fully initialized four-byte GPU storage representation.
 ///
 /// Values are zero or one by construction. Shaders consume the complete value as a `u32`.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, NoUninit)]
 #[repr(transparent)]
 pub struct PaddedBool32(u32);
 
@@ -45,7 +45,7 @@ impl PaddedBool32 {
 }
 
 /// One exact window-space rounded-rectangle clip consumed by renderer shaders.
-#[derive(Default, Debug, Copy, Clone, PartialEq)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, NoUninit)]
 #[repr(C)]
 pub struct GpuClipShape {
     /// Window-space bounds in device-scaled pixels.
@@ -93,7 +93,7 @@ impl GpuClipShape {
 }
 
 /// A primitive's conservative clip bounds and range in [`Scene::clip_shapes`].
-#[derive(Default, Debug, Copy, Clone, PartialEq)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, NoUninit)]
 #[repr(C)]
 pub struct ClipEnvelope {
     /// Device-space raster bounds from the exact clip stack and any primitive raster restriction.
@@ -1473,7 +1473,7 @@ impl PrimitiveBatch {
 /// snapping a primitive's raster envelope, while shaders retain the primitive's local coordinates
 /// for gradients, signed-distance fields, and texture sampling.
 #[doc(hidden)]
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, NoUninit)]
 #[repr(C)]
 pub struct PrimitiveTransform {
     scale_x: f32,
@@ -1692,7 +1692,7 @@ impl PrimitiveTransform {
     }
 }
 
-#[derive(Default, Debug, Copy, Clone)]
+#[derive(Default, Debug, Copy, Clone, NoUninit)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct Quad {
@@ -1713,7 +1713,7 @@ impl From<Quad> for Primitive {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, NoUninit)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct Underline {
@@ -1733,7 +1733,7 @@ impl From<Underline> for Primitive {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, NoUninit)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct Shadow {
@@ -1768,7 +1768,8 @@ impl From<Shadow> for Primitive {
 }
 
 /// The style of a border.
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, NoUninit)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[repr(C)]
 pub enum BorderStyle {
     /// A solid border.
@@ -1779,7 +1780,7 @@ pub enum BorderStyle {
 }
 
 /// An affine transformation of an SVG's raster, independent of layout and hit testing.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, NoUninit)]
 #[repr(C)]
 pub struct TransformationMatrix {
     /// Row-major rotation and scale matrix.
@@ -1929,7 +1930,7 @@ impl Default for TransformationMatrix {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, NoUninit)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct MonochromeSprite {
@@ -1944,7 +1945,7 @@ pub struct MonochromeSprite {
 }
 
 /// A scene-local animation identifier stored in a four-byte sprite slot.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, NoUninit)]
 #[repr(transparent)]
 pub struct SpriteAnimationId(u32);
 
@@ -1993,7 +1994,7 @@ impl From<MonochromeSprite> for Primitive {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, NoUninit)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct SubpixelSprite {
@@ -2012,7 +2013,7 @@ impl From<SubpixelSprite> for Primitive {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, NoUninit)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct PolychromeSprite {
@@ -2042,7 +2043,7 @@ impl PolychromeSprite {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, NoUninit)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct PathCurve {
@@ -2054,7 +2055,7 @@ pub struct PathCurve {
     pub pad: u32,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, NoUninit)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct PathPaint {
@@ -2068,7 +2069,7 @@ pub struct PathPaint {
     pub transform: PrimitiveTransform,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, NoUninit)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct PathTile {

@@ -625,6 +625,10 @@ impl<T: 'static> Entity<T> {
     /// Grab a reference to this entity from the context.
     #[inline]
     pub fn read<'a>(&self, cx: &'a App) -> &'a T {
+        cx.retained_revisions
+            .read(crate::fast::dependencies::RevisionKey::Entity(
+                self.entity_id,
+            ));
         cx.entities.read(self)
     }
 

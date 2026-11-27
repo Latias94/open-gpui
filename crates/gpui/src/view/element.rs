@@ -2,7 +2,7 @@ use super::{View, ViewCacheKey, ViewElementState};
 use crate::Refineable;
 use crate::{
     AnyElement, App, Bounds, Element, ElementId, EntityId, GlobalElementId, InspectorElementId,
-    IntoElement, LayoutId, Pixels, Style, StyleRefinement, Window,
+    IntoElement, LayoutId, Pixels, Style, StyleRefinement, Window, fast::retained,
 };
 use std::{any::type_name, mem};
 
@@ -67,8 +67,8 @@ fn render_view<V: View>(view: V, window: &mut Window, cx: &mut App) -> AnyElemen
 }
 
 impl<V: View> Element for ViewElement<V> {
-    type RequestLayoutState = Option<AnyElement>;
-    type PrepaintState = Option<AnyElement>;
+    type RequestLayoutState = ViewLayoutState;
+    type PrepaintState = ViewPrepaintState;
 
     fn id(&self) -> Option<ElementId> {
         self.entity_id.map(ElementId::View)
@@ -83,7 +83,7 @@ impl<V: View> Element for ViewElement<V> {
 
     fn request_layout(
         &mut self,
-        _: Option<&GlobalElementId>,
+        global_id: Option<&GlobalElementId>,
         _: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
@@ -99,7 +99,33 @@ impl<V: View> Element for ViewElement<V> {
             let draw = move |window: &mut Window, cx: &mut App| {
                 let source = self;
                 let view = &mut source.view;
-                request_layout_view(
+                if source.cached_style.is_some() {
+                    crate::fast::dependencies::requires_fresh_draw();
+                }
+                if let Some(id) = global_id
+                    && source.cached_style.is_none()
+                    && retained::can_record(window, cx)
+                    && let Some(rebuild) = view.as_ref().and_then(View::retained_view)
+                {
+                    return window.with_rendered_view(entity_id, |window| {
+                        let (id, layout) = retained::layout(
+                            id,
+                            entity_id,
+                            rebuild,
+                            window,
+                            cx,
+                            &mut |window, cx| {
+                                render_view(
+                                    view.take().expect("view render consumed once"),
+                                    window,
+                                    cx,
+                                )
+                            },
+                        );
+                        (id, ViewLayoutState(LayoutState::Retained(Some(layout))))
+                    });
+                }
+                let (id, element) = request_layout_view(
                     entity_id,
                     source.cached_style.as_ref(),
                     window,
@@ -107,7 +133,8 @@ impl<V: View> Element for ViewElement<V> {
                     &mut |window, cx| {
                         render_view(view.take().expect("view render consumed once"), window, cx)
                     },
-                )
+                );
+                (id, ViewLayoutState(LayoutState::Immediate(element)))
             };
             #[cfg(feature = "profiler")]
             return window.profile_view_phase(
@@ -119,13 +146,15 @@ impl<V: View> Element for ViewElement<V> {
             #[cfg(not(feature = "profiler"))]
             return draw(window, cx);
         }
-        request_layout_component(type_name::<V>(), window, cx, &mut |window, cx| {
-            render_view(
-                self.view.take().expect("component render consumed once"),
-                window,
-                cx,
-            )
-        })
+        let (id, element) =
+            request_layout_component(type_name::<V>(), window, cx, &mut |window, cx| {
+                render_view(
+                    self.view.take().expect("component render consumed once"),
+                    window,
+                    cx,
+                )
+            });
+        (id, ViewLayoutState(LayoutState::Immediate(element)))
     }
 
     fn prepaint(
@@ -142,7 +171,24 @@ impl<V: View> Element for ViewElement<V> {
             let view_type_name = self.view_type_name;
             let draw = move |window: &mut Window, cx: &mut App| {
                 let source = self;
-                prepaint_view(
+                let element = match &mut element.0 {
+                    LayoutState::Immediate(element) => element,
+                    LayoutState::Retained(layout) => {
+                        window.set_view_id(entity_id);
+                        return window.with_rendered_view(entity_id, |window| {
+                            let prepaint = retained::prepaint(
+                                global_id.expect("retained view has an element ID"),
+                                entity_id,
+                                bounds,
+                                layout.take().expect("view prepaints once"),
+                                window,
+                                cx,
+                            );
+                            ViewPrepaintState(PrepaintState::Retained(prepaint))
+                        });
+                    }
+                };
+                ViewPrepaintState(PrepaintState::Immediate(prepaint_view(
                     entity_id,
                     global_id,
                     bounds,
@@ -159,7 +205,7 @@ impl<V: View> Element for ViewElement<V> {
                             cx,
                         )
                     },
-                )
+                )))
             };
             #[cfg(feature = "profiler")]
             return window.profile_view_phase(
@@ -171,7 +217,15 @@ impl<V: View> Element for ViewElement<V> {
             #[cfg(not(feature = "profiler"))]
             return draw(window, cx);
         }
-        prepaint_component(type_name::<V>(), element, window, cx)
+        let LayoutState::Immediate(element) = &mut element.0 else {
+            unreachable!("stateless components are not retained");
+        };
+        ViewPrepaintState(PrepaintState::Immediate(prepaint_component(
+            type_name::<V>(),
+            element,
+            window,
+            cx,
+        )))
     }
 
     fn paint(
@@ -187,8 +241,17 @@ impl<V: View> Element for ViewElement<V> {
         if let Some(entity_id) = self.entity_id {
             let cached = self.cached_style.is_some();
             let draw = move |window: &mut Window, cx: &mut App| {
-                let rendered = element;
-                paint_view(entity_id, cached, global_id, rendered, window, cx)
+                let element = element;
+                match &mut element.0 {
+                    PrepaintState::Immediate(rendered) => {
+                        paint_view(entity_id, cached, global_id, rendered, window, cx);
+                    }
+                    PrepaintState::Retained(retained) => {
+                        window.with_rendered_view(entity_id, |window| {
+                            retained::paint(retained, window, cx)
+                        });
+                    }
+                }
             };
             #[cfg(feature = "profiler")]
             window.profile_view_phase(
@@ -200,9 +263,28 @@ impl<V: View> Element for ViewElement<V> {
             #[cfg(not(feature = "profiler"))]
             draw(window, cx);
         } else {
+            let PrepaintState::Immediate(element) = &mut element.0 else {
+                unreachable!("stateless components are not retained");
+            };
             paint_component(type_name::<V>(), element, window, cx);
         }
     }
+}
+
+#[doc(hidden)]
+pub struct ViewLayoutState(LayoutState);
+
+enum LayoutState {
+    Immediate(Option<AnyElement>),
+    Retained(Option<retained::Layout>),
+}
+
+#[doc(hidden)]
+pub struct ViewPrepaintState(PrepaintState);
+
+enum PrepaintState {
+    Immediate(Option<AnyElement>),
+    Retained(retained::Prepaint),
 }
 
 #[inline(never)]
@@ -252,7 +334,8 @@ fn prepaint_view(
             let opacity = window.element_opacity();
             let subtree_presentation = window.subtree_presentation();
             let subtree_transform = window.subtree_transform();
-            if let Some(mut state) = state
+            if window.view_retention_enabled()
+                && let Some(mut state) = state
                 && state.cache_key.bounds == bounds
                 && state.cache_key.clip_stack == clip_stack
                 && state.cache_key.text_style == text_style

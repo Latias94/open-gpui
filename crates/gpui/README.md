@@ -33,9 +33,12 @@ single-platform application, select only the features that its backend needs:
 - **macOS:** Enable `font-kit` for glyph rendering. Metal rendering is always available, but
   without `font-kit` the platform uses a placeholder text system that renders no glyphs.
 - **Linux / FreeBSD:** Enable `wayland`, `x11`, or both for desktop windows. These features
-  also select the renderer and text system.
+  also enable the renderer's `font-kit` integration.
 - **Windows:** No platform features are required. Windowing uses Win32 and text uses
   DirectWrite; `font-kit` has no effect on this backend.
+
+Enable `open-gpui`'s `schemars` feature to generate action and style JSON schemas. Action
+registration and JSON keymap loading are available in every build.
 
 An existing application may instead supply platform and renderer services. `App::open_surface`
 opens a host-driven logical root without creating a native window, while retaining ordinary
@@ -70,6 +73,12 @@ layout size. They return ViewElement values. Notification or window refresh inva
 alongside the existing geometry, inherited style and resource checks. Manual and stateless Views
 have no public cache shortcut. When branches have different element types, finish each branch
 with `into_any_element()`; the underlying entity identity and concrete profiling name survive.
+
+GPUI can replay the layout and frame output of an unchanged entity-backed view. It tracks
+entity, global, scroll, list, and input reads during drawing. When a nested update preserves
+layout and inherited state, GPUI can rebuild that view and replay the accepted frame around it.
+Use `Context::notify` when drawing depends on state held outside GPUI's tracked APIs. Set
+`GPUI_VIEW_RETENTION=0` before launching an application to disable automatic view and layout reuse.
 
 ## Atlas Ownership
 
@@ -152,7 +161,7 @@ Native backends cover macOS, Windows, Linux, and FreeBSD through platform crates
 availability varies by platform and compositor.
 
 Use `open-gpui-base` for unstyled controls and `open-gpui-docking` for retained dock
-spaces. Shared motion primitives live in `open_gpui_core_util::motion`. `img()` loads local paths
+spaces. Shared motion primitives live in `open_gpui::motion`. `img()` loads local paths
 or application assets and accepts decoded images and custom loaders.
 
 ## Platform Window Lifecycle
@@ -400,6 +409,17 @@ producing a catch-up burst. These rules do not replace accepted-frame or native 
 The [power/cadence qualification](../../docs/verification.md#power-modes-and-stable-frame-cadence)
 records backend sources, executed platform/consumer scope and remaining physical timing/energy
 limits.
+
+## Retained View Rendering
+
+GPUI can reuse layout and frame output from an accepted draw when an entity-backed view's
+dependencies and rendering context still match. A dirty nested view can rebuild within retained
+ancestors when its layout remains stable. When those checks fail, GPUI draws the affected frame
+through the ordinary rendering path. Native accessibility supports complete subtree replay and
+uses a fresh draw for dirty splice candidates.
+
+Set `GPUI_VIEW_RETENTION=0` before launch to disable view replay for a full-redraw comparison.
+Presentation of an already accepted scene remains available in this mode.
 
 ## Frame And Hang Measurement
 

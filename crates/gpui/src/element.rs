@@ -34,7 +34,7 @@
 use crate::{
     A11ySubtreeBuilder, App, ArenaBox, AvailableSpace, Bounds, Context, DispatchNodeId, ElementId,
     FocusHandle, InspectorElementId, LayoutId, Pixels, Point, Size, Style, Window,
-    util::FluentBuilder, window::with_element_arena,
+    fast::layout_key::LayoutKey, util::FluentBuilder, window::with_element_arena,
 };
 use smallvec::SmallVec;
 use std::{
@@ -391,12 +391,14 @@ enum ElementDrawPhase<RequestLayoutState, PrepaintState> {
     Start,
     RequestLayout {
         layout_id: LayoutId,
+        layout_key: LayoutKey,
         global_id: Option<GlobalElementId>,
         inspector_id: Option<InspectorElementId>,
         request_layout: RequestLayoutState,
     },
     LayoutComputed {
         layout_id: LayoutId,
+        layout_key: LayoutKey,
         global_id: Option<GlobalElementId>,
         inspector_id: Option<InspectorElementId>,
         available_space: Size<AvailableSpace>,
@@ -425,7 +427,9 @@ impl<E: Element> Drawable<E> {
     fn request_layout(&mut self, window: &mut Window, cx: &mut App) -> LayoutId {
         match mem::take(&mut self.phase) {
             ElementDrawPhase::Start => {
-                let global_id = self.element.id().map(|element_id| {
+                let element_id = self.element.id();
+                let layout_key = window.layout_keys.push(element_id.as_ref());
+                let global_id = element_id.map(|element_id| {
                     window.element_id_stack.push(element_id);
                     GlobalElementId::from_stack(&window.element_id_stack)
                 });
@@ -452,6 +456,7 @@ impl<E: Element> Drawable<E> {
                     window,
                     cx,
                 );
+                window.layout_keys.pop();
 
                 if global_id.is_some() {
                     window.element_id_stack.pop();
@@ -459,6 +464,7 @@ impl<E: Element> Drawable<E> {
 
                 self.phase = ElementDrawPhase::RequestLayout {
                     layout_id,
+                    layout_key,
                     global_id,
                     inspector_id,
                     request_layout,
@@ -473,12 +479,14 @@ impl<E: Element> Drawable<E> {
         match mem::take(&mut self.phase) {
             ElementDrawPhase::RequestLayout {
                 layout_id,
+                layout_key,
                 global_id,
                 inspector_id,
                 mut request_layout,
             }
             | ElementDrawPhase::LayoutComputed {
                 layout_id,
+                layout_key,
                 global_id,
                 inspector_id,
                 mut request_layout,
@@ -535,6 +543,7 @@ impl<E: Element> Drawable<E> {
                     .next_frame
                     .dispatch_tree
                     .push_node_scoped(window.subtree_geometry_validity());
+                window.layout_keys.push_prepaint(layout_key);
                 let mut prepaint = window.with_prepaint_layout_id(layout_id, |window| {
                     if let Some(node_id) = reveal_a11y_node {
                         window.bind_accessibility_reveal_target(node_id, bounds);
@@ -548,6 +557,7 @@ impl<E: Element> Drawable<E> {
                         cx,
                     )
                 });
+                window.layout_keys.pop();
                 window.next_frame.dispatch_tree.pop_node();
 
                 if pushed_a11y_node {
@@ -648,6 +658,7 @@ impl<E: Element> Drawable<E> {
         let layout_id = match mem::take(&mut self.phase) {
             ElementDrawPhase::RequestLayout {
                 layout_id,
+                layout_key,
                 global_id,
                 inspector_id,
                 request_layout,
@@ -655,6 +666,7 @@ impl<E: Element> Drawable<E> {
                 window.compute_layout(layout_id, available_space, cx);
                 self.phase = ElementDrawPhase::LayoutComputed {
                     layout_id,
+                    layout_key,
                     global_id,
                     inspector_id,
                     available_space,
@@ -664,6 +676,7 @@ impl<E: Element> Drawable<E> {
             }
             ElementDrawPhase::LayoutComputed {
                 layout_id,
+                layout_key,
                 global_id,
                 inspector_id,
                 available_space: prev_available_space,
@@ -674,6 +687,7 @@ impl<E: Element> Drawable<E> {
                 }
                 self.phase = ElementDrawPhase::LayoutComputed {
                     layout_id,
+                    layout_key,
                     global_id,
                     inspector_id,
                     available_space,

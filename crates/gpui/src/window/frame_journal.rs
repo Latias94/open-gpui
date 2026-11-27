@@ -113,6 +113,7 @@ pub(crate) struct DeferredDraw {
 
 pub(crate) struct Frame {
     pub(crate) generation: u64,
+    pub(crate) retained_views: crate::fast::retained::FrameViews,
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
@@ -203,6 +204,79 @@ pub(crate) struct PaintIndex {
     pub(super) subtree_transform_diagnostics_index: usize,
 }
 
+macro_rules! rebase_indices {
+    ($index:ty, $($name:ident),+ $(,)?) => {
+        impl $index {
+            pub(crate) fn precedes(&self, other: &Self) -> bool {
+                self.line_layout_index.precedes(&other.line_layout_index)
+                    $(&& self.$name <= other.$name)+
+            }
+
+            pub(crate) fn rebase(&self, source: &Self, target: &Self) -> Self {
+                Self {
+                    $($name: target.$name + self.$name - source.$name,)+
+                    line_layout_index: self.line_layout_index.rebase(
+                        &source.line_layout_index,
+                        &target.line_layout_index,
+                    ),
+                }
+            }
+        }
+    };
+    ($index:ty; test: $($test:ident),+; $($name:ident),+ $(,)?) => {
+        impl $index {
+            pub(crate) fn precedes(&self, other: &Self) -> bool {
+                #[cfg(any(test, feature = "test-support"))]
+                if $(self.$test > other.$test)||+ {
+                    return false;
+                }
+                self.line_layout_index.precedes(&other.line_layout_index)
+                    $(&& self.$name <= other.$name)+
+            }
+
+            pub(crate) fn rebase(&self, source: &Self, target: &Self) -> Self {
+                Self {
+                    $($name: target.$name + self.$name - source.$name,)+
+                    $(#[cfg(any(test, feature = "test-support"))]
+                      $test: target.$test + self.$test - source.$test,)+
+                    line_layout_index: self.line_layout_index.rebase(
+                        &source.line_layout_index,
+                        &target.line_layout_index,
+                    ),
+                }
+            }
+        }
+    };
+}
+
+rebase_indices!(
+    PrepaintStateIndex,
+    hitboxes_index,
+    pointer_capture_bindings_index,
+    portal_anchor_bindings_index,
+    reveal_target_bindings_index,
+    retained_resources_index,
+    prepaint_commits_index,
+    tooltips_index,
+    deferred_draws_index,
+    dispatch_tree_index,
+    accessed_element_states_index,
+    subtree_transform_diagnostics_index,
+);
+rebase_indices!(PaintIndex; test: debug_bounds_entries_index, debug_focus_entries_index;
+    scene_index, atlas_texture_lease_entries_index, atlas_access_diagnostics_index,
+    image_paint_diagnostics_index, retained_visual_publications_index, retained_visual_replays_index,
+    mouse_listeners_index, pointer_cancel_listeners_index, input_handlers_index,
+    cursor_styles_index, window_control_hitboxes_index, accessed_element_states_index,
+    tab_handle_index, subtree_transform_diagnostics_index,
+);
+
+impl PrepaintStateIndex {
+    pub(crate) fn dispatch_range(range: &Range<Self>) -> Range<usize> {
+        range.start.dispatch_tree_index..range.end.dispatch_tree_index
+    }
+}
+
 /// Frame-journal cursor for paint-only replay.
 ///
 /// Unlike [`PaintIndex`], this deliberately excludes every interactive and semantic channel.
@@ -230,6 +304,7 @@ impl Frame {
     pub(crate) fn new(dispatch_tree: DispatchTree) -> Self {
         Frame {
             generation: 0,
+            retained_views: Default::default(),
             focus: None,
             window_active: false,
             element_states: FxHashMap::default(),
@@ -284,6 +359,7 @@ impl Frame {
     }
 
     pub(crate) fn clear(&mut self) {
+        self.retained_views.clear();
         self.element_states.clear();
         self.element_state_validities.clear();
         self.accessed_element_states.clear();

@@ -53,7 +53,6 @@ use image::codecs::{gif::GifDecoder, webp::WebPDecoder};
 use image::{DynamicImage, Frame, Rgba};
 use parking_lot::Mutex as ParkingMutex;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use schemars::JsonSchema;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -235,7 +234,7 @@ impl GraphicalEnvironment {
         // SAFETY: The output pointer remains valid for the native call.
         let result = unsafe {
             windows::Win32::System::RemoteDesktop::ProcessIdToSessionId(
-                windows::Win32::System::Threading::GetCurrentProcessId(),
+                std::process::id(),
                 &mut session_id,
             )
         };
@@ -7149,7 +7148,7 @@ impl<T> AtlasTextureList<T> {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, bytemuck::NoUninit)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct AtlasTile {
@@ -7299,7 +7298,7 @@ mod atlas_tile_abi_tests {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, bytemuck::NoUninit)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct AtlasTextureId {
@@ -7324,7 +7323,7 @@ pub struct AtlasTextureInstanceId {
     pub generation: u32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, bytemuck::NoUninit)]
 #[repr(C)]
 #[cfg_attr(
     all(
@@ -7340,7 +7339,7 @@ pub enum AtlasTextureKind {
     Subpixel = 2,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, bytemuck::NoUninit)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct TileId(pub u32);
@@ -8685,9 +8684,8 @@ impl From<&str> for PromptButton {
 }
 
 /// The style of the cursor (pointer)
-#[derive(
-    Copy, Clone, Default, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, EnumIter,
-)]
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, EnumIter)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub enum CursorStyle {
     /// The default cursor
     #[default]

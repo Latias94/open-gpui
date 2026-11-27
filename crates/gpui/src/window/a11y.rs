@@ -112,6 +112,8 @@ mod composite_focus_tests;
 #[cfg(test)]
 mod configuration_tests;
 pub(crate) mod debug;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) mod retained;
 #[cfg(test)]
 mod synthetic_tests;
 
@@ -385,6 +387,11 @@ pub enum AccessibilityTreeScope {
 pub(crate) type A11yActionListener =
     Box<dyn FnMut(Option<&accesskit::ActionData>, &mut Window, &mut App) + 'static>;
 
+#[cfg(not(target_family = "wasm"))]
+use retained::ActionListener as CandidateActionListener;
+#[cfg(target_family = "wasm")]
+type CandidateActionListener = A11yActionListener;
+
 #[derive(Default)]
 struct PublishedA11yDispatch {
     revision: u64,
@@ -490,9 +497,11 @@ pub(crate) struct A11y {
     candidate_action_listeners: Vec<(
         NodeId,
         Action,
-        A11yActionListener,
+        CandidateActionListener,
         Option<SubtreeGeometryValidity>,
     )>,
+    #[cfg(not(target_family = "wasm"))]
+    retained: retained::Candidate,
     published: Option<PublishedA11yDispatch>,
     next_published_revision: u64,
     announcement_generation: Option<u64>,
@@ -510,6 +519,8 @@ pub(crate) struct A11yPrepaintCheckpoint {
     node_bounds_len: usize,
     action_listeners_len: usize,
     missing_focus_len: usize,
+    #[cfg(not(target_family = "wasm"))]
+    retained_fragments_len: usize,
 }
 
 impl A11y {
@@ -537,6 +548,8 @@ impl A11y {
             candidate_focus_ids: Vec::new(),
             candidate_node_geometry: Vec::new(),
             candidate_action_listeners: Vec::new(),
+            #[cfg(not(target_family = "wasm"))]
+            retained: retained::Candidate::default(),
             published: None,
             next_published_revision: 0,
             announcement_generation: None,
@@ -590,6 +603,9 @@ impl A11y {
         self.candidate_action_listeners.clear();
         self.staged_announcement_nodes.clear();
         self.nodes.begin_frame();
+        #[cfg(not(target_family = "wasm"))]
+        self.retained
+            .begin(&self.active_state, self.activation_generation_this_frame);
         if let Some(title) = &self.window_title {
             self.nodes
                 .current_node_mut()
@@ -612,6 +628,8 @@ impl A11y {
         self.candidate_node_geometry.clear();
         self.candidate_action_listeners.clear();
         self.staged_announcement_nodes.clear();
+        #[cfg(not(target_family = "wasm"))]
+        self.retained.discard();
     }
 
     pub(crate) fn debug_tree_json(&self) -> Option<String> {
@@ -700,6 +718,8 @@ impl A11y {
                 .get(&id)
                 .is_some_and(|mask| mask & action_mask(action) != 0)
             {
+                #[cfg(not(target_family = "wasm"))]
+                let listener = listener.into_dispatch();
                 published
                     .action_listeners
                     .entry(id)
@@ -712,6 +732,8 @@ impl A11y {
         published.revision = self.next_published_revision;
         published.activation_generation = activation_generation;
         self.published = Some(published);
+        #[cfg(not(target_family = "wasm"))]
+        self.retained.accept(activation_generation);
         self.commit_announcements(activation_generation);
         if self.debug_disabled {
             self.clear_debug_tree();
@@ -1125,6 +1147,8 @@ impl A11y {
         if !self.is_active() {
             return;
         }
+        #[cfg(not(target_family = "wasm"))]
+        self.nodes.retained.block();
         self.candidate_keyboard_focus = keyboard_focus;
         self.nodes.keyboard_focus = keyboard_focus
             .and_then(|focus| self.registered_focus(focus))
@@ -1157,6 +1181,8 @@ impl A11y {
         action: Action,
         listener: A11yActionListener,
     ) {
+        #[cfg(not(target_family = "wasm"))]
+        let listener = CandidateActionListener::new(listener);
         self.candidate_action_listeners.push((
             node_id,
             action,
@@ -1165,6 +1191,7 @@ impl A11y {
         ));
     }
 
+    #[cfg(any(test, not(target_family = "wasm")))]
     pub(crate) fn accepts_action(
         &self,
         request_activation_generation: u64,
@@ -1185,6 +1212,7 @@ impl A11y {
             })
     }
 
+    #[cfg(any(test, not(target_family = "wasm")))]
     pub(crate) fn take_published_action_listeners(
         &mut self,
         node_id: NodeId,
@@ -1194,6 +1222,7 @@ impl A11y {
         Some((published.revision, listeners))
     }
 
+    #[cfg(any(test, not(target_family = "wasm")))]
     pub(crate) fn restore_published_action_listeners(
         &mut self,
         revision: u64,
@@ -1215,6 +1244,7 @@ impl A11y {
         }
     }
 
+    #[cfg(any(test, not(target_family = "wasm")))]
     pub(crate) fn published_node_witness(&self, node_id: NodeId) -> Option<Point<Pixels>> {
         self.published
             .as_ref()?
@@ -1223,6 +1253,7 @@ impl A11y {
             .and_then(|(_, witness)| *witness)
     }
 
+    #[cfg(any(test, not(target_family = "wasm")))]
     pub(crate) fn published_focus_id(&self, node_id: NodeId) -> Option<FocusId> {
         self.published.as_ref()?.focus_ids.get(&node_id).copied()
     }
@@ -1234,6 +1265,8 @@ impl A11y {
             node_bounds_len: self.candidate_node_geometry.len(),
             action_listeners_len: self.candidate_action_listeners.len(),
             missing_focus_len: self.candidate_missing_focus.len(),
+            #[cfg(not(target_family = "wasm"))]
+            retained_fragments_len: self.retained.len(),
         }
     }
 
@@ -1254,6 +1287,8 @@ impl A11y {
         self.candidate_node_geometry
             .truncate(checkpoint.node_bounds_len);
         self.candidate_focus_ids.truncate(checkpoint.focus_ids_len);
+        #[cfg(not(target_family = "wasm"))]
+        self.retained.rollback(checkpoint.retained_fragments_len);
         self.nodes.rollback(checkpoint.nodes);
     }
 
@@ -1408,6 +1443,8 @@ pub(crate) struct A11yNodeBuilder {
     keyboard_focus: Option<NodeId>,
     active_descendant: Option<NodeId>,
     active_descendant_candidates: Vec<(NodeId, Option<SubtreeGeometryValidity>)>,
+    #[cfg(not(target_family = "wasm"))]
+    retained: retained::NodeCapture,
     #[cfg(debug_assertions)]
     has_set_focus: bool,
     #[cfg(debug_assertions)]
@@ -1568,6 +1605,8 @@ impl A11yNodeBuilder {
             keyboard_focus: None,
             active_descendant: None,
             active_descendant_candidates: Vec::new(),
+            #[cfg(not(target_family = "wasm"))]
+            retained: retained::NodeCapture::default(),
             #[cfg(debug_assertions)]
             has_set_focus: false,
             #[cfg(debug_assertions)]
@@ -1600,6 +1639,8 @@ impl A11yNodeBuilder {
     }
 
     fn rollback(&mut self, checkpoint: A11yNodeBuilderCheckpoint) {
+        #[cfg(not(target_family = "wasm"))]
+        self.retained.block();
         let stack_prefix_is_intact = self.ids_stack.len() >= checkpoint.stack_depth
             && self.nodes_stack.len() >= checkpoint.stack_depth
             && checkpoint
@@ -1682,6 +1723,8 @@ impl A11yNodeBuilder {
         }
 
         if !self.seen_ids.insert(id) {
+            #[cfg(not(target_family = "wasm"))]
+            self.retained.block();
             debug_assert!(
                 false,
                 "Duplicate a11y node id: {id:?}. In a release build, this node would be silently discarded from the a11y tree."
@@ -1696,11 +1739,15 @@ impl A11yNodeBuilder {
         }
 
         let Some((parent_id, deferred_parent)) = self.take_accessibility_parent_for_child() else {
+            #[cfg(not(target_family = "wasm"))]
+            self.retained.block();
             self.seen_ids.remove(&id);
             log::error!("a11y: node {id:?} has no current parent");
             return false;
         };
         if !self.attach_child(parent_id, id, deferred_parent.as_ref()) {
+            #[cfg(not(target_family = "wasm"))]
+            self.retained.block();
             self.seen_ids.remove(&id);
             log::error!("a11y: node {id:?} could not resolve its recorded parent {parent_id:?}");
             return false;
@@ -1725,6 +1772,10 @@ impl A11yNodeBuilder {
     }
 
     pub(crate) fn current_node_mut(&mut self) -> Option<&mut accesskit::Node> {
+        #[cfg(not(target_family = "wasm"))]
+        if let Some(&node_id) = self.ids_stack.last() {
+            self.retained.record_node_edit(node_id);
+        }
         self.nodes_stack.last_mut()
     }
 
@@ -1749,6 +1800,8 @@ impl A11yNodeBuilder {
 
     /// Push the root node to start a new frame.
     fn begin_frame(&mut self) {
+        #[cfg(not(target_family = "wasm"))]
+        self.retained.clear();
         #[cfg(debug_assertions)]
         self.node_info.clear();
         self.all_nodes.clear();
@@ -1787,6 +1840,10 @@ impl A11yNodeBuilder {
         &mut self,
         scope: AccessibilityTreeScope,
     ) -> AccessibilityTreeScopeGuard {
+        #[cfg(not(target_family = "wasm"))]
+        if scope != AccessibilityTreeScope::Unrestricted {
+            self.retained.block();
+        }
         if matches!(
             scope,
             AccessibilityTreeScope::ModalRoot | AccessibilityTreeScope::ModalDescendant
@@ -1807,6 +1864,10 @@ impl A11yNodeBuilder {
         &mut self,
         validity: Option<SubtreeGeometryValidity>,
     ) -> AccessibilityGeometryValidityGuard {
+        #[cfg(not(target_family = "wasm"))]
+        if validity.is_some() {
+            self.retained.block();
+        }
         let depth = self.geometry_validity_stack.borrow().len();
         self.geometry_validity_stack.borrow_mut().push(validity);
         AccessibilityGeometryValidityGuard {
@@ -1816,6 +1877,8 @@ impl A11yNodeBuilder {
     }
 
     pub(crate) fn enter_clip_owner_scope(&mut self) -> AccessibilityClipOwnerScopeGuard {
+        #[cfg(not(target_family = "wasm"))]
+        self.retained.block();
         let depth = self.clip_owner_scope_depths.borrow().len();
         self.clip_owner_scope_depths
             .borrow_mut()
@@ -1830,6 +1893,8 @@ impl A11yNodeBuilder {
         &mut self,
         parent: AccessibilityDeferredParent,
     ) -> AccessibilityDeferredParentScopeGuard {
+        #[cfg(not(target_family = "wasm"))]
+        self.retained.block();
         let depth = self.deferred_parent_scopes.borrow().len();
         self.deferred_parent_scopes
             .borrow_mut()
@@ -1848,6 +1913,8 @@ impl A11yNodeBuilder {
         &mut self,
         parent: AccessibilityDeferredParent,
     ) -> AccessibilityWindowPortalScopeGuard {
+        #[cfg(not(target_family = "wasm"))]
+        self.retained.block();
         let depth = self.window_portal_scopes.borrow().len();
         self.window_portal_scopes
             .borrow_mut()
@@ -1863,6 +1930,8 @@ impl A11yNodeBuilder {
     }
 
     pub(crate) fn reserve_deferred_parent(&mut self) -> Option<AccessibilityDeferredParent> {
+        #[cfg(not(target_family = "wasm"))]
+        self.retained.block();
         if let Some(parent) = self.take_current_scoped_parent_order() {
             return Some(parent);
         }
@@ -1887,6 +1956,8 @@ impl A11yNodeBuilder {
     }
 
     pub(crate) fn reserve_window_portal_parent(&mut self) -> Option<AccessibilityDeferredParent> {
+        #[cfg(not(target_family = "wasm"))]
+        self.retained.block();
         let root_order = if let Some(root_order) = self.take_current_root_order() {
             root_order
         } else {
@@ -1914,7 +1985,7 @@ impl A11yNodeBuilder {
         if self.ids_stack.last().copied() != Some(id) {
             return false;
         }
-        let Some(node) = self.nodes_stack.last_mut() else {
+        let Some(node) = self.current_node_mut() else {
             return false;
         };
         node.set_clips_children();
@@ -2255,6 +2326,8 @@ impl A11yNodeBuilder {
     }
 
     fn set_focus_with_validity(&mut self, id: NodeId, validity: Option<SubtreeGeometryValidity>) {
+        #[cfg(not(target_family = "wasm"))]
+        self.retained.block();
         #[cfg(debug_assertions)]
         {
             debug_assert!(

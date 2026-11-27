@@ -33,7 +33,7 @@ fn main() {
 ## Desktop Backends
 
 - On Windows, `windows::WindowsPlatform` and the renderer factory traits support native hosts. `test-support` enables the native window probes.
-- On macOS, `macos::MacPlatform` owns AppKit lifecycle and windowing. The backend includes Apple dispatcher, Keychain, and process services from the Apache-2.0 Zed GPUI implementation. `font-kit` enables its CoreText/OpenType text system.
+- On macOS, `macos::MacPlatform` owns AppKit lifecycle and windowing. The backend includes Apple dispatcher and process services from the Apache-2.0 Zed GPUI implementation. `font-kit` enables its CoreText/OpenType text system.
 - On Linux and FreeBSD, enable `wayland`, `x11`, or both for a graphical application. The headless backend is available without these features.
 
 `application_with_shared_wgpu` creates a native application whose windows use a caller-supplied WGPU context. `open-gpui-wgpu` owns rendering and atlas resources. Native capabilities such as desktop viewport windows are discovered at runtime.

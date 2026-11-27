@@ -172,18 +172,16 @@ pub trait Scheduler: Send + Sync {
 ///
 /// This function never blocks: the returned task starts as an asynchronous
 /// rendezvous that resolves to the root task's handle once the dedicated
-/// thread has spawned it, and behaves like that handle from then on. That
-/// makes it safe to call from threads that must not block, such as the web
-/// main thread. On wasm targets the thread is a web worker and requires the
-/// `wasm-threads` cargo feature (and a shared-memory build); without it this
-/// panics. Spawning a worker is far more expensive than an OS thread —
-/// module instantiation plus a fresh function table — so on the web treat a
-/// dedicated session as a long-lived place to send work, not a per-job
-/// convenience.
+/// thread has spawned it, and behaves like that handle from then on.
 ///
 /// The caller is responsible for supplying a `session_id` that's distinct from
 /// every other live session on `scheduler`. Concrete schedulers typically wrap
 /// this in an inherent method that allocates the id from their own counter.
+///
+/// # Panics
+///
+/// Dedicated OS threads are unavailable on WebAssembly. On native targets this
+/// panics if the OS fails to spawn a thread.
 pub fn spawn_dedicated_thread<F, Fut>(
     session_id: SessionId,
     scheduler: Arc<dyn Scheduler>,
@@ -219,21 +217,15 @@ where
 }
 
 fn spawn_dedicated_os_thread(session_id: SessionId, thread_body: impl FnOnce() + Send + 'static) {
-    let thread_name = format!("spawn_dedicated session {:?}", session_id);
     #[cfg(not(target_family = "wasm"))]
     std::thread::Builder::new()
-        .name(thread_name)
+        .name(format!("spawn_dedicated session {session_id:?}"))
         .spawn(thread_body)
         .expect("failed to spawn dedicated thread");
-    #[cfg(all(target_family = "wasm", feature = "wasm-threads"))]
-    wasm_thread::Builder::new()
-        .name(thread_name)
-        .spawn(thread_body)
-        .expect("failed to spawn dedicated thread");
-    #[cfg(all(target_family = "wasm", not(feature = "wasm-threads")))]
+    #[cfg(target_family = "wasm")]
     {
-        let _ = (thread_name, thread_body);
-        panic!("spawn_dedicated on wasm requires the scheduler crate's `wasm-threads` feature");
+        let _ = (session_id, thread_body);
+        panic!("dedicated scheduler threads are unavailable on WebAssembly");
     }
 }
 

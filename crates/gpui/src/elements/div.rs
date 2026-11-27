@@ -2879,30 +2879,45 @@ impl Element for Div {
         if let Some(handle) = self.interactivity.scroll_anchor.as_ref() {
             *handle.last_origin.borrow_mut() = bounds.origin - window.element_offset();
         }
-        let content_size = if request_layout.child_layout_ids.is_empty() {
-            bounds.size
-        } else if let Some(scroll_handle) = self.interactivity.tracked_scroll_handle.as_ref() {
-            let mut state = scroll_handle.0.borrow_mut();
-            state.child_bounds = Vec::with_capacity(request_layout.child_layout_ids.len());
-            for child_layout_id in &request_layout.child_layout_ids {
-                let child_bounds = window.layout_bounds(*child_layout_id);
-                child_min = child_min.min(&child_bounds.origin);
-                child_max = child_max.max(&child_bounds.bottom_right());
-                state.child_bounds.push(child_bounds);
-            }
-            (child_max - child_min).into()
-        } else {
-            for child_layout_id in &request_layout.child_layout_ids {
-                let child_bounds = window.layout_bounds(*child_layout_id);
-                child_min = child_min.min(&child_bounds.origin);
-                child_max = child_max.max(&child_bounds.bottom_right());
-
-                if has_prepaint_listener {
-                    children_bounds.push(child_bounds);
+        let content_size =
+            if let Some(scroll_handle) = self.interactivity.tracked_scroll_handle.as_ref() {
+                let mut state = scroll_handle.0.borrow_mut();
+                let child_count = request_layout.child_layout_ids.len();
+                let mut changed = state.child_bounds.len() != child_count;
+                for (index, child_layout_id) in request_layout.child_layout_ids.iter().enumerate() {
+                    let child_bounds = window.layout_bounds(*child_layout_id);
+                    child_min = child_min.min(&child_bounds.origin);
+                    child_max = child_max.max(&child_bounds.bottom_right());
+                    if let Some(previous) = state.child_bounds.get_mut(index) {
+                        changed |= *previous != child_bounds;
+                        *previous = child_bounds;
+                    } else {
+                        state.child_bounds.push(child_bounds);
+                    }
                 }
-            }
-            (child_max - child_min).into()
-        };
+                state.child_bounds.truncate(child_count);
+                if changed {
+                    state.child_bounds_revision = state.child_bounds_revision.wrapping_add(1);
+                }
+                if child_count == 0 {
+                    bounds.size
+                } else {
+                    (child_max - child_min).into()
+                }
+            } else if request_layout.child_layout_ids.is_empty() {
+                bounds.size
+            } else {
+                for child_layout_id in &request_layout.child_layout_ids {
+                    let child_bounds = window.layout_bounds(*child_layout_id);
+                    child_min = child_min.min(&child_bounds.origin);
+                    child_max = child_max.max(&child_bounds.bottom_right());
+
+                    if has_prepaint_listener {
+                        children_bounds.push(child_bounds);
+                    }
+                }
+                (child_max - child_min).into()
+            };
 
         if let Some(scroll_handle) = self.interactivity.tracked_scroll_handle.as_ref() {
             scroll_handle.scroll_to_active_item();
@@ -3158,6 +3173,7 @@ impl Interactivity {
                 }
 
                 if let Some(scroll_handle) = self.tracked_scroll_handle.as_ref() {
+                    scroll_handle.record_retained_read();
                     self.scroll_offset = Some(scroll_handle.0.borrow().offset.clone());
                 } else if (self.base_style.overflow.x == Some(Overflow::Scroll)
                     || self.base_style.overflow.y == Some(Overflow::Scroll))
@@ -3167,6 +3183,7 @@ impl Interactivity {
                         .scroll_handle
                         .get_or_insert_with(ScrollHandle::new)
                         .clone();
+                    scroll_handle.record_retained_read();
                     self.scroll_offset = Some(scroll_handle.0.borrow().offset.clone());
                     self.tracked_scroll_handle = Some(scroll_handle);
                 }
@@ -5719,6 +5736,7 @@ struct ScrollHandleState {
     bounds: Bounds<Pixels>,
     max_offset: Point<Pixels>,
     child_bounds: Vec<Bounds<Pixels>>,
+    child_bounds_revision: u64,
     viewport_generation: u64,
     last_committed_viewport: Option<ScrollViewportStateSnapshot>,
     last_committed_viewport_snapshot: Option<ScrollViewportSnapshot>,
@@ -5761,18 +5779,45 @@ impl ScrollHandle {
         Self(Rc::default())
     }
 
+    fn record_retained_read(&self) {
+        crate::fast::dependencies::state(|| {
+            let state = self.0.borrow();
+            let revision = state.direct_scroll_revision;
+            let offset = *state.offset.borrow();
+            let bounds = state.bounds;
+            let max_offset = state.max_offset;
+            let child_bounds_revision = state.child_bounds_revision;
+            let viewport_generation = state.viewport_generation;
+            let handle = Rc::downgrade(&self.0);
+            Box::new(move || {
+                handle.upgrade().is_some_and(|handle| {
+                    let state = handle.borrow();
+                    state.direct_scroll_revision == revision
+                        && state.bounds == bounds
+                        && state.max_offset == max_offset
+                        && state.child_bounds_revision == child_bounds_revision
+                        && state.viewport_generation == viewport_generation
+                        && *state.offset.borrow() == offset
+                })
+            })
+        });
+    }
+
     /// Get the current scroll offset.
     pub fn offset(&self) -> Point<Pixels> {
+        self.record_retained_read();
         *self.0.borrow().offset.borrow()
     }
 
     /// Get the maximum scroll offset.
     pub fn max_offset(&self) -> Point<Pixels> {
+        self.record_retained_read();
         self.0.borrow().max_offset
     }
 
     /// Get the top child that's scrolled into view.
     pub fn top_item(&self) -> usize {
+        self.record_retained_read();
         let state = self.0.borrow();
         let top = state.bounds.top() - state.offset.borrow().y;
 
@@ -5792,6 +5837,7 @@ impl ScrollHandle {
 
     /// Get the bottom child that's scrolled into view.
     pub fn bottom_item(&self) -> usize {
+        self.record_retained_read();
         let state = self.0.borrow();
         let bottom = state.bounds.bottom() - state.offset.borrow().y;
 
@@ -5811,11 +5857,13 @@ impl ScrollHandle {
 
     /// Return the bounds into which this child is painted
     pub fn bounds(&self) -> Bounds<Pixels> {
+        self.record_retained_read();
         self.0.borrow().bounds
     }
 
     /// Get the bounds for a specific child.
     pub fn bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
+        self.record_retained_read();
         self.0.borrow().child_bounds.get(ix).cloned()
     }
 
@@ -5825,6 +5873,7 @@ impl ScrollHandle {
     /// It is intended for tests and diagnostics that need final scroll facts after simulated input
     /// or programmatic reveal calls.
     pub fn committed_viewport_snapshot(&self) -> Option<ScrollViewportSnapshot> {
+        self.record_retained_read();
         self.0.borrow().last_committed_viewport_snapshot
     }
 
@@ -6093,6 +6142,7 @@ impl ScrollHandle {
 
     /// Get the count of children for scrollable item.
     pub fn children_count(&self) -> usize {
+        self.record_retained_read();
         self.0.borrow().child_bounds.len()
     }
 }

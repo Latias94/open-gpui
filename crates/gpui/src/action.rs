@@ -40,6 +40,26 @@ macro_rules! actions {
     };
 }
 
+#[cfg(feature = "schemars")]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __open_gpui_action_schema {
+    () => {
+        fn action_json_schema(
+            generator: &mut $crate::private::schemars::SchemaGenerator,
+        ) -> Option<$crate::private::schemars::Schema> {
+            Some(<Self as $crate::private::schemars::JsonSchema>::json_schema(generator))
+        }
+    };
+}
+
+#[cfg(not(feature = "schemars"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __open_gpui_action_schema {
+    () => {};
+}
+
 /// Actions are used to implement keyboard-driven UI. When you declare an action, you can bind keys
 /// to the action in the keymap and listeners for that action in the element tree.
 ///
@@ -59,16 +79,17 @@ macro_rules! actions {
 ///
 /// ```
 /// use open_gpui::Action;
-/// #[derive(Clone, PartialEq, serde::Deserialize, schemars::JsonSchema, Action)]
+/// #[derive(Clone, PartialEq, serde::Deserialize, Action)]
 /// #[action(namespace = editor)]
 /// pub struct SelectNext {
 ///     pub replace_newest: bool,
 /// }
 /// ```
 ///
-/// The derive macro for `Action` requires that the type implement `Clone` and `PartialEq`. It also
-/// requires `serde::Deserialize` and `schemars::JsonSchema` unless `#[action(no_json)]` is
-/// specified. These trait impls allow actions to be loaded from JSON keymaps.
+/// The derive macro requires `Clone` and `PartialEq`. Actions with parameters also require
+/// `serde::Deserialize` for loading from JSON keymaps, unless they specify `#[action(no_json)]`.
+/// When Open GPUI's `schemars` feature is enabled, also derive `schemars::JsonSchema` for
+/// parameterized actions that can be built from JSON.
 ///
 /// Multiple arguments separated by commas may be specified in `#[action(...)]`:
 ///
@@ -76,8 +97,7 @@ macro_rules! actions {
 ///
 /// - `name = "ActionName"` overrides the action's name. This must not contain `::`.
 ///
-/// - `no_json` causes the `build` method to always error and `action_json_schema` to return `None`,
-///   and allows actions not implement `serde::Serialize` and `schemars::JsonSchema`.
+/// - `no_json` disables building the action from JSON and generating a schema for its parameters.
 ///
 /// - `no_register` skips registering the action. This is useful for implementing the `Action` trait
 ///   while not supporting invocation by name or JSON deserialization.
@@ -98,7 +118,7 @@ macro_rules! actions {
 ///
 /// ```
 /// use open_gpui::{SharedString, register_action};
-/// #[derive(Clone, PartialEq, Eq, serde::Deserialize, schemars::JsonSchema)]
+/// #[derive(Clone, PartialEq, Eq, serde::Deserialize)]
 /// pub struct Paste {
 ///     pub content: SharedString,
 /// }
@@ -137,6 +157,7 @@ pub trait Action: Any + Send {
         Self: Sized;
 
     /// Optional JSON schema for the action's input data.
+    #[cfg(feature = "schemars")]
     fn action_json_schema(_: &mut schemars::SchemaGenerator) -> Option<schemars::Schema>
     where
         Self: Sized,
@@ -258,6 +279,7 @@ impl Default for ActionRegistry {
 
 struct ActionData {
     pub build: ActionBuilder,
+    #[cfg(feature = "schemars")]
     pub json_schema: fn(&mut schemars::SchemaGenerator) -> Option<schemars::Schema>,
 }
 
@@ -273,10 +295,26 @@ pub struct MacroActionData {
     pub name: &'static str,
     pub type_id: TypeId,
     pub build: ActionBuilder,
+    #[cfg(feature = "schemars")]
     pub json_schema: fn(&mut schemars::SchemaGenerator) -> Option<schemars::Schema>,
     pub deprecated_aliases: &'static [&'static str],
     pub deprecation_message: Option<&'static str>,
     pub documentation: Option<&'static str>,
+}
+
+impl MacroActionData {
+    pub fn new<A: Action>() -> Self {
+        Self {
+            name: A::name_for_type(),
+            type_id: TypeId::of::<A>(),
+            build: A::build,
+            #[cfg(feature = "schemars")]
+            json_schema: A::action_json_schema,
+            deprecated_aliases: A::deprecated_aliases(),
+            deprecation_message: A::deprecation_message(),
+            documentation: A::documentation(),
+        }
+    }
 }
 
 inventory::collect!(MacroActionBuilder);
@@ -302,6 +340,7 @@ impl ActionRegistry {
             name,
             ActionData {
                 build: action.build,
+                #[cfg(feature = "schemars")]
                 json_schema: action.json_schema,
             },
         );
@@ -316,6 +355,7 @@ impl ActionRegistry {
                 alias,
                 ActionData {
                     build: action.build,
+                    #[cfg(feature = "schemars")]
                     json_schema: action.json_schema,
                 },
             );
@@ -372,6 +412,7 @@ impl ActionRegistry {
         self.all_names.as_slice()
     }
 
+    #[cfg(feature = "schemars")]
     pub fn action_schemas(
         &self,
         generator: &mut schemars::SchemaGenerator,
@@ -389,6 +430,7 @@ impl ActionRegistry {
             .collect::<Vec<_>>()
     }
 
+    #[cfg(feature = "schemars")]
     pub fn action_schema_by_name(
         &self,
         name: &str,
@@ -423,7 +465,6 @@ pub fn generate_list_of_all_registered_actions() -> impl Iterator<Item = MacroAc
 }
 
 mod no_action {
-    use schemars::JsonSchema;
     use serde::Deserialize;
 
     actions!(
@@ -442,7 +483,8 @@ mod no_action {
     /// In keymap JSON this is written as:
     ///
     /// `["open_gpui::Unbind", "editor::NewLine"]`
-    #[derive(Clone, Debug, PartialEq, Deserialize, JsonSchema, open_gpui::Action)]
+    #[derive(Clone, Debug, PartialEq, Deserialize, open_gpui::Action)]
+    #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
     #[action(namespace = open_gpui, deprecated_aliases = ["zed::Unbind"])]
     pub struct Unbind(pub open_gpui::SharedString);
 

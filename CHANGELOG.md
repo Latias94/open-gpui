@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- GPUI retains eligible entity-backed layout, paint, and interaction output across accepted frames. Dirty nested views can rebuild within replayed ancestors when their layout stays stable. Set `GPUI_VIEW_RETENTION=0` to disable automatic view retention when comparing draws.
 - `open-gpui-base` provides unstyled GPUI controls, including `TextInput`, buttons, a controlled `Checkbox`, and virtualized lists and trees. The dockspace editor uses a retained text input per View and applies committed text to the shared document on submit.
 - SVGs support the official static and timed raster transformations, including rotation, independent easing, alpha, heartbeat and FPS caps. Native retained scenes animate without re-rendering their views; reduced motion uses the initial pose. Custom renderer monochrome records now include an SVG matrix and animation ID, while subpixel records retain their existing layout.
 - Additive Window/test APIs include `Window::touch_prediction_enabled`, scale-factor simulation, accepted-frame quad/underline inspection and passive image-cache/atlas queries. The test platform now retains owned menu snapshots for `App::get_menus`. `ElementId` accepts `u64`, `ImageFormat::extension` returns canonical file extensions, and `hsla` / `opaque_grey` support constant construction. See the [migration guide](docs/ui/migration-v0.3.md#additive-window-and-test-apis) for feature gates and observation limits.
@@ -139,7 +140,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - The native HTTP implementation selects official `zed-reqwest` revision `33bc764aa15ff7b200bf7c93bd96e24878d53e14`. Direct consumers passing reqwest clients must select that same package/source. The former registry-client reconstruction cache is removed; request-local redirects preserve imported client configuration. Custom `HttpRequestExt` implementations must provide `timeout`.
 
-- Native blocking executor APIs, scoped background futures and the `block_on` reexport are unavailable on WebAssembly. Web quit observers run asynchronously as best-effort cleanup; native shutdown retains its bounded wait. Enable `open-gpui/wasm-threads` for dedicated Web workers with a shared-memory build; the Web backend forwards it from `multithreaded`.
+- Enable the `open-gpui` feature `schemars` for the action schema queries and `JsonSchema` implementations. JSON keymaps and action registration remain available with the default features.
+- WebAssembly uses WebGPU by default. A host that supplies WebGL must enable `wgpu/webgl` in its own WGPU dependency. The `wasm-threads` feature is retired. Dedicated threads, native blocking executors, scoped background futures, and `block_on` remain available on native targets. Web quit observers continue to run asynchronously.
 
 - Darwin command `Child` pipes now use `smol::Async<File>` instead of `Unblock<File>`. Consumer workspace roots must select `async-process` revision `0b6d6713570af61806e1e5cb40e0f757cb93fd9d` through `[patch.crates-io]`, as shown in the independent consumer. Cargo does not inherit a dependency's root patches; the direct Darwin dependency and `smol` must resolve to that same package.
 
