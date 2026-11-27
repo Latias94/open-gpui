@@ -227,7 +227,7 @@ fn wait_for_native_a11y_submission(
 }
 
 fn assert_native_a11y_reads_are_passive(
-    platform: &WindowsPlatform,
+    hwnd: HWND,
     app: &mut Application,
     handle: WindowHandle<NativeA11yRoot>,
     probe: &NativeA11yProbe,
@@ -239,6 +239,7 @@ fn assert_native_a11y_reads_are_passive(
                 (
                     window.debug_a11y_tree_json(),
                     window.presentation_facts(),
+                    window.present_submission_count(),
                     window.is_a11y_enabled(),
                     window.is_a11y_active(),
                 )
@@ -246,18 +247,24 @@ fn assert_native_a11y_reads_are_passive(
         })
         .expect("the inspected native window must remain open")
     };
+    // Deliver this HWND's paint callback without dispatching unrelated native messages.
+    // Settle previously queued drawing work before measuring the effect of inspection.
+    let paint = |app: &mut Application| {
+        let requests_before = frame_requests.get();
+        app.update_for_test(|_| {
+            unsafe { SendMessageW(hwnd, WM_PAINT, None, None) };
+        });
+        assert!(frame_requests.get() > requests_before);
+    };
+    paint(app);
     let before = read(app);
     let counts = (probe.renders.get(), probe.hooks.get());
     for _ in 0..3 {
         assert_eq!(read(app), before);
     }
-    let requests_before = frame_requests.get();
-    pump_messages_until_with_delay(
-        &Rc::downgrade(&platform.inner),
-        "passive inspection frame opportunities",
-        Duration::from_millis(5),
-        || frame_requests.get() >= requests_before + 2,
-    );
+    for _ in 0..2 {
+        paint(app);
+    }
     assert_eq!(read(app), before);
     assert_eq!((probe.renders.get(), probe.hooks.get()), counts);
 }
@@ -289,6 +296,9 @@ fn native_synthetic_a11y_activation_snapshot_update_and_release() {
                     }),
                     focus_on_appearing: false,
                     show: true,
+                    inactive_frame_interval: None,
+                    low_power_frame_interval: None,
+                    thermal_frame_interval: None,
                     ..WindowOptions::default()
                 },
                 |window, cx| {
@@ -360,7 +370,7 @@ fn native_synthetic_a11y_activation_snapshot_update_and_release() {
     })
     .unwrap();
     assert_eq!(probe.hooks.get(), 0);
-    assert_native_a11y_reads_are_passive(&platform, &mut app, handle, &probe, &frame_requests);
+    assert_native_a11y_reads_are_passive(hwnd, &mut app, handle, &probe, &frame_requests);
     let submission_before_activation = read_submission(&mut app);
     let counts_before_activation = (probe.renders.get(), probe.hooks.get());
     let activation_snapshot = {
@@ -403,7 +413,7 @@ fn native_synthetic_a11y_activation_snapshot_update_and_release() {
     assert_eq!(initial_owner["aria"]["keyboard_shortcut"], INITIAL_SHORTCUT);
     assert_eq!(initial_owner["aria"]["numeric_value_step"], 0.25);
     assert!(probe.hooks.get() > 0);
-    assert_native_a11y_reads_are_passive(&platform, &mut app, handle, &probe, &frame_requests);
+    assert_native_a11y_reads_are_passive(hwnd, &mut app, handle, &probe, &frame_requests);
     let counts_before = (probe.renders.get(), probe.hooks.get());
     let initial_generation = initial["frame"]["frame_generation"].as_u64().unwrap();
     app.update_for_test(|cx| {
@@ -444,7 +454,7 @@ fn native_synthetic_a11y_activation_snapshot_update_and_release() {
     assert!(!changed.to_string().contains(INITIAL_TEXT));
     assert!(!changed.to_string().contains(INITIAL_AUTHOR_ID));
     assert!(!changed.to_string().contains(INITIAL_SHORTCUT));
-    assert_native_a11y_reads_are_passive(&platform, &mut app, handle, &probe, &frame_requests);
+    assert_native_a11y_reads_are_passive(hwnd, &mut app, handle, &probe, &frame_requests);
 
     let changed_generation = changed["frame"]["frame_generation"].as_u64().unwrap();
     let counts_before_removal = (probe.renders.get(), probe.hooks.get());
@@ -485,7 +495,7 @@ fn native_synthetic_a11y_activation_snapshot_update_and_release() {
     assert!(!removed.to_string().contains(CHANGED_TEXT));
     assert!(!removed.to_string().contains(CHANGED_AUTHOR_ID));
     assert!(!removed.to_string().contains(CHANGED_SHORTCUT));
-    assert_native_a11y_reads_are_passive(&platform, &mut app, handle, &probe, &frame_requests);
+    assert_native_a11y_reads_are_passive(hwnd, &mut app, handle, &probe, &frame_requests);
 
     let submission_before_reactivation = read_submission(&mut app);
     let counts_before_reactivation = (probe.renders.get(), probe.hooks.get());
@@ -556,7 +566,7 @@ fn native_synthetic_a11y_activation_snapshot_update_and_release() {
     for property in ["author_id", "keyboard_shortcut", "numeric_value_step"] {
         assert!(reactivated_owner["aria"].get(property).is_none());
     }
-    assert_native_a11y_reads_are_passive(&platform, &mut app, handle, &probe, &frame_requests);
+    assert_native_a11y_reads_are_passive(hwnd, &mut app, handle, &probe, &frame_requests);
 
     assert!(platform.raw_window_handles.read().contains(&registration));
     app.update_for_test(|cx| {
