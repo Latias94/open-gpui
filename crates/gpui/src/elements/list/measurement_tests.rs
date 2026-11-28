@@ -5,6 +5,50 @@ use crate::{
 };
 
 #[crate::test]
+fn retained_item_queries_follow_list_measurements(cx: &mut TestAppContext) {
+    let cx = cx.add_empty_window();
+    let state = ListState::new(4, ListAlignment::Top, px(0.)).measure_all();
+    let draw = |height, cx: &mut VisualTestContext| {
+        draw_list(&state, 40., move |_| div().h(px(height)).into_any(), cx);
+    };
+
+    let (above, before_first_above) = capture(|| state.item_is_above_viewport(0));
+    let (below, before_first_below) = capture(|| state.item_is_below_viewport(2));
+    assert_eq!((above, below), (None, None));
+    draw(0., cx);
+    let revision = state.2.get();
+    let (end, end_read) = capture(|| state.is_scrolled_to_end());
+    let (bounds, bounds_read) = capture(|| state.bounds_for_item(0).unwrap());
+    let (above, above_read) = capture(|| state.item_is_above_viewport(0));
+    let (below, below_read) = capture(|| state.item_is_below_viewport(2));
+    assert_eq!((end, above, below), (None, Some(true), Some(false)));
+    assert_eq!(bounds.size.height, px(0.));
+    let measured_reads = [end_read, bounds_read, above_read, below_read];
+    cx.update(|window, cx| {
+        assert!(
+            measured_reads
+                .iter()
+                .all(|read| read.is_current(window, cx))
+        );
+    });
+
+    draw(30., cx);
+    assert_eq!(state.2.get(), revision);
+    assert_eq!(state.is_scrolled_to_end(), Some(false));
+    assert_eq!(state.bounds_for_item(0).unwrap().size.height, px(30.));
+    assert_eq!(state.item_is_above_viewport(0), Some(false));
+    assert_eq!(state.item_is_below_viewport(2), Some(true));
+    cx.update(|window, cx| {
+        assert_eq!(
+            measured_reads.map(|read| read.is_current(window, cx)),
+            [false; 4]
+        );
+        assert!(!before_first_above.is_current(window, cx));
+        assert!(!before_first_below.is_current(window, cx));
+    });
+}
+
+#[crate::test]
 fn retained_scrollbar_metrics_follow_list_layout(cx: &mut TestAppContext) {
     let cx = cx.add_empty_window();
     let state = ListState::new(4, ListAlignment::Bottom, px(0.)).measure_all();

@@ -28,6 +28,58 @@ impl Render for ActionRoot {
 }
 
 #[crate::test]
+fn deferred_candidate_keeps_the_pointer_outside_after_exit(cx: &mut TestAppContext) {
+    struct HoverRoot;
+
+    impl Render for HoverRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().hover(|style| style.bg(rgb(0x112233)))
+        }
+    }
+
+    let handle = cx.open_window(crate::size(crate::px(100.), crate::px(100.)), |_, _| {
+        HoverRoot
+    });
+    let mut native = cx.test_window(handle.into());
+    assert!(native.simulate_frame(RequestFrameOptions {
+        require_presentation: true,
+        ..Default::default()
+    }));
+    cx.run_until_parked();
+    native.set_frame_delivery_mode(crate::PlatformFrameDeliveryMode::Deferred);
+    cx.update_window(handle.into(), |_, window, cx| {
+        let position = crate::point(crate::px(30.), crate::px(30.));
+        window.dispatch_event(
+            crate::PlatformInput::MouseMove(crate::MouseMoveEvent {
+                position,
+                ..Default::default()
+            }),
+            cx,
+        );
+        assert!(!window.mouse_hit_test.ids.is_empty());
+        window.dispatch_event(
+            crate::PlatformInput::MouseExited(crate::MouseExitEvent {
+                position,
+                ..Default::default()
+            }),
+            cx,
+        );
+        assert!(window.mouse_hit_test.ids.is_empty());
+
+        window.draw(cx).clear(cx);
+        assert!(window.deferred_candidate.is_some());
+        let hit_while_pending = !window.mouse_hit_test.ids.is_empty();
+        assert!(window.cancel_deferred_candidate(cx));
+        assert_eq!(
+            (hit_while_pending, !window.mouse_hit_test.ids.is_empty()),
+            (false, false),
+            "neither preparing nor discarding a deferred frame may revive hover"
+        );
+    })
+    .unwrap();
+}
+
+#[crate::test]
 fn deferred_represent_without_model_changes_uses_an_exact_submission(cx: &mut TestAppContext) {
     cx.defer_next_window_frame_requests();
     let handle = cx

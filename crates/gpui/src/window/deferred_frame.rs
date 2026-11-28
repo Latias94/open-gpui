@@ -185,7 +185,7 @@ impl Window {
         self.invalidator.set_phase(DrawPhase::None);
         let notify_pending_input_changed =
             self.restore_candidate_frame_authority(original_authority);
-        self.mouse_hit_test = self.rendered_frame.hit_test(self.mouse_position);
+        self.mouse_hit_test = self.frame_hit_test(&self.rendered_frame);
         if self.user_interaction_is_admitted()
             && let Some(index) = prepared.restored_input_handler_index
             && let Some(handler) = self.rendered_frame.input_handlers[index].value.take()
@@ -562,7 +562,7 @@ impl Window {
             .truncate(candidate.prepared.rendered_input_handlers_len);
         self.append_focus_claim_resolutions(candidate.focus_resolutions);
         self.schedule_focus_claim_resolution_dispatch(cx);
-        self.mouse_hit_test = self.rendered_frame.hit_test(self.mouse_position);
+        self.mouse_hit_test = self.frame_hit_test(&self.rendered_frame);
         self.needs_present.set(false);
         candidate
             .prepared

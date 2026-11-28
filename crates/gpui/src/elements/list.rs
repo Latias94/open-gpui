@@ -364,7 +364,10 @@ impl ListState {
         self.record_retained_value(read_layout, || read_layout(&self.0.borrow()));
     }
 
-    fn read_retained<T: Copy + PartialEq + 'static>(&self, read: fn(&StateInner) -> T) -> T {
+    fn read_retained<T: Copy + PartialEq + 'static>(
+        &self,
+        read: impl Fn(&StateInner) -> T + 'static,
+    ) -> T {
         let value = read(&self.0.borrow());
         self.record_retained_value(read, || value);
         value
@@ -372,7 +375,7 @@ impl ListState {
 
     fn record_retained_value<T: PartialEq + 'static>(
         &self,
-        read: fn(&StateInner) -> T,
+        read: impl Fn(&StateInner) -> T + 'static,
         observed: impl FnOnce() -> T,
     ) {
         crate::fast::dependencies::state(|| {
@@ -538,21 +541,7 @@ impl ListState {
     /// Whether the list is scrolled to the end, or `None` if the list is
     /// not scrollable or the total content height is not yet known.
     pub fn is_scrolled_to_end(&self) -> Option<bool> {
-        self.record_retained_read();
-        let state = self.0.borrow();
-        let bounds = state.last_layout_bounds?;
-        let summary = state.items.summary();
-        if summary.has_unknown_height {
-            return None;
-        }
-        let padding = state.last_padding.unwrap_or_default();
-        let content_height = summary.height + padding.top + padding.bottom;
-        let scroll_max = (content_height - bounds.size.height).max(px(0.));
-        if scroll_max <= px(0.) {
-            return None;
-        }
-        let scroll_top = state.scroll_top(&state.logical_scroll_top());
-        Some(scroll_top >= scroll_max)
+        self.read_retained(StateInner::is_scrolled_to_end)
     }
 
     /// Inform the list state that the items in `old_range` have been replaced
@@ -788,33 +777,7 @@ impl ListState {
     /// Get the bounds for the given item in window coordinates, if it's
     /// been rendered.
     pub fn bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
-        self.record_retained_read();
-        let state = &*self.0.borrow();
-
-        let bounds = state.last_layout_bounds.unwrap_or_default();
-        let padding = state.last_padding.unwrap_or_default();
-        let scroll_top = state.logical_scroll_top();
-        if ix < scroll_top.item_ix {
-            return None;
-        }
-
-        let mut cursor = state.items.cursor::<Dimensions<Count, Height>>(());
-        cursor.seek(&Count(scroll_top.item_ix), Bias::Right);
-
-        let scroll_top = cursor.start().1.0 + scroll_top.offset_in_item;
-
-        cursor.seek_forward(&Count(ix), Bias::Right);
-        if let Some(&ListItem::Measured { size, .. }) = cursor.item() {
-            let &Dimensions(Count(count), Height(top), _) = cursor.start();
-            if count == ix {
-                let top = bounds.top() + padding.top + top - scroll_top;
-                return Some(Bounds::from_corners(
-                    point(bounds.left() + padding.left, top),
-                    point(bounds.right() - padding.right, top + size.height),
-                ));
-            }
-        }
-        None
+        self.read_retained(move |state| state.bounds_for_item(ix))
     }
 
     /// Call this method when the user starts dragging the scrollbar.
@@ -951,17 +914,7 @@ impl ListState {
     /// itself to zero height), so returning `None` in that case would make
     /// the answer oscillate from frame to frame.
     pub fn item_is_above_viewport(&self, ix: usize) -> Option<bool> {
-        let viewport_bounds = self.0.borrow().last_layout_bounds?;
-
-        let scroll_top = self.logical_scroll_top();
-        if ix < scroll_top.item_ix {
-            // Rows before the logical scroll top have no item bounds, but
-            // their position relative to the viewport is known from scroll state.
-            return Some(true);
-        }
-
-        let item_bounds = self.bounds_for_item(ix)?;
-        Some(item_bounds.bottom() <= viewport_bounds.top())
+        self.read_retained(move |state| state.item_relative_to_viewport(ix).map(|(above, _)| above))
     }
 
     /// Returns whether the item is entirely below the viewport, or `None` if
@@ -970,21 +923,66 @@ impl ListState {
     /// See [`Self::item_is_above_viewport`] for why a zero-height viewport
     /// still yields a definitive answer.
     pub fn item_is_below_viewport(&self, ix: usize) -> Option<bool> {
-        let viewport_bounds = self.0.borrow().last_layout_bounds?;
-
-        let scroll_top = self.logical_scroll_top();
-        if ix < scroll_top.item_ix {
-            // Rows before the logical scroll top have no item bounds, but
-            // their position relative to the viewport is known from scroll state.
-            return Some(false);
-        }
-
-        let item_bounds = self.bounds_for_item(ix)?;
-        Some(item_bounds.top() >= viewport_bounds.bottom())
+        self.read_retained(move |state| state.item_relative_to_viewport(ix).map(|(_, below)| below))
     }
 }
 
 impl StateInner {
+    fn is_scrolled_to_end(&self) -> Option<bool> {
+        let bounds = self.last_layout_bounds?;
+        let summary = self.items.summary();
+        if summary.has_unknown_height {
+            return None;
+        }
+        let padding = self.last_padding.unwrap_or_default();
+        let content_height = summary.height + padding.top + padding.bottom;
+        let scroll_max = (content_height - bounds.size.height).max(px(0.));
+        if scroll_max <= px(0.) {
+            return None;
+        }
+        let scroll_top = self.scroll_top(&self.logical_scroll_top());
+        Some(scroll_top >= scroll_max)
+    }
+
+    fn bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
+        let bounds = self.last_layout_bounds.unwrap_or_default();
+        let padding = self.last_padding.unwrap_or_default();
+        let scroll_top = self.logical_scroll_top();
+        if ix < scroll_top.item_ix {
+            return None;
+        }
+
+        let mut cursor = self.items.cursor::<Dimensions<Count, Height>>(());
+        cursor.seek(&Count(scroll_top.item_ix), Bias::Right);
+        let scroll_top = cursor.start().1.0 + scroll_top.offset_in_item;
+
+        cursor.seek_forward(&Count(ix), Bias::Right);
+        if let Some(&ListItem::Measured { size, .. }) = cursor.item() {
+            let &Dimensions(Count(count), Height(top), _) = cursor.start();
+            if count == ix {
+                let top = bounds.top() + padding.top + top - scroll_top;
+                return Some(Bounds::from_corners(
+                    point(bounds.left() + padding.left, top),
+                    point(bounds.right() - padding.right, top + size.height),
+                ));
+            }
+        }
+        None
+    }
+
+    fn item_relative_to_viewport(&self, ix: usize) -> Option<(bool, bool)> {
+        let viewport = self.last_layout_bounds?;
+        if ix < self.logical_scroll_top().item_ix {
+            // Rows before the scroll top have no item bounds. Scroll state locates them above it.
+            return Some((true, false));
+        }
+        let item = self.bounds_for_item(ix)?;
+        Some((
+            item.bottom() <= viewport.top(),
+            item.top() >= viewport.bottom(),
+        ))
+    }
+
     fn scrollbar_offset(&self) -> Pixels {
         if self.scroll_anchor.is_none() && self.alignment == ListAlignment::Bottom {
             return -self.max_scroll_offset();
